@@ -7,6 +7,7 @@ use App\Models\CaMaster;
 use App\Models\Employee;
 use App\Models\FollowUp;
 use App\Models\LeadAssignmentEngine;
+use App\Support\Database\SqlAggregate;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -312,7 +313,7 @@ class BulkAssignmentCatalogService
             return [
                 'employee_id' => $employee->employee_id,
                 'name' => $employee->name,
-                'designation' => $employee->role ?? 'Sales Executive',
+                'designation' => $employee->role ?? 'Employee',
                 'city' => $employee->city?->city_name,
                 'state' => $employee->city?->state?->state_name,
                 'city_id' => $employee->city_id,
@@ -431,8 +432,8 @@ class BulkAssignmentCatalogService
 
         $assignmentRows = LeadAssignmentEngine::query()
             ->selectRaw('employee_id')
-            ->selectRaw("COUNT(*) FILTER (WHERE status = 'Active') as active_leads")
-            ->selectRaw("COUNT(*) FILTER (WHERE status = 'Active' AND assigned_date = ?) as assigned_today", [$today])
+            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Active'").' as active_leads')
+            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Active' AND assigned_date = ?").' as assigned_today', [$today])
             ->whereIn('employee_id', $employeeIds)
             ->groupBy('employee_id')
             ->get();

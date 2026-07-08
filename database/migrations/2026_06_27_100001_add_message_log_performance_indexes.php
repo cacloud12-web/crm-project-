@@ -4,7 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-
+use App\Support\Database\MigrationIndexHelper;
 return new class extends Migration
 {
     public function up(): void
@@ -22,12 +22,12 @@ return new class extends Migration
 
             Schema::table($table, function (Blueprint $blueprint) use ($table, $statusColumn, $campaignColumn) {
                 $statusIndex = $table.'_'.$statusColumn.'_index';
-                if (! $this->indexExists($table, $statusIndex)) {
+                if (! MigrationIndexHelper::exists($table, $statusIndex)) {
                     $blueprint->index($statusColumn, $statusIndex);
                 }
 
                 $campaignIndex = $table.'_'.$campaignColumn.'_index';
-                if (! $this->indexExists($table, $campaignIndex)) {
+                if (! MigrationIndexHelper::exists($table, $campaignIndex)) {
                     $blueprint->index($campaignColumn, $campaignIndex);
                 }
             });
@@ -44,7 +44,7 @@ return new class extends Migration
             Schema::table($table, function (Blueprint $blueprint) use ($table) {
                 foreach (['message_status', 'email_status', 'sms_status', 'campaign_id'] as $column) {
                     $index = $table.'_'.$column.'_index';
-                    if ($this->indexExists($table, $index)) {
+                    if (MigrationIndexHelper::exists($table, $index)) {
                         $blueprint->dropIndex($index);
                     }
                 }
@@ -52,17 +52,4 @@ return new class extends Migration
         }
     }
 
-    private function indexExists(string $table, string $index): bool
-    {
-        if (DB::getDriverName() === 'pgsql') {
-            $result = DB::selectOne(
-                'SELECT 1 FROM pg_indexes WHERE tablename = ? AND indexname = ?',
-                [$table, $index],
-            );
-
-            return $result !== null;
-        }
-
-        return false;
-    }
 };

@@ -206,7 +206,7 @@ class CrmCoreFlowsTest extends TestCase
             'ca_id' => $lead->ca_id,
             'employee_id' => $employee->employee_id,
             'followup_type' => 'Call',
-            'scheduled_date' => now()->toDateString(),
+            'scheduled_date' => now()->addDay()->toDateTimeString(),
             'status' => 'Scheduled',
             'remarks' => 'Feature test follow-up',
         ]);

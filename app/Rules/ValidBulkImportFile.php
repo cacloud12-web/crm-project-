@@ -16,6 +16,12 @@ class ValidBulkImportFile implements ValidationRule
             return;
         }
 
+        if ($value->getSize() === 0) {
+            $fail('The uploaded file is empty.');
+
+            return;
+        }
+
         $extension = strtolower($value->getClientOriginalExtension());
         $allowed = ['csv', 'txt', 'xlsx'];
 

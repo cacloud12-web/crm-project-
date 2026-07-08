@@ -18,6 +18,8 @@ class BulkImportCommitRequest extends FormRequest
             'mapping' => 'required|array',
             'save_template' => 'nullable|boolean',
             'template_name' => 'nullable|string|max:120',
+            'row_actions' => 'nullable|array',
+            'row_actions.*' => 'nullable|string|in:skip,import_anyway,merge,replace',
         ];
     }
 }

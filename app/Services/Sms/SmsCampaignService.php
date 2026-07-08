@@ -2,10 +2,15 @@
 
 namespace App\Services\Sms;
 
+use App\Jobs\Sms\ProcessSmsCampaignJob;
 use App\Models\CaMaster;
 use App\Models\City;
 use App\Models\SmsCampaign;
+use App\Support\Queue\QueueDispatcher;
 use App\Models\SmsLog;
+use App\Models\SmsLogStatus;
+use App\Models\SmsSetting;
+use App\Models\SmsTemplate;
 use App\Models\SourceLead;
 use App\Models\State;
 use App\Models\User;
@@ -40,15 +45,29 @@ class SmsCampaignService
         private readonly ActivityLogService $activityLogService,
         private readonly SmsAlertMappingService $smsAlertMappingService,
         private readonly SmsSettingsService $smsSettingsService,
+        private readonly SmsDltTemplateService $smsDltTemplateService,
+        private readonly SmsDispatchService $smsDispatchService,
         private readonly EmployeeDataScopeService $employeeDataScope,
         private readonly RbacService $rbacService,
     ) {}
 
     public function ensureCanManageCampaigns(?User $user): void
     {
-        if (! in_array($this->rbacService->roleKey($user), ['admin', 'super_admin'], true)) {
+        if (! $this->canManageCampaigns($user)) {
             throw new AuthorizationException('Only Admin and Super Admin can create or modify SMS campaigns.');
         }
+    }
+
+    public function ensureCanSendSms(?User $user): void
+    {
+        if (! $this->canSendSms($user)) {
+            throw new AuthorizationException('You do not have permission to send SMS campaigns.');
+        }
+    }
+
+    public function canSendSms(?User $user): bool
+    {
+        return in_array($this->rbacService->roleKey($user), ['admin', 'super_admin', 'manager', 'employee'], true);
     }
 
     public function canManageCampaigns(?User $user): bool
@@ -113,10 +132,15 @@ class SmsCampaignService
             $campaign = $this->find($id);
             $leads = $this->resolveCampaignAudience($campaign);
             $settings = $this->smsSettingsService->current();
+            $dltTemplate = $this->smsAlertMappingService->resolveCampaignDltTemplate($campaign);
+            $dltTemplateId = $dltTemplate
+                ? $this->smsAlertMappingService->resolveCampaignDltTemplateId($dltTemplate->dlt_template_id)
+                : null;
             $validation = $this->smsAlertMappingService->validateCampaignPreparation(
                 $settings,
                 $leads,
                 (string) $campaign->message_template,
+                $dltTemplateId,
             );
 
             if (! $validation['valid']) {
@@ -130,8 +154,10 @@ class SmsCampaignService
             SmsLog::query()->where('campaign_id', $campaign->id)->where('sms_status', self::STATUS_MAPPED)->delete();
 
             foreach ($deduped as $lead) {
-                $message = $this->smsAlertMappingService->renderMessage($campaign->message_template, $lead);
-                $prepared = $this->smsAlertMappingService->prepareForLead($lead, $message, $settings);
+                $message = $dltTemplate
+                    ? $this->smsDltTemplateService->renderBody($dltTemplate, $lead)
+                    : $this->smsAlertMappingService->renderMessage((string) $campaign->message_template, $lead);
+                $prepared = $this->smsAlertMappingService->prepareForLead($lead, $message, $settings, $dltTemplateId);
 
                 if (! $prepared['valid']) {
                     continue;
@@ -139,10 +165,13 @@ class SmsCampaignService
 
                 $log = SmsLog::create([
                     'campaign_id' => $campaign->id,
+                    'sms_template_id' => $dltTemplate?->id,
+                    'template_name' => $dltTemplate?->template_name,
+                    'dlt_template_id' => $dltTemplateId,
                     'ca_id' => $lead->ca_id,
                     'employee_id' => $employeeId,
                     'mobile_no' => $prepared['payload']['mobileno'],
-                    'sender_id' => $settings->sender_id,
+                    'sender_id' => $dltTemplate?->sender_id ?? $settings->sender_id,
                     'message' => $message,
                     'sms_status' => self::STATUS_MAPPED,
                     'provider_response' => $prepared['provider_response'],
@@ -177,16 +206,25 @@ class SmsCampaignService
     {
         $settings = $this->smsSettingsService->current();
         $leads = $this->resolveAudience($data);
+        $template = $this->smsDltTemplateService->findApproved((int) $data['sms_template_id']);
+        $messageTemplate = $template->body_template;
 
         return $this->smsAlertMappingService->validateCampaignPreparation(
             $settings,
             $leads,
-            (string) ($data['message_template'] ?? ''),
+            (string) $messageTemplate,
+            $this->smsAlertMappingService->resolveCampaignDltTemplateId($template->dlt_template_id),
         );
     }
 
-    public function previewMessage(string $template, int $leadId): array
+    public function previewMessage(string $template, int $leadId, ?int $smsTemplateId = null): array
     {
+        if ($smsTemplateId) {
+            $dltTemplate = $this->smsDltTemplateService->findApproved($smsTemplateId);
+
+            return $this->smsDltTemplateService->preview($dltTemplate, $leadId);
+        }
+
         $lead = CaMaster::query()->with(['city', 'state'])->findOrFail($leadId);
         $rendered = $this->smsAlertMappingService->renderMessage($template, $lead);
 
@@ -210,10 +248,15 @@ class SmsCampaignService
         bool $persisted,
     ): array {
         $deduped = $this->smsAlertMappingService->deduplicateLeadsByMobile($leads);
+        $dltTemplate = $this->smsAlertMappingService->resolveCampaignDltTemplate($campaign);
+        $dltTemplateId = $dltTemplate
+            ? $this->smsAlertMappingService->resolveCampaignDltTemplateId($dltTemplate->dlt_template_id)
+            : null;
         $validation = $this->smsAlertMappingService->validateCampaignPreparation(
             $settings,
             $leads,
             (string) $campaign->message_template,
+            $dltTemplateId,
         );
         $payloads = $this->smsAlertMappingService->buildCampaignPayloads($campaign, $deduped);
         $sample = collect($payloads)->firstWhere('valid', true);
@@ -256,7 +299,7 @@ class SmsCampaignService
 
     public function create(array $data): SmsCampaign
     {
-        $this->ensureCanManageCampaigns(auth()->user());
+        $this->ensureCanSendSms(auth()->user());
 
         return DB::transaction(function () use ($data) {
             $recipients = $this->resolveAudience($data);
@@ -265,13 +308,15 @@ class SmsCampaignService
                 throw new InvalidArgumentException('No leads matched the selected audience.');
             }
 
+            $template = $this->resolveCampaignTemplate($data);
             $scheduledAt = isset($data['scheduled_at']) && $data['scheduled_at']
-                ? Carbon::parse($data['scheduled_at'])
+                ? Carbon::parse($data['scheduled_at'], config('app.timezone'))
                 : null;
-            $senderId = $data['sender_id'] ?? $this->smsSettingsService->current()->sender_id ?? 'CACLDK';
-            $saveAsDraft = (bool) ($data['save_as_draft'] ?? true);
+            $senderId = $template?->sender_id ?? $data['sender_id'] ?? $this->smsSettingsService->current()->sender_id ?? 'CACLOD';
+            $status = ($scheduledAt && $scheduledAt->gt(now())) ? 'Scheduled' : 'Draft';
+            $metadata = app(\App\Services\Campaign\CampaignMetadataRecorder::class)->smsCreateAttributes($data, $template);
 
-            $campaign = SmsCampaign::create([
+            $campaign = SmsCampaign::create(array_merge([
                 'campaign_name' => $data['campaign_name'],
                 'campaign_type' => $data['campaign_type'],
                 'audience_mode' => $data['audience_mode'],
@@ -281,14 +326,14 @@ class SmsCampaignService
                     ? array_values(array_map('intval', $data['ca_ids'] ?? []))
                     : null,
                 'sender_id' => $senderId,
-                'message_template' => $data['message_template'],
+                'sms_template_id' => $template?->id,
+                'message_template' => $template?->body_template ?? $data['message_template'],
                 'scheduled_at' => $scheduledAt,
-                'status' => $saveAsDraft ? 'Draft' : 'Draft',
-                'performed_by' => $data['performed_by'] ?? auth()->user()?->name ?? 'System',
+                'status' => $status,
                 'total_sms' => $this->smsAlertMappingService->deduplicateLeadsByMobile($recipients)->count(),
                 'queued_count' => 0,
                 'skipped_count' => 0,
-            ]);
+            ], $metadata));
 
             $this->activityLogService->log(
                 'SMS_CAMPAIGN',
@@ -313,16 +358,186 @@ class SmsCampaignService
 
     public function process(int|string $id): SmsCampaign
     {
-        $this->ensureCanManageCampaigns(auth()->user());
+        $this->ensureCanSendSms(auth()->user());
 
-        throw new InvalidArgumentException(
-            'SMS live dispatch is not enabled. Complete mapping preview first; sending will be available after API credentials are configured.',
-        );
+        $campaign = $this->find($id);
+
+        if ($campaign->status === 'Processing') {
+            throw new InvalidArgumentException('Campaign is already processing.');
+        }
+
+        if (! $campaign->sms_template_id) {
+            throw new InvalidArgumentException('Select an approved DLT SMS template before sending.');
+        }
+
+        $template = $this->smsDltTemplateService->findApproved((int) $campaign->sms_template_id);
+        $settings = $this->smsSettingsService->current();
+        $this->assertReadyForLiveDispatch($settings, $template);
+
+        $campaign->update(['status' => 'Processing']);
+
+        QueueDispatcher::dispatchOrRun(new ProcessSmsCampaignJob((int) $campaign->id));
+
+        return $campaign->fresh();
+    }
+
+    public function runProcess(int $campaignId): void
+    {
+        DB::transaction(function () use ($campaignId) {
+            $campaign = $this->find($campaignId);
+
+            if (! in_array($campaign->status, ['Processing', 'Scheduled'], true)) {
+                return;
+            }
+
+            $template = $this->smsDltTemplateService->findApproved((int) $campaign->sms_template_id);
+            $settings = $this->smsSettingsService->current();
+            $this->assertReadyForLiveDispatch($settings, $template);
+
+            $leads = $this->resolveCampaignAudience($campaign);
+            $deduped = $this->smsAlertMappingService->deduplicateLeadsByMobile($leads);
+            $actor = $campaign->created_by_user_id
+                ? User::query()->find($campaign->created_by_user_id)
+                : null;
+            $employeeId = $actor ? $this->employeeDataScope->resolveEmployeeId($actor) : null;
+            $dltTemplateId = $this->smsAlertMappingService->resolveCampaignDltTemplateId($template->dlt_template_id);
+
+            $sentCount = 0;
+            $failedCount = 0;
+            $pendingCount = 0;
+
+            foreach ($deduped as $lead) {
+                $message = $this->smsDltTemplateService->renderBody($template, $lead);
+                $mobileError = $this->smsAlertMappingService->leadMobileValidationError($lead->mobile_no);
+
+                if ($mobileError !== null || ! filled(trim($message))) {
+                    SmsLog::create([
+                        'campaign_id' => $campaign->id,
+                        'sms_template_id' => $template->id,
+                        'template_name' => $template->template_name,
+                        'dlt_template_id' => $dltTemplateId,
+                        'ca_id' => $lead->ca_id,
+                        'employee_id' => $employeeId,
+                        'mobile_no' => $lead->mobile_no,
+                        'sender_id' => $template->sender_id,
+                        'message' => $message,
+                        'sms_status' => SmsLogStatus::FAILED,
+                        'error_message' => $mobileError ?? 'Rendered SMS message is empty.',
+                        'failed_reason' => $mobileError ?? 'Rendered SMS message is empty.',
+                        'queued_at' => now(),
+                    ]);
+                    $failedCount++;
+
+                    continue;
+                }
+
+                $payload = $this->smsAlertMappingService->buildPushPayload(
+                    $settings,
+                    (string) $lead->mobile_no,
+                    $message,
+                    $dltTemplateId,
+                );
+
+                $log = SmsLog::create([
+                    'campaign_id' => $campaign->id,
+                    'sms_template_id' => $template->id,
+                    'template_name' => $template->template_name,
+                    'dlt_template_id' => $dltTemplateId,
+                    'ca_id' => $lead->ca_id,
+                    'employee_id' => $employeeId,
+                    'mobile_no' => $payload['mobileno'],
+                    'sender_id' => $template->sender_id,
+                    'message' => $message,
+                    'sms_status' => SmsLogStatus::PENDING,
+                    'queued_at' => now(),
+                ]);
+                $pendingCount++;
+
+                $result = $this->smsDispatchService->send(
+                    $settings,
+                    $template->sender_id,
+                    (string) $lead->mobile_no,
+                    $message,
+                    $dltTemplateId,
+                );
+
+                $this->smsDispatchService->applyDispatchResult($log, $result);
+
+                if ($result['success']) {
+                    $sentCount++;
+                } else {
+                    $failedCount++;
+                }
+            }
+
+            $finalStatus = match (true) {
+                $sentCount > 0 && $failedCount === 0 => 'Completed',
+                $sentCount > 0 => 'Partial',
+                default => 'Failed',
+            };
+
+            $campaign->update([
+                'status' => $finalStatus,
+                'total_sms' => $deduped->count(),
+                'delivered_count' => $sentCount,
+                'failed_count' => $failedCount,
+                'queued_count' => $pendingCount,
+            ]);
+
+            $this->activityLogService->log(
+                'SMS_CAMPAIGN',
+                'SMS Campaign Sent',
+                (string) $campaign->id,
+                $campaign->campaign_name.' · Sent: '.$sentCount.' · Failed: '.$failedCount,
+                $actor?->name ?? $actor?->email ?? 'System',
+            );
+        });
+    }
+
+    public function markProcessFailed(int $campaignId, string $message): void
+    {
+        SmsCampaign::query()->where('id', $campaignId)->update(['status' => 'Failed']);
+    }
+
+    private function assertReadyForLiveDispatch(SmsSetting $settings, ?SmsTemplate $template = null): void
+    {
+        if (! $settings->is_active) {
+            throw new InvalidArgumentException('SMS provider is inactive.');
+        }
+
+        if (! $settings->isLiveMode()) {
+            throw new InvalidArgumentException('SMS provider must be in Live mode to send messages.');
+        }
+
+        $validation = $this->smsSettingsService->validateConfiguration();
+        if (! $validation['valid']) {
+            throw new InvalidArgumentException(implode(' ', $validation['errors']));
+        }
+
+        if ($template !== null) {
+            $dltTemplateId = $this->smsAlertMappingService->resolveCampaignDltTemplateId($template->dlt_template_id);
+            $dltError = $this->smsAlertMappingService->campaignDltTemplateIdValidationError($settings, $dltTemplateId);
+            if ($dltError !== null) {
+                throw new InvalidArgumentException($dltError);
+            }
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function resolveCampaignTemplate(array $data): ?SmsTemplate
+    {
+        if (empty($data['sms_template_id'])) {
+            return null;
+        }
+
+        return $this->smsDltTemplateService->findApproved((int) $data['sms_template_id']);
     }
 
     private function resolveAudience(array $data): Collection
     {
-        $query = CaMaster::query();
+        $query = $this->employeeDataScope->audienceCaMasterQuery();
 
         return match ($data['audience_mode']) {
             'selected_leads' => $query->whereIn('ca_id', $data['ca_ids'] ?? [])->get(),
@@ -378,7 +593,7 @@ class SmsCampaignService
             'campaign_name' => $data['campaign_name'] ?? $campaign->campaign_name,
             'message_template' => $data['message_template'] ?? $campaign->message_template,
             'scheduled_at' => array_key_exists('scheduled_at', $data)
-                ? ($data['scheduled_at'] ? Carbon::parse($data['scheduled_at']) : null)
+                ? ($data['scheduled_at'] ? Carbon::parse($data['scheduled_at'], config('app.timezone')) : null)
                 : $campaign->scheduled_at,
         ]);
 

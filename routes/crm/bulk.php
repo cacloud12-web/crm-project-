@@ -16,9 +16,15 @@ Route::middleware(['auth', 'rbac'])->group(function () {
     Route::get('ca-masters/bulk-import/history/{id}/reimport-template.csv', [BulkCaMasterImportController::class, 'importReimportTemplate']);
     Route::get('ca-masters/bulk-import/session/{sessionId}/error-report.csv', [BulkCaMasterImportController::class, 'sessionErrorReport']);
     Route::get('ca-masters/bulk-import/session/{sessionId}/reimport-template.csv', [BulkCaMasterImportController::class, 'sessionReimportTemplate']);
-    Route::post('ca-masters/bulk-import/parse', [BulkCaMasterImportController::class, 'parse']);
-    Route::post('ca-masters/bulk-import/validate', [BulkCaMasterImportController::class, 'validateMapping']);
-    Route::post('ca-masters/bulk-import', [BulkCaMasterImportController::class, 'store']);
+    Route::post('ca-masters/bulk-import/parse', [BulkCaMasterImportController::class, 'parse'])
+        ->middleware('throttle:bulk-import');
+    Route::post('ca-masters/bulk-import/validate', [BulkCaMasterImportController::class, 'validateMapping'])
+        ->middleware('throttle:bulk-import');
+    Route::post('ca-masters/bulk-import/row-actions', [BulkCaMasterImportController::class, 'applyRowActions'])
+        ->middleware('throttle:bulk-import');
+    Route::post('ca-masters/bulk-import', [BulkCaMasterImportController::class, 'store'])
+        ->middleware('throttle:bulk-import');
+    Route::get('ca-masters/bulk-import/history/{id}/status', [BulkCaMasterImportController::class, 'status']);
     Route::get('ca-masters/bulk-import/mapping-templates', [BulkCaMasterImportController::class, 'mappingTemplates']);
     Route::post('ca-masters/bulk-import/mapping-templates', [BulkCaMasterImportController::class, 'saveMappingTemplate']);
 

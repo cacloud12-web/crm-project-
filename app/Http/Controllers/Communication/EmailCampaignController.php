@@ -35,7 +35,9 @@ class EmailCampaignController extends Controller
 
         return ApiResponse::created(
             new EmailCampaignResource($campaign),
-            'Email campaign created successfully',
+            $campaign->status === 'Processing'
+                ? 'Email campaign queued successfully.'
+                : 'Email campaign created successfully',
         );
     }
 
@@ -59,7 +61,23 @@ class EmailCampaignController extends Controller
 
         return ApiResponse::success(
             new EmailCampaignResource($campaign),
-            'Email campaign processed successfully',
+            $campaign->status === 'Processing'
+                ? 'Email campaign queued successfully.'
+                : 'Email campaign processed successfully.',
+        );
+    }
+
+    public function retryFailed(string $id): JsonResponse
+    {
+        try {
+            $campaign = $this->emailCampaignService->retryFailed($id);
+        } catch (\InvalidArgumentException $exception) {
+            return ApiResponse::error($exception->getMessage(), 422);
+        }
+
+        return ApiResponse::success(
+            new EmailCampaignResource($campaign),
+            'Failed email messages queued for retry',
         );
     }
 

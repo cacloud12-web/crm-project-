@@ -11,6 +11,9 @@ class SmsLog extends Model
 
     protected $fillable = [
         'campaign_id',
+        'sms_template_id',
+        'template_name',
+        'dlt_template_id',
         'ca_id',
         'employee_id',
         'mobile_no',
@@ -37,6 +40,11 @@ class SmsLog extends Model
     public function campaign(): BelongsTo
     {
         return $this->belongsTo(SmsCampaign::class, 'campaign_id');
+    }
+
+    public function smsTemplate(): BelongsTo
+    {
+        return $this->belongsTo(SmsTemplate::class, 'sms_template_id');
     }
 
     public function caMaster(): BelongsTo

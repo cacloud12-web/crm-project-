@@ -12,11 +12,15 @@ $crmRoutes = [
     'bulk',
     'assignment',
     'followups',
+    'workflow',
+    'sales',
     'communication',
     'reports',
     'settings',
+    'webhooks',
     'admin',
     'master',
+    'google',
 ];
 
 foreach ($crmRoutes as $module) {

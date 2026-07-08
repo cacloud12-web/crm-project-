@@ -2,23 +2,69 @@
 
 return [
     'outcomes' => [
+        'Demo Scheduled' => [
+            'requires_followup' => true,
+            'followup_type' => 'Demo Scheduled',
+            'priority' => 'High',
+            'advance_sequence' => false,
+            'closes_sequence' => true,
+        ],
+        'Follow-up Required' => [
+            'requires_followup' => true,
+            'followup_type' => 'Follow Up Reminder',
+            'priority' => 'Normal',
+            'advance_sequence' => false,
+            'manual_schedule' => true,
+        ],
         'Interested' => [
+            'requires_followup' => false,
+            'followup_type' => 'Call',
+            'priority' => 'High',
+            'advance_sequence' => false,
+        ],
+        'Not Interested' => [
+            'requires_followup' => false,
+            'complete_current' => true,
+            'closes_sequence' => true,
+            'final_status' => 'Closed',
+        ],
+        'No Answer' => [
+            'requires_followup' => false,
+            'followup_type' => 'Call',
+            'priority' => 'Normal',
+            'advance_sequence' => true,
+        ],
+        'Busy' => [
+            'requires_followup' => false,
+            'followup_type' => 'Call',
+            'priority' => 'Normal',
+            'advance_sequence' => true,
+        ],
+        'Wrong Number' => [
+            'requires_followup' => false,
+            'complete_current' => true,
+            'closes_sequence' => true,
+            'marks_wrong_number' => true,
+        ],
+        // Legacy outcomes kept for existing tests/API clients.
+        'Connected' => [
             'requires_followup' => true,
             'followup_type' => 'Call',
             'priority' => 'High',
             'advance_sequence' => false,
         ],
-        'Busy' => [
+        'Not Connected' => [
             'requires_followup' => true,
             'followup_type' => 'Call',
             'priority' => 'Normal',
             'advance_sequence' => true,
         ],
-        'No Answer' => [
+        'Call Back Later' => [
             'requires_followup' => true,
             'followup_type' => 'Call',
             'priority' => 'Normal',
-            'advance_sequence' => true,
+            'advance_sequence' => false,
+            'manual_schedule' => true,
         ],
         'Call Later' => [
             'requires_followup' => true,
@@ -27,23 +73,10 @@ return [
             'advance_sequence' => false,
             'manual_schedule' => true,
         ],
-        'Demo Scheduled' => [
-            'requires_followup' => true,
-            'followup_type' => 'Demo Scheduled',
-            'priority' => 'High',
-            'advance_sequence' => false,
-            'closes_sequence' => true,
-        ],
         'Demo Completed' => [
             'requires_followup' => false,
             'complete_current' => true,
             'closes_sequence' => true,
-        ],
-        'Not Interested' => [
-            'requires_followup' => false,
-            'complete_current' => true,
-            'closes_sequence' => true,
-            'final_status' => 'Closed',
         ],
     ],
 

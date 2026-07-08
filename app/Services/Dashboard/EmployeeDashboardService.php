@@ -8,7 +8,11 @@ use App\Models\Employee;
 use App\Models\FollowUp;
 use App\Models\LeadAssignmentEngine;
 use App\Models\Task;
+use App\Services\Cache\CrmCacheService;
 use App\Services\Rbac\EmployeeDataScopeService;
+use App\Services\Rbac\RbacService;
+use App\Services\Leads\EmployeeProductivityService;
+use App\Support\Database\SqlAggregate;
 use Illuminate\Support\Facades\DB;
 
 class EmployeeDashboardService
@@ -23,25 +27,36 @@ class EmployeeDashboardService
 
     public function __construct(
         private readonly EmployeeDataScopeService $employeeDataScope,
+        private readonly EmployeeProductivityService $employeeProductivity,
+        private readonly CrmCacheService $cacheService,
     ) {}
 
     public function metrics(): array
     {
         $user = auth()->user();
         $employeeId = $this->requireEmployeeId($user);
-        $employee = Employee::query()->with('city')->findOrFail($employeeId);
+
+        return $this->cacheService->rememberEmployeeDashboard($employeeId, function () use ($user, $employeeId) {
+            return $this->buildMetrics($user, $employeeId);
+        });
+    }
+
+    private function buildMetrics($user, int $employeeId): array
+    {
+        $employee = Employee::query()->with('city:city_id,city_name')->findOrFail($employeeId);
 
         $leadCounts = $this->leadStatusCounts($employeeId);
         $followUpCounts = $this->followUpSummary($employeeId);
         $taskCounts = $this->taskSummary($employeeId);
         $assignmentStats = $this->assignmentStats($employeeId);
+        $productivity = $this->employeeProductivity->employeeDailyMetrics($employeeId);
         $today = now()->toDateString();
 
         return [
             'employee_id' => $employeeId,
             'welcome' => [
                 'name' => $user->name,
-                'designation' => $employee->role ?? 'Sales Executive',
+                'designation' => app(RbacService::class)->roleLabel($user),
                 'city' => $employee->city?->city_name,
                 'date' => $today,
                 'working_status' => $this->workingStatus($followUpCounts),
@@ -64,6 +79,7 @@ class EmployeeDashboardService
                 'todays_target' => $assignmentStats['target_today'],
                 'todays_achievement' => $assignmentStats['achieved_today'],
             ],
+            'productivity' => $productivity,
             'today_work' => [
                 'followups_due' => $followUpCounts['due_today'],
                 'followups_overdue' => $followUpCounts['overdue'],
@@ -73,12 +89,7 @@ class EmployeeDashboardService
                 'upcoming_tasks' => $followUpCounts['upcoming'],
             ],
             'assigned_leads' => $this->recentAssignedLeads($employeeId),
-            'followups' => [
-                'today' => $this->followUpItems($employeeId, 'today'),
-                'pending' => $this->followUpItems($employeeId, 'pending'),
-                'completed' => $this->followUpItems($employeeId, 'completed'),
-                'overdue' => $this->followUpItems($employeeId, 'overdue'),
-            ],
+            'followups' => $this->followUpBuckets($employeeId),
             'tasks' => $this->taskItems($employeeId),
             'calendar' => $this->calendarItems($employeeId),
             'recent_activity' => $this->recentActivity($user, $employee),
@@ -89,7 +100,7 @@ class EmployeeDashboardService
     private function requireEmployeeId($user): int
     {
         if (! $this->employeeDataScope->shouldScopeToEmployee($user)) {
-            abort(403, 'Employee dashboard is only available to sales executives.');
+            abort(403, 'Employee dashboard is only available to employees.');
         }
 
         $employeeId = $this->employeeDataScope->scopedEmployeeId($user);
@@ -103,14 +114,14 @@ class EmployeeDashboardService
 
     private function leadStatusCounts(int $employeeId): array
     {
-        $query = CaMaster::query();
+        $query = CaMaster::query()->countableInStatistics();
         $this->employeeDataScope->scopeCaMasterQuery($query, $employeeId);
 
         $row = $query
             ->selectRaw('COUNT(*) as total')
-            ->selectRaw("COUNT(*) FILTER (WHERE status = 'Hot') as hot")
-            ->selectRaw("COUNT(*) FILTER (WHERE status = 'Warm') as warm")
-            ->selectRaw("COUNT(*) FILTER (WHERE status = 'Cold') as cold")
+            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Hot'").' as hot')
+            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Warm'").' as warm')
+            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Cold'").' as cold')
             ->first();
 
         return [
@@ -121,9 +132,17 @@ class EmployeeDashboardService
         ];
     }
 
+    private function followUpsQuery(int $employeeId): \Illuminate\Database\Eloquent\Builder
+    {
+        $query = FollowUp::query();
+        $this->employeeDataScope->scopeFollowUpQuery($query, $employeeId);
+
+        return $query;
+    }
+
     private function followUpSummary(int $employeeId): array
     {
-        $base = FollowUp::query()->where('employee_id', $employeeId);
+        $base = $this->followUpsQuery($employeeId);
 
         $open = $this->quotedList(self::OPEN_FOLLOWUP_STATUSES);
         $completed = $this->quotedList(self::COMPLETED_FOLLOWUP_STATUSES);
@@ -131,15 +150,15 @@ class EmployeeDashboardService
         $meetings = $this->quotedList(self::MEETING_TYPES);
 
         $row = (clone $base)
-            ->selectRaw("COUNT(*) FILTER (WHERE status IN ({$open})) as open_total")
-            ->selectRaw("COUNT(*) FILTER (WHERE status IN ({$open}) AND DATE(scheduled_date) = CURRENT_DATE) as due_today")
-            ->selectRaw("COUNT(*) FILTER (WHERE status IN ({$open}) AND scheduled_date < CURRENT_DATE) as overdue")
-            ->selectRaw("COUNT(*) FILTER (WHERE status IN ({$completed})) as completed")
-            ->selectRaw("COUNT(*) FILTER (WHERE followup_type IN ({$demos})) as demos_total")
-            ->selectRaw("COUNT(*) FILTER (WHERE followup_type = 'Call' AND DATE(scheduled_date) = CURRENT_DATE) as calls_today")
-            ->selectRaw("COUNT(*) FILTER (WHERE followup_type IN ({$meetings}) AND DATE(scheduled_date) = CURRENT_DATE) as meetings_today")
-            ->selectRaw("COUNT(*) FILTER (WHERE status IN ({$open}) AND scheduled_date > CURRENT_DATE) as upcoming")
-            ->selectRaw("COUNT(*) FILTER (WHERE status IN ({$open}) AND DATE(scheduled_date) > CURRENT_DATE AND DATE(scheduled_date) <= ?) as upcoming_week", [now()->addDays(7)->toDateString()])
+            ->selectRaw(SqlAggregate::countFilter('*', "status IN ({$open})").' as open_total')
+            ->selectRaw(SqlAggregate::countFilter('*', "status IN ({$open}) AND DATE(scheduled_date) = CURRENT_DATE").' as due_today')
+            ->selectRaw(SqlAggregate::countFilter('*', "status IN ({$open}) AND scheduled_date < CURRENT_DATE").' as overdue')
+            ->selectRaw(SqlAggregate::countFilter('*', "status IN ({$completed})").' as completed')
+            ->selectRaw(SqlAggregate::countFilter('*', "followup_type IN ({$demos})").' as demos_total')
+            ->selectRaw(SqlAggregate::countFilter('*', "followup_type = 'Call' AND DATE(scheduled_date) = CURRENT_DATE").' as calls_today')
+            ->selectRaw(SqlAggregate::countFilter('*', "followup_type IN ({$meetings}) AND DATE(scheduled_date) = CURRENT_DATE").' as meetings_today')
+            ->selectRaw(SqlAggregate::countFilter('*', "status IN ({$open}) AND scheduled_date > CURRENT_DATE").' as upcoming')
+            ->selectRaw(SqlAggregate::countFilter('*', "status IN ({$open}) AND DATE(scheduled_date) > CURRENT_DATE AND DATE(scheduled_date) <= ?").' as upcoming_week', [now()->addDays(7)->toDateString()])
             ->first();
 
         return [
@@ -160,10 +179,10 @@ class EmployeeDashboardService
         $today = now()->toDateString();
         $row = Task::query()
             ->where('employee_id', $employeeId)
-            ->selectRaw("COUNT(*) FILTER (WHERE status IN ('Pending', 'Overdue')) as pending")
-            ->selectRaw("COUNT(*) FILTER (WHERE status = 'Overdue') as overdue")
-            ->selectRaw("COUNT(*) FILTER (WHERE status IN ('Pending', 'Overdue') AND due_date = ?) as due_today", [$today])
-            ->selectRaw("COUNT(*) FILTER (WHERE status = 'Completed' AND DATE(completed_at) = ?) as completed_today", [$today])
+            ->selectRaw(SqlAggregate::countFilter('*', "status IN ('Pending', 'Overdue')").' as pending')
+            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Overdue'").' as overdue')
+            ->selectRaw(SqlAggregate::countFilter('*', "status IN ('Pending', 'Overdue') AND due_date = ?").' as due_today', [$today])
+            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Completed' AND DATE(completed_at) = ?").' as completed_today', [$today])
             ->first();
 
         return [
@@ -221,7 +240,7 @@ class EmployeeDashboardService
             return 0.0;
         }
 
-        $query = CaMaster::query()->where('status', 'Won');
+        $query = CaMaster::query()->countableInStatistics()->where('status', 'Won');
         $this->employeeDataScope->scopeCaMasterQuery($query, $employeeId);
         $won = (int) $query->count();
 
@@ -268,11 +287,74 @@ class EmployeeDashboardService
             ->all();
     }
 
+    /**
+     * @return array{today: list<array<string, mixed>>, pending: list<array<string, mixed>>, completed: list<array<string, mixed>>, overdue: list<array<string, mixed>>}
+     */
+    private function followUpBuckets(int $employeeId): array
+    {
+        $today = now()->toDateString();
+        $buckets = [
+            'today' => [],
+            'pending' => [],
+            'completed' => [],
+            'overdue' => [],
+        ];
+
+        $rows = $this->followUpsQuery($employeeId)
+            ->with(['caMaster:ca_id,firm_name'])
+            ->where(function ($query) {
+                $query->whereIn('status', self::OPEN_FOLLOWUP_STATUSES)
+                    ->orWhereIn('status', self::COMPLETED_FOLLOWUP_STATUSES);
+            })
+            ->orderBy('scheduled_date')
+            ->limit(48)
+            ->get()
+            ->map(fn (FollowUp $f) => [
+                'followup_id' => $f->followup_id,
+                'firm_name' => $f->caMaster?->firm_name ?? '—',
+                'followup_type' => $f->followup_type,
+                'scheduled_date' => $f->scheduled_date?->toDateString(),
+                'status' => $f->status,
+                'priority' => $f->priority,
+                'is_rescheduled' => $f->is_rescheduled,
+                'remarks' => $f->remarks,
+            ])
+            ->all();
+
+        foreach ($rows as $row) {
+            $scheduled = $row['scheduled_date'] ?? '';
+            $isOpen = in_array($row['status'], self::OPEN_FOLLOWUP_STATUSES, true);
+            $isCompleted = in_array($row['status'], self::COMPLETED_FOLLOWUP_STATUSES, true);
+
+            if ($isCompleted) {
+                if (count($buckets['completed']) < 8) {
+                    $buckets['completed'][] = $row;
+                }
+                continue;
+            }
+
+            if (! $isOpen) {
+                continue;
+            }
+
+            if ($scheduled === $today && count($buckets['today']) < 8) {
+                $buckets['today'][] = $row;
+            }
+            if ($scheduled !== '' && $scheduled < $today && count($buckets['overdue']) < 8) {
+                $buckets['overdue'][] = $row;
+            }
+            if (count($buckets['pending']) < 8) {
+                $buckets['pending'][] = $row;
+            }
+        }
+
+        return $buckets;
+    }
+
     private function followUpItems(int $employeeId, string $scope): array
     {
-        $query = FollowUp::query()
-            ->with(['caMaster:ca_id,firm_name'])
-            ->where('employee_id', $employeeId);
+        $query = $this->followUpsQuery($employeeId)
+            ->with(['caMaster:ca_id,firm_name']);
 
         match ($scope) {
             'today' => $query->whereIn('status', self::OPEN_FOLLOWUP_STATUSES)
@@ -303,9 +385,8 @@ class EmployeeDashboardService
 
     private function calendarItems(int $employeeId): array
     {
-        return FollowUp::query()
+        return $this->followUpsQuery($employeeId)
             ->with(['caMaster:ca_id,firm_name'])
-            ->where('employee_id', $employeeId)
             ->whereIn('status', self::OPEN_FOLLOWUP_STATUSES)
             ->whereDate('scheduled_date', '>=', now()->toDateString())
             ->orderBy('scheduled_date')

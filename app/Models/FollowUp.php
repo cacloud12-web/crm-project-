@@ -25,6 +25,9 @@ class FollowUp extends Model
         'next_followup_date',
         'status',
         'priority',
+        'team_size',
+        'demo_provider_name',
+        'meeting_link',
         'sequence_step',
         'is_auto_generated',
         'source',
@@ -42,6 +45,7 @@ class FollowUp extends Model
             'is_auto_generated' => 'boolean',
             'is_rescheduled' => 'boolean',
             'rescheduled_at' => 'datetime',
+            'team_size' => 'integer',
         ];
     }
 

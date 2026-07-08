@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\EnsureActiveUser;
 use App\Http\Middleware\EnsureBulkExportPermission;
 use App\Http\Middleware\EnsureRbacPermission;
 use App\Http\Middleware\EnsureSpaPageAccess;
@@ -21,13 +22,22 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
+            'active.user' => EnsureActiveUser::class,
             'spa.browser' => ServeSpaForBrowser::class,
             'bulk.export' => EnsureBulkExportPermission::class,
             'rbac' => EnsureRbacPermission::class,
             'spa.access' => EnsureSpaPageAccess::class,
         ]);
 
+        $middleware->appendToGroup('web', [
+            EnsureActiveUser::class,
+        ]);
+
         $middleware->redirectGuestsTo(fn () => route('crm.login'));
+
+        $middleware->validateCsrfTokens(except: [
+            'webhooks/whatsapp',
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(
@@ -79,7 +89,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
             $message = $status === 403
                 ? ($e->getMessage() ?: 'You do not have permission to perform this action.')
-                : 'Something went wrong. Please try again.';
+                : ($e->getMessage() ?: 'Something went wrong. Please try again.');
 
             return response()->json([
                 'success' => false,

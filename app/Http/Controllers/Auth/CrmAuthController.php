@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Services\Auth\LoginRateLimiterService;
 use App\Services\Rbac\RbacService;
 use App\Support\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -16,6 +17,7 @@ class CrmAuthController extends Controller
 {
     public function __construct(
         private readonly RbacService $rbacService,
+        private readonly LoginRateLimiterService $loginRateLimiter,
     ) {}
 
     public function showLogin(): View|RedirectResponse
@@ -34,7 +36,15 @@ class CrmAuthController extends Controller
             'password' => ['required', 'string'],
         ]);
 
+        if ($this->loginRateLimiter->isLockedOut($request)) {
+            throw ValidationException::withMessages([
+                'email' => [$this->loginRateLimiter->lockoutMessage()],
+            ]);
+        }
+
         if (! Auth::attempt($credentials, (bool) $request->boolean('remember'))) {
+            $this->loginRateLimiter->recordFailedAttempt($request);
+
             throw ValidationException::withMessages([
                 'email' => ['Invalid email or password.'],
             ]);
@@ -43,11 +53,14 @@ class CrmAuthController extends Controller
         $user = Auth::user();
         if (! $user->is_active) {
             Auth::logout();
+            $this->loginRateLimiter->recordFailedAttempt($request);
 
             throw ValidationException::withMessages([
-                'email' => ['This account has been deactivated.'],
+                'email' => ['Invalid email or password.'],
             ]);
         }
+
+        $this->loginRateLimiter->clear($request);
 
         $request->session()->regenerate();
 

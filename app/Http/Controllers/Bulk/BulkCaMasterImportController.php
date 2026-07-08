@@ -71,6 +71,7 @@ class BulkCaMasterImportController extends Controller
                 $request->string('session_id')->toString(),
                 $request->input('mapping', []),
                 $templateName,
+                $request->input('row_actions', []),
             );
 
             if (! empty($summary['uses_background'])) {
@@ -78,7 +79,7 @@ class BulkCaMasterImportController extends Controller
             }
 
             $message = sprintf(
-                'Import completed: %d inserted, %d duplicates, %d failed out of %d rows.',
+                'Import completed: %d inserted, %d duplicates skipped, %d failed out of %d rows.',
                 $summary['inserted_rows'],
                 $summary['duplicate_rows'],
                 $summary['failed_rows'],
@@ -97,6 +98,43 @@ class BulkCaMasterImportController extends Controller
 
             return ApiResponse::error('Bulk import failed. Please try again.', 500);
         }
+    }
+
+    public function applyRowActions(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'session_id' => 'required|uuid',
+            'row_actions' => 'required|array',
+            'row_actions.*' => 'required|string|in:skip,import_anyway,merge,replace',
+        ]);
+
+        try {
+            $result = $this->importService->applyRowActions(
+                $validated['session_id'],
+                $validated['row_actions'],
+            );
+        } catch (RuntimeException $e) {
+            return ApiResponse::error($e->getMessage(), 422);
+        } catch (Throwable $e) {
+            report($e);
+
+            return ApiResponse::error('Unable to update duplicate actions.', 500);
+        }
+
+        return ApiResponse::success($result, 'Duplicate actions updated');
+    }
+
+    public function status(string $id): JsonResponse
+    {
+        try {
+            $result = $this->importService->importStatus((int) $id);
+        } catch (Throwable $e) {
+            report($e);
+
+            return ApiResponse::error('Unable to load import status.', 500);
+        }
+
+        return ApiResponse::success($result, 'Import status loaded');
     }
 
     public function downloadSampleCsv(): StreamedResponse

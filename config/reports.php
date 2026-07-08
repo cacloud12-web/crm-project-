@@ -3,7 +3,8 @@
 return [
     'default_days' => 30,
 
-    'won_statuses' => ['Active'],
+    'won_statuses' => [],
+    'won_uses_purchase_flag' => true,
     'lost_statuses' => ['Lost', 'Inactive'],
     'pipeline_statuses' => [
         'Pipeline',
@@ -13,7 +14,7 @@ return [
         'Negotiation',
         'Details Shared',
     ],
-    'open_followup_statuses' => ['Pending', 'Scheduled', 'Open'],
+    'open_followup_statuses' => ['Pending', 'Scheduled', 'Open', 'Overdue'],
     'completed_followup_statuses' => ['Completed', 'Done', 'Closed'],
 
     'reports' => [
@@ -56,6 +57,11 @@ return [
             'label' => 'Lost Lead Analysis',
             'description' => 'Lost and inactive leads with assignment context',
             'card' => 'Lost Lead Analysis',
+        ],
+        'duplicate_productivity' => [
+            'label' => 'Duplicate & Productivity',
+            'description' => 'Employee-wise unique leads, duplicate attempts, and accuracy',
+            'card' => 'Duplicate Productivity',
         ],
     ],
 

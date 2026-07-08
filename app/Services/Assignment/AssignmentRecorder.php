@@ -129,6 +129,15 @@ class AssignmentRecorder
         });
     }
 
+    public function recordAchievement(int $caId, int $employeeId): void
+    {
+        LeadAssignmentEngine::query()
+            ->where('ca_id', $caId)
+            ->where('employee_id', $employeeId)
+            ->where('status', 'Active')
+            ->increment('achieved_leads');
+    }
+
     private function shortId(string $id): string
     {
         return strlen($id) <= 8 ? $id : substr($id, 0, 4).'…'.substr($id, -2);

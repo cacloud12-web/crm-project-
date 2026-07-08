@@ -44,31 +44,33 @@ class GlobalSearchService
                 'type' => 'Lead',
                 'title' => $lead->firm_name ?: $lead->ca_name,
                 'meta' => trim(($lead->city?->city_name ?? '').' · '.($lead->status ?? '')),
-                'page' => 'leads',
+                'page' => $employeeId === null ? 'ca-master' : 'leads',
                 'icon' => 'building-2',
                 'record_id' => (string) $lead->ca_id,
             ];
         }
 
-        Employee::query()
-            ->where(function ($q) use ($term) {
-                $like = '%'.$term.'%';
-                $q->where('name', 'ilike', $like)
-                    ->orWhere('email_id', 'ilike', $like)
-                    ->orWhere('mobile_no', 'ilike', $like);
-            })
-            ->limit($perGroup)
-            ->get()
-            ->each(function (Employee $employee) use (&$results) {
-                $results[] = [
-                    'type' => 'Employee',
-                    'title' => $employee->name,
-                    'meta' => ($employee->role ?? 'Executive').' · '.$employee->email_id,
-                    'page' => 'assignment',
-                    'icon' => 'user',
-                    'record_id' => (string) $employee->employee_id,
-                ];
-            });
+        if ($employeeId === null) {
+            Employee::query()
+                ->where(function ($q) use ($term) {
+                    $like = '%'.$term.'%';
+                    $q->where('name', 'ilike', $like)
+                        ->orWhere('email_id', 'ilike', $like)
+                        ->orWhere('mobile_no', 'ilike', $like);
+                })
+                ->limit($perGroup)
+                ->get()
+                ->each(function (Employee $employee) use (&$results) {
+                    $results[] = [
+                        'type' => 'Employee',
+                        'title' => $employee->name,
+                        'meta' => ($employee->role ?? 'Employee').' · '.$employee->email_id,
+                        'page' => 'assignment',
+                        'icon' => 'user',
+                        'record_id' => (string) $employee->employee_id,
+                    ];
+                });
+        }
 
         $followUpQuery = FollowUp::query()
             ->with(['caMaster', 'employee'])
@@ -91,27 +93,29 @@ class GlobalSearchService
             ];
         }
 
-        $campaignModels = [
-            [WhatsAppCampaign::class, 'WhatsApp', 'whatsapp', 'message-circle'],
-            [EmailCampaign::class, 'Email', 'email', 'mail'],
-            [SmsCampaign::class, 'SMS', 'sms', 'smartphone'],
-        ];
+        if ($employeeId === null) {
+            $campaignModels = [
+                [WhatsAppCampaign::class, 'WhatsApp', 'whatsapp', 'message-circle'],
+                [EmailCampaign::class, 'Email', 'email', 'mail'],
+                [SmsCampaign::class, 'SMS', 'sms', 'smartphone'],
+            ];
 
-        foreach ($campaignModels as [$model, $label, $page, $icon]) {
-            $model::query()
-                ->where('campaign_name', 'ilike', '%'.$term.'%')
-                ->limit(2)
-                ->get()
-                ->each(function ($campaign) use (&$results, $label, $page, $icon) {
-                    $results[] = [
-                        'type' => $label.' Campaign',
-                        'title' => $campaign->campaign_name,
-                        'meta' => ($campaign->campaign_type ?? 'Campaign').' · '.($campaign->status ?? ''),
-                        'page' => $page,
-                        'icon' => $icon,
-                        'record_id' => (string) $campaign->id,
-                    ];
-                });
+            foreach ($campaignModels as [$model, $label, $page, $icon]) {
+                $model::query()
+                    ->where('campaign_name', 'ilike', '%'.$term.'%')
+                    ->limit(2)
+                    ->get()
+                    ->each(function ($campaign) use (&$results, $label, $page, $icon) {
+                        $results[] = [
+                            'type' => $label.' Campaign',
+                            'title' => $campaign->campaign_name,
+                            'meta' => ($campaign->campaign_type ?? 'Campaign').' · '.($campaign->status ?? ''),
+                            'page' => $page,
+                            'icon' => $icon,
+                            'record_id' => (string) $campaign->id,
+                        ];
+                    });
+            }
         }
 
         return array_slice($results, 0, $limit);

@@ -62,6 +62,7 @@ class DemoConfirmationTest extends TestCase
             'state_id' => $state->state_id,
             'city_id' => $city->city_id,
             'status' => 'Demo Scheduled',
+            'team_size' => 6,
         ])->assertCreated();
 
         $leadId = $leadResponse->json('data.ca_id');
@@ -118,6 +119,7 @@ class DemoConfirmationTest extends TestCase
             'state_id' => $state->state_id,
             'city_id' => $city->city_id,
             'status' => 'Demo Scheduled',
+            'team_size' => 6,
         ])->assertCreated();
 
         $leadId = $leadResponse->json('data.ca_id');

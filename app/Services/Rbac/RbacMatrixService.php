@@ -16,11 +16,16 @@ class RbacMatrixService
 
     public function __construct(
         private readonly ActivityLogService $activityLogService,
+        private readonly RbacDatabaseService $rbacDatabaseService,
     ) {}
 
     public function effectiveMatrix(): array
     {
         return Cache::remember(self::CACHE_KEY, 300, function () {
+            if ($this->rbacDatabaseService->isSeeded()) {
+                return $this->rbacDatabaseService->buildMatrix();
+            }
+
             $base = config('rbac.matrix', []);
             $stored = CrmSetting::query()
                 ->where('group', 'rbac')
@@ -49,7 +54,12 @@ class RbacMatrixService
 
         $role = app(RbacService::class)->roleKey($user);
 
-        return in_array($role, ['super_admin', 'admin'], true);
+        return $role === 'super_admin';
+    }
+
+    public function canManageRolePermissions(?User $user): bool
+    {
+        return $this->canEditMatrix($user);
     }
 
     public function togglePermission(
@@ -103,7 +113,7 @@ class RbacMatrixService
         $matrix[$role][$module] = $modulePermissions;
         unset($matrix[$role]['*']);
 
-        $this->persistMatrix($matrix);
+        $this->persistMatrix($role, $matrix[$role]);
 
         $this->activityLogService->log(
             'SECURITY',
@@ -118,12 +128,85 @@ class RbacMatrixService
         return $this->effectiveMatrix();
     }
 
+    /**
+     * @param  array<string, list<string>>  $moduleGrants
+     */
+    public function updateRolePermissions(User $actor, string $role, array $moduleGrants): array
+    {
+        if (in_array($role, self::PROTECTED_ROLES, true)) {
+            throw new InvalidArgumentException('This role cannot be modified.');
+        }
+
+        $this->guardSelfLockoutMatrix($actor, $role, $moduleGrants);
+
+        if ($this->rbacDatabaseService->isSeeded()) {
+            $this->rbacDatabaseService->saveRolePermissions($role, $moduleGrants);
+        } else {
+            $matrix = $this->effectiveMatrix();
+            $matrix[$role] = $moduleGrants;
+            $this->persistLegacyMatrix($matrix);
+        }
+
+        $this->activityLogService->log(
+            'SECURITY',
+            'Role Permissions Saved',
+            $role,
+            'Updated permissions for '.$role,
+            $actor->name,
+        );
+
+        Cache::forget(self::CACHE_KEY);
+
+        return $this->effectiveMatrix();
+    }
+
+    public function resetRolePermissions(User $actor, string $role): array
+    {
+        if (in_array($role, self::PROTECTED_ROLES, true)) {
+            throw new InvalidArgumentException('This role cannot be reset.');
+        }
+
+        if ($this->rbacDatabaseService->isSeeded()) {
+            $this->rbacDatabaseService->resetRoleToDefault($role);
+        } else {
+            $defaults = config('rbac.matrix.'.$role, []);
+            $matrix = $this->effectiveMatrix();
+            $matrix[$role] = $defaults;
+            $this->persistLegacyMatrix($matrix);
+        }
+
+        $this->activityLogService->log(
+            'SECURITY',
+            'Role Permissions Reset',
+            $role,
+            'Reset permissions to default for '.$role,
+            $actor->name,
+        );
+
+        Cache::forget(self::CACHE_KEY);
+
+        return $this->effectiveMatrix();
+    }
+
     public function flushCache(): void
     {
         Cache::forget(self::CACHE_KEY);
     }
 
-    private function persistMatrix(array $matrix): void
+    private function persistMatrix(string $role, array $roleMatrix): void
+    {
+        if ($this->rbacDatabaseService->isSeeded()) {
+            $this->rbacDatabaseService->saveRolePermissions($role, $roleMatrix);
+
+            return;
+        }
+
+        $matrix = $this->effectiveMatrix();
+        $matrix[$role] = $roleMatrix;
+        $this->persistLegacyMatrix($matrix);
+    }
+
+    private function persistLegacyMatrix(array $matrix): void
     {
         $base = config('rbac.matrix', []);
         $override = [];
@@ -142,6 +225,23 @@ class RbacMatrixService
             ['group' => 'rbac', 'key' => 'matrix'],
             ['value' => json_encode($override, JSON_UNESCAPED_UNICODE)],
         );
+    }
+
+    /**
+     * @param  array<string, list<string>>  $moduleGrants
+     */
+    private function guardSelfLockoutMatrix(User $actor, string $role, array $moduleGrants): void
+    {
+        $actorRole = app(RbacService::class)->roleKey($actor);
+
+        if ($actorRole !== $role) {
+            return;
+        }
+
+        $dashboard = $moduleGrants['dashboard'] ?? [];
+        if (! in_array('view', $dashboard, true)) {
+            throw new InvalidArgumentException('You cannot remove your own dashboard access.');
+        }
     }
 
     private function guardSelfLockout(User $actor, string $role, string $module, array $modulePermissions): void

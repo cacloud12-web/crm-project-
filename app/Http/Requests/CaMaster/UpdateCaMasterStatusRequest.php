@@ -15,9 +15,7 @@ class UpdateCaMasterStatusRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'status' => ['required', 'string', Rule::in([
-                'New', 'Hot', 'Warm', 'Pipeline', 'Demo Scheduled', 'Active', 'Inactive', 'Lost',
-            ])],
+            'status' => ['required', 'string', Rule::in(config('crm_statuses.allowed', []))],
         ];
     }
 }

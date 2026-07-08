@@ -13,6 +13,7 @@ class LeadActionService
         'Move to Demo Tab' => 'Demo Scheduled',
         'Details Shared' => 'Pipeline',
         'Not Interested' => 'Lost',
+        'Negotiation' => 'Negotiation',
         'Pipeline' => 'Pipeline',
         'Mark Inactive' => 'Inactive',
     ];

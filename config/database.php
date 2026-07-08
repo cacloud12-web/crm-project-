@@ -61,7 +61,49 @@ return [
             'engine' => null,
             'options' => extension_loaded('pdo_mysql') ? array_filter([
                 Mysql::ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
+                \PDO::ATTR_TIMEOUT => (int) env('DB_CONNECT_TIMEOUT', 10),
             ]) : [],
+        ],
+
+        'mysql_target' => [
+            'driver' => 'mysql',
+            'host' => env('MYSQL_HOST', env('DB_HOST', '127.0.0.1')),
+            'port' => env('MYSQL_PORT', env('DB_PORT', '3306')),
+            'database' => env('MYSQL_DATABASE', env('DB_DATABASE', 'crm_project')),
+            'username' => env('MYSQL_USERNAME', env('DB_USERNAME', 'root')),
+            'password' => env('MYSQL_PASSWORD', env('DB_PASSWORD', '')),
+            'unix_socket' => env('MYSQL_SOCKET', env('DB_SOCKET', '')),
+            'charset' => env('DB_CHARSET', 'utf8mb4'),
+            'collation' => env('DB_COLLATION', 'utf8mb4_unicode_ci'),
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'strict' => true,
+            'engine' => null,
+            'options' => extension_loaded('pdo_mysql') ? array_filter([
+                Mysql::ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
+            ]) : [],
+        ],
+
+        'mysql_admin' => [
+            'driver' => 'mysql',
+            'host' => env('MYSQL_ADMIN_HOST', env('MYSQL_HOST', '127.0.0.1')),
+            'port' => env('MYSQL_ADMIN_PORT', env('MYSQL_PORT', '3306')),
+            'username' => env('MYSQL_ADMIN_USERNAME', env('MYSQL_USERNAME', 'root')),
+            'password' => env('MYSQL_ADMIN_PASSWORD', env('MYSQL_PASSWORD', '')),
+        ],
+
+        'pgsql_source' => [
+            'driver' => 'pgsql',
+            'host' => env('PGSQL_HOST', env('DB_HOST', '127.0.0.1')),
+            'port' => env('PGSQL_PORT', env('DB_PORT', '5432')),
+            'database' => env('PGSQL_DATABASE', env('DB_DATABASE', 'crm_project')),
+            'username' => env('PGSQL_USERNAME', env('DB_USERNAME', 'postgres')),
+            'password' => env('PGSQL_PASSWORD', env('DB_PASSWORD', '')),
+            'charset' => env('DB_CHARSET', 'utf8'),
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'search_path' => 'public',
+            'sslmode' => env('DB_SSLMODE', 'prefer'),
         ],
 
         'mariadb' => [

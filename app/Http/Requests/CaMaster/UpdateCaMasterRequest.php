@@ -3,6 +3,7 @@
 namespace App\Http\Requests\CaMaster;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdateCaMasterRequest extends FormRequest
 {
@@ -13,6 +14,19 @@ class UpdateCaMasterRequest extends FormRequest
 
     public function rules(): array
     {
-        return (new StoreCaMasterRequest)->rules();
+        $storeRules = (new StoreCaMasterRequest)->rules();
+        $rules = [];
+
+        foreach ($storeRules as $field => $rule) {
+            if (is_string($rule)) {
+                $rules[$field] = 'sometimes|'.$rule;
+
+                continue;
+            }
+
+            $rules[$field] = array_merge(['sometimes'], $rule);
+        }
+
+        return $rules;
     }
 }

@@ -21,21 +21,24 @@ class ProductionReadinessTest extends TestCase
 
     public function test_login_is_rate_limited_after_repeated_failures(): void
     {
-        $rateLimitEmail = 'ratelimit.test@ca.local';
+        $rateLimitEmail = 'ratelimit.prod.'.microtime(true).'@test.local';
 
         for ($i = 0; $i < 5; $i++) {
-            $this->post('/login', [
+            $this->from('/login')->post('/login', [
                 'email' => $rateLimitEmail,
                 'password' => 'wrong-password',
-            ]);
+            ])->assertRedirect('/login');
         }
 
-        $response = $this->post('/login', [
+        $response = $this->from('/login')->post('/login', [
             'email' => $rateLimitEmail,
             'password' => 'wrong-password',
         ]);
 
-        $response->assertStatus(429);
+        $response->assertRedirect('/login');
+        $response->assertSessionHasErrors([
+            'email' => 'Too many failed login attempts. Please try again after 15 minutes.',
+        ]);
     }
 
     public function test_queue_status_requires_authentication(): void

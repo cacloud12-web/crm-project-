@@ -78,6 +78,19 @@ class IndiaStateCityTest extends TestCase
         $this->assertContains('Nagpur', $names);
     }
 
+    public function test_lookup_executives_api_returns_active_employees_for_admin(): void
+    {
+        $response = $this->actingAs($this->admin())->getJson('/lookups/executives');
+        $response->assertOk()
+            ->assertJsonPath('success', true);
+
+        $items = $response->json('data');
+        $this->assertIsArray($items);
+        $this->assertGreaterThanOrEqual(1, count($items));
+        $this->assertArrayHasKey('employee_id', $items[0]);
+        $this->assertArrayHasKey('name', $items[0]);
+    }
+
     public function test_cities_api_filters_by_state_and_includes_major_cities(): void
     {
         $maharashtra = State::query()->where('state_name', 'Maharashtra')->firstOrFail();

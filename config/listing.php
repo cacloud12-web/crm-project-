@@ -1,8 +1,8 @@
 <?php
 
 return [
-    'default_per_page' => 25,
-    'max_per_page' => 100,
+    'default_per_page' => 10,
+    'max_per_page' => 1000,
     'max_all' => 5000,
 
     'ca_masters' => [
@@ -25,15 +25,28 @@ return [
             'source_id' => 'exact_int',
             'city' => 'city_name',
             'state' => 'state_name',
+            'firm_name' => 'ilike',
+            'ca_name' => 'ilike',
+            'mobile_no' => 'ilike',
+            'alternate_mobile_no' => 'ilike',
+            'email_id' => 'ilike',
+            'gst_no' => 'ilike',
+            'source' => 'source_name',
+            'executive' => 'executive_name',
             'existing_software' => 'exact',
             'is_newly_established' => 'boolean',
+            'is_verified' => 'boolean',
             'team_size_min' => 'team_size_min',
             'team_size_max' => 'team_size_max',
             'rating_min' => 'rating_min',
             'rating_max' => 'rating_max',
             'segment' => 'segment',
+            'priority' => 'exact',
+            'research_status' => 'exact',
+            'lead_tag' => 'lead_tag',
         ],
         'date_column' => 'created_at',
+        'exclude_columns' => ['google_places_cache'],
     ],
 
     'employees' => [
@@ -277,6 +290,7 @@ return [
     'wa_message_logs' => [
         'table' => 'wa_message_logs',
         'primary_key' => 'id',
+        'employee_scope' => 'assigned_lead_ca',
         'default_sort' => 'created_at',
         'default_sort_dir' => 'desc',
         'sortable' => ['id', 'message_status', 'created_at'],
@@ -295,6 +309,7 @@ return [
     'email_logs' => [
         'table' => 'email_logs',
         'primary_key' => 'id',
+        'employee_scope' => 'assigned_lead_ca',
         'default_sort' => 'created_at',
         'default_sort_dir' => 'desc',
         'sortable' => ['id', 'email_status', 'created_at'],
@@ -310,9 +325,29 @@ return [
         'date_column' => 'created_at',
     ],
 
+    'email_inbox' => [
+        'table' => 'email_inbound_messages',
+        'primary_key' => 'id',
+        'default_sort' => 'received_at',
+        'default_sort_dir' => 'desc',
+        'sortable' => ['id', 'received_at', 'from_email', 'subject', 'match_status', 'created_at'],
+        'search_columns' => ['from_email', 'to_email', 'subject', 'match_status'],
+        'search_relations' => [
+            'caMaster' => ['firm_name', 'email_id'],
+        ],
+        'filters' => [
+            'match_status' => 'exact',
+            'direction' => 'exact',
+            'is_read' => 'boolean',
+            'ca_id' => 'exact_int',
+        ],
+        'date_column' => 'received_at',
+    ],
+
     'sms_logs' => [
         'table' => 'sms_logs',
         'primary_key' => 'id',
+        'employee_scope' => 'assigned_lead_ca',
         'default_sort' => 'created_at',
         'default_sort_dir' => 'desc',
         'sortable' => ['id', 'sms_status', 'created_at'],
@@ -340,5 +375,48 @@ return [
             'status' => 'exact',
         ],
         'date_column' => 'created_at',
+    ],
+
+    'sales_list' => [
+        'table' => 'sales_list_entries',
+        'primary_key' => 'id',
+        'default_sort' => 'purchase_date',
+        'default_sort_dir' => 'desc',
+        'sortable' => [
+            'serial_number', 'sale_month', 'points', 'customer_name', 'firm_name', 'reference_name',
+            'mobile_no', 'city_name', 'plan_purchased', 'purchase_date', 'cooling_period_days',
+            'expiry_date', 'total_amount', 'amount_received', 'balance_amount', 'invoice_number',
+            'payment_status', 'created_at',
+        ],
+        'search_columns' => ['customer_name', 'firm_name', 'mobile_no', 'invoice_number', 'city_name'],
+        'search_relations' => [
+            'employee' => ['name'],
+        ],
+        'filters' => [
+            'serial_number' => 'exact_int',
+            'sale_month' => 'exact',
+            'points_min' => 'min_int',
+            'points_max' => 'max_int',
+            'customer_name' => 'ilike',
+            'firm_name' => 'ilike',
+            'reference_name' => 'ilike',
+            'mobile_no' => 'ilike',
+            'city_name' => 'ilike',
+            'plan_purchased' => 'exact',
+            'purchase_date' => 'purchase_date_exact',
+            'cooling_period_days' => 'exact_int',
+            'expiry_date' => 'expiry_date_exact',
+            'total_amount_min' => 'min_decimal',
+            'total_amount_max' => 'max_decimal',
+            'amount_received_min' => 'min_decimal',
+            'amount_received_max' => 'max_decimal',
+            'balance_amount_min' => 'min_decimal',
+            'balance_amount_max' => 'max_decimal',
+            'invoice_number' => 'ilike',
+            'payment_status' => 'exact',
+            'employee_name' => 'employee_name_exact',
+            'manager_name' => 'manager_name_exact',
+        ],
+        'date_column' => 'purchase_date',
     ],
 ];

@@ -2,14 +2,14 @@
 (function () {
   'use strict';
 
-  var DEFAULT_PER_PAGE = 25;
+  var DEFAULT_PER_PAGE = 10;
 
   var REGISTRY = {
     ca_masters: { endpoint: '/ca-masters', tableId: 'leads-data-table', altTables: ['ca-master-data-table', 'ca-master-new-data-table', 'dashboard-leads-table'] },
     employees: { endpoint: '/employees', tableId: 'employees-data-table' },
     follow_ups: { endpoint: '/follow-ups', tableId: 'followups-data-table' },
-    lead_assignments: { endpoint: '/lead-assignments', tableId: 'assignment-data-table' },
-    assignment_histories: { endpoint: '/assignment-histories', tableId: 'assignment-history-table' },
+    lead_assignments: { endpoint: '/lead-assignments', tableId: 'assignment-table' },
+    assignment_histories: { endpoint: '/assignment-histories', tableId: 'assignment-history-table-el' },
     activity_logs: { endpoint: '/activity-logs', tableId: 'activity-logs-table', itemsKey: 'logs' },
     states: { endpoint: '/states', tableId: 'master-states-table' },
     cities: { endpoint: '/cities', tableId: 'master-cities-table' },
@@ -24,6 +24,7 @@
     wa_message_logs: { endpoint: '/wa-message-logs', tableId: 'wa-message-logs-table' },
     email_logs: { endpoint: '/email-logs', tableId: 'email-logs-table' },
     sms_logs: { endpoint: '/sms-logs', tableId: 'sms-logs-table' },
+    sales_list: { endpoint: '/sales-list', tableId: 'sales-list-data-table' },
     bulk_operations: { endpoint: '/ca-masters/bulk-operations/history', tableId: 'bulk-actions-data-table' },
   };
 
@@ -102,45 +103,36 @@
     return { items: [], pagination: null, meta: null, raw: body };
   }
 
-  function renderPaginationBar(key, tableId, pagination) {
-    if (!pagination || pagination.last_page <= 1) {
-      var existing = document.getElementById('listing-pagination-' + key);
+  function renderPaginationBar(key, tableId, pagination, slotId) {
+    if (!window.CATablePagination) return;
+
+    var slot = slotId ? document.getElementById(slotId) : null;
+    var wrapId = 'listing-pagination-' + key + (slotId ? '-' + slotId : '');
+
+    if (!pagination || !pagination.total) {
+      if (slot) {
+        slot.innerHTML = '';
+        slot.classList.add('crm-table-footer--empty');
+      }
+      var existing = document.getElementById(wrapId);
       if (existing) existing.remove();
+      var legacy = document.getElementById('listing-pagination-' + key);
+      if (legacy && !slot) legacy.remove();
       return;
     }
 
-    var table = document.getElementById(tableId);
-    if (!table) return;
+    var state = getState(key);
+    CATablePagination.renderInto(slot || slotId, {
+      tableId: tableId,
+      wrapId: wrapId,
+      listingKey: key,
+      pagination: pagination,
+      perPage: state.per_page || pagination.per_page || CATablePagination.DEFAULT_PER_PAGE,
+      showPerPage: true,
+    });
 
-    var wrapId = 'listing-pagination-' + key;
-    var wrap = document.getElementById(wrapId);
-    if (!wrap) {
-      wrap = document.createElement('div');
-      wrap.id = wrapId;
-      wrap.className = 'listing-pagination flex flex-wrap items-center justify-between gap-2 mt-3 px-1';
-      table.closest('.card, .overflow-x-auto, .leads-hub, .ca-table-wrap')?.parentNode?.insertBefore(wrap, table.closest('.card, .overflow-x-auto')?.nextSibling);
-      if (!wrap.parentNode) table.parentNode?.appendChild(wrap);
-    }
-
-    wrap.innerHTML =
-      '<p class="text-caption text-slate-500">Showing ' + (pagination.from || 0) + '–' + (pagination.to || 0) + ' of ' + pagination.total + '</p>' +
-      '<div class="flex items-center gap-2">' +
-        '<button type="button" class="btn-secondary btn-sm listing-page-btn" data-listing="' + key + '" data-page="' + (pagination.current_page - 1) + '" ' + (pagination.current_page <= 1 ? 'disabled' : '') + '>Prev</button>' +
-        '<span class="text-caption text-slate-600">Page ' + pagination.current_page + ' / ' + pagination.last_page + '</span>' +
-        '<button type="button" class="btn-secondary btn-sm listing-page-btn" data-listing="' + key + '" data-page="' + (pagination.current_page + 1) + '" ' + (pagination.current_page >= pagination.last_page ? 'disabled' : '') + '>Next</button>' +
-      '</div>';
-
-    if (!wrap._paginationBound) {
-      wrap._paginationBound = true;
-      wrap.addEventListener('click', function (e) {
-        var btn = e.target.closest('.listing-page-btn');
-        if (!btn || btn.disabled) return;
-        var listingKey = btn.dataset.listing;
-        var page = parseInt(btn.dataset.page, 10);
-        if (!listingKey || !page) return;
-        setState(listingKey, { page: page });
-        window.CA_LISTING_SEARCH.reload(listingKey);
-      });
+    if (slot) {
+      slot.classList.remove('listing-pagination', 'cam-pagination', 'cam-pagination--enterprise', 'assign-active__pagination');
     }
   }
 
@@ -286,7 +278,7 @@
       pageKey = pageKey || 'ca_masters';
       setState(pageKey, { search: term, page: 1 });
       if (window.navigateTo) {
-        var nav = { ca_masters: 'leads', employees: 'assignment', follow_ups: 'followups' }[pageKey] || 'ca-master';
+        var nav = { ca_masters: 'ca-master', employees: 'assignment', follow_ups: 'followups' }[pageKey] || 'ca-master';
         window.navigateTo(nav);
       }
       setTimeout(function () { window.CA_LISTING_SEARCH.reload(pageKey); }, 150);

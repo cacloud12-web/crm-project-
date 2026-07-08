@@ -1,0 +1,384 @@
+/**
+ * CA Cloud Desk — Typography enforcement (loaded last via styles.css)
+ * Overrides page-specific font-size / font-weight rules for a single CRM-wide system.
+ */
+
+body.crm-layout,
+body.crm-layout button,
+body.crm-layout input,
+body.crm-layout select,
+body.crm-layout textarea,
+.ca-modal,
+.crm-layout,
+.crm-layout *:not(code):not(pre):not(kbd):not(samp):not(.er-badge) {
+  font-family: var(--crm-font-family);
+  letter-spacing: var(--crm-letter-spacing);
+}
+
+.header-profile-menu,
+.search-dropdown,
+.sc-combobox-list {
+  font-family: var(--crm-font-family);
+  letter-spacing: var(--crm-letter-spacing);
+}
+
+/* Page title — H1 (identical on every module page) */
+body.crm-layout h1:not(.comm-card-label),
+body.crm-layout .text-page-title,
+body.crm-layout .page-title,
+body.crm-layout .text-3xl,
+body.crm-layout .cam-page-title,
+body.crm-layout .cam-hub-title,
+body.crm-layout .comm-page-title,
+body.crm-layout .mgr-greeting {
+  font-family: var(--crm-font-family) !important;
+  font-size: var(--crm-font-size-page-title) !important;
+  font-weight: var(--crm-font-weight-page-title) !important;
+  line-height: var(--crm-line-height-page-title) !important;
+  letter-spacing: var(--crm-letter-spacing-page-title) !important;
+  color: var(--crm-color-heading) !important;
+  margin-top: 0 !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  margin-bottom: var(--crm-page-title-margin-bottom) !important;
+  text-transform: none !important;
+}
+
+/* Never allow extra-bold utilities on page headings */
+body.crm-layout h1.text-page-title.font-bold,
+body.crm-layout h1.page-title.font-bold,
+body.crm-layout .text-page-title.font-bold,
+body.crm-layout .page-title.font-bold,
+body.crm-layout h1.mgr-greeting.font-bold {
+  font-weight: var(--crm-font-weight-page-title) !important;
+}
+
+/* Subtitle directly below page title — cancel duplicate bottom gap */
+body.crm-layout .page-hero .text-page-title + .text-body,
+body.crm-layout .page-hero .text-page-title + p,
+body.crm-layout .crm-tm-hero .text-page-title + .text-body,
+body.crm-layout .crm-tm-hero .text-page-title + p,
+body.crm-layout .ecfg-settings-hero .text-page-title + .text-body,
+body.crm-layout .ecfg-settings-hero .text-page-title + p {
+  margin-top: -12px !important;
+}
+
+/* Section heading — H2 */
+body.crm-layout h2,
+body.crm-layout .text-section-heading,
+body.crm-layout .text-xl,
+body.crm-layout .section-title,
+body.crm-layout .dash-kpi-section-title {
+  font-size: var(--crm-font-size-subheading) !important;
+  font-weight: var(--crm-font-weight-section) !important;
+  line-height: var(--crm-line-height-subheading) !important;
+  color: #334155 !important;
+}
+
+body.crm-layout .mgr-kpi-desc {
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  line-height: 1.35 !important;
+}
+
+body.crm-layout .mgr-kpi-updated {
+  font-size: 11px !important;
+  font-weight: 400 !important;
+}
+
+body.crm-layout .mgr-panel-subtitle {
+  font-size: 12px !important;
+  font-weight: 400 !important;
+}
+
+/* Card heading — H3 */
+body.crm-layout h3,
+body.crm-layout .text-card-heading,
+body.crm-layout .text-lg,
+body.crm-layout .mgr-panel-title,
+body.crm-layout .ca-modal-title,
+body.crm-layout .comm-card-label,
+body.crm-layout .ecfg-section-title {
+  font-size: var(--crm-font-size-card-title) !important;
+  font-weight: var(--crm-font-weight-card-title) !important;
+  line-height: var(--crm-line-height-card-title) !important;
+}
+
+/* Sub heading */
+body.crm-layout .text-subheading,
+body.crm-layout h5 {
+  font-size: var(--crm-font-size-subheading) !important;
+  font-weight: var(--crm-font-weight-subheading) !important;
+  line-height: var(--crm-line-height-subheading) !important;
+}
+
+body.crm-layout h4.text-sm.font-semibold,
+body.crm-layout h4.text-card-heading {
+  font-size: var(--crm-font-size-card-title) !important;
+  font-weight: var(--crm-font-weight-card-title) !important;
+  line-height: var(--crm-line-height-card-title) !important;
+}
+
+/* Dashboard statistics */
+body.crm-layout .text-2xl,
+body.crm-layout .text-stat-number,
+body.crm-layout .stat-box-value,
+body.crm-layout .cam-summary-value {
+  font-size: var(--crm-font-size-stat-number) !important;
+  font-weight: var(--crm-font-weight-stat-number) !important;
+  line-height: var(--crm-line-height-page-title) !important;
+}
+
+body.crm-layout .mgr-kpi-value,
+body.crm-layout .dash-kpi-grid .mgr-kpi-value {
+  font-size: var(--crm-font-size-kpi-value) !important;
+  font-weight: var(--crm-font-weight-kpi-value) !important;
+  line-height: var(--crm-line-height-kpi-value) !important;
+}
+
+body.crm-layout .text-stat-label,
+body.crm-layout .mgr-kpi-label,
+body.crm-layout .stat-box-label,
+body.crm-layout .dash-kpi-grid .mgr-kpi-label,
+body.crm-layout .cam-summary-label {
+  font-size: var(--crm-font-size-stat-label) !important;
+  font-weight: var(--crm-font-weight-stat-label) !important;
+  line-height: var(--crm-line-height-body) !important;
+}
+
+/* Navigation */
+body.crm-layout .nav-item,
+body.crm-layout .sidebar-label {
+  font-size: var(--crm-font-size-sidebar) !important;
+  font-weight: var(--crm-font-weight-sidebar) !important;
+}
+
+body.crm-layout .nav-sub-item,
+body.crm-layout .ca-sidebar-footer,
+body.crm-layout .ca-sidebar-footer-btn {
+  font-size: var(--crm-font-size-body) !important;
+  font-weight: var(--crm-font-weight-sidebar) !important;
+}
+
+/* Tables */
+body.crm-layout table th,
+body.crm-layout .ca-table th,
+body.crm-layout .crm-table th,
+body.crm-layout .ca-table--enterprise thead th {
+  font-size: var(--crm-font-size-body) !important;
+  font-weight: var(--crm-font-weight-table-header) !important;
+  text-transform: none !important;
+  letter-spacing: var(--crm-letter-spacing) !important;
+}
+
+body.crm-layout table td,
+body.crm-layout .ca-table td,
+body.crm-layout .crm-table td,
+body.crm-layout .ca-table--enterprise td {
+  font-size: var(--crm-font-size-body) !important;
+  font-weight: var(--crm-font-weight-table-data) !important;
+  letter-spacing: var(--crm-letter-spacing) !important;
+}
+
+/* Forms */
+body.crm-layout label,
+body.crm-layout .form-label,
+body.crm-layout .ecfg-form-label,
+body.crm-layout .crm-listing-filter-label {
+  font-size: var(--crm-font-size-body) !important;
+  font-weight: var(--crm-font-weight-label) !important;
+}
+
+body.crm-layout .input-field,
+body.crm-layout .crm-col-filter-input,
+body.crm-layout .cam-filter-select,
+body.crm-layout select,
+body.crm-layout textarea,
+body.crm-layout .crm-entity-lookup__input,
+body.crm-layout .ca-input,
+body.crm-layout input::placeholder,
+body.crm-layout textarea::placeholder {
+  font-size: var(--crm-font-size-body) !important;
+  font-weight: var(--crm-font-weight-input) !important;
+}
+
+/* Buttons */
+body.crm-layout .btn-primary,
+body.crm-layout .btn-secondary,
+body.crm-layout .btn-ghost,
+body.crm-layout .btn-sm,
+body.crm-layout .mgr-link-btn,
+body.crm-layout .mgr-period-tab,
+body.crm-layout .ca-tab,
+body.crm-layout .ca-chip,
+body.crm-layout .dash-filter-chip,
+body.crm-layout .dash-quick-action-btn,
+body.crm-layout .header-profile-item,
+body.crm-layout .header-checkin-btn,
+body.crm-layout .ca-action-btn {
+  font-size: var(--crm-font-size-button) !important;
+  font-weight: var(--crm-font-weight-button) !important;
+}
+
+/* Badges / status */
+body.crm-layout .badge,
+body.crm-layout .stat-pill,
+body.crm-layout .mgr-chip,
+body.crm-layout .mgr-kpi-trend,
+body.crm-layout .ca-tab-count,
+body.crm-layout .manager-role-badge,
+body.crm-layout .text-caption {
+  font-size: var(--crm-font-size-badge) !important;
+  font-weight: var(--crm-font-weight-badge) !important;
+}
+
+/* Pagination */
+body.crm-layout .crm-table-pagination,
+body.crm-layout .crm-table-pagination__rows-label,
+body.crm-layout .crm-table-pagination__per-page,
+body.crm-layout .crm-table-pagination__page,
+body.crm-layout .crm-table-pagination__of,
+body.crm-layout .crm-table-pagination__count,
+body.crm-layout .cam-pagination,
+body.crm-layout .cam-pagination-summary,
+body.crm-layout .cam-pagination-nav {
+  font-size: var(--crm-font-size-body) !important;
+  font-weight: var(--crm-font-weight-pagination) !important;
+}
+
+/* Body text utilities */
+body.crm-layout .text-sm,
+body.crm-layout .text-body,
+body.crm-layout .mgr-top-meta,
+body.crm-layout .mgr-empty,
+body.crm-layout .header-user-pill-text,
+body.crm-layout .search-result-title,
+body.crm-layout .detail-field,
+body.crm-layout .filter-time-heading,
+body.crm-layout .sc-combobox-empty,
+body.crm-layout .search-empty,
+body.crm-layout .comm-card-desc,
+body.crm-layout .mgr-priority-firm,
+body.crm-layout .mgr-team-name,
+body.crm-layout .mgr-table-name,
+body.crm-layout .mgr-activity-title,
+body.crm-layout .mgr-funnel-count,
+body.crm-layout .mgr-funnel-label,
+body.crm-layout .mgr-bar-label,
+body.crm-layout .mgr-bar-val,
+body.crm-layout .dash-activity-user {
+  font-size: var(--crm-font-size-body) !important;
+  letter-spacing: var(--crm-letter-spacing) !important;
+}
+
+body.crm-layout .mgr-priority-meta,
+body.crm-layout .mgr-team-city,
+body.crm-layout .mgr-table-sub,
+body.crm-layout .mgr-activity-time,
+body.crm-layout .mgr-activity-detail,
+body.crm-layout .dash-activity-time,
+body.crm-layout .search-result-meta,
+body.crm-layout .mgr-team-pct,
+body.crm-layout .mgr-dup-trend-label,
+body.crm-layout .emp-list-meta {
+  font-size: var(--crm-font-size-badge) !important;
+  font-weight: var(--crm-font-weight-badge) !important;
+}
+
+body.crm-layout .mgr-priority-firm,
+body.crm-layout .mgr-team-name,
+body.crm-layout .mgr-table-name,
+body.crm-layout .mgr-activity-title,
+body.crm-layout .dash-activity-user {
+  font-weight: var(--crm-font-weight-label) !important;
+}
+
+body.crm-layout .mgr-funnel-count,
+body.crm-layout .mgr-bar-val {
+  font-weight: var(--crm-font-weight-stat-number) !important;
+}
+
+body.crm-layout .dash-activity-action {
+  font-size: var(--crm-font-size-body) !important;
+  font-weight: var(--crm-font-weight-table-header) !important;
+}
+
+/* Tooltip */
+body.crm-layout #crm-instant-tooltip {
+  font-size: var(--crm-font-size-tooltip) !important;
+  font-weight: var(--crm-font-weight-tooltip) !important;
+}
+
+/* Tailwind weight utilities — map to design tokens */
+body.crm-layout .font-bold {
+  font-weight: var(--crm-font-weight-section) !important;
+}
+
+body.crm-layout .font-semibold {
+  font-weight: var(--crm-font-weight-section) !important;
+}
+
+body.crm-layout .font-medium {
+  font-weight: var(--crm-font-weight-label) !important;
+}
+
+body.crm-layout .manager-role-badge,
+body.crm-layout .search-group-label,
+body.crm-layout .bulk-assign-batch-label,
+body.crm-layout .bulk-assign-avail,
+body.crm-layout [class*="uppercase"] {
+  text-transform: none !important;
+  letter-spacing: var(--crm-letter-spacing) !important;
+}
+
+/* Auth pages */
+body:not(.crm-layout) .text-page-title,
+body:not(.crm-layout) .page-title {
+  font-size: var(--crm-font-size-page-title) !important;
+  font-weight: var(--crm-font-weight-page-title) !important;
+  line-height: var(--crm-line-height-page-title) !important;
+  letter-spacing: var(--crm-letter-spacing-page-title) !important;
+  color: var(--crm-color-heading) !important;
+  margin: 0 0 var(--crm-page-title-margin-bottom) 0 !important;
+}
+
+body:not(.crm-layout) .form-label,
+body:not(.crm-layout) label {
+  font-size: var(--crm-font-size-body) !important;
+  font-weight: var(--crm-font-weight-label) !important;
+}
+
+body:not(.crm-layout) .input-field,
+body:not(.crm-layout) input,
+body:not(.crm-layout) select,
+body:not(.crm-layout) textarea {
+  font-size: var(--crm-font-size-body) !important;
+  font-weight: var(--crm-font-weight-input) !important;
+}
+
+body:not(.crm-layout) .btn-primary,
+body:not(.crm-layout) .btn-secondary {
+  font-size: var(--crm-font-size-button) !important;
+  font-weight: var(--crm-font-weight-button) !important;
+}
+
+/* Sub-card headings beat generic .text-sm when both apply */
+body.crm-layout h4.text-sm.font-semibold {
+  font-size: var(--crm-font-size-card-title) !important;
+  font-weight: var(--crm-font-weight-card-title) !important;
+  line-height: var(--crm-line-height-card-title) !important;
+}
+
+/* Date/time picker */
+.flatpickr-calendar.crm-fp-theme,
+.flatpickr-calendar.crm-fp-theme .flatpickr-day,
+.flatpickr-calendar.crm-fp-theme .flatpickr-time input {
+  font-size: var(--crm-font-size-body) !important;
+  font-weight: var(--crm-font-weight-table-data) !important;
+}
+
+.flatpickr-calendar.crm-fp-theme .flatpickr-current-month,
+.flatpickr-calendar.crm-fp-theme .flatpickr-weekday {
+  font-size: var(--crm-font-size-body) !important;
+  font-weight: var(--crm-font-weight-table-header) !important;
+}

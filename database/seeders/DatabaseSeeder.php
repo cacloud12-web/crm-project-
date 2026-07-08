@@ -19,6 +19,9 @@ class DatabaseSeeder extends Seeder
             CrmMasterDataSeeder::class,
             CrmUserSeeder::class,
             ManagerDemoSeeder::class,
+            RbacPermissionSeeder::class,
+            CrmTemplateVariablesSeeder::class,
+            CrmDefaultTemplatesSeeder::class,
         ]);
     }
 }

@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth', 'rbac'])->group(function () {
     Route::get('dashboard/metrics', [DashboardController::class, 'metrics']);
+    Route::get('dashboard/productivity-employees', [DashboardController::class, 'productivityEmployees']);
     Route::get('dashboard/employee', [DashboardController::class, 'employeeMetrics']);
     Route::get('demo-confirmations/metrics', [DemoConfirmationController::class, 'metrics'])
         ->middleware('spa.browser:dashboard');

@@ -31,6 +31,7 @@ class SmsSettingsService
             'sender_id' => null,
             'mode' => SmsSetting::MODE_SIMULATION,
             'is_active' => true,
+            'integration_status' => SmsSetting::INTEGRATION_NOT_CONFIGURED,
         ]);
     }
 
@@ -47,12 +48,58 @@ class SmsSettingsService
             'provider_name' => $settings->provider_name,
             'api_url' => $settings->api_url,
             'sender_id' => $settings->sender_id,
+            'dlt_template_id' => $settings->dlt_template_id,
             'mode' => $settings->mode,
             'is_active' => (bool) $settings->is_active,
             'has_api_key' => $settings->hasApiKey(),
             'is_configured' => $settings->isConfigured(),
             'integration_status' => $this->integrationStatus($settings),
+            'last_tested_at' => $settings->last_tested_at?->toIso8601String(),
+            'last_test_status' => $settings->last_test_status,
+            'last_test_message' => $this->lastTestMessage($settings),
             'can_edit' => $this->canManageSettings(auth()->user()),
+            'can_send_live' => $this->canSendLiveSms($settings)['can_send'],
+            'send_blockers' => $this->canSendLiveSms($settings)['errors'],
+        ];
+    }
+
+    /**
+     * @return array{can_send: bool, errors: array<int, string>}
+     */
+    public function canSendLiveSms(?SmsSetting $settings = null): array
+    {
+        $settings ??= $this->current();
+        $errors = [];
+
+        if (! $settings->is_active) {
+            $errors[] = 'SMS provider is inactive. Enable it in SMS Settings.';
+        }
+
+        if (! $settings->isLiveMode()) {
+            $errors[] = 'Set SMS mode to Live in SMS Settings to send messages.';
+        }
+
+        if (! filled($settings->api_url)) {
+            $errors[] = 'API URL is required.';
+        } elseif (! filter_var($settings->api_url, FILTER_VALIDATE_URL)) {
+            $errors[] = 'API URL must be a valid URL.';
+        }
+
+        if (! $settings->hasApiKey()) {
+            $errors[] = 'API Key is required.';
+        }
+
+        if (! filled($settings->sender_id)) {
+            $errors[] = 'Sender ID is required.';
+        }
+
+        if ($settings->isLiveMode() && ! filled($settings->dlt_template_id)) {
+            $errors[] = SmsAlertMappingService::ERROR_DLT_TEMPLATE_ID_REQUIRED;
+        }
+
+        return [
+            'can_send' => $errors === [],
+            'errors' => array_values(array_unique($errors)),
         ];
     }
 
@@ -61,14 +108,45 @@ class SmsSettingsService
         $settings ??= $this->current();
 
         if (! $settings->is_active) {
-            return 'disabled';
+            return SmsSetting::INTEGRATION_DISABLED;
         }
 
-        if ($settings->hasApiKey() && filled($settings->sender_id)) {
-            return 'connected';
+        if (! $settings->hasApiKey() || ! filled($settings->sender_id)) {
+            return SmsSetting::INTEGRATION_NOT_CONFIGURED;
         }
 
-        return 'not_configured';
+        $stored = (string) ($settings->integration_status ?? '');
+
+        if (in_array($stored, [SmsSetting::INTEGRATION_INTEGRATED, SmsSetting::INTEGRATION_FAILED], true)) {
+            return $stored;
+        }
+
+        return SmsSetting::INTEGRATION_CONNECTED;
+    }
+
+    public function lastTestMessage(?SmsSetting $settings = null): ?string
+    {
+        $settings ??= $this->current();
+
+        if (! filled($settings->last_test_response)) {
+            return null;
+        }
+
+        $decoded = json_decode((string) $settings->last_test_response, true);
+        if (! is_array($decoded)) {
+            return null;
+        }
+
+        $message = $decoded['description']
+            ?? $decoded['message']
+            ?? $decoded['error']
+            ?? ($settings->last_test_status === 'success' ? 'SMS Alert connection test succeeded.' : null);
+
+        if (is_array($message)) {
+            $message = json_encode($message);
+        }
+
+        return $message !== null ? (string) $message : null;
     }
 
     /**
@@ -86,12 +164,39 @@ class SmsSettingsService
             'provider_name' => $data['provider_name'] ?? $settings->provider_name,
             'api_url' => $data['api_url'] ?? $settings->api_url,
             'sender_id' => array_key_exists('sender_id', $data) ? $data['sender_id'] : $settings->sender_id,
+            'dlt_template_id' => array_key_exists('dlt_template_id', $data)
+                ? ($data['dlt_template_id'] !== '' ? $data['dlt_template_id'] : null)
+                : $settings->dlt_template_id,
             'mode' => $data['mode'] ?? $settings->mode,
             'is_active' => array_key_exists('is_active', $data) ? (bool) $data['is_active'] : $settings->is_active,
         ];
 
+        $credentialsChanged = false;
+
         if (array_key_exists('api_key', $data) && filled($data['api_key'])) {
             $payload['api_key'] = $data['api_key'];
+            $credentialsChanged = true;
+        }
+
+        if (array_key_exists('sender_id', $data) && $data['sender_id'] !== $settings->sender_id) {
+            $credentialsChanged = true;
+        }
+
+        if (array_key_exists('api_url', $data) && $data['api_url'] !== $settings->api_url) {
+            $credentialsChanged = true;
+        }
+
+        if ($credentialsChanged) {
+            $payload['last_tested_at'] = null;
+            $payload['last_test_status'] = null;
+            $payload['last_test_response'] = null;
+
+            $willHaveKey = (array_key_exists('api_key', $data) && filled($data['api_key'])) || $settings->hasApiKey();
+            $willHaveSender = filled($payload['sender_id']);
+
+            $payload['integration_status'] = ($willHaveKey && $willHaveSender)
+                ? SmsSetting::INTEGRATION_CONNECTED
+                : SmsSetting::INTEGRATION_NOT_CONFIGURED;
         }
 
         $settings->update($payload);
@@ -156,6 +261,10 @@ class SmsSettingsService
             $errors[] = 'Sender ID is required.';
         }
 
+        if ($settings->isLiveMode() && ! filled($settings->dlt_template_id)) {
+            $errors[] = SmsAlertMappingService::ERROR_DLT_TEMPLATE_ID_REQUIRED;
+        }
+
         if (! filled($settings->mode)) {
             $errors[] = 'Mode is required.';
         }
@@ -185,8 +294,13 @@ class SmsSettingsService
             'api_url' => SmsSetting::DEFAULT_API_URL,
             'api_key' => null,
             'sender_id' => null,
+            'dlt_template_id' => null,
             'mode' => SmsSetting::MODE_SIMULATION,
             'is_active' => true,
+            'integration_status' => SmsSetting::INTEGRATION_NOT_CONFIGURED,
+            'last_tested_at' => null,
+            'last_test_status' => null,
+            'last_test_response' => null,
         ]);
 
         $this->activityLogService->log(
@@ -230,6 +344,7 @@ class SmsSettingsService
             'provider_name' => ['required', 'string', 'max:120'],
             'api_url' => ['required', 'string', 'max:255', 'url'],
             'sender_id' => ['required', 'string', 'max:20'],
+            'dlt_template_id' => ['nullable', 'string', 'max:30'],
             'mode' => ['required', 'string', 'in:'.SmsSetting::MODE_SIMULATION.','.SmsSetting::MODE_LIVE],
             'is_active' => ['sometimes', 'boolean'],
             'api_key' => ['nullable', 'string', 'max:255'],
@@ -245,6 +360,17 @@ class SmsSettingsService
         if (! $hasKey) {
             throw ValidationException::withMessages([
                 'api_key' => ['API Key is required.'],
+            ]);
+        }
+
+        $mode = $data['mode'] ?? $settings->mode;
+        $dltId = array_key_exists('dlt_template_id', $data)
+            ? ($data['dlt_template_id'] !== '' ? $data['dlt_template_id'] : null)
+            : $settings->dlt_template_id;
+
+        if ($mode === SmsSetting::MODE_LIVE && ! filled($dltId)) {
+            throw ValidationException::withMessages([
+                'dlt_template_id' => [SmsAlertMappingService::ERROR_DLT_TEMPLATE_ID_REQUIRED],
             ]);
         }
     }

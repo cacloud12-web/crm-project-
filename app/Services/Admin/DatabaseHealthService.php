@@ -430,6 +430,36 @@ class DatabaseHealthService
                     ])
                     ->values()
                     ->all();
+            } elseif ($info['driver'] === 'mysql') {
+                $sizeRow = DB::selectOne(
+                    'SELECT SUM(data_length + index_length) AS size_bytes
+                     FROM information_schema.tables
+                     WHERE table_schema = ?',
+                    [$databaseName],
+                );
+
+                if ($sizeRow && $sizeRow->size_bytes !== null) {
+                    $info['total_size_bytes'] = (int) $sizeRow->size_bytes;
+                    $info['total_size'] = $this->formatBytes((int) $sizeRow->size_bytes);
+                }
+
+                $tableSizes = DB::select(
+                    'SELECT table_name,
+                            (data_length + index_length) AS size_bytes
+                     FROM information_schema.tables
+                     WHERE table_schema = ?
+                     ORDER BY (data_length + index_length) DESC',
+                    [$databaseName],
+                );
+
+                $info['tables'] = collect($tableSizes)
+                    ->map(fn ($row) => [
+                        'table_name' => $row->table_name,
+                        'size_bytes' => (int) $row->size_bytes,
+                        'size' => $this->formatBytes((int) $row->size_bytes),
+                    ])
+                    ->values()
+                    ->all();
             }
         } catch (Throwable $e) {
             $info['error'] = $e->getMessage();
@@ -461,5 +491,22 @@ class DatabaseHealthService
                 'status' => $exists ? 'healthy' : 'missing',
             ];
         }, self::API_ROUTES);
+    }
+
+    private function formatBytes(int $bytes): string
+    {
+        if ($bytes < 1024) {
+            return $bytes.' B';
+        }
+
+        if ($bytes < 1048576) {
+            return round($bytes / 1024, 1).' KB';
+        }
+
+        if ($bytes < 1073741824) {
+            return round($bytes / 1048576, 1).' MB';
+        }
+
+        return round($bytes / 1073741824, 2).' GB';
     }
 }

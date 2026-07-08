@@ -4,6 +4,7 @@ namespace App\Support\Listing;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Schema;
 
 class ListingQueryApplier
 {
@@ -11,9 +12,8 @@ class ListingQueryApplier
     {
         $params = self::normalizeParams($params, $config);
 
-        self::applySearch($query, $params, $config);
-        self::applyColumnFilters($query, $params, $config);
-        self::applyDateRange($query, $params, $config);
+        self::applyColumnProjection($query, $config);
+        self::applyListingFilters($query, $params, $config);
         self::applySort($query, $params, $config);
 
         $all = filter_var($params['all'] ?? false, FILTER_VALIDATE_BOOLEAN);
@@ -51,9 +51,36 @@ class ListingQueryApplier
         ];
     }
 
+    public static function applyListingFilters(Builder $query, array $params, array $config): array
+    {
+        $params = self::normalizeParams($params, $config);
+
+        self::applySearch($query, $params, $config);
+        self::applyColumnFilters($query, $params, $config);
+        self::applyDateRange($query, $params, $config);
+
+        return $params;
+    }
+
     public static function config(string $key): array
     {
         return config("listing.{$key}", []);
+    }
+
+    public static function applyColumnProjection(Builder $query, array $config): void
+    {
+        $exclude = $config['exclude_columns'] ?? [];
+        if ($exclude === []) {
+            return;
+        }
+
+        $table = $query->getModel()->getTable();
+        $columns = array_values(array_diff(Schema::getColumnListing($table), $exclude));
+        if ($columns === []) {
+            return;
+        }
+
+        $query->select(array_map(static fn (string $column) => $table.'.'.$column, $columns));
     }
 
     private static function normalizeParams(array $params, array $config): array
@@ -103,18 +130,20 @@ class ListingQueryApplier
 
         $columns = $config['search_columns'] ?? [];
         $relations = $config['search_relations'] ?? [];
-        $escaped = '%'.addcslashes(strtolower($term), '%_\\').'%';
+        $escaped = '%'.addcslashes($term, '%_\\').'%';
+        $table = $query->getModel()->getTable();
 
-        $query->where(function (Builder $outer) use ($columns, $relations, $escaped) {
+        $query->where(function (Builder $outer) use ($columns, $relations, $escaped, $table) {
             foreach ($columns as $column) {
-                $outer->orWhereRaw('LOWER('.$column.') LIKE ?', [$escaped]);
+                $qualified = str_contains($column, '.') ? $column : $table.'.'.$column;
+                $outer->orWhere($qualified, 'ilike', $escaped);
             }
 
             foreach ($relations as $relation => $relationColumns) {
                 $outer->orWhereHas($relation, function (Builder $relationQuery) use ($relationColumns, $escaped) {
                     $relationQuery->where(function (Builder $inner) use ($relationColumns, $escaped) {
                         foreach ($relationColumns as $column) {
-                            $inner->orWhereRaw('LOWER('.$column.') LIKE ?', [$escaped]);
+                            $inner->orWhere($column, 'ilike', $escaped);
                         }
                     });
                 });
@@ -139,22 +168,38 @@ class ListingQueryApplier
             match ($type) {
                 'exact' => $query->where($key, $value),
                 'exact_int' => $query->where($key, (int) $value),
-                'min_int' => $query->where($key, '>=', (int) $value),
-                'max_int' => $query->where($key, '<=', (int) $value),
+                'min_int' => $query->where(str_ends_with($key, '_min') ? substr($key, 0, -4) : $key, '>=', (int) $value),
+                'max_int' => $query->where(str_ends_with($key, '_max') ? substr($key, 0, -4) : $key, '<=', (int) $value),
+                'min_decimal' => $query->where(str_ends_with($key, '_min') ? substr($key, 0, -4) : $key, '>=', (float) $value),
+                'max_decimal' => $query->where(str_ends_with($key, '_max') ? substr($key, 0, -4) : $key, '<=', (float) $value),
+                'purchase_date_exact' => $query->whereDate('purchase_date', $value),
+                'expiry_date_exact' => $query->whereDate('expiry_date', $value),
                 'team_size_min' => $query->where('team_size', '>=', (int) $value),
                 'team_size_max' => $query->where('team_size', '<=', (int) $value),
                 'rating_min' => $query->where('rating', '>=', (int) $value),
                 'rating_max' => $query->where('rating', '<=', (int) $value),
                 'boolean' => $query->where($key, filter_var($value, FILTER_VALIDATE_BOOLEAN)),
+                'ilike' => $query->where($key, 'ilike', '%'.addcslashes((string) $value, '%_\\').'%'),
                 'performed_by_ilike' => $query->where('performed_by', 'ilike', '%'.$value.'%'),
                 'date_exact' => $query->whereDate($config['date_column'] ?? 'created_at', $value),
-                'city_name' => $query->whereHas('city', fn (Builder $q) => $q->where('city_name', 'ilike', $value)),
-                'state_name' => $query->whereHas('state', fn (Builder $q) => $q->where('state_name', 'ilike', $value)),
+                'city_name' => $query->whereHas('city', fn (Builder $q) => $q->where('city_name', 'ilike', '%'.addcslashes((string) $value, '%_\\').'%')),
+                'state_name' => $query->whereHas('state', fn (Builder $q) => $q->where('state_name', 'ilike', '%'.addcslashes((string) $value, '%_\\').'%')),
+                'source_name' => $query->whereHas('sourceLead', fn (Builder $q) => $q->where('source_name', 'ilike', '%'.addcslashes((string) $value, '%_\\').'%')),
+                'executive_name' => $query->whereHas('activeAssignment.employee', fn (Builder $q) => $q->where('name', 'ilike', '%'.addcslashes((string) $value, '%_\\').'%')),
+                'employee_name' => $query->whereHas('employee', fn (Builder $q) => $q->where('name', 'ilike', '%'.addcslashes((string) $value, '%_\\').'%')),
+                'employee_name_exact' => $query->whereHas('employee', fn (Builder $q) => $q->where('name', $value)),
+                'manager_name_exact' => $query->whereHas('manager', fn (Builder $q) => $q->where('name', $value)),
                 'segment' => self::applySegment($query, (string) $value),
+                'lead_tag' => self::applyLeadTag($query, (string) $value),
                 'followup_due' => self::applyFollowupDue($query, (string) $value, $config),
                 default => null,
             };
         }
+    }
+
+    private static function applyLeadTag(Builder $query, string $tag): void
+    {
+        $query->whereJsonContains('lead_tags', $tag);
     }
 
     private static function applySegment(Builder $query, string $segment): void
@@ -164,7 +209,11 @@ class ListingQueryApplier
             'hot' => $query->where('status', 'Hot'),
             'cold' => $query->where('status', 'Cold'),
             'pipeline' => $query->whereIn('status', ['Pipeline', 'Demo Scheduled', 'Negotiation', 'Details Shared']),
+            'negotiation' => $query->whereIn('status', ['Negotiation', 'Hot']),
             'lost' => $query->whereIn('status', ['Lost', 'Inactive']),
+            'mobile_missing' => $query->where(function (Builder $inner) {
+                $inner->whereNull('mobile_no')->orWhere('mobile_no', '');
+            }),
             default => null,
         };
     }
@@ -179,6 +228,8 @@ class ListingQueryApplier
                 ->whereIn('status', $openStatuses),
             'overdue' => $query->whereDate($column, '<', now()->toDateString())
                 ->whereIn('status', $openStatuses),
+            'pending' => $query->whereIn('status', $openStatuses),
+            'completed' => $query->whereIn('status', ['Completed', 'Closed']),
             default => null,
         };
     }

@@ -9,6 +9,7 @@ use App\Models\DndManagement;
 use App\Models\Employee;
 use App\Models\FollowUp;
 use App\Models\LeadAssignmentEngine;
+use App\Models\SalesListEntry;
 use App\Services\Listing\ListingExportService;
 use App\Support\Listing\ListingQueryApplier;
 use Illuminate\Http\Request;
@@ -71,7 +72,7 @@ class ListingExportController extends Controller
                     'followup_type' => 'Type',
                     'status' => 'Status',
                     'scheduled_date' => 'Scheduled',
-                    'employee.name' => 'Executive',
+                    'employee.name' => 'Employee',
                 ],
             ],
             'lead_assignments' => [
@@ -80,7 +81,7 @@ class ListingExportController extends Controller
                 [
                     'assignment_id' => 'Assignment ID',
                     'caMaster.firm_name' => 'Firm',
-                    'employee.name' => 'Executive',
+                    'employee.name' => 'Employee',
                     'assignment_type' => 'Type',
                     'status' => 'Status',
                 ],
@@ -104,6 +105,31 @@ class ListingExportController extends Controller
                     'caMaster.firm_name' => 'Firm',
                     'dnd_type' => 'Channel',
                     'dnd_status' => 'Status',
+                ],
+            ],
+            'sales_list' => [
+                SalesListEntry::query()->with(['employee', 'manager']),
+                ListingQueryApplier::config('sales_list'),
+                [
+                    'serial_number' => 'S.No',
+                    'sale_month' => 'Month',
+                    'points' => 'Point',
+                    'customer_name' => 'Customer Name',
+                    'firm_name' => 'Firm Name',
+                    'reference_name' => 'Reference',
+                    'mobile_no' => 'Mobile Number',
+                    'city_name' => 'City',
+                    'plan_purchased' => 'Plan Purchased',
+                    'purchase_date' => 'Purchase Date',
+                    'cooling_period_days' => 'Cooling Period',
+                    'expiry_date' => 'Expiry Date',
+                    'total_amount' => 'Total Amount',
+                    'amount_received' => 'Amount Received',
+                    'balance_amount' => 'Balance Amount',
+                    'invoice_number' => 'Invoice Number',
+                    'payment_status' => 'Payment Status',
+                    'employee.name' => 'Sales Executive',
+                    'manager.name' => 'Assigned Manager',
                 ],
             ],
             default => abort(404, 'Unknown listing export key'),

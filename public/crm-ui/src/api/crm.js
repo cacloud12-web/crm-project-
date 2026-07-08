@@ -16,27 +16,82 @@ window.CA_CRM = (function () {
     if (typeof lucide !== 'undefined') lucide.createIcons();
   }
 
+  function iconsIn(root) {
+    if (window.CAActionDropdown && typeof window.CAActionDropdown.iconsIn === 'function') {
+      window.CAActionDropdown.iconsIn(root || document);
+      return;
+    }
+    icons();
+  }
+
   function toast(msg, type) {
     if (typeof showToast === 'function') showToast(msg, type || 'info');
   }
 
+  function iconBtn(icon, label, attrs, variant) {
+    if (window.CA_ICON_BTN && typeof window.CA_ICON_BTN.icon === 'function') {
+      return window.CA_ICON_BTN.icon(icon, label, attrs, variant);
+    }
+    var title = String(label || '').replace(/"/g, '&quot;');
+    var cls = 'crm-toolbar-icon-btn';
+    if (variant === 'primary') cls += ' crm-toolbar-icon-btn--primary';
+    if (variant === 'danger') cls += ' crm-toolbar-icon-btn--danger';
+    attrs = String(attrs || '').trim();
+    return '<button type="button" class="' + cls + '"' + (attrs ? ' ' + attrs : '') +
+      ' data-crm-tip="' + title + '" aria-label="' + title + '">' +
+      '<i data-lucide="' + (icon || 'circle') + '" class="h-4 w-4"></i></button>';
+  }
+
   function openModal(el) {
-    if (typeof window.openModal === 'function') window.openModal(el);
-    else if (el) {
+    if (typeof window.openModal === 'function' && window.openModal !== openModal) {
+      window.openModal(el);
+      return;
+    }
+    if (el) {
       el.classList.add('open');
       document.getElementById('overlay')?.classList.add('active');
-      document.body.style.overflow = 'hidden';
+      if (typeof window.setCrmScrollLock === 'function') window.setCrmScrollLock(true);
+      else document.body.style.overflow = 'hidden';
     }
   }
 
   function closeModal(el) {
+    if (window.CrmDateTimePicker && typeof window.CrmDateTimePicker.close === 'function') {
+      window.CrmDateTimePicker.close({ focus: false });
+    }
     if (el) el.classList.remove('open');
     document.getElementById('overlay')?.classList.remove('active');
-    document.body.style.overflow = '';
+    if (typeof window.setCrmScrollLock === 'function') window.setCrmScrollLock(false);
+    else document.body.style.overflow = '';
   }
 
   function closeAllCrmModals() {
     document.querySelectorAll('.ca-modal.open').forEach(function (m) { m.classList.remove('open'); });
+  }
+
+  function openExclusiveCrmModal(el) {
+    if (!el) return;
+    document.querySelectorAll('.ca-modal.open').forEach(function (m) {
+      if (m !== el) m.classList.remove('open');
+    });
+    openModal(el);
+    if (window.CrmDateTimePicker) {
+      requestAnimationFrame(function () {
+        window.CrmDateTimePicker.initAll(el, { force: true });
+      });
+    }
+  }
+
+  function isLeadModalOpen() {
+    return document.getElementById('modal-add-lead')?.classList.contains('open') === true;
+  }
+
+  function isCampaignModalOpen() {
+    return document.getElementById('modal-add-campaign')?.classList.contains('open') === true;
+  }
+
+  function campaignNameFromForm(data) {
+    return String((data && (data.campaign_name || data.name)) || '').trim();
   }
 
   function stars(n) {
@@ -45,19 +100,59 @@ window.CA_CRM = (function () {
   }
 
   function statusBadge(s) {
-    var map = { Hot: 'bg-amber-50 text-amber-700', 'Demo Scheduled': 'badge-brand', Active: 'badge-success', Inactive: 'bg-slate-100 text-slate-600', Lost: 'badge-danger', New: 'badge-brand', Pipeline: 'badge-brand', Warm: 'bg-blue-50 text-blue-700' };
-    return '<span class="badge ' + (map[s] || 'badge-brand') + '">' + s;
+    var label = s || '—';
+    var map = {
+      Hot: 'bg-amber-50 text-amber-700',
+      Interested: 'bg-amber-50 text-amber-700',
+      Thinking: 'bg-amber-50 text-amber-700',
+      Purchasing: 'bg-amber-50 text-amber-700',
+      'Demo Scheduled': 'badge-brand',
+      'Demo Completed': 'badge-brand',
+      'Follow Up Scheduled': 'bg-blue-50 text-blue-700',
+      'Follow Up Reminder': 'bg-blue-50 text-blue-700',
+      Active: 'badge-success',
+      Purchased: 'badge-success',
+      Inactive: 'bg-slate-100 text-slate-600',
+      Lost: 'badge-danger',
+      'Not Interested': 'badge-danger',
+      New: 'badge-brand',
+      Pipeline: 'badge-brand',
+      Negotiation: 'badge-brand',
+      'Details Shared': 'badge-brand',
+      Warm: 'bg-blue-50 text-blue-700',
+      'Next Week': 'bg-violet-50 text-violet-700',
+      'Next Month': 'bg-violet-50 text-violet-700',
+      Hold: 'bg-violet-50 text-violet-700',
+      Cold: 'bg-slate-100 text-slate-600',
+    };
+    return '<span class="badge ' + (map[label] || 'badge-brand') + '">' + escapeHtml(label) + '</span>';
   }
   var realLeadsLoaded = false;
+  var kanbanLeadsLoaded = false;
+  var _kanbanLoadGeneration = 0;
+  window.kanbanLeads = [];
+  window._listingLeadsPage = [];
   var realEmployeesLoaded = false;
   var realAssignmentsLoaded = false;
   var realFollowUpsLoaded = false;
   var masterDataLoaded = false;
   var dashboardMetricsLoaded = false;
   var dashboardMetricsPromise = null;
+  var dashboardMetricsRequestSeq = 0;
+  var _leadsLoadGeneration = 0;
+  var _assignmentsLoadGeneration = 0;
+  var _listingLoadGeneration = 0;
+  var leadsHubLoading = false;
+  var DASHBOARD_CACHE_TTL_MS = 120000;
+  var LISTING_PAGE_CACHE_TTL_MS = 30000;
+  var LISTING_PAGE_CACHE_KEYS = ['ca_masters', 'follow_ups', 'sales_list', 'lead_assignments', 'employees'];
   var employeeDashboardLoaded = false;
   var employeeDashboardPromise = null;
   var employeeDashboardData = null;
+  var leadSegmentCounts = null;
+  var leadSegmentCountsLoaded = false;
+  var leadSegmentCountsPromise = null;
+  window.kanbanStageCounts = {};
   var activityLogsCache = [];
   var activityFilterOptions = { modules: [], actions: [], users: [] };
   var activityFilters = { module_name: '', action: '', date: '', user: '' };
@@ -103,7 +198,7 @@ window.CA_CRM = (function () {
 
   var RBAC_MODULE_LABELS = {
     dashboard: 'Dashboard',
-    ca_master: 'CA Master',
+    ca_master: 'Master Data',
     leads: 'Lead Management',
     employees: 'Employees',
     assignment: 'Assignment',
@@ -117,6 +212,15 @@ window.CA_CRM = (function () {
     admin: 'Administration',
     security: 'Security',
     settings: 'Settings',
+    sales_list: 'Sales List',
+    email_configuration: 'Email Configuration',
+    google_api: 'Google API Settings',
+    whatsapp_templates: 'WhatsApp Templates',
+    email_templates: 'Email Templates',
+    sources: 'Sources',
+    team_size: 'Team Size',
+    lead_status: 'Lead Status',
+    roles_permissions: 'Roles & Permissions',
   };
 
   var ACTIVITY_ACTION_META = {
@@ -187,10 +291,79 @@ window.CA_CRM = (function () {
     return CA_LISTING_SEARCH.buildQueryString(key, extra || {});
   }
 
-  function applyListingPagination(key, tableId, body) {
+  function listingPaginationSlot(key) {
+    var slots = {
+      employees: 'employees-pagination-slot',
+      follow_ups: 'followups-pagination-slot',
+      activity_logs: 'activity-pagination-slot',
+      consent_trackings: 'consent-pagination-slot',
+      dnd_management: 'dnd-pagination-slot',
+      bulk_operations: 'bulk-operations-pagination-slot',
+      states: 'master-states-pagination-slot',
+      cities: 'master-cities-pagination-slot',
+      source_leads: 'master-sources-pagination-slot',
+      team_sizes: 'master-team-sizes-pagination-slot',
+      role_masters: 'master-roles-pagination-slot',
+      wa_message_logs: 'wa-logs-pagination-slot',
+      email_logs: 'email-logs-pagination-slot',
+      sms_logs: 'sms-logs-pagination-slot',
+    };
+    var id = slots[key];
+    return id && document.getElementById(id) ? id : null;
+  }
+
+  function applyListingPagination(key, tableId, body, slotId) {
     if (!window.CA_LISTING_SEARCH || !body) return;
     var parsed = CA_LISTING_SEARCH.unwrapListingBody(body);
-    if (parsed.pagination) CA_LISTING_SEARCH.renderPaginationBar(key, tableId, parsed.pagination);
+    if (parsed.pagination && parsed.pagination.per_page) {
+      CA_LISTING_SEARCH.setState(key, { per_page: parsed.pagination.per_page });
+    }
+    if (parsed.pagination) {
+      CA_LISTING_SEARCH.renderPaginationBar(key, tableId, parsed.pagination, slotId || listingPaginationSlot(key));
+    }
+  }
+
+  function getCaMasterTableContext() {
+    return {
+      tbodyId: 'ca-master-data-table',
+      tableId: 'ca-master-table',
+      paginationSlot: 'ca-master-pagination-slot',
+    };
+  }
+
+  function isMasterDataHub() {
+    return !!document.getElementById('cam-hub');
+  }
+
+  function isCamPipelineTabActive() {
+    var primary = document.getElementById('cam-primary-views');
+    if (primary && primary.classList.contains('hidden')) return false;
+    var panel = document.querySelector('.ca-tab-panel[data-tab-group="cam-view"][data-panel="pipeline"]');
+    return !!(panel && panel.classList.contains('active'));
+  }
+
+  function isCamAllFirmsTabActive() {
+    var primary = document.getElementById('cam-primary-views');
+    if (primary && primary.classList.contains('hidden')) return false;
+    var panel = document.querySelector('.ca-tab-panel[data-tab-group="cam-view"][data-panel="all"]');
+    return !!(panel && panel.classList.contains('active'));
+  }
+
+  function formatApiErrorMessage(error, fallback) {
+    if (!error) return fallback || 'Request failed';
+    if (error.errors && typeof error.errors === 'object') {
+      var messages = [];
+      Object.keys(error.errors).forEach(function (key) {
+        var items = error.errors[key];
+        if (Array.isArray(items)) {
+          items.forEach(function (item) {
+            if (item) messages.push(String(item));
+          });
+        }
+      });
+      if (messages.length) return messages.join(' ');
+    }
+    return error.message || fallback || 'Request failed';
   }
 
   function apiFetch(url, options) {
@@ -200,7 +373,18 @@ window.CA_CRM = (function () {
       'Accept': 'application/json',
       'X-Requested-With': 'XMLHttpRequest',
     }, options.headers || {});
+    var timeoutMs = options.timeoutMs;
+    var controller = null;
+    var timeoutId = null;
+    if (timeoutMs && typeof AbortController !== 'undefined') {
+      controller = new AbortController();
+      options.signal = controller.signal;
+      timeoutId = setTimeout(function () {
+        controller.abort();
+      }, timeoutMs);
+    }
     return fetch(url, options).then(function (response) {
+      if (timeoutId) clearTimeout(timeoutId);
       if (response.status === 401) {
         window.location.href = '/login';
         throw new Error('Session expired. Please sign in again.');
@@ -221,29 +405,63 @@ window.CA_CRM = (function () {
           } else if (response.status === 422 && body.errors) {
             var firstKey = Object.keys(body.errors)[0];
             if (firstKey && body.errors[firstKey][0]) message = body.errors[firstKey][0];
+          } else if (response.status === 423) {
+            message = body.message || 'This lead is currently being edited by another employee.';
+          } else if (response.status === 409 && body.errors && body.errors.duplicate) {
+            message = body.message || 'This phone number already exists.';
           } else if (response.status === 500) {
             message = body.message || 'A server error occurred. Please try again or contact support.';
           }
           var err = new Error(message);
           err.status = response.status;
           err.errors = body.errors || null;
+          if (response.status === 423 && body.errors && body.errors.lock) {
+            err.lock = body.errors.lock;
+          }
+          if (response.status === 409 && body.errors && body.errors.duplicate) {
+            err.duplicate = body.errors.duplicate;
+          }
           throw err;
         }
         return body;
       });
+    }).catch(function (error) {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (error && error.name === 'AbortError') {
+        throw new Error('Request timed out. Please try again.');
+      }
+      if (error && error.message === 'Failed to fetch') {
+        throw new Error('Unable to reach the server. Please refresh the page and try again.');
+      }
+      throw error;
     });
   }
 
   function mapStatusToStage(status) {
     var map = {
       New: 'New Lead',
+      Cold: 'New Lead',
       Hot: 'Negotiation',
+      Negotiation: 'Negotiation',
+      Interested: 'Negotiation',
+      Thinking: 'Negotiation',
+      Purchasing: 'Negotiation',
       'Demo Scheduled': 'Demo Scheduled',
+      'Demo Completed': 'Demo Completed',
+      'Details Shared': 'Details Shared',
       Pipeline: 'Details Shared',
-      Warm: 'Details Shared',
+      Warm: 'Demo Completed',
       Lost: 'Lost',
       Inactive: 'Lost',
+      'Not Interested': 'Lost',
       Active: 'Won',
+      Purchased: 'Won',
+      Purchasing: 'Won',
+      'Next Week': 'Demo Completed',
+      'Next Month': 'Demo Completed',
+      Hold: 'Demo Completed',
+      'Follow Up Scheduled': 'Details Shared',
+      'Follow Up Reminder': 'Details Shared',
     };
     return map[status] || 'New Lead';
   }
@@ -253,7 +471,7 @@ window.CA_CRM = (function () {
       'New Lead': 'New',
       'Details Shared': 'Pipeline',
       'Demo Scheduled': 'Demo Scheduled',
-      'Demo Completed': 'Warm',
+      'Demo Completed': 'Demo Completed',
       'Negotiation': 'Hot',
       'Won': 'Active',
       'Lost': 'Lost',
@@ -299,6 +517,42 @@ window.CA_CRM = (function () {
       .replace(/"/g, '&quot;');
   }
 
+  function previewTextCell(text, cellClass) {
+    var raw = text == null || text === '' ? '' : String(text).trim();
+    if (!raw) {
+      return '<span class="cam-cell-text cam-cell-empty">—</span>';
+    }
+    var escaped = escapeHtml(raw);
+    return '<span class="truncate-cell ' + (cellClass || '') + '" title="' + escaped + '">' + escaped + '</span>';
+  }
+
+  function firmNameCell(text) {
+    return previewTextCell(text, 'crm-firm-cell');
+  }
+
+  function caNameCell(text) {
+    return previewTextCell(text, 'crm-ca-cell');
+  }
+
+  function compactTextCell(text, opts) {
+    opts = opts || {};
+    var raw = text == null || text === '' ? '' : String(text);
+    if (!raw) {
+      return '<span class="cam-cell-text cam-cell-empty">' + escapeHtml(opts.fallback || '—') + '</span>';
+    }
+    var escaped = escapeHtml(raw);
+    return '<span class="cam-cell-text" title="' + escaped + '">' + escaped + '</span>';
+  }
+
+  function camPhoneCell(raw) {
+    var display = formatPhoneDisplay(raw);
+    if (!display) {
+      return '<span class="cam-cell-text cam-cell-empty">—</span>';
+    }
+    var escaped = escapeHtml(display);
+    return '<a href="tel:' + escaped + '" class="cam-cell-text cam-cell-mono text-brand hover:underline" title="' + escaped + '" onclick="event.stopPropagation();">' + escaped + '</a>';
+  }
+
   function formatPhoneDisplay(raw) {
     if (!raw || raw === '—') return '';
     var digits = String(raw).replace(/\D/g, '');
@@ -333,92 +587,1554 @@ window.CA_CRM = (function () {
   function buildLeadGoogleSearchQuery(lead) {
     var parts = [];
     var firm = leadFieldText(lead.firm_name);
-    var city = leadFieldText(lead.city);
+    var ca = leadFieldText(lead.ca_name);
+    var city = leadFieldText(lead.city || lead.city_name);
+    var state = leadFieldText(lead.state || lead.state_name);
     if (firm) parts.push(firm);
+    if (ca) parts.push(ca);
     if (city) parts.push(city);
-    parts.push('CA');
-    return parts.join(' ');
+    if (state) parts.push(state);
+    parts.push('Chartered Accountant');
+    return parts.join(' ').trim();
   }
 
   function buildLeadGoogleMapsQuery(lead) {
-    var parts = [];
-    var firm = leadFieldText(lead.firm_name);
-    var city = leadFieldText(lead.city);
-    if (firm) parts.push(firm);
-    if (city) parts.push(city);
-    return parts.join(' ');
+    return buildLeadGoogleSearchQuery(lead);
   }
 
-  function googleChromeIconSvg() {
+  function researchLeadIconSvg() {
     return '<svg class="lead-quick-icon" viewBox="0 0 48 48" aria-hidden="true" focusable="false">' +
-      '<circle cx="24" cy="24" r="22" fill="#fff"/>' +
-      '<path fill="#EA4335" d="M24 4a20 20 0 0 1 17.32 10H24V4z"/>' +
-      '<path fill="#34A853" d="M41.32 14A20 20 0 0 1 24 44V24H41.32z"/>' +
-      '<path fill="#FBBC05" d="M24 44A20 20 0 0 1 6.68 34H24V44z"/>' +
-      '<path fill="#4285F4" d="M6.68 34A20 20 0 0 1 24 4v20H6.68z"/>' +
-      '<circle cx="24" cy="24" r="8.5" fill="#fff"/>' +
-      '<circle cx="24" cy="24" r="6.5" fill="#4285F4"/>' +
+      '<circle cx="20" cy="20" r="11" fill="none" stroke="#25B7A7" stroke-width="3.5"/>' +
+      '<path d="M28.5 28.5L38 38" stroke="#25B7A7" stroke-width="3.5" stroke-linecap="round"/>' +
+      '<path fill="#EA4335" d="M20 12c-4.4 0-8 3.6-8 8 0 6 8 14 8 14s8-8 8-14c0-4.4-3.6-8-8-8z"/>' +
+      '<circle cx="20" cy="20" r="3" fill="#fff"/>' +
     '</svg>';
   }
 
-  function googleMapsIconSvg() {
-    return '<svg class="lead-quick-icon" viewBox="0 0 48 48" aria-hidden="true" focusable="false">' +
-      '<path fill="#EA4335" d="M24 4c-7.18 0-13 5.82-13 13 0 9.75 13 27 13 27s13-17.25 13-27c0-7.18-5.82-13-13-13z"/>' +
-      '<circle cx="24" cy="17" r="5.5" fill="#fff"/>' +
-      '<path fill="#34A853" d="M8 38l6-10 4 6 6-9 6 9 4-6 6 10H8z" opacity="0.9"/>' +
-      '<path fill="#FBBC05" d="M14 28l4 6 6-9 2 3V38H14z" opacity="0.55"/>' +
-      '<path fill="#4285F4" d="M28 25l6 9h8L34 30l-6-5z" opacity="0.55"/>' +
-    '</svg>';
+  function canUseLeadQuickActions(lead) {
+    if (!lead) return false;
+    if (!isEmployeeUser()) return true;
+    var u = window.__CRM_USER__ || {};
+    var empId = u.employee_id ? String(u.employee_id) : '';
+    if (empId && lead.executive_id && String(lead.executive_id) === empId) return true;
+    var executive = lead.executive || '';
+    return !!(executive && executive !== 'Unassigned' && executive !== '—' && executive !== 'Assigned');
   }
 
-  function getLeadQuickActionDefs() {
-    return [
-      { action: 'google', label: 'Search on Google', iconHtml: googleChromeIconSvg() },
-      { action: 'maps', label: 'Open in Google Maps', iconHtml: googleMapsIconSvg() },
-    ];
+  function renderLeadResearchQuickCell(lead) {
+    if (!canUseLeadQuickActions(lead)) {
+      return '<td class="lead-quick-cell lead-quick-cell--research"><span class="cam-cell-empty">—</span></td>';
+    }
+    return '<td class="lead-quick-cell lead-quick-cell--research">' +
+      '<button type="button" class="lead-quick-btn lead-quick-btn--research" data-lead-quick="research" data-lead-id="' +
+      escapeHtml(lead.ca_id) + '" title="Google Lookup" aria-label="Google Lookup">' +
+      researchLeadIconSvg() + '</button></td>';
   }
 
-  function renderLeadQuickActionButton(leadId, def) {
-    return '<button type="button" class="lead-quick-btn lead-quick-btn--' + def.action + '" data-lead-quick="' + def.action + '" data-lead-id="' + escapeHtml(leadId) + '" title="' + escapeHtml(def.label) + '" aria-label="' + escapeHtml(def.label) + '">' +
-      def.iconHtml + '</button>';
+  function canUseLeadCallLog(lead) {
+    var employeeOk = !isEmployeeUser() || (lead && canUseLeadQuickActions(lead));
+    if (!employeeOk) return false;
+    return crmCanAction('leads', 'view')
+      || crmCanAction('followups', 'schedule_followup')
+      || crmCanAction('followups', 'create');
   }
 
-  function renderLeadQuickActionsCell(lead) {
-    var defs = getLeadQuickActionDefs();
-    return '<td class="lead-quick-actions-cell">' +
-      '<div class="lead-quick-actions--bar">' +
-      defs.map(function (d) { return renderLeadQuickActionButton(lead.ca_id, d); }).join('') +
-      '</div></td>';
+  function renderLeadCallLogQuickCell(lead) {
+    if (!canUseLeadCallLog(lead)) {
+      return '<td class="lead-quick-cell lead-quick-cell--call-log"><span class="cam-cell-empty">—</span></td>';
+    }
+    return '<td class="lead-quick-cell lead-quick-cell--call-log">' +
+      '<button type="button" class="lead-quick-btn lead-quick-btn--call-log" data-lead-quick="call-log" data-lead-id="' +
+      escapeHtml(lead.ca_id) + '" title="Call Log" aria-label="Call Log" data-crm-tip="Call Log">' +
+      '<i data-lucide="phone-call" class="lead-quick-icon h-4 w-4" aria-hidden="true"></i></button></td>';
   }
 
-  function handleLeadQuickAction(action, leadId) {
+  /* ─── Inbox-style row selection (checkbox column) ─── */
+  window._crmInboxSelected = window._crmInboxSelected || {};
+
+  function inboxSelectedMap(tableKey) {
+    if (!window._crmInboxSelected[tableKey]) window._crmInboxSelected[tableKey] = {};
+    return window._crmInboxSelected[tableKey];
+  }
+
+  function normalizeInboxId(rawId) {
+    if (rawId === null || rawId === undefined || rawId === '') return '';
+    var id = String(rawId).trim();
+    if (!/^\d+$/.test(id)) return '';
+    return id;
+  }
+
+  function getInboxSelectedIds(tableKey) {
+    var map = inboxSelectedMap(tableKey);
+    return Object.keys(map)
+      .map(normalizeInboxId)
+      .filter(function (id) { return id && map[id]; })
+      .filter(function (id, index, arr) { return arr.indexOf(id) === index; });
+  }
+
+  function getInboxSelectedLeadIds(tableKey) {
+    return getInboxSelectedIds(tableKey).map(function (id) { return parseInt(id, 10); }).filter(function (id) { return id > 0; });
+  }
+
+  function resolveLeadLabelsForIds(ids) {
+    var leads = (window.realLeads || []).concat(window.realCaMasters || []);
+    var byId = {};
+    leads.forEach(function (lead) {
+      if (lead && lead.ca_id != null) byId[String(lead.ca_id)] = lead;
+    });
+    return (ids || []).map(function (id) {
+      var lead = byId[String(id)];
+      if (!lead) return 'Lead #' + id;
+      return lead.firm_name || lead.ca_name || ('Lead #' + id);
+    });
+  }
+
+  function renderInboxCheckCell(tableKey, rowId) {
+    var id = normalizeInboxId(rowId);
+    if (!id) return '<td class="crm-td-check sticky-left"></td>';
+    var checked = !!inboxSelectedMap(tableKey)[id];
+    return '<td class="crm-td-check sticky-left">' +
+      '<input type="checkbox" class="crm-inbox-row-check" data-inbox-table="' + escapeHtml(tableKey) +
+      '" data-inbox-id="' + escapeHtml(id) + '"' + (checked ? ' checked' : '') +
+      ' aria-label="Select lead ' + escapeHtml(id) + '" />' +
+    '</td>';
+  }
+
+  function updateInboxBulkBar(tableKey) {
+    var ids = getInboxSelectedIds(tableKey);
+    var bar = document.getElementById(tableKey + '-bulk-bar');
+    var countEl = document.querySelector('[data-inbox-count="' + tableKey + '"]');
+    if (countEl) countEl.textContent = ids.length + ' selected';
+    if (bar) {
+      var wasHidden = bar.classList.contains('hidden');
+      bar.classList.toggle('hidden', ids.length === 0);
+      if (ids.length > 0 && wasHidden) icons();
+    }
+
+    var tbody = document.getElementById(tableKey);
+    var selectAll = document.querySelector('.crm-inbox-check-all[data-inbox-table="' + tableKey + '"]');
+    if (selectAll && tbody) {
+      var rowChecks = tbody.querySelectorAll('.crm-inbox-row-check');
+      var checkedCount = 0;
+      rowChecks.forEach(function (cb) { if (cb.checked) checkedCount++; });
+      selectAll.checked = rowChecks.length > 0 && checkedCount === rowChecks.length;
+      selectAll.indeterminate = checkedCount > 0 && checkedCount < rowChecks.length;
+    }
+  }
+
+  function clearInboxSelection(tableKey) {
+    window._crmInboxSelected[tableKey] = {};
+    document.querySelectorAll('.crm-inbox-row-check[data-inbox-table="' + tableKey + '"]').forEach(function (cb) {
+      cb.checked = false;
+    });
+    var selectAll = document.querySelector('.crm-inbox-check-all[data-inbox-table="' + tableKey + '"]');
+    if (selectAll) {
+      selectAll.checked = false;
+      selectAll.indeterminate = false;
+    }
+    updateInboxBulkBar(tableKey);
+  }
+
+  function ensureInboxSelectionBound() {
+    if (document._crmInboxSelectionBound) return;
+    document._crmInboxSelectionBound = true;
+
+    document.addEventListener('change', function (e) {
+      var rowCheck = e.target.closest('.crm-inbox-row-check');
+      if (rowCheck) {
+        var tableKey = rowCheck.getAttribute('data-inbox-table');
+        var id = normalizeInboxId(rowCheck.getAttribute('data-inbox-id'));
+        if (!tableKey || !id) return;
+        if (rowCheck.checked) inboxSelectedMap(tableKey)[id] = true;
+        else delete inboxSelectedMap(tableKey)[id];
+        updateInboxBulkBar(tableKey);
+        return;
+      }
+
+      var allCheck = e.target.closest('.crm-inbox-check-all');
+      if (allCheck) {
+        var key = allCheck.getAttribute('data-inbox-table');
+        var tbody = document.getElementById(key);
+        if (!key || !tbody) return;
+        var map = inboxSelectedMap(key);
+        // Select-all only affects currently visible page rows (by lead ID, never by index).
+        tbody.querySelectorAll('.crm-inbox-row-check').forEach(function (cb) {
+          var rid = normalizeInboxId(cb.getAttribute('data-inbox-id'));
+          if (!rid) return;
+          cb.checked = allCheck.checked;
+          if (allCheck.checked) map[rid] = true;
+          else delete map[rid];
+        });
+        updateInboxBulkBar(key);
+      }
+    });
+
+    document.addEventListener('click', function (e) {
+      var actionBtn = e.target.closest('[data-inbox-action]');
+      if (actionBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        var bar = actionBtn.closest('[data-inbox-table], #assignment-bulk-bar');
+        var tableKey = actionBtn.getAttribute('data-inbox-table')
+          || (bar && bar.getAttribute('data-inbox-table'))
+          || 'leads-data-table';
+        var module = actionBtn.getAttribute('data-inbox-module')
+          || (bar && bar.getAttribute('data-inbox-module'))
+          || 'leads';
+        handleInboxBulkAction(actionBtn.getAttribute('data-inbox-action'), tableKey, module);
+        return;
+      }
+      var clearBtn = e.target.closest('[data-inbox-clear]');
+      if (clearBtn) {
+        e.preventDefault();
+        clearInboxSelection(clearBtn.getAttribute('data-inbox-clear'));
+        return;
+      }
+      if (e.target.closest('#assignment-bulk-clear')) {
+        e.preventDefault();
+        clearAssignmentBulkSelection();
+      }
+    });
+  }
+
+  function syncInboxChecks(tableKey) {
+    ensureInboxSelectionBound();
+    updateInboxBulkBar(tableKey);
+    icons();
+  }
+
+  function ensureKpiCardsBound() {
+    if (document._crmKpiCardsBound) return;
+    document._crmKpiCardsBound = true;
+    document.addEventListener('click', function (e) {
+      var camCard = e.target.closest('[data-cam-summary]');
+      if (camCard) {
+        e.preventDefault();
+        applyCaMasterSummaryFilter(camCard.getAttribute('data-cam-summary'));
+        return;
+      }
+      var kpiCard = e.target.closest('[data-kpi-filter][data-kpi-listing="follow_ups"]');
+      if (kpiCard) {
+        e.preventDefault();
+        applyFollowupKpiFilter(kpiCard.getAttribute('data-kpi-filter'));
+      }
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      var kpiCard = e.target.closest('[data-kpi-filter][data-kpi-listing="follow_ups"]');
+      if (!kpiCard) return;
+      e.preventDefault();
+      applyFollowupKpiFilter(kpiCard.getAttribute('data-kpi-filter'));
+    });
+  }
+
+  function setFollowupCalendarPopoverOpen(open) {
+    var popover = document.getElementById('followup-cal-popover');
+    var toggleBtn = document.getElementById('followup-cal-toggle');
+    if (!popover) return;
+    popover.classList.toggle('hidden', !open);
+    if (toggleBtn) {
+      toggleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      toggleBtn.classList.toggle('is-active', !!open);
+    }
+    if (open) {
+      renderFollowupCalendarFromData();
+      icons();
+    }
+  }
+
+  function ensureFollowupCalendarPopoverBound() {
+    if (document._followupCalPopoverBound) return;
+    document._followupCalPopoverBound = true;
+
+    document.addEventListener('click', function (e) {
+      var popover = document.getElementById('followup-cal-popover');
+      if (!popover) return;
+
+      var toggle = e.target.closest('#followup-cal-toggle');
+      if (toggle) {
+        e.preventDefault();
+        e.stopPropagation();
+        setFollowupCalendarPopoverOpen(popover.classList.contains('hidden'));
+        return;
+      }
+
+      if (e.target.closest('#followup-cal-close')) {
+        e.preventDefault();
+        setFollowupCalendarPopoverOpen(false);
+        return;
+      }
+
+      if (!popover.classList.contains('hidden')
+        && !e.target.closest('#followup-cal-popover')
+        && !e.target.closest('#followup-cal-toggle')) {
+        setFollowupCalendarPopoverOpen(false);
+      }
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') setFollowupCalendarPopoverOpen(false);
+    });
+  }
+
+  function openInboxImport() {
+    if (isMasterDataHub()) {
+      showCamSecondaryView('bulk');
+      setTimeout(function () {
+        if (typeof window.openBulkImportWizard === 'function') window.openBulkImportWizard();
+      }, 120);
+      return;
+    }
+    if (typeof navigateTo === 'function') navigateTo('bulk');
+    setTimeout(function () {
+      if (typeof window.openBulkImportWizard === 'function') window.openBulkImportWizard();
+    }, 150);
+  }
+
+  function openInboxAssign(ids) {
+    var leadIds = (ids || []).map(function (id) { return parseInt(id, 10); }).filter(function (id) { return id > 0; });
+    if (!leadIds.length) {
+      toast('Select at least one lead', 'warning');
+      return;
+    }
+    window._inboxBulkLeadIds = leadIds.slice();
+    var leadId = leadIds[0];
+    CAData.setSelectedLeadId(leadId);
+    ensureFormSelectData(function () {
+      populateSelects();
+      var leadSelect = document.getElementById('form-assign-lead-select');
+      var leadWrap = document.getElementById('assign-lead-select-wrap');
+      var summary = document.getElementById('assign-bulk-summary');
+      var titleText = document.querySelector('#assign-lead-title [data-assign-title-text]');
+      setSelectValueIfValid(leadSelect, leadId);
+      if (leadIds.length > 1) {
+        if (leadWrap) leadWrap.classList.add('hidden');
+        if (leadSelect) leadSelect.removeAttribute('required');
+        if (summary) {
+          summary.classList.remove('hidden');
+          summary.textContent = 'Assigning ' + leadIds.length + ' selected leads to one employee.';
+        }
+        if (titleText) titleText.textContent = 'Assign ' + leadIds.length + ' Leads';
+      } else {
+        if (leadWrap) leadWrap.classList.remove('hidden');
+        if (leadSelect) leadSelect.setAttribute('required', 'required');
+        if (summary) {
+          summary.classList.add('hidden');
+          summary.textContent = '';
+        }
+        if (titleText) titleText.textContent = 'Assign Lead';
+      }
+      window._editingAssignmentId = null;
+      openModal(document.getElementById('modal-assign-lead'));
+      icons();
+    });
+  }
+
+  function openInboxFollowup(ids) {
+    var presetIds = (ids || []).map(function (id) { return parseInt(id, 10); }).filter(Boolean);
+    if (presetIds.length !== 1) {
+      toast('Select exactly one lead to schedule a follow-up.', 'warning');
+      return;
+    }
+    window._inboxBulkLeadIds = null;
+    CAData.setSelectedLeadId(presetIds[0]);
+    window._editingFollowUpId = null;
+    window._followupOriginalScheduled = '';
+    openFollowupModalWithLeads(presetIds);
+  }
+
+  function openInboxCampaign(channel, ids) {
+    window._pendingCampaignLeadIds = (ids || []).map(function (id) { return parseInt(id, 10); }).filter(Boolean);
+    var modal = document.getElementById('modal-add-campaign');
+    if (typeof configureCampaignModal === 'function') configureCampaignModal(channel);
+    if (modal) openExclusiveCrmModal(modal);
+    setTimeout(function () { applyPendingCampaignLeadSelection(channel); }, 200);
+    icons();
+  }
+
+  function exportInboxSelection(tableKey, module) {
+    if (module === 'assignment' && window.CA_LISTING_SEARCH) {
+      CA_LISTING_SEARCH.exportListing('lead_assignments');
+      return;
+    }
+    if (module === 'employees' && window.CA_LISTING_SEARCH) {
+      CA_LISTING_SEARCH.exportListing('employees');
+      return;
+    }
+    if (module === 'followups' && window.CA_LISTING_SEARCH) {
+      CA_LISTING_SEARCH.exportListing('follow_ups');
+      return;
+    }
+
+    var selectedIds = getInboxSelectedLeadIds(tableKey);
+    if (!selectedIds.length) {
+      toast('Select at least one lead to export', 'warning');
+      return;
+    }
+
+    toast('Exporting ' + selectedIds.length + ' selected lead(s)…', 'info');
+    apiFetch('/ca-masters/bulk-export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        scope: 'selected',
+        format: 'csv',
+        ca_ids: selectedIds,
+      }),
+    })
+      .then(function (body) {
+        var data = body.data || {};
+        var exportedCount = data.total_rows || selectedIds.length;
+        if (exportedCount !== selectedIds.length) {
+          toast('Exported ' + exportedCount + ' of ' + selectedIds.length + ' selected leads', 'warning');
+        }
+        if (data.download_ready && data.bulk_action_id) {
+          window.location.href = '/ca-masters/bulk-export/history/' + encodeURIComponent(data.bulk_action_id) + '/download';
+          toast('Export ready for ' + exportedCount + ' selected lead(s)', 'success');
+          return;
+        }
+        if (data.bulk_action_id) {
+          toast('Export queued for ' + exportedCount + ' selected lead(s). Check Bulk Operations for download.', 'success');
+          return;
+        }
+        toast('Export started for ' + exportedCount + ' selected lead(s)', 'success');
+      })
+      .catch(function (err) {
+        toast(err.message || 'Unable to export selected leads', 'error');
+      });
+  }
+
+  function bulkDeleteFollowups(followupIds, tableKey) {
+    var ids = (followupIds || []).map(function (id) { return parseInt(id, 10); }).filter(function (id) { return id > 0; });
+    if (!ids.length) {
+      toast('Select at least one follow-up', 'warning');
+      return;
+    }
+
+    Promise.all(ids.map(function (id) {
+      return apiFetch('/follow-ups/' + encodeURIComponent(id), { method: 'DELETE' })
+        .then(function () { return { id: id, ok: true }; })
+        .catch(function (err) { return { id: id, ok: false, error: err }; });
+    })).then(function (results) {
+      var deleted = results.filter(function (r) { return r.ok; });
+      var failed = results.filter(function (r) { return !r.ok; });
+      deleted.forEach(function (r) {
+        removeFollowupFromCache(r.id);
+        removeFollowupTableRow(r.id);
+      });
+      clearInboxSelection(tableKey || 'followups-data-table');
+      invalidateDataCaches(['metrics', 'followups']);
+      refreshFollowupsPage({ reload: failed.length > 0, calendar: true });
+      if (failed.length) {
+        var firstError = failed[0] && failed[0].error;
+        var detail = firstError && firstError.message ? ' ' + firstError.message : '';
+        toast('Deleted ' + deleted.length + ' of ' + ids.length + ' selected follow-ups.' + detail, 'warning');
+      } else {
+        toast(deleted.length + ' follow-up(s) deleted', 'success');
+      }
+    });
+  }
+
+  function openBulkDeleteLeadsModal(tableKey, ids) {
+    var leadIds = (ids || []).map(function (id) { return parseInt(id, 10); }).filter(function (id) { return id > 0; });
+    if (!leadIds.length) {
+      toast('Select at least one lead', 'warning');
+      return;
+    }
+    window._pendingBulkDelete = { tableKey: tableKey, ids: leadIds };
+    var modal = document.getElementById('modal-bulk-delete-leads');
+    var message = document.getElementById('bulk-delete-leads-message');
+    var namesEl = document.getElementById('bulk-delete-leads-names');
+    var names = resolveLeadLabelsForIds(leadIds);
+    if (message) {
+      message.textContent = 'Are you sure you want to delete ' + leadIds.length + ' selected lead' + (leadIds.length === 1 ? '' : 's') + '?';
+    }
+    if (namesEl) {
+      namesEl.innerHTML = names.slice(0, 20).map(function (name) {
+        return '<li>' + escapeHtml(name) + '</li>';
+      }).join('') + (names.length > 20 ? '<li>…and ' + (names.length - 20) + ' more</li>' : '');
+    }
+    openModal(modal);
+    icons();
+  }
+
+  function confirmBulkDeleteLeads() {
+    var pending = window._pendingBulkDelete;
+    if (!pending || !pending.ids || !pending.ids.length) {
+      toast('No leads selected', 'warning');
+      return;
+    }
+    var selectedIds = pending.ids.slice();
+    var tableKey = pending.tableKey || 'leads-data-table';
+    var confirmBtn = document.getElementById('bulk-delete-leads-confirm');
+    if (confirmBtn) confirmBtn.disabled = true;
+
+    apiFetch('/ca-masters/bulk-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ca_ids: selectedIds }),
+    })
+      .then(function (body) {
+        var data = body.data || {};
+        var deletedIds = (data.deleted_ids || []).map(function (id) { return parseInt(id, 10); });
+        var deletedCount = data.deleted_count || deletedIds.length;
+        if (deletedCount !== selectedIds.length) {
+          toast('Deleted ' + deletedCount + ' of ' + selectedIds.length + ' selected leads', 'warning');
+        } else {
+          toast(deletedCount + ' selected lead(s) deleted', 'success');
+        }
+        closeModal(document.getElementById('modal-bulk-delete-leads'));
+        window._pendingBulkDelete = null;
+        clearInboxSelection(tableKey);
+        invalidateDataCaches(['metrics', 'segment_counts', 'leads', 'ca_masters']);
+        refreshCaMasterOrLeadsTable();
+        if (typeof refreshAll === 'function') refreshAll();
+      })
+      .catch(function (err) {
+        toast(err.message || 'Bulk delete failed', 'error');
+      })
+      .finally(function () {
+        if (confirmBtn) confirmBtn.disabled = false;
+      });
+  }
+
+  function handleInboxBulkAction(action, tableKey, module) {
+    var rbacModule = module === 'ca-master' ? 'ca_master' : module === 'leads' ? 'leads' : module === 'followups' ? 'followups' : module;
+    if (action === 'import' && !crmCanAction(rbacModule, 'import')) {
+      toast('You do not have permission for this action.', 'warning');
+      return;
+    }
+    if (action === 'export' && !crmCanAction(rbacModule, 'export')) {
+      toast('You do not have permission for this action.', 'warning');
+      return;
+    }
+    if (action === 'assign' && !crmCanAction('assignment', 'create')) {
+      toast('You do not have permission for this action.', 'warning');
+      return;
+    }
+    if (action === 'delete' && !crmCanAction(rbacModule, 'delete')) {
+      toast('You do not have permission for this action.', 'warning');
+      return;
+    }
+
+    // Import never depends on row selection.
+    if (action === 'import') {
+      openInboxImport();
+      return;
+    }
+
+    var ids = module === 'assignment'
+      ? getAssignmentBulkSelectedIds()
+      : getInboxSelectedIds(tableKey);
+    if (!ids.length) {
+      toast('Select at least one record', 'warning');
+      return;
+    }
+
+    if (action === 'assign') {
+      if (module === 'assignment') {
+        var assignmentCaIds = ids.map(function (assignmentId) {
+          var row = (window.realAssignments || []).find(function (a) {
+            return String(a.assignment_id) === String(assignmentId);
+          });
+          return row && row.ca_id ? parseInt(row.ca_id, 10) : 0;
+        }).filter(function (id) { return id > 0; });
+        openInboxAssign(assignmentCaIds);
+        return;
+      }
+      openInboxAssign(ids);
+      return;
+    }
+    if (action === 'export') {
+      exportInboxSelection(tableKey, module);
+      return;
+    }
+    if (action === 'delete') {
+      if (module === 'assignment') {
+        if (!window.confirm('Delete ' + ids.length + ' selected assignment(s)?')) return;
+        Promise.all(ids.map(deleteAssignmentById))
+          .then(function () {
+            toast('Selected assignments removed', 'success');
+            clearAssignmentBulkSelection();
+            realAssignmentsLoaded = false;
+            refreshAll();
+          })
+          .catch(function (err) {
+            toast(err.message || 'Bulk delete failed', 'error');
+          });
+        return;
+      }
+      if (module === 'followups') {
+        if (!window.confirm('Delete ' + ids.length + ' selected follow-up(s)?')) return;
+        bulkDeleteFollowups(ids, tableKey);
+        return;
+      }
+      openBulkDeleteLeadsModal(tableKey, ids);
+      return;
+    }
+    if (action === 'email') {
+      openInboxCampaign('email', ids);
+      return;
+    }
+    if (action === 'sms') {
+      openInboxCampaign('sms', ids);
+      return;
+    }
+    if (action === 'whatsapp') {
+      openInboxCampaign('whatsapp', ids);
+      return;
+    }
+    if (action === 'followup') {
+      openInboxFollowup(ids);
+      return;
+    }
+    if (action === 'stage') {
+      toast('Select a stage from the lead actions menu, or use Filters to review pipeline stages.', 'info');
+      return;
+    }
+    if (action === 'tag') {
+      toast('Open a lead and use Tags to add labels. Bulk tagging will use selected leads.', 'info');
+      return;
+    }
+    if (action === 'note') {
+      toast('Open a lead to add an internal note. Selected: ' + ids.length, 'info');
+      return;
+    }
+    if (action === 'duplicate') {
+      if (typeof navigateTo === 'function') navigateTo('duplicate-attempts');
+      else toast('Open Duplicate Attempts to review matches for selected leads.', 'info');
+      return;
+    }
+    if (action === 'more') {
+      toast(ids.length + ' record(s) selected. Use row Actions for additional options.', 'info');
+    }
+  }
+
+  function crmCanAction(module, permission) {
+    if (window.CA_RBAC && typeof CA_RBAC.can === 'function') {
+      return CA_RBAC.can(module, permission);
+    }
+    return true;
+  }
+
+  function getCrmRowActionItems(opts) {
+    opts = opts || {};
+    var items = [];
+    if (crmCanAction('leads', 'edit') || crmCanAction('ca_master', 'edit')) {
+      items.push({ action: 'edit', label: 'Edit Firm', icon: 'pencil' });
+    }
+    if (crmCanAction('followups', 'schedule_followup') || crmCanAction('followups', 'create')) {
+      items.push({ action: 'followup', label: 'Add Follow-up', icon: 'calendar' });
+    }
+    if (opts.lead && canUseLeadQuickActions(opts.lead)) {
+      items.push({ action: 'google-lookup', label: 'Google Lookup', icon: 'map-pin' });
+    }
+    var commItems = [];
+    if (crmCanAction('campaigns', 'send_sms') || crmCanAction('campaigns', 'campaigns')) {
+      commItems.push({ action: 'sms', label: 'Send SMS', icon: 'smartphone' });
+    }
+    if (crmCanAction('campaigns', 'send_email') || crmCanAction('campaigns', 'campaigns')) {
+      commItems.push({ action: 'email', label: 'Send Email', icon: 'mail' });
+      commItems.push({ action: 'whatsapp', label: 'Send WhatsApp', icon: 'message-circle' });
+    }
+    if (commItems.length) {
+      if (items.length) items.push({ type: 'divider' });
+      items.push({ type: 'communication', items: commItems });
+    }
+    return items;
+  }
+
+  function closeAllCrmActionMenus() {
+    if (window.CAActionDropdown) CAActionDropdown.closeAll();
+  }
+
+  function findCrmActionsMenu(trigger) {
+    return window.CAActionDropdown ? CAActionDropdown.findMenu(trigger) : null;
+  }
+
+  function positionCrmActionsDropdown(trigger, menu) {
+    if (window.CAActionDropdown) CAActionDropdown.position(trigger, menu);
+  }
+
+  function refreshCaMasterOrLeadsTable() {
+    invalidateDataCaches(['metrics', 'segment_counts', 'leads']);
+    if (window.CA_LISTING_SEARCH) {
+      reloadListing('ca_masters');
+      return;
+    }
+    if (document.getElementById('ca-master-data-table')) renderCaMasterTable();
+    else if (document.getElementById('leads-data-table')) renderLeadsTable();
+  }
+
+  function resetAssignLeadModalUi() {
+    var leadWrap = document.getElementById('assign-lead-select-wrap');
+    var leadSelect = document.getElementById('form-assign-lead-select');
+    var summary = document.getElementById('assign-bulk-summary');
+    var titleText = document.querySelector('#assign-lead-title [data-assign-title-text]');
+    if (leadWrap) leadWrap.classList.remove('hidden');
+    if (leadSelect) leadSelect.setAttribute('required', 'required');
+    if (summary) {
+      summary.classList.add('hidden');
+      summary.textContent = '';
+    }
+    if (titleText) titleText.textContent = 'Assign Lead';
+  }
+
+  function openLeadAssignModal(leadId) {
+    window._inboxBulkLeadIds = leadId ? [parseInt(leadId, 10)] : null;
+    resetAssignLeadModalUi();
+    CAData.setSelectedLeadId(leadId);
+    ensureFormSelectData(function () {
+      populateSelects();
+      setSelectValueIfValid(document.getElementById('form-assign-lead-select'), leadId);
+      window._editingAssignmentId = null;
+      var modal = document.getElementById('modal-assign-lead');
+      if (modal) openModal(modal);
+      icons();
+    });
+  }
+
+  function renderCrmRowActionsCell(lead, opts) {
+    opts = opts || {};
+    if (!window.CAActionDropdown) {
+      return '<td class="crm-actions-cell sticky-right col-actions"><span class="cam-cell-empty">—</span></td>';
+    }
+    var items = getCrmRowActionItems(Object.assign({}, opts, { lead: lead }));
+    return CAActionDropdown.renderCell(items, {
+      scope: 'crm-lead',
+      rowId: lead.ca_id,
+      icon: 'more-vertical',
+      ariaLabel: 'Lead actions',
+    });
+  }
+
+  function openLeadFollowupModal(leadId) {
+    CAData.setSelectedLeadId(leadId);
+    window._editingFollowUpId = null;
+    window._followupOriginalScheduled = '';
+    openFollowupModalWithLeads(leadId ? [parseInt(leadId, 10)] : []);
+  }
+
+  var leadCallLogStatusOptions = null;
+
+  function ensureLeadCallLogStatusOptions() {
+    if (leadCallLogStatusOptions) return Promise.resolve(leadCallLogStatusOptions);
+    return apiFetch('/workflow/options')
+      .then(function (body) {
+        var fromApi = (body.data && body.data.call_statuses) || [];
+        var extras = ['No Answer', 'Call Later', 'Interested', 'Follow-up Required', 'Not Interested', 'Demo Scheduled'];
+        var merged = fromApi.slice();
+        extras.forEach(function (status) {
+          if (merged.indexOf(status) === -1) merged.push(status);
+        });
+        leadCallLogStatusOptions = merged;
+        return leadCallLogStatusOptions;
+      })
+      .catch(function () {
+        leadCallLogStatusOptions = [
+          'Connected', 'Not Connected', 'Busy', 'Wrong Number', 'Call Back Later',
+          'No Answer', 'Call Later', 'Interested', 'Follow-up Required', 'Not Interested', 'Demo Scheduled',
+        ];
+        return leadCallLogStatusOptions;
+      });
+  }
+
+  function populateLeadCallLogStatusSelect(selectEl, statuses) {
+    if (!selectEl) return;
+    selectEl.innerHTML = '<option value="">Select status…</option>' +
+      (statuses || []).map(function (status) {
+        return '<option value="' + escapeHtml(status) + '">' + escapeHtml(status) + '</option>';
+      }).join('');
+  }
+
+  function renderLeadCallLogContext(lead) {
+    var wrap = document.getElementById('lead-call-log-context');
+    var hidden = document.getElementById('lead-call-log-ca-id');
+    if (!wrap || !hidden) return;
+    if (!lead) {
+      hidden.value = '';
+      wrap.classList.add('hidden');
+      return;
+    }
+    hidden.value = String(lead.ca_id);
+    var firmEl = document.getElementById('lead-call-log-ctx-firm');
+    var caEl = document.getElementById('lead-call-log-ctx-ca');
+    var mobileEl = document.getElementById('lead-call-log-ctx-mobile');
+    var cityEl = document.getElementById('lead-call-log-ctx-city');
+    var employeeEl = document.getElementById('lead-call-log-ctx-employee');
+    if (firmEl) firmEl.textContent = lead.firm_name || '—';
+    if (caEl) caEl.textContent = lead.ca_name || '—';
+    if (mobileEl) mobileEl.textContent = lead.mobile_no || '—';
+    if (cityEl) cityEl.textContent = lead.city || '—';
+    if (employeeEl) employeeEl.textContent = lead.executive || 'Unassigned';
+    wrap.classList.remove('hidden');
+  }
+
+  function clearLeadCallLogErrors(form) {
+    if (!form) return;
+    form.querySelectorAll('.ca-field-error').forEach(function (el) {
+      el.textContent = '';
+      el.classList.add('hidden');
+    });
+    form.querySelectorAll('.input-field.is-invalid').forEach(function (el) {
+      el.classList.remove('is-invalid');
+    });
+  }
+
+  function setLeadCallLogError(field, message) {
+    var form = document.getElementById('form-lead-call-log');
+    if (!form) return;
+    var errorEl = form.querySelector('[data-error-for="' + field + '"]');
+    var input = form.querySelector('[name="' + field + '"]') || document.getElementById('lead-call-log-' + field);
+    if (errorEl) {
+      errorEl.textContent = message || '';
+      errorEl.classList.toggle('hidden', !message);
+    }
+    if (input) input.classList.toggle('is-invalid', !!message);
+  }
+
+  function syncLeadCallLogFields() {
+    var status = (document.getElementById('lead-call-log-status') || {}).value || '';
+    var nextWrap = document.getElementById('lead-call-log-next-wrap');
+    var demoWrap = document.getElementById('lead-call-log-demo-wrap');
+    if (nextWrap) {
+      var showNext = status === 'Follow-up Required' || status === 'Call Back Later' || status === 'Call Later' || status === 'Interested';
+      nextWrap.classList.toggle('hidden', !showNext);
+      if (!showNext) {
+        var nextDate = document.getElementById('lead-call-log-next-date');
+        var nextTime = document.getElementById('lead-call-log-next-time');
+        if (nextDate) nextDate.value = '';
+        if (nextTime) nextTime.value = '';
+        setLeadCallLogError('next_followup_date', '');
+      }
+    }
+    if (demoWrap) {
+      demoWrap.classList.toggle('hidden', status !== 'Demo Scheduled');
+      if (status !== 'Demo Scheduled') {
+        ['lead-call-log-demo-date', 'lead-call-log-demo-time', 'lead-call-log-meeting-link'].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          if (id === 'lead-call-log-demo-time') el.value = '10:00';
+          else el.value = '';
+        });
+        setLeadCallLogError('demo_date', '');
+        setLeadCallLogError('demo_time', '');
+      }
+    }
+  }
+
+  function validateLeadCallLogForm(form) {
+    clearLeadCallLogErrors(form);
+    var payload = Object.fromEntries(new FormData(form).entries());
+    var errors = [];
+    var status = (payload.call_status || '').trim();
+    var note = (payload.call_note || '').trim();
+    var caId = (payload.ca_id || '').trim();
+
+    if (!caId) errors.push({ field: 'call_status', message: 'Lead is required.' });
+    if (!status) errors.push({ field: 'call_status', message: 'Please select a call status.' });
+    if (!note) errors.push({ field: 'call_note', message: 'Call note is required.' });
+    if (!(payload.called_at || '').trim()) errors.push({ field: 'called_at', message: 'Call date and time are required.' });
+
+    if (status === 'Demo Scheduled') {
+      if (!(payload.demo_date || '').trim()) errors.push({ field: 'demo_date', message: 'Demo date is required.' });
+      if (!(payload.demo_time || '').trim()) errors.push({ field: 'demo_time', message: 'Demo time is required.' });
+    }
+
+    if (status === 'Follow-up Required' && !(payload.next_followup_date || '').trim()) {
+      errors.push({ field: 'next_followup_date', message: 'Next action date is required.' });
+    }
+
+    errors.forEach(function (err) { setLeadCallLogError(err.field, err.message); });
+    if (errors.length) {
+      var first = form.querySelector('.input-field.is-invalid');
+      if (first && typeof first.focus === 'function') first.focus();
+      return null;
+    }
+
+    payload.call_status = status;
+    payload.call_note = note;
+    if (payload.demo_date && payload.demo_time) {
+      payload.demo_at = payload.demo_date + ' ' + payload.demo_time;
+    }
+    return payload;
+  }
+
+  function submitLeadCallLog(payload) {
+    if (payload.call_status === 'Demo Scheduled') {
+      return apiFetch('/follow-ups/call-outcome', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ca_id: parseInt(payload.ca_id, 10),
+          outcome: 'Demo Scheduled',
+          remarks: payload.call_note,
+          demo_date: payload.demo_date,
+          demo_time: payload.demo_time,
+          demo_at: payload.demo_at,
+          meeting_link: payload.meeting_link || '',
+        }),
+      });
+    }
+
+    return apiFetch('/workflow/calls', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ca_id: parseInt(payload.ca_id, 10),
+        call_status: payload.call_status,
+        call_note: payload.call_note,
+        called_at: payload.called_at,
+        next_followup_date: payload.next_followup_date || null,
+        next_followup_time: payload.next_followup_time || null,
+      }),
+    });
+  }
+
+  function openLeadCallLogModal(leadId) {
+    if (!leadId) {
+      toast('Lead not found', 'warning');
+      return;
+    }
+    var lead = getLeadRecord(leadId);
+    if (isEmployeeUser() && lead && !canUseLeadQuickActions(lead)) {
+      toast('You can only log calls for leads assigned to you.', 'error');
+      return;
+    }
+    var modal = document.getElementById('modal-lead-call-log');
+    var form = document.getElementById('form-lead-call-log');
+    if (!modal || !form) {
+      toast('Call log form is unavailable.', 'warning');
+      return;
+    }
+    form.reset();
+    clearLeadCallLogErrors(form);
+    renderLeadCallLogContext(null);
+    syncLeadCallLogFields();
+
+    var calledAtEl = document.getElementById('lead-call-log-called-at');
+    if (calledAtEl) {
+      var now = new Date();
+      var y = now.getFullYear();
+      var m = String(now.getMonth() + 1).padStart(2, '0');
+      var d = String(now.getDate()).padStart(2, '0');
+      var h = String(now.getHours()).padStart(2, '0');
+      var min = String(now.getMinutes()).padStart(2, '0');
+      calledAtEl.value = y + '-' + m + '-' + d + 'T' + h + ':' + min;
+    }
+
+    openModal(modal);
+    setLeadCallLogFormBusy(true);
+
+    Promise.all([
+      ensureLeadCallLogStatusOptions(),
+      fetchLeadForFollowup(leadId),
+    ]).then(function (results) {
+      if (isEmployeeUser() && results[1] && !canUseLeadQuickActions(results[1])) {
+        throw new Error('You can only log calls for leads assigned to you.');
+      }
+      populateLeadCallLogStatusSelect(document.getElementById('lead-call-log-status'), results[0]);
+      renderLeadCallLogContext(results[1]);
+      setLeadCallLogFormBusy(false);
+      if (window.CrmDateTimePicker) {
+        window.CrmDateTimePicker.syncAll(form);
+      }
+      var statusEl = document.getElementById('lead-call-log-status');
+      if (statusEl) statusEl.focus();
+      iconsIn(modal);
+    }).catch(function (err) {
+      setLeadCallLogFormBusy(false);
+      closeModal(modal);
+      toast(err.message || 'Unable to load lead for call log', 'error');
+    });
+  }
+
+  function setLeadCallLogFormBusy(busy) {
+    var form = document.getElementById('form-lead-call-log');
+    if (!form) return;
+    form.querySelectorAll('input, select, textarea, button').forEach(function (el) {
+      el.disabled = !!busy;
+    });
+    var submitBtn = document.querySelector('button[form="form-lead-call-log"]');
+    if (submitBtn) submitBtn.disabled = !!busy;
+  }
+
+  function openLeadCommunicationCampaign(channel, leadId) {
     var lead = getLeadRecord(leadId);
     if (!lead) {
       toast('Lead not found', 'warning');
       return;
     }
-    if (action === 'google') {
-      var gq = buildLeadGoogleSearchQuery(lead);
-      if (!gq) { toast('Insufficient lead data for search', 'warning'); return; }
-      window.open('https://www.google.com/search?q=' + encodeURIComponent(gq), '_blank', 'noopener,noreferrer');
+    if (channel === 'sms' && !leadHasValidMobile(lead)) {
+      toast(SMS_MOBILE_REQUIRED_MESSAGE, 'error');
       return;
     }
-    if (action === 'maps') {
-      var mq = buildLeadGoogleMapsQuery(lead);
-      if (!mq) { toast('Insufficient lead data for maps', 'warning'); return; }
-      window.open('https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(mq), '_blank', 'noopener,noreferrer');
+    if (channel === 'email' && !leadHasEmail(lead)) {
+      toast('Email address is required. Please update the lead first.', 'error');
+      return;
+    }
+    window._pendingCampaignLeadIds = [parseInt(leadId, 10)];
+    window._pendingCampaignChannel = channel;
+    var pageMap = { sms: 'sms', email: 'email', whatsapp: 'whatsapp' };
+    if (typeof navigateTo === 'function') navigateTo(pageMap[channel] || channel);
+  }
+
+  function applyPendingCampaignLeadSelection(channel) {
+    var ids = window._pendingCampaignLeadIds;
+    var pendingChannel = window._pendingCampaignChannel;
+    if (!ids || !ids.length || !pendingChannel || pendingChannel !== channel) return;
+    var presetIds = ids.slice();
+    window._pendingCampaignLeadIds = null;
+    window._pendingCampaignChannel = null;
+    var modeEl = document.getElementById('form-campaign-audience-mode');
+    if (modeEl) modeEl.value = 'selected_leads';
+    toggleCampaignAudienceFields();
+    configureCampaignModal(channel);
+    populateCampaignAudienceSelects(channel, { preserveSelection: true }).then(function () {
+      if (window.CrmLeadPicker) {
+        window.CrmLeadPicker.applyPresetIds('campaign', presetIds);
+      } else {
+        var pickerState = getCampaignLeadPickerState();
+        presetIds.forEach(function (id) {
+          var lead = findLeadById(id);
+          if (lead) pickerState.selected[String(id)] = lead;
+        });
+        renderCampaignLeadPicker();
+      }
+      var modal = document.getElementById('modal-add-campaign');
+      if (modal) openExclusiveCrmModal(modal);
+      icons();
+    });
+  }
+
+  function handleCrmRowAction(action, leadId) {
+    if (!leadId) {
+      console.error('[CRM] Row action missing lead id:', action);
+      toast('Lead not found', 'warning');
+      return;
+    }
+    if (action === 'view') {
+      selectLead(leadId, true);
+      return;
+    }
+    if (action === 'edit') {
+      openLeadFormForEdit(leadId).then(function (ok) {
+        if (ok) openExclusiveCrmModal(document.getElementById('modal-add-lead'));
+      }).catch(function (err) {
+        console.error('[CRM] Edit firm failed:', leadId, err);
+        toast(err.message || 'Unable to open edit form', 'error');
+      });
+      return;
+    }
+    if (action === 'assign') {
+      openLeadAssignModal(leadId);
+      return;
+    }
+    if (action === 'followup') {
+      openLeadFollowupModal(leadId);
+      return;
+    }
+    if (action === 'call-log') {
+      openLeadCallLogModal(leadId);
+      return;
+    }
+    if (action === 'google-lookup' || action === 'google_lookup') {
+      openLeadResearch(leadId);
+      return;
+    }
+    if (action === 'sms' || action === 'email' || action === 'whatsapp') {
+      openLeadCommunicationCampaign(action, leadId);
+      return;
+    }
+    if (action === 'delete') {
+      if (!window.confirm('Delete this firm record? This cannot be undone.')) return;
+      apiFetch('/ca-masters/' + encodeURIComponent(leadId), { method: 'DELETE' })
+        .then(function () {
+          toast('Firm deleted', 'success');
+          refreshCaMasterOrLeadsTable();
+        })
+        .catch(function (err) {
+          console.error('[CRM] Delete firm failed:', leadId, err);
+          toast(err.message || 'Unable to delete firm', 'error');
+        });
     }
   }
 
-  function bindLeadQuickActions(container) {
-    if (!container) return;
-    container.querySelectorAll('[data-lead-quick]').forEach(function (btn) {
-      btn.addEventListener('click', function (e) {
+  function bindCrmRowActions(root) {
+    ensureLeadQuickActionsDelegated();
+    if (window.CAActionDropdown) CAActionDropdown.bindScrollDismiss(root || document);
+  }
+
+  function bindCrmActionsScrollDismiss(root) {
+    if (window.CAActionDropdown) CAActionDropdown.bindScrollDismiss(root || document);
+  }
+
+  function ensureLeadQuickActionsDelegated() {
+    if (document._leadQuickActionsDelegated) return;
+    document._leadQuickActionsDelegated = true;
+
+    document.addEventListener('click', function (e) {
+      var quickBtn = e.target.closest('[data-lead-quick]');
+      if (quickBtn) {
         e.preventDefault();
         e.stopPropagation();
-        handleLeadQuickAction(btn.getAttribute('data-lead-quick'), btn.getAttribute('data-lead-id'));
-      });
+        closeAllCrmActionMenus();
+        handleLeadQuickAction(quickBtn.getAttribute('data-lead-quick'), quickBtn.getAttribute('data-lead-id'));
+        return;
+      }
+      var drawerGoogleBtn = e.target.closest('[data-lead-drawer-google]');
+      if (drawerGoogleBtn) {
+        e.preventDefault();
+        openLeadResearch(drawerGoogleBtn.getAttribute('data-lead-drawer-google'));
+      }
+    }, true);
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        closeAllCrmActionMenus();
+        closeTopLeadQuickPanel();
+      }
     });
+  }
+
+  function bindCrmActionsDismiss() {
+    ensureLeadQuickActionsDelegated();
+    ensureLeadQuickPanelsDelegated();
+  }
+
+  function registerActionDropdownHandlers() {
+    if (!window.CAActionDropdown || window._actionDropdownHandlersRegistered) return;
+    window._actionDropdownHandlersRegistered = true;
+
+    CAActionDropdown.register('crm-lead', function (action, dataset) {
+      handleCrmRowAction(action, dataset.menuId);
+    });
+
+    CAActionDropdown.register('assignment', function (action, dataset) {
+      handleAssignmentMenuAction(action, dataset.menuId);
+    });
+
+    CAActionDropdown.register('followup', function (action, dataset) {
+      var id = dataset.menuId;
+      if (!id) {
+        toast('Follow-up record is missing. Refresh the page and try again.', 'warning');
+        return;
+      }
+      if (action === 'view') {
+        openFollowupDetails(id);
+        return;
+      }
+      if (action === 'edit') {
+        openFollowupFormForEdit(id);
+        return;
+      }
+      if (action === 'outcome') {
+        openCallOutcomeModal(id, dataset.caId);
+        return;
+      }
+      if (action === 'complete') {
+        markFollowupCompleted(id);
+        return;
+      }
+      if (action === 'demo-result') {
+        openDemoResultForFollowup(id, dataset.caId);
+        return;
+      }
+      if (action === 'delete') {
+        if (!crmCanAction('followups', 'delete')) return;
+        if (!window.confirm('Delete this follow-up?')) return;
+        var deleteRow = document.querySelector('tr[data-followup-id="' + id + '"]');
+        if (deleteRow) deleteRow.classList.add('crm-row-busy');
+        apiFetch('/follow-ups/' + encodeURIComponent(id), { method: 'DELETE' })
+          .then(function () {
+            removeFollowupFromCache(id);
+            removeFollowupTableRow(id);
+            toast('Follow-up deleted', 'success');
+            refreshFollowupsPage({ reload: false, calendar: true });
+          })
+          .catch(function (err) {
+            if (deleteRow) deleteRow.classList.remove('crm-row-busy');
+            if (err.status === 403) return;
+            toast(err.message || 'Unable to delete follow-up', 'error');
+          });
+      }
+    });
+
+    CAActionDropdown.register('employee', function (action, dataset) {
+      var id = dataset.menuId;
+      if (action === 'edit') {
+        openEmployeeFormForEdit(id);
+        return;
+      }
+      if (action === 'delete') {
+        if (!window.confirm('Archive this employee?')) return;
+        apiFetch('/employees/' + encodeURIComponent(id), { method: 'DELETE' })
+          .then(function () {
+            toast('Employee archived', 'success');
+            realEmployeesLoaded = false;
+            refreshAll();
+          })
+          .catch(function (err) {
+            toast(err.message || 'Unable to delete employee', 'error');
+          });
+      }
+    });
+
+    CAActionDropdown.register('master', function (action, dataset) {
+      var entity = dataset.masterEntity;
+      var id = dataset.masterId;
+      if (action === 'edit') {
+        var record = findMasterRecord(entity, id);
+        if (!record) {
+          toast('Record not found — refresh and try again', 'warning');
+          return;
+        }
+        openMasterRecordModal(entity, record);
+        return;
+      }
+      if (action === 'delete') {
+        var delCfg = masterEntityConfig(entity);
+        if (!delCfg || !window.confirm('Delete this ' + delCfg.title.toLowerCase() + '?')) return;
+        apiFetch(delCfg.endpoint + '/' + encodeURIComponent(id), { method: 'DELETE' })
+          .then(function () {
+            toast(delCfg.title + ' deleted', 'success');
+            refreshMasterDataCaches();
+            if (window.CA_LISTING_SEARCH) {
+              reloadListing('states');
+              reloadListing('cities');
+            }
+          })
+          .catch(function (err) {
+            toast(err.message || 'Unable to delete record', 'error');
+          });
+      }
+    });
+
+    CAActionDropdown.register('sms-template', function (action, dataset) {
+      var id = dataset.menuId;
+      if (action === 'edit') {
+        openSmsTemplateForm(parseInt(id, 10));
+        return;
+      }
+      if (action === 'delete') {
+        if (!window.confirm('Delete this DLT template?')) return;
+        apiFetch('/sms-templates/' + id, { method: 'DELETE' })
+          .then(function () {
+            toast('SMS template deleted', 'success');
+            refreshSmsTemplatesPanel();
+          })
+          .catch(function (err) {
+            toast(err.message || 'Unable to delete template', 'error');
+          });
+      }
+    });
+
+    CAActionDropdown.register('email-account', function (action, dataset) {
+      var id = dataset.menuId;
+      if (action === 'edit') {
+        loadEmailAccountIntoForm(id);
+        return;
+      }
+      if (action === 'default') {
+        apiFetch('/email-accounts/' + encodeURIComponent(id) + '/set-default', { method: 'POST' })
+          .then(function () {
+            toast('Default email account updated', 'success');
+            reloadEmailAccountsList();
+          })
+          .catch(function (err) { toast(err.message || 'Unable to set default account', 'error'); });
+        return;
+      }
+      if (action === 'delete') {
+        if (!window.confirm('Delete this email account?')) return;
+        apiFetch('/email-accounts/' + encodeURIComponent(id), { method: 'DELETE' })
+          .then(function () {
+            toast('Email account deleted', 'success');
+            if ((document.getElementById('email-account-id') || {}).value === String(id)) {
+              clearEmailAccountForm();
+            }
+            reloadEmailAccountsList();
+          })
+          .catch(function (err) { toast(err.message || 'Unable to delete account', 'error'); });
+      }
+    });
+
+    CAActionDropdown.register('dnd', function (action, dataset) {
+      var id = dataset.menuId;
+      if (action !== 'remove') return;
+      if (!id || !confirm('Remove this DND entry?')) return;
+      apiFetch('/dnd-management/' + id, { method: 'DELETE' })
+        .then(function () {
+          toast('DND entry removed', 'success');
+          refreshConsentDndPage();
+          if (document.getElementById('recent-activity-list')) renderRecentActivity();
+        })
+        .catch(function (err) {
+          toast(err.message || 'Unable to remove DND entry', 'error');
+        });
+    });
+  }
+
+  function researchWorkspaceDeps() {
+    return {
+      apiFetch: apiFetch,
+      toast: toast,
+      escapeHtml: escapeHtml,
+      icons: icons,
+      onSaved: function (lead) {
+        mergeLeadIntoPools(lead);
+        if (document.getElementById('leads-data-table')) renderLeadsTable();
+        if (document.querySelector('[id^="ca-master"][id$="-data-table"]')) renderCaMasterTable();
+        var editingId = window._editingLeadId ? String(window._editingLeadId) : '';
+        if (editingId && lead && String(lead.ca_id) === editingId) {
+          renderLeadGoogleFieldsSection(lead);
+        }
+      },
+    };
+  }
+
+  function closeTopLeadQuickPanel() {
+    if (window.CA_RESEARCH_WORKSPACE && CA_RESEARCH_WORKSPACE.isOpen()) {
+      CA_RESEARCH_WORKSPACE.close();
+      return true;
+    }
+    return false;
+  }
+
+  function closeAllLeadResearchPanels() {
+    if (window.CA_RESEARCH_WORKSPACE) CA_RESEARCH_WORKSPACE.close();
+  }
+
+  function formatGoogleBusinessStatus(status) {
+    var value = String(status || '').toUpperCase();
+    if (value === 'OPERATIONAL') return 'Open';
+    if (value === 'CLOSED_TEMPORARILY') return 'Temporarily closed';
+    if (value === 'CLOSED_PERMANENTLY') return 'Permanently closed';
+    return status || '—';
+  }
+
+  function leadHasSavedGoogleData(lead) {
+    if (!lead) return false;
+    return !!(lead.verified_from_google || lead.google_place_id);
+  }
+
+  function leadToResearchPlace(lead) {
+    if (!leadHasSavedGoogleData(lead)) return null;
+    return {
+      place_id: lead.google_place_id,
+      google_place_id: lead.google_place_id,
+      business_name: lead.firm_name && lead.firm_name !== '—' ? lead.firm_name : null,
+      verified_address: lead.verified_address || (lead.address && lead.address !== '—' ? lead.address : null),
+      address: lead.address && lead.address !== '—' ? lead.address : lead.verified_address,
+      mobile_no: lead.mobile_no && lead.mobile_no !== '—' ? lead.mobile_no : null,
+      website: lead.website && lead.website !== '—' ? lead.website : null,
+      google_rating: lead.google_rating,
+      google_review_count: lead.google_review_count,
+      google_business_status: lead.google_business_status,
+      google_maps_url: lead.google_maps_url,
+      latitude: lead.latitude,
+      longitude: lead.longitude,
+      open_status: formatGoogleBusinessStatus(lead.google_business_status),
+    };
+  }
+
+  function mapResearchPayload(data, lead) {
+    data = data || {};
+    return {
+      place: data.place || null,
+      results: data.results || [],
+      api_status: data.api_status || data.status || null,
+      api_error: data.api_error || null,
+      api_recommendation: data.api_recommendation || null,
+      api_google_reason: data.api_google_reason || null,
+      multiple_results: !!data.multiple_results,
+      cached: !!data.cached,
+      can_refresh: !!data.can_refresh,
+      can_save: data.can_save !== false,
+      current: data.current || lead,
+      google_maps_embed_url: data.google_maps_embed_url || null,
+      google_maps_url: data.google_maps_url || null,
+      query: data.query || null,
+    };
+  }
+
+  function mapGoogleSearchPayload(data, lead) {
+    data = data || {};
+    return {
+      place: data.place || null,
+      results: data.results || [],
+      api_status: data.status || null,
+      api_error: data.api_error || null,
+      api_recommendation: data.api_recommendation || null,
+      api_google_reason: data.api_google_reason || null,
+      multiple_results: !!data.multiple_results,
+      cached: false,
+      can_refresh: false,
+      can_save: true,
+      current: lead,
+      google_maps_embed_url: data.google_maps_embed_url || null,
+      google_maps_url: data.google_maps_url || null,
+      query: data.query || null,
+    };
+  }
+
+  function isGooglePlacesServerRestrictionError(data) {
+    data = data || {};
+    var status = String(data.api_status || data.status || '').toUpperCase();
+    var reason = String(data.api_google_reason || '').toUpperCase();
+    if (status === 'PERMISSION_DENIED' || status === 'API_KEY_INVALID' || status === 'REFERER_NOT_ALLOWED') {
+      return true;
+    }
+    return reason.indexOf('ANDROID') >= 0
+      || reason.indexOf('IOS') >= 0
+      || reason.indexOf('REFERRER') >= 0
+      || reason.indexOf('IP_ADDRESS') >= 0;
+  }
+
+  function mapClientPlacesPayload(results, query, lead) {
+    results = results || [];
+    var place = results[0] || null;
+    var encoded = encodeURIComponent(query || '');
+    return {
+      place: place,
+      results: results,
+      api_status: results.length ? 'OK' : 'ZERO_RESULTS',
+      api_error: results.length ? null : 'No Google Places results matched this CA firm.',
+      api_recommendation: null,
+      api_google_reason: null,
+      multiple_results: results.length > 1,
+      cached: false,
+      can_refresh: false,
+      can_save: true,
+      current: lead,
+      google_maps_embed_url: place && place.latitude != null && place.longitude != null
+        ? 'https://www.google.com/maps?q=' + place.latitude + ',' + place.longitude + '&output=embed'
+        : 'https://www.google.com/maps?q=' + encoded + '&output=embed',
+      google_maps_url: place && place.google_maps_url
+        ? place.google_maps_url
+        : 'https://www.google.com/maps/search/?api=1&query=' + encoded,
+      query: query,
+      sourceNote: 'Loaded via browser Places API (server key blocked)',
+    };
+  }
+
+  function mergeLeadIntoPools(lead) {
+    if (!lead || lead.ca_id == null) return;
+    var mapped = mapLeadRecord(lead);
+    var id = String(lead.ca_id);
+    [window.realLeads, window._listingLeadsPage, window.kanbanLeads, window._selectLeads].forEach(function (pool) {
+      if (!pool || !pool.length) return;
+      var idx = pool.findIndex(function (item) { return String(item.ca_id) === id; });
+      if (idx >= 0) pool[idx] = Object.assign({}, pool[idx], mapped);
+    });
+  }
+
+  function ensureLeadWithGoogleFields(leadId, lead) {
+    return apiFetch('/ca-masters/' + encodeURIComponent(leadId))
+      .then(function (body) {
+        var fresh = body.data;
+        if (!fresh) return lead;
+        mergeLeadIntoPools(fresh);
+        return Object.assign({}, lead || {}, mapLeadRecord(fresh));
+      })
+      .catch(function () {
+        return lead;
+      });
+  }
+
+  function runLeadResearchLookup(leadId, lead, googleQuery) {
+    return apiFetch('/ca-masters/' + encodeURIComponent(leadId) + '/research', { method: 'POST' })
+      .then(function (body) {
+        var data = body.data || {};
+        var payload = mapResearchPayload(data, lead);
+
+        if (!payload.cached && payload.api_error && isGooglePlacesServerRestrictionError(data) && window.CrmGoogleMaps && window.CrmGoogleMaps.hasKey()) {
+          return window.CrmGoogleMaps.searchPlacesText(googleQuery)
+            .then(function (clientResults) {
+              return mapClientPlacesPayload(clientResults, googleQuery, lead);
+            })
+            .catch(function () {
+              return payload;
+            });
+        }
+
+        return payload;
+      });
+  }
+
+  function openLeadResearch(leadId) {
+    if (!window.CA_RESEARCH_WORKSPACE) {
+      toast('Research workspace is unavailable', 'error');
+      return;
+    }
+    var lead = getLeadRecord(leadId);
+    if (!lead) {
+      toast('Lead not found', 'warning');
+      return;
+    }
+    if (!canUseLeadQuickActions(lead)) {
+      toast('You do not have access to this lead', 'warning');
+      return;
+    }
+    var googleQuery = buildLeadGoogleSearchQuery(lead);
+    if (!leadFieldText(lead.firm_name) || !leadFieldText(lead.ca_name)) {
+      toast('Firm Name and CA Name are required for Google lookup', 'warning');
+      return;
+    }
+    var mapsQuery = buildLeadGoogleMapsQuery(lead);
+
+    ensureLeadWithGoogleFields(leadId, lead).then(function (resolvedLead) {
+      lead = resolvedLead || lead;
+      var savedPlace = leadToResearchPlace(lead);
+      var savedMapsUrl = lead.google_maps_url
+        || (lead.latitude != null && lead.longitude != null
+          ? 'https://www.google.com/maps?q=' + lead.latitude + ',' + lead.longitude
+          : null);
+
+      CA_RESEARCH_WORKSPACE.open({
+        leadId: leadId,
+        lead: lead,
+        googleQuery: googleQuery,
+        mapsQuery: mapsQuery,
+        place: savedPlace,
+        results: savedPlace ? [savedPlace] : [],
+        current: lead,
+        cached: !!savedPlace,
+        mapsExternal: savedMapsUrl,
+        mapsEmbed: savedMapsUrl
+          ? (String(savedMapsUrl).indexOf('output=embed') >= 0
+            ? savedMapsUrl
+            : savedMapsUrl + (String(savedMapsUrl).indexOf('?') >= 0 ? '&' : '?') + 'output=embed')
+          : null,
+        sourceNote: savedPlace
+          ? 'Loading saved Google data…'
+          : 'Loading Google Places results…',
+        deps: researchWorkspaceDeps(),
+      });
+
+      runLeadResearchLookup(leadId, lead, googleQuery)
+        .then(function (payload) {
+          CA_RESEARCH_WORKSPACE.setResearchData(payload);
+        })
+        .catch(function (err) {
+          CA_RESEARCH_WORKSPACE.setSourceError(
+            (err && err.message) || 'Could not load Places details. Search and Maps are still available.',
+          );
+        });
+    });
+  }
+
+  function ensureLeadQuickPanelsDelegated() {
+    // Research workspace handles its own events; kept for bindCrmActionsDismiss compatibility.
+  }
+
+  function handleLeadQuickAction(action, leadId) {
+    if (action === 'call-log' || action === 'call_log') {
+      openLeadCallLogModal(leadId);
+      return;
+    }
+    if (action === 'research' || action === 'google' || action === 'maps') {
+      openLeadResearch(leadId);
+    }
   }
 
   function activityModuleLabel(moduleName) {
@@ -667,14 +2383,29 @@ window.CA_CRM = (function () {
       website: l.website || '—',
       rating: l.rating || 1,
       is_newly_established: !!l.is_newly_established,
-      status: l.status || 'Active',
+      status: l.status || l.demo_status || 'New',
       source: l.source || l.source_name || '—',
       source_id: l.source_id ? String(l.source_id) : null,
-      stage: mapStatusToStage(l.status),
+      stage: l.stage || mapStatusToStage(l.status),
       executive_id: l.executive_id ? String(l.executive_id) : null,
-      executive: l.executive || l.employee_name || 'Unassigned',
+      executive: l.executive || l.executive_name || l.employee_name || (l.executive_id ? 'Assigned' : 'Unassigned'),
       priority: l.rating || 1,
+      created_by: l.created_by_name || l.created_by || '—',
+      is_verified: !!l.is_verified,
+      is_wrong_number: !!l.is_wrong_number,
       last_action: l.last_action || '—',
+      google_place_id: l.google_place_id || null,
+      verified_address: l.verified_address || null,
+      address: l.address || null,
+      google_rating: l.google_rating != null ? Number(l.google_rating) : null,
+      google_review_count: l.google_review_count != null ? Number(l.google_review_count) : null,
+      google_business_status: l.google_business_status || null,
+      google_maps_url: l.google_maps_url || null,
+      latitude: l.latitude != null ? Number(l.latitude) : null,
+      longitude: l.longitude != null ? Number(l.longitude) : null,
+      verified_from_google: !!l.verified_from_google,
+      researched_at: l.researched_at || null,
+      research_status: l.research_status || null,
       created_at: l.created_at,
       updated_at: l.updated_at,
       updated: formatRelativeDate(l.updated_at),
@@ -687,7 +2418,7 @@ window.CA_CRM = (function () {
       name: e.name || '—',
       email_id: e.email_id || '—',
       mobile_no: e.mobile_no || '—',
-      role: e.role || 'Sales Executive',
+      role: e.role || 'Employee',
       crm_role: e.crm_role || 'employee',
       login_status: e.login_status || 'none',
       login_status_label: e.login_status_label || 'No Login Created',
@@ -711,7 +2442,7 @@ window.CA_CRM = (function () {
     var select = document.getElementById('employee-crm-role');
     if (!select) return;
     var actorRole = (window.__CRM_USER__ || {}).role || 'employee';
-    var options = [{ value: 'employee', label: 'Sales Executive (Employee)' }];
+    var options = [{ value: 'employee', label: 'Employee' }];
     if (actorRole === 'admin' || actorRole === 'super_admin') {
       options.push({ value: 'manager', label: 'Manager' });
     }
@@ -740,14 +2471,14 @@ window.CA_CRM = (function () {
         statusNote.textContent = 'Login status: ' + (employee.login_status_label || 'No Login Created');
         statusNote.classList.remove('hidden');
       }
-      if (title) title.innerHTML = title.innerHTML.replace('Add Sales Executive', 'Edit Sales Executive');
+      if (title) title.innerHTML = title.innerHTML.replace('Add Employee', 'Edit Employee');
     } else {
       if (loginFields) loginFields.classList.remove('hidden');
       passwordInputs.forEach(function (input) { input.required = true; });
       if (statusNote) statusNote.classList.add('hidden');
       configureEmployeeCrmRoleSelect();
       if (title && title.textContent.indexOf('Edit') >= 0) {
-        title.innerHTML = title.innerHTML.replace('Edit Sales Executive', 'Add Sales Executive');
+        title.innerHTML = title.innerHTML.replace('Edit Employee', 'Add Employee');
       }
     }
   }
@@ -769,31 +2500,50 @@ window.CA_CRM = (function () {
     });
   }
 
-  function populateResetPasswordEmployeeSelect() {
+  function fillResetPasswordEmployeeSelect() {
+    initResetPasswordEmployeeLookup();
+  }
+
+  function initResetPasswordEmployeeLookup() {
     var select = document.getElementById('reset-password-employee-select');
     var emailField = document.getElementById('reset-password-employee-email');
     if (!select) return;
-    var employees = (window.realEmployees || []).filter(function (e) {
-      return e.login_status === 'active' || e.login_status === 'inactive';
+    enhanceEntityLookups(select.parentElement || document);
+    if (select._resetPwdBound) return;
+    select._resetPwdBound = true;
+    select.addEventListener('change', function () {
+      var api = window.CrmEntityLookup ? window.CrmEntityLookup.get(select) : null;
+      var record = api ? api.getSelectedRecord() : null;
+      if (emailField) emailField.value = record && record.email_id && record.email_id !== '—' ? record.email_id : '';
     });
-    select.innerHTML = '<option value="">Select employee</option>' + employees.map(function (e) {
-      return '<option value="' + e.employee_id + '" data-email="' + escapeHtml(e.email_id) + '">' +
-        escapeHtml(e.name) + ' (' + escapeHtml(e.email_id) + ')</option>';
-    }).join('');
-    select.onchange = function () {
-      var opt = select.options[select.selectedIndex];
-      if (emailField) emailField.value = opt && opt.dataset.email ? opt.dataset.email : '';
-    };
     if (emailField) emailField.value = '';
+  }
+
+  function populateResetPasswordEmployeeSelect() {
+    initResetPasswordEmployeeLookup();
   }
 
   function getLeadRecord(leadId) {
     var id = String(leadId);
-    if (window.realLeads && window.realLeads.length) {
-      var found = window.realLeads.find(function (l) { return String(l.ca_id) === id; });
+    var pools = [window._listingLeadsPage, window.kanbanLeads, window.realLeads, window._selectLeads];
+    for (var i = 0; i < pools.length; i++) {
+      if (!pools[i] || !pools[i].length) continue;
+      var found = pools[i].find(function (l) { return String(l.ca_id) === id; });
       if (found) return found;
     }
     return USE_DEMO_FALLBACKS ? CAData.getLeadById(leadId) : null;
+  }
+
+  function getLeadsForSelects() {
+    if (window._selectLeadsLoaded && window._selectLeads && window._selectLeads.length) {
+      return window._selectLeads;
+    }
+    if (realLeadsLoaded && window.realLeads && window.realLeads.length) {
+      return window.realLeads;
+    }
+    if (window._selectLeadsLoaded) return window._selectLeads || [];
+    if (realLeadsLoaded) return window.realLeads || [];
+    return [];
   }
 
   function loadLeadsForSelects(callback) {
@@ -805,6 +2555,10 @@ window.CA_CRM = (function () {
       .then(function (body) {
         window._selectLeads = unwrapList(body).map(mapLeadRecord);
         window._selectLeadsLoaded = true;
+        if (!realLeadsLoaded || !window.realLeads || !window.realLeads.length) {
+          window.realLeads = window._selectLeads.slice();
+          realLeadsLoaded = true;
+        }
         if (callback) callback();
       })
       .catch(function () {
@@ -815,19 +2569,41 @@ window.CA_CRM = (function () {
   }
 
   function loadEmployeesForSelects(callback) {
-    if (window._selectEmployeesLoaded) {
+    if (window._selectEmployeesLoaded && window._selectEmployees && window._selectEmployees.length) {
       if (callback) callback();
       return;
     }
-    apiFetch('/employees?per_page=100&sort_by=name&sort_dir=asc&status=Active')
+    apiFetch('/lookups/executives')
       .then(function (body) {
-        window._selectEmployees = unwrapList(body).map(mapEmployeeRecord);
-        window._selectEmployeesLoaded = true;
+        var items = unwrapList(body);
+        if (items.length) {
+          window._selectEmployees = items.map(mapEmployeeRecord);
+          window._selectEmployeesLoaded = true;
+          return null;
+        }
+        return apiFetch('/employees' + listingAllQuery('employees', { status: 'Active', sort_by: 'name', sort_dir: 'asc' }));
+      })
+      .then(function (body) {
+        if (body === null) {
+          if (callback) callback();
+          return;
+        }
+        if (body) {
+          window._selectEmployees = unwrapList(body).map(mapEmployeeRecord);
+          window._selectEmployeesLoaded = true;
+        } else {
+          window._selectEmployees = getExecutivesForSelects();
+          if (window._selectEmployees.length) {
+            window._selectEmployeesLoaded = true;
+          }
+        }
         if (callback) callback();
       })
       .catch(function () {
-        window._selectEmployees = [];
-        window._selectEmployeesLoaded = true;
+        window._selectEmployees = getExecutivesForSelects();
+        if (window._selectEmployees.length) {
+          window._selectEmployeesLoaded = true;
+        }
         if (callback) callback();
       });
   }
@@ -846,6 +2622,13 @@ window.CA_CRM = (function () {
       dashboardMetricsLoaded = false;
       dashboardMetricsPromise = null;
       window.dashboardMetrics = null;
+      window._camSegmentCountsLoaded = false;
+      clearDashboardMetricsCache();
+    }
+    if (keys.indexOf('metrics') >= 0 || keys.indexOf('segment_counts') >= 0) {
+      leadSegmentCountsLoaded = false;
+      leadSegmentCounts = null;
+      leadSegmentCountsPromise = null;
     }
     if (keys.indexOf('employee_dashboard') >= 0 || keys.indexOf('metrics') >= 0) {
       employeeDashboardLoaded = false;
@@ -854,6 +2637,9 @@ window.CA_CRM = (function () {
     }
     if (keys.indexOf('leads') >= 0) {
       realLeadsLoaded = false;
+      kanbanLeadsLoaded = false;
+      window.kanbanLeads = [];
+      window._listingLeadsPage = [];
       window._selectLeadsLoaded = false;
     }
     if (keys.indexOf('employees') >= 0) {
@@ -863,19 +2649,131 @@ window.CA_CRM = (function () {
     if (keys.indexOf('assignments') >= 0) realAssignmentsLoaded = false;
     if (keys.indexOf('followups') >= 0) realFollowUpsLoaded = false;
     if (keys.indexOf('masters') >= 0) masterDataLoaded = false;
+    if (keys.indexOf('ca_masters') >= 0 || keys.indexOf('leads') >= 0) {
+      clearListingPageCaches(['ca_masters']);
+    }
+    if (keys.indexOf('followups') >= 0) clearListingPageCaches(['follow_ups']);
+    if (keys.indexOf('assignments') >= 0) clearListingPageCaches(['lead_assignments', 'employees']);
+    if (keys.indexOf('sales_list') >= 0) clearListingPageCaches(['sales_list']);
+  }
+
+  function listingCacheFingerprint(key, extra) {
+    var state = window.CA_LISTING_SEARCH ? CA_LISTING_SEARCH.getState(key) : {};
+    var raw = JSON.stringify({ key: key, state: state, extra: extra || {} });
+    var hash = 0;
+    for (var i = 0; i < raw.length; i++) {
+      hash = ((hash << 5) - hash) + raw.charCodeAt(i);
+      hash |= 0;
+    }
+    return 'crm_listing_v1_' + key + '_' + hash;
+  }
+
+  function readListingPageCache(key, extra) {
+    if (LISTING_PAGE_CACHE_KEYS.indexOf(key) < 0) return null;
+    try {
+      var raw = sessionStorage.getItem(listingCacheFingerprint(key, extra));
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      if (!parsed || !parsed.body || !parsed.savedAt) return null;
+      if (Date.now() - parsed.savedAt > LISTING_PAGE_CACHE_TTL_MS) return null;
+      return parsed;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeListingPageCache(key, extra, body) {
+    if (LISTING_PAGE_CACHE_KEYS.indexOf(key) < 0 || !body) return;
+    try {
+      sessionStorage.setItem(listingCacheFingerprint(key, extra), JSON.stringify({
+        savedAt: Date.now(),
+        body: body,
+      }));
+    } catch (e) { /* quota */ }
+  }
+
+  function clearListingPageCaches(keys) {
+    try {
+      var prefixes = (keys || LISTING_PAGE_CACHE_KEYS).map(function (key) {
+        return 'crm_listing_v1_' + key + '_';
+      });
+      var toRemove = [];
+      for (var i = 0; i < sessionStorage.length; i++) {
+        var storageKey = sessionStorage.key(i);
+        if (!storageKey) continue;
+        prefixes.forEach(function (prefix) {
+          if (storageKey.indexOf(prefix) === 0) toRemove.push(storageKey);
+        });
+      }
+      toRemove.forEach(function (storageKey) {
+        sessionStorage.removeItem(storageKey);
+      });
+    } catch (e) { /* ignore */ }
   }
 
   function loadLeadsFromDatabase(callback) {
-    apiFetch('/ca-masters' + listingAllQuery('ca_masters'))
+    var gen = ++_leadsLoadGeneration;
+    return apiFetch('/ca-masters' + listingAllQuery('ca_masters'))
       .then(function (body) {
+        if (gen !== _leadsLoadGeneration) return;
         window.realLeads = unwrapList(body).map(mapLeadRecord);
+        window.kanbanLeads = window.realLeads.slice();
+        kanbanLeadsLoaded = true;
         realLeadsLoaded = true;
+        window._selectLeads = window.realLeads.slice();
+        window._selectLeadsLoaded = true;
+        if (realAssignmentsLoaded) enrichLeadsWithAssignments();
         if (callback) callback();
       })
       .catch(function () {
+        if (gen !== _leadsLoadGeneration) return;
         window.realLeads = [];
+        window.kanbanLeads = [];
+        kanbanLeadsLoaded = true;
         realLeadsLoaded = true;
         if (callback) callback();
+      });
+  }
+
+  function loadKanbanLeads(callback) {
+    if (!document.getElementById('kanban-board')) {
+      if (callback) callback();
+      return Promise.resolve();
+    }
+    if (!isAnyPipelineTabActive()) {
+      if (callback) callback();
+      return Promise.resolve();
+    }
+    var gen = ++_kanbanLoadGeneration;
+    setLeadsHubLoadingState(true);
+    var extra = { per_stage: 80 };
+    var segment = getLeadFilter();
+    if (segment && segment !== 'all') extra.segment = segment;
+    if (window.CA_LISTING_SEARCH && (document.getElementById('leads-data-table') || document.getElementById('ca-master-data-table'))) {
+      if (document.getElementById('leads-data-table')) {
+        Object.assign(extra, CA_LISTING_SEARCH.readLeadDrawerFilters());
+      } else {
+        Object.assign(extra, readCaMasterFiltersFromBar(), readCaMasterColumnFilters());
+      }
+    }
+    var qs = new URLSearchParams(extra).toString();
+    return apiFetch('/ca-masters/kanban?' + qs)
+      .then(function (body) {
+        if (gen !== _kanbanLoadGeneration) return;
+        var data = body.data || body;
+        window.kanbanLeads = (data.items || []).map(mapLeadRecord);
+        window.kanbanStageCounts = data.stage_counts || {};
+        kanbanLeadsLoaded = true;
+        setLeadsHubLoadingState(false);
+        if (document.getElementById('kanban-board')) renderKanbanFromData();
+        if (callback) callback();
+      })
+      .catch(function (err) {
+        if (gen !== _kanbanLoadGeneration) return;
+        window.kanbanLeads = window._listingLeadsPage ? window._listingLeadsPage.slice() : [];
+        kanbanLeadsLoaded = true;
+        setLeadsHubLoadingState(false);
+        if (callback) callback(err);
       });
   }
 
@@ -894,13 +2792,17 @@ window.CA_CRM = (function () {
   }
 
   function loadAssignmentsFromDatabase(callback) {
-    apiFetch('/lead-assignments' + listingAllQuery('lead_assignments'))
+    var gen = ++_assignmentsLoadGeneration;
+    return apiFetch('/lead-assignments' + listingAllQuery('lead_assignments'))
       .then(function (body) {
+        if (gen !== _assignmentsLoadGeneration) return;
         window.realAssignments = unwrapList(body);
         realAssignmentsLoaded = true;
+        if (realLeadsLoaded) enrichLeadsWithAssignments();
         if (callback) callback();
       })
       .catch(function () {
+        if (gen !== _assignmentsLoadGeneration) return;
         window.realAssignments = [];
         realAssignmentsLoaded = true;
         if (callback) callback();
@@ -973,7 +2875,10 @@ window.CA_CRM = (function () {
 
     document.querySelectorAll('select[name="source_id"]').forEach(function (sel) {
       var current = sel.value;
-      sel.innerHTML = buildMasterSelectOptions(sources, 'source_id', 'source_name');
+      var placeholder = '<option value="">Select source</option>';
+      sel.innerHTML = sources.length
+        ? placeholder + buildMasterSelectOptions(sources, 'source_id', 'source_name')
+        : '<option value="">No sources available</option>';
       setSelectValueIfValid(sel, current);
     });
 
@@ -982,25 +2887,62 @@ window.CA_CRM = (function () {
     }
   }
 
-  function masterActionButtons(entity, id) {
-    var canEdit = !window.CA_RBAC || CA_RBAC.can('ca_master', 'edit');
-    var canDelete = !window.CA_RBAC || CA_RBAC.can('ca_master', 'delete');
-    if (!canEdit && !canDelete) return '—';
-    var html = '';
-    if (canEdit) {
-      html += '<button type="button" class="btn-secondary btn-sm" data-master-edit="' + entity + '" data-master-id="' + id + '">Edit</button> ';
+  function masterActionCell(entity, id) {
+    if (!window.CAActionDropdown) return '<td class="crm-actions-cell text-right"><span class="cam-cell-empty">—</span></td>';
+    var items = [];
+    if (crmCanAction('ca_master', 'edit')) {
+      items.push({
+        action: 'edit',
+        label: 'Edit',
+        icon: 'pencil',
+        dataAttrs: { 'master-entity': entity, 'master-id': id },
+      });
     }
-    if (canDelete) {
-      html += '<button type="button" class="btn-secondary btn-sm" data-master-delete="' + entity + '" data-master-id="' + id + '">Delete</button>';
+    if (crmCanAction('ca_master', 'delete')) {
+      items.push({
+        action: 'delete',
+        label: 'Delete',
+        icon: 'trash-2',
+        danger: true,
+        dataAttrs: { 'master-entity': entity, 'master-id': id },
+      });
     }
-    return html.trim();
+    return CAActionDropdown.renderCell(items, {
+      scope: 'master',
+      rowId: entity + ':' + id,
+      cellClass: 'crm-actions-cell text-right',
+      ariaLabel: 'Master data actions',
+    });
   }
 
   function applyMasterDataRbac() {
-    var canCreate = !window.CA_RBAC || CA_RBAC.can('ca_master', 'create');
+    var canCreate = crmCanAction('ca_master', 'create');
     document.querySelectorAll('[data-master-add]').forEach(function (btn) {
       btn.classList.toggle('hidden', !canCreate);
     });
+    document.querySelectorAll('#cam-add-firm-btn').forEach(function (btn) {
+      btn.classList.toggle('hidden', !canCreate);
+    });
+    document.querySelectorAll('#cam-import-btn').forEach(function (btn) {
+      btn.classList.toggle('hidden', !crmCanAction('ca_master', 'import'));
+    });
+    document.querySelectorAll('#cam-export-btn').forEach(function (btn) {
+      btn.classList.toggle('hidden', !crmCanAction('ca_master', 'export'));
+    });
+    document.querySelectorAll('[data-inbox-module="ca-master"] [data-inbox-action]').forEach(function (btn) {
+      var action = btn.getAttribute('data-inbox-action');
+      var allowed = true;
+      if (action === 'assign') allowed = crmCanAction('assignment', 'create');
+      else if (action === 'import') allowed = crmCanAction('ca_master', 'import');
+      else if (action === 'export') allowed = crmCanAction('ca_master', 'export');
+      else if (action === 'delete') allowed = crmCanAction('ca_master', 'delete');
+      btn.classList.toggle('hidden', !allowed);
+    });
+    var bulkToolbar = document.querySelector('[data-inbox-module="ca-master"] .crm-inbox-bulk-toolbar');
+    if (bulkToolbar) {
+      var visible = bulkToolbar.querySelectorAll('[data-inbox-action]:not(.hidden)');
+      bulkToolbar.classList.toggle('hidden', !visible.length);
+    }
   }
 
   function refreshMasterDataCaches() {
@@ -1081,39 +3023,6 @@ window.CA_CRM = (function () {
       if (addBtn) {
         e.preventDefault();
         openMasterRecordModal(addBtn.getAttribute('data-master-add'), null);
-        return;
-      }
-      var editBtn = e.target.closest('[data-master-edit]');
-      if (editBtn) {
-        e.preventDefault();
-        var entity = editBtn.getAttribute('data-master-edit');
-        var record = findMasterRecord(entity, editBtn.getAttribute('data-master-id'));
-        if (!record) {
-          toast('Record not found — refresh and try again', 'warning');
-          return;
-        }
-        openMasterRecordModal(entity, record);
-        return;
-      }
-      var deleteBtn = e.target.closest('[data-master-delete]');
-      if (deleteBtn) {
-        e.preventDefault();
-        var delEntity = deleteBtn.getAttribute('data-master-delete');
-        var delCfg = masterEntityConfig(delEntity);
-        var delId = deleteBtn.getAttribute('data-master-id');
-        if (!delCfg || !window.confirm('Delete this ' + delCfg.title.toLowerCase() + '?')) return;
-        apiFetch(delCfg.endpoint + '/' + encodeURIComponent(delId), { method: 'DELETE' })
-          .then(function () {
-            toast(delCfg.title + ' deleted', 'success');
-            refreshMasterDataCaches();
-            if (window.CA_LISTING_SEARCH) {
-              reloadListing('states');
-              reloadListing('cities');
-            }
-          })
-          .catch(function (err) {
-            toast(err.message || 'Unable to delete record', 'error');
-          });
       }
     });
 
@@ -1163,8 +3072,8 @@ window.CA_CRM = (function () {
         return '<tr class="ca-table-row">' +
           '<td class="font-medium">' + s.state_name + '</td>' +
           '<td>' + (s.cities_count != null ? s.cities_count : '—') + '</td>' +
-          '<td class="text-caption">' + formatRelativeDate(s.created_at) + '</td>' +
-          '<td class="text-right whitespace-nowrap">' + masterActionButtons('state', s.state_id) + '</td>' +
+          '<td>' + formatRelativeDate(s.created_at) + '</td>' +
+          masterActionCell('state', s.state_id) +
         '</tr>';
       }).join('') : '<tr><td colspan="4" class="text-center text-slate-500 p-4">No states yet.</td></tr>';
     }
@@ -1184,7 +3093,7 @@ window.CA_CRM = (function () {
           '<td class="font-medium">' + s.source_name + '</td>' +
           '<td>—</td>' +
           '<td>—</td>' +
-          '<td class="text-right whitespace-nowrap">' + masterActionButtons('source', s.source_id) + '</td>' +
+          masterActionCell('source', s.source_id) +
         '</tr>';
       }).join('') : '<tr><td colspan="4" class="text-center text-slate-500 p-4">No lead sources yet.</td></tr>';
     }
@@ -1199,7 +3108,7 @@ window.CA_CRM = (function () {
           '<td>' + (t.team_size_max != null ? t.team_size_max : '—') + '</td>' +
           '<td>' + (t.team_size_label || '—') + '</td>' +
           '<td>—</td>' +
-          '<td class="text-right whitespace-nowrap">' + masterActionButtons('team', id) + '</td>' +
+          masterActionCell('team', id) +
         '</tr>';
       }).join('') : '<tr><td colspan="5" class="text-center text-slate-500 p-4">No team size ranges yet.</td></tr>';
     }
@@ -1211,7 +3120,7 @@ window.CA_CRM = (function () {
         return '<tr class="ca-table-row">' +
           '<td class="font-medium">' + escapeHtml(r.role_name) + '</td>' +
           '<td>' + escapeHtml(r.description || '—') + '</td>' +
-          '<td class="text-right whitespace-nowrap">' + masterActionButtons('role', r.id) + '</td>' +
+          masterActionCell('role', r.id) +
         '</tr>';
       }).join('') : '<tr><td colspan="3" class="text-center text-slate-500 p-4">No roles yet.</td></tr>';
     }
@@ -1221,6 +3130,7 @@ window.CA_CRM = (function () {
     if (!window.realLeads || !window.realAssignments) return;
     var latestByCa = {};
     window.realAssignments.forEach(function (a) {
+      if (a.status && String(a.status).toLowerCase() !== 'active') return;
       var caId = String(a.ca_id);
       if (!latestByCa[caId] || Number(a.assignment_id) > Number(latestByCa[caId].assignment_id)) {
         latestByCa[caId] = a;
@@ -1228,12 +3138,216 @@ window.CA_CRM = (function () {
     });
     window.realLeads = window.realLeads.map(function (lead) {
       var asgn = latestByCa[String(lead.ca_id)];
-      if (!asgn) return lead;
+      var hasNamedExecutive = lead.executive && lead.executive !== 'Unassigned' && lead.executive !== '—' && lead.executive !== 'Assigned';
+      if (hasNamedExecutive && lead.executive_id) return lead;
+      if (!asgn) {
+        if (lead.executive_id && !hasNamedExecutive) {
+          return Object.assign({}, lead, { executive: lead.executive || 'Assigned' });
+        }
+        return lead;
+      }
       return Object.assign({}, lead, {
         executive_id: String(asgn.employee_id),
-        executive: asgn.executive || asgn.employee_name || 'Assigned',
+        executive: asgn.executive || asgn.employee_name || lead.executive || 'Assigned',
         assignment_type: asgn.assignment_type || lead.assignment_type,
       });
+    });
+  }
+
+  function setLeadsHubLoadingState(isLoading) {
+    leadsHubLoading = !!isLoading;
+    var table = document.getElementById('leads-data-table');
+    var kanban = document.getElementById('kanban-board');
+    var loadingRow = '<tr><td colspan="15" class="text-center text-slate-500 p-6"><span class="inline-flex items-center gap-2"><i data-lucide="loader-2" class="h-4 w-4 animate-spin"></i> Loading leads…</span></td></tr>';
+    var loadingKanban = '<div class="w-full text-center text-slate-500 p-8"><span class="inline-flex items-center gap-2"><i data-lucide="loader-2" class="h-4 w-4 animate-spin"></i> Loading pipeline…</span></div>';
+    if (isLoading) {
+      if (table && !table.querySelector('tr.ca-table-row')) table.innerHTML = loadingRow;
+      if (kanban && !kanban.querySelector('.kanban-column')) kanban.innerHTML = loadingKanban;
+      icons();
+    }
+  }
+
+  function upsertLeadInCache(mappedLead) {
+    if (!mappedLead || !mappedLead.ca_id) return;
+    var leads = window.realLeads || [];
+    var idx = leads.findIndex(function (l) { return String(l.ca_id) === String(mappedLead.ca_id); });
+    if (idx >= 0) {
+      leads[idx] = Object.assign({}, leads[idx], mappedLead);
+    } else {
+      leads.unshift(mappedLead);
+    }
+    window.realLeads = leads;
+    window._selectLeads = leads.slice();
+    window._selectLeadsLoaded = true;
+    realLeadsLoaded = true;
+    if (window._listingLeadsPage) {
+      var pageIdx = window._listingLeadsPage.findIndex(function (l) { return String(l.ca_id) === String(mappedLead.ca_id); });
+      if (pageIdx >= 0) {
+        window._listingLeadsPage[pageIdx] = Object.assign({}, window._listingLeadsPage[pageIdx], mappedLead);
+      }
+    }
+    if (window.kanbanLeads) {
+      var kanbanIdx = window.kanbanLeads.findIndex(function (l) { return String(l.ca_id) === String(mappedLead.ca_id); });
+      if (kanbanIdx >= 0) {
+        window.kanbanLeads[kanbanIdx] = Object.assign({}, window.kanbanLeads[kanbanIdx], mappedLead);
+      }
+    }
+  }
+
+  function mergeLeadFromApiResponse(body) {
+    var raw = (body && body.data) ? body.data : body;
+    if (!raw || raw.ca_id === undefined || raw.ca_id === null) return null;
+    return mapLeadRecord(raw);
+  }
+
+  function refreshLeadsUi(options) {
+    options = options || {};
+    enrichLeadsWithAssignments();
+    if (options.invalidateMetrics) {
+      dashboardMetricsLoaded = false;
+      dashboardMetricsPromise = null;
+      leadSegmentCountsLoaded = false;
+      leadSegmentCounts = null;
+    }
+    if (document.getElementById('leads-kpi-strip')) {
+      if (options.invalidateMetrics) {
+        loadLeadSegmentCounts(function () {
+          renderLeadKpis();
+        }, { force: true });
+      } else {
+        renderLeadKpis();
+      }
+    }
+    if (document.getElementById('leads-data-table')) {
+      if (window.CA_LISTING_SEARCH && options.reloadListing !== false) {
+        reloadListing('ca_masters');
+      } else {
+        renderLeadsTable();
+      }
+    }
+    if (document.getElementById('kanban-board')) {
+      renderKanbanFromData();
+    }
+    var selId = CAData.getSelectedLeadId();
+    if (selId) {
+      highlightLeadSelection(selId);
+      updateSelectedLeadBar(getLeadRecord(selId));
+    }
+    icons();
+  }
+
+  function reloadLeadDataAfterMutation(options) {
+    options = options || {};
+    invalidateDataCaches(options.cacheKeys || ['metrics', 'leads', 'assignments']);
+    return Promise.all([
+      new Promise(function (resolve) { loadAssignmentsFromDatabase(resolve); }),
+      new Promise(function (resolve) { loadLeadsFromDatabase(resolve); }),
+    ]).then(function () {
+      enrichLeadsWithAssignments();
+      refreshLeadsUi({ invalidateMetrics: true, reloadListing: options.reloadListing !== false });
+    });
+  }
+
+  function applyLeadMutationSuccess(body, options) {
+    options = options || {};
+    var mapped = mergeLeadFromApiResponse(body);
+    invalidateDataCaches(options.cacheKeys || ['metrics', 'assignments']);
+    if (mapped) {
+      upsertLeadInCache(mapped);
+      return new Promise(function (resolve) {
+        loadAssignmentsFromDatabase(function () {
+          enrichLeadsWithAssignments();
+          refreshLeadsUi({ invalidateMetrics: true, reloadListing: options.reloadListing });
+          if (options.toast) toast(options.toast, 'success');
+          if (options.callback) options.callback(mapped);
+          resolve(mapped);
+        });
+      });
+    }
+    return reloadLeadDataAfterMutation(options).then(function () {
+      if (options.toast) toast(options.toast, 'success');
+      if (options.callback) options.callback(null);
+      return null;
+    });
+  }
+
+  function metricsDataReady() {
+    return isEmployeeUser() ? employeeDashboardLoaded : dashboardMetricsLoaded;
+  }
+
+  function getLeadHubMetrics() {
+    if (isEmployeeUser()) {
+      return mapEmployeeDashboardToLeadMetrics(employeeDashboardData || {});
+    }
+    return window.dashboardMetrics || {};
+  }
+
+  function isLeadsPipelineTabActive() {
+    var panel = document.querySelector('.ca-tab-panel[data-tab-group="leads-view"][data-panel="pipeline"]');
+    return !!(panel && panel.classList.contains('active'));
+  }
+
+  function isLeadsAllTabActive() {
+    var panel = document.querySelector('.ca-tab-panel[data-tab-group="leads-view"][data-panel="all"]');
+    return !!(panel && panel.classList.contains('active'));
+  }
+
+  function isAnyPipelineTabActive() {
+    return isLeadsPipelineTabActive() || isCamPipelineTabActive();
+  }
+
+  function mapSegmentCountsToLeadMetrics(counts) {
+    if (!counts) return {};
+    return {
+      total_leads: counts.all || 0,
+      new_leads: counts.new || 0,
+      hot_leads: counts.hot || 0,
+      pipeline_leads: counts.pipeline || 0,
+      lost_leads: counts.lost || 0,
+    };
+  }
+
+  function loadLeadSegmentCounts(callback, options) {
+    options = options || {};
+    if (!options.force && leadSegmentCountsLoaded && leadSegmentCounts) {
+      if (callback) callback(leadSegmentCounts);
+      return Promise.resolve(leadSegmentCounts);
+    }
+    if (leadSegmentCountsPromise) {
+      return leadSegmentCountsPromise.then(function (data) {
+        if (callback) callback(data);
+        return data;
+      });
+    }
+    leadSegmentCountsPromise = apiFetch('/ca-masters/segment-counts')
+      .then(function (body) {
+        leadSegmentCounts = body.data || body;
+        leadSegmentCountsLoaded = true;
+        leadSegmentCountsPromise = null;
+        if (callback) callback(leadSegmentCounts);
+        return leadSegmentCounts;
+      })
+      .catch(function (err) {
+        leadSegmentCountsPromise = null;
+        if (callback) callback(null, err);
+        throw err;
+      });
+    return leadSegmentCountsPromise;
+  }
+
+  function ensureLeadsHubData(callback) {
+    if (leadSegmentCountsLoaded && leadSegmentCounts) {
+      if (callback) callback();
+      return Promise.resolve();
+    }
+    setLeadsHubLoadingState(true);
+    return loadLeadSegmentCounts(function () {
+      setLeadsHubLoadingState(false);
+      if (callback) callback();
+    }).catch(function (error) {
+      setLeadsHubLoadingState(false);
+      toast((error && error.message) ? error.message : 'Unable to load lead data. Please refresh.', 'error');
+      if (callback) callback();
     });
   }
 
@@ -1275,6 +3389,7 @@ window.CA_CRM = (function () {
       if (pending <= 0) {
         populateSelects();
         populateMasterDropdowns();
+        window._formSelectDataReady = true;
         if (callback) callback();
       }
     }
@@ -1292,12 +3407,24 @@ window.CA_CRM = (function () {
     }
     if (pending === 0) {
       populateSelects();
+      populateMasterDropdowns();
+      window._formSelectDataReady = true;
       if (callback) callback();
     }
   }
 
-  function setSelectValueIfValid(select, value) {
+  function enhanceEntityLookups(root) {
+    if (window.CrmEntityLookup && typeof window.CrmEntityLookup.enhanceAll === 'function') {
+      window.CrmEntityLookup.enhanceAll(root || document);
+    }
+  }
+
+  function setSelectValueIfValid(select, value, record) {
     if (!select || value === undefined || value === null || value === '') return;
+    if (select.dataset && select.dataset.crmEntityLookup && window.CrmEntityLookup) {
+      enhanceEntityLookups(select.parentElement || document);
+      return window.CrmEntityLookup.setValue(select, value, record);
+    }
     var strValue = String(value);
     var option = Array.prototype.find.call(select.options, function (opt) {
       return opt.value === strValue || opt.text === strValue;
@@ -1314,13 +3441,25 @@ window.CA_CRM = (function () {
     }).join('');
   }
 
-  function buildExecOptionsHtml(executives) {
+  function buildExecOptionsHtml(executives, placeholder) {
+    placeholder = placeholder || 'Select employee';
+    var blank = '<option value="">' + escapeHtml(placeholder) + '</option>';
     if (!executives || !executives.length) {
-      return '<option value="">No data available</option>';
+      return blank;
     }
-    return executives.map(function (e) {
+    return blank + executives.map(function (e) {
       return '<option value="' + e.employee_id + '">' + e.name + ' · ' + (e.city || '—') + '</option>';
     }).join('');
+  }
+
+  function getExecutivesForSelects() {
+    if (window._selectEmployees && window._selectEmployees.length) {
+      return window._selectEmployees;
+    }
+    if (realEmployeesLoaded && window.realEmployees && window.realEmployees.length) {
+      return window.realEmployees;
+    }
+    return getDashboardExecutives();
   }
   function mapEmployeeDashboardToLeadMetrics(data) {
     var summary = (data && data.summary) || {};
@@ -1336,52 +3475,354 @@ window.CA_CRM = (function () {
     };
   }
 
-  function loadDashboardMetricsFromDatabase(callback) {
-    if (isEmployeeUser()) {
-      loadEmployeeDashboardFromDatabase(function (data) {
+  function dashboardCacheStorageKey() {
+    var role = (window.__CRM_USER__ || {}).role || 'user';
+    return 'crm_dashboard_metrics_v2_' + role;
+  }
+
+  function readDashboardMetricsCache() {
+    var storages = [sessionStorage, localStorage];
+    for (var s = 0; s < storages.length; s++) {
+      try {
+        var raw = storages[s].getItem(dashboardCacheStorageKey());
+        if (!raw) continue;
+        var parsed = JSON.parse(raw);
+        if (!parsed || !parsed.data || !parsed.savedAt) continue;
+        var maxAge = storages[s] === localStorage
+          ? DASHBOARD_CACHE_TTL_MS * 30
+          : DASHBOARD_CACHE_TTL_MS * 5;
+        if (Date.now() - parsed.savedAt > maxAge) continue;
+        if (!parsed.data.productivity || typeof parsed.data.productivity !== 'object') continue;
+        return parsed;
+      } catch (e) { /* try next storage */ }
+    }
+    return null;
+  }
+
+  function writeDashboardMetricsCache(data) {
+    if (!data) return;
+    var payload = JSON.stringify({
+      savedAt: Date.now(),
+      data: data,
+    });
+    try { sessionStorage.setItem(dashboardCacheStorageKey(), payload); } catch (e) { /* quota */ }
+    try { localStorage.setItem(dashboardCacheStorageKey(), payload); } catch (e) { /* quota */ }
+  }
+
+  function clearDashboardMetricsCache() {
+    try { sessionStorage.removeItem(dashboardCacheStorageKey()); } catch (e) { /* ignore */ }
+    try { localStorage.removeItem(dashboardCacheStorageKey()); } catch (e) { /* ignore */ }
+  }
+
+  function mapDashboardLeadSummary(lead) {
+    return {
+      ca_id: String(lead.ca_id),
+      firm_name: lead.firm_name || '—',
+      ca_name: lead.ca_name || '—',
+      city: lead.city || '—',
+      status: lead.status || 'New',
+      stage: lead.stage || mapStatusToStage(lead.status),
+      executive: lead.executive || 'Unassigned',
+      updated: formatRelativeDate(lead.updated_at),
+    };
+  }
+
+  function setDashboardChartsLoading(isLoading) {
+    document.querySelectorAll('[data-dashboard-chart]').forEach(function (el) {
+      if (isLoading) {
+        delete el.dataset.chartReady;
+        el.innerHTML = '<div class="dash-chart-loading flex items-center justify-center gap-2 p-4 text-slate-400"><i data-lucide="loader-2" class="h-4 w-4 animate-spin"></i><span class="text-caption">Loading chart…</span></div>';
+      }
+    });
+    if (isLoading) icons();
+  }
+
+  function showDashboardLoadError(message) {
+    var root = document.querySelector('.mgr-dashboard');
+    if (!root) return;
+    var banner = document.getElementById('dashboard-load-error');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'dashboard-load-error';
+      banner.className = 'dashboard-load-error';
+      root.insertBefore(banner, root.firstChild);
+    }
+    banner.innerHTML = '<i data-lucide="alert-circle" class="h-4 w-4"></i><span>' + escapeHtml(message || 'Unable to load dashboard metrics. Please refresh.') + '</span>';
+    banner.classList.remove('hidden');
+    icons();
+  }
+
+  function hideDashboardLoadError() {
+    var banner = document.getElementById('dashboard-load-error');
+    if (banner) banner.classList.add('hidden');
+  }
+
+  function paintDashboardLoadingShell() {
+    paintDashboardInstantShell(true);
+  }
+
+  function paintDashboardInstantShell(showSpinner) {
+    var crmUser = window.__CRM_USER__ || {};
+    var displayName = crmUser.name || 'User';
+    var roleLabel = crmUser.role_label || crmUser.role || 'User';
+    var now = new Date();
+    var greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 17 ? 'Good afternoon' : 'Good evening';
+    var dateStr = now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    var greetingLine = dashboardGreetingText(greeting, displayName, roleLabel);
+    var badgeIcon = showSpinner
+      ? '<i data-lucide="loader-2" class="h-3.5 w-3.5 animate-spin"></i> Refreshing'
+      : '<i data-lucide="layout-dashboard" class="h-3.5 w-3.5"></i> ' + escapeHtml(roleLabel);
+
+    var top = document.getElementById('mgr-top-header');
+    if (top) {
+      top.innerHTML =
+        '<div class="mgr-top-left">' +
+          '<span class="manager-role-badge">' + badgeIcon + '</span>' +
+          '<h1 class="text-page-title mgr-greeting">' + escapeHtml(greetingLine) + '</h1>' +
+          '<p class="mgr-top-meta text-slate-400">' + escapeHtml(dateStr) + ' · updating metrics</p>' +
+        '</div>' +
+        managerDashboardFiltersHtml();
+    }
+    ensureManagerEmployeeFilter();
+    iconsIn(document.querySelector('.mgr-dashboard') || document);
+  }
+
+  function paintEmployeeDashboardInstantShell() {
+    var crmUser = window.__CRM_USER__ || {};
+    var now = new Date();
+    var greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 17 ? 'Good afternoon' : 'Good evening';
+    var timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    var dateStr = now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    var roleBadge = crmUser.role_label || 'Employee';
+    var top = document.getElementById('emp-top-header');
+    if (top) {
+      top.innerHTML =
+        '<div class="mgr-top-left">' +
+          '<span class="manager-role-badge"><i data-lucide="briefcase" class="h-3.5 w-3.5"></i> ' + escapeHtml(roleBadge) + '</span>' +
+          '<h1 class="text-page-title mgr-greeting">' + escapeHtml(dashboardGreetingText(greeting, crmUser.name, roleBadge)) + '</h1>' +
+          '<p class="mgr-top-meta text-slate-400">' + escapeHtml(dateStr) + ' · ' + escapeHtml(timeStr) + ' · updating metrics</p>' +
+        '</div>';
+    }
+    iconsIn(document.querySelector('.emp-dashboard') || document);
+  }
+
+  var DASHBOARD_DATE_PRESETS = {
+    today: 'Today',
+    yesterday: 'Yesterday',
+    last_7_days: 'Last 7 Days',
+    last_15_days: 'Last 15 Days',
+    last_30_days: 'Last 30 Days',
+    this_week: 'This Week',
+    last_week: 'Last Week',
+    this_month: 'This Month',
+    last_month: 'Last Month',
+    last_quarter: 'Last Quarter',
+    last_half_year: 'Last Half Year',
+    this_year: 'This Year',
+    last_year: 'Last Year',
+    custom: 'Custom Range',
+  };
+
+  function getDashboardEmployeeFilterId() {
+    if (isEmployeeUser()) return null;
+    try {
+      var stored = localStorage.getItem('crm_dashboard_employee_id');
+      if (!stored || stored === 'all') return null;
+      var id = parseInt(stored, 10);
+      return id > 0 ? id : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function setDashboardEmployeeFilterId(employeeId) {
+    try {
+      if (!employeeId) localStorage.setItem('crm_dashboard_employee_id', 'all');
+      else localStorage.setItem('crm_dashboard_employee_id', String(employeeId));
+    } catch (e) { /* ignore */ }
+  }
+
+  function clearStaleDashboardEmployeeFilter() {
+    var selectedId = getDashboardEmployeeFilterId();
+    if (!selectedId) return false;
+    var employees = managerEmployeeFilterState.employees || [];
+    if (!managerEmployeeFilterState.loaded) return false;
+    var valid = employees.some(function (row) {
+      return String(row.employee_id) === String(selectedId);
+    });
+    if (valid) return false;
+    try {
+      localStorage.removeItem('crm_dashboard_employee_id');
+      localStorage.setItem('crm_dashboard_employee_id', 'all');
+    } catch (e) { /* ignore */ }
+    setDashboardEmployeeFilterId(null);
+    dashboardMetricsLoaded = false;
+    return true;
+  }
+
+  function recoverDashboardEmployeeFilterError(err, callback, options) {
+    var message = (err && err.message) ? String(err.message) : '';
+    if (!/do not have access to this employee/i.test(message)) return false;
+    try {
+      localStorage.removeItem('crm_dashboard_employee_id');
+      localStorage.setItem('crm_dashboard_employee_id', 'all');
+    } catch (e) { /* ignore */ }
+    setDashboardEmployeeFilterId(null);
+    dashboardMetricsLoaded = false;
+    if (options && options._employeeFilterRecovered) return false;
+    loadDashboardMetricsFromDatabase(callback, Object.assign({}, options || {}, { force: true, _employeeFilterRecovered: true }));
+    toast('Previous employee filter was cleared. Showing organization dashboard.', 'info');
+    return true;
+  }
+
+  function getDashboardDateFilter() {
+    try {
+      var preset = localStorage.getItem('crm_dashboard_date_preset') || 'today';
+      var from = localStorage.getItem('crm_dashboard_date_from') || '';
+      var to = localStorage.getItem('crm_dashboard_date_to') || '';
+      if (!DASHBOARD_DATE_PRESETS[preset]) preset = 'today';
+      return { preset: preset, from: from, to: to };
+    } catch (e) {
+      return { preset: 'today', from: '', to: '' };
+    }
+  }
+
+  function setDashboardDateFilter(preset, from, to) {
+    try {
+      localStorage.setItem('crm_dashboard_date_preset', preset || 'today');
+      localStorage.setItem('crm_dashboard_date_from', from || '');
+      localStorage.setItem('crm_dashboard_date_to', to || '');
+    } catch (e) { /* ignore */ }
+  }
+
+  function buildDashboardMetricsQuery(employeeId, dateFilter) {
+    var params = [];
+    if (employeeId) params.push('employee_id=' + encodeURIComponent(employeeId));
+    dateFilter = dateFilter || getDashboardDateFilter();
+    if (dateFilter.preset) params.push('date_preset=' + encodeURIComponent(dateFilter.preset));
+    if (dateFilter.preset === 'custom') {
+      if (dateFilter.from) params.push('from=' + encodeURIComponent(dateFilter.from));
+      if (dateFilter.to) params.push('to=' + encodeURIComponent(dateFilter.to));
+    }
+    return params.length ? ('?' + params.join('&')) : '';
+  }
+
+  function loadDashboardMetricsFromDatabase(callback, options) {
+    options = options || {};
+    var isEmployee = isEmployeeUser();
+    var filterEmployeeId = options.employeeId !== undefined ? options.employeeId : getDashboardEmployeeFilterId();
+    var dateFilter = options.dateFilter || getDashboardDateFilter();
+    var isDefaultFilters = !filterEmployeeId && (!dateFilter.preset || dateFilter.preset === 'today');
+    var endpoint = isEmployee
+      ? '/dashboard/employee'
+      : ('/dashboard/metrics' + buildDashboardMetricsQuery(filterEmployeeId, dateFilter));
+
+    // Default org-wide "today" views may use cache; filtered views always fetch live.
+    if (!options.force && !options.background && isDefaultFilters) {
+      var cached = readDashboardMetricsCache();
+      if (cached && cached.data) {
+        window.dashboardMetrics = isEmployee ? cached.data : cached.data;
+        window.__dashboardUpdatedAt = cached.savedAt || Date.now();
+        if (isEmployee) {
+          employeeDashboardData = cached.data;
+          employeeDashboardLoaded = true;
+        } else {
+          dashboardMetricsLoaded = true;
+        }
+        var metrics = isEmployee ? mapEmployeeDashboardToLeadMetrics(cached.data) : cached.data;
+        if (callback) callback(metrics, null, { fromCache: true });
+        loadDashboardMetricsFromDatabase(function (freshMetrics, err, meta) {
+          if (!meta || !meta.background || err || !window.dashboardMetrics) return;
+          if (window._currentPageId === 'dashboard') {
+            if (isEmployeeUser()) {
+              paintEmployeeDashboard(employeeDashboardData || window.dashboardMetrics);
+            } else {
+              paintManagerDashboard(buildDashboardDisplayMetrics(freshMetrics || window.dashboardMetrics));
+              renderDashboardCharts((freshMetrics || window.dashboardMetrics).reports);
+            }
+          }
+          if (document.getElementById('leads-kpi-strip')) renderLeadKpis();
+        }, { force: true, background: true });
+        return;
+      }
+    }
+
+    if (!options.background && dashboardMetricsLoaded && window.dashboardMetrics && !options.force && isDefaultFilters) {
+      var current = isEmployee ? mapEmployeeDashboardToLeadMetrics(employeeDashboardData || window.dashboardMetrics) : window.dashboardMetrics;
+      if (callback) callback(current, null, { fromCache: true });
+      return;
+    }
+
+    var activePromise = isEmployee ? employeeDashboardPromise : dashboardMetricsPromise;
+    // Reuse in-flight requests only for non-forced loads so filter changes (e.g. Clear)
+    // always fetch the correct employee / organization payload.
+    if (activePromise && !options.force) {
+      activePromise.then(function (data) {
         if (!data) {
-          if (callback) callback(null);
+          if (callback) callback(null, new Error('Unable to load dashboard'));
           return;
         }
-        var metrics = mapEmployeeDashboardToLeadMetrics(data);
-        window.dashboardMetrics = metrics;
-        dashboardMetricsLoaded = true;
-        if (callback) callback(metrics);
-      }, true);
-      return;
-    }
-
-    if (dashboardMetricsLoaded && window.dashboardMetrics) {
-      if (callback) callback(window.dashboardMetrics);
-      return;
-    }
-
-    if (dashboardMetricsPromise) {
-      dashboardMetricsPromise.then(function (metrics) {
-        if (callback) callback(metrics);
-      }).catch(function () {
-        if (callback) callback(null);
+        var result = isEmployee ? mapEmployeeDashboardToLeadMetrics(data) : data;
+        if (callback) callback(result, null, { fromCache: false });
+      }).catch(function (err) {
+        if (callback) callback(null, err);
       });
       return;
     }
 
-    dashboardMetricsPromise = apiFetch('/dashboard/metrics')
+    var requestSeq = ++dashboardMetricsRequestSeq;
+    var fetchPromise = apiFetch(endpoint)
       .then(function (body) {
-        window.dashboardMetrics = body.data || {};
+        if (requestSeq !== dashboardMetricsRequestSeq) return null;
+        var data = body.data || {};
+        if (isDefaultFilters) writeDashboardMetricsCache(data);
+        hideDashboardLoadError();
+        if (isEmployee) {
+          employeeDashboardData = data;
+          employeeDashboardLoaded = true;
+          window.__dashboardUpdatedAt = Date.now();
+          return data;
+        }
+        window.dashboardMetrics = data;
+        window.__dashboardUpdatedAt = Date.now();
         dashboardMetricsLoaded = true;
-        return window.dashboardMetrics;
+        return data;
       })
-      .catch(function () {
-        window.dashboardMetrics = null;
-        dashboardMetricsLoaded = true;
-        return null;
+      .catch(function (err) {
+        if (requestSeq !== dashboardMetricsRequestSeq) return null;
+        if (!options.background) {
+          window.dashboardMetrics = null;
+          dashboardMetricsLoaded = true;
+        }
+        if (isEmployee) {
+          employeeDashboardData = null;
+          employeeDashboardLoaded = true;
+        }
+        throw err;
       })
       .finally(function () {
-        dashboardMetricsPromise = null;
+        if (isEmployee) {
+          if (employeeDashboardPromise === fetchPromise) employeeDashboardPromise = null;
+        } else if (dashboardMetricsPromise === fetchPromise) {
+          dashboardMetricsPromise = null;
+        }
       });
 
-    dashboardMetricsPromise.then(function (metrics) {
-      if (callback) callback(metrics);
+    if (isEmployee) employeeDashboardPromise = fetchPromise;
+    else dashboardMetricsPromise = fetchPromise;
+
+    fetchPromise.then(function (data) {
+      if (requestSeq !== dashboardMetricsRequestSeq) return;
+      if (!data) {
+        if (callback) callback(null, new Error('Unable to load dashboard'));
+        return;
+      }
+      var result = isEmployee ? mapEmployeeDashboardToLeadMetrics(data) : data;
+      if (callback) callback(result, null, { fromCache: false, background: !!options.background });
+    }).catch(function (err) {
+      if (requestSeq !== dashboardMetricsRequestSeq) return;
+      if (recoverDashboardEmployeeFilterError(err, callback, options)) return;
+      if (callback) callback(null, err, { background: !!options.background });
     });
   }
 
@@ -1400,6 +3841,20 @@ window.CA_CRM = (function () {
   }
 
   function getDashboardExecutives() {
+    var metrics = window.dashboardMetrics || {};
+    if (metrics.team_summary && metrics.team_summary.length) {
+      return metrics.team_summary.map(function (employee) {
+        return {
+          employee_id: String(employee.employee_id),
+          name: employee.name || '—',
+          city: employee.city || '—',
+          achieved_leads: employee.achieved_leads || 0,
+          target_leads: employee.target_leads || 20,
+          daily_calls: employee.daily_calls || 0,
+          demos: employee.demos || 0,
+        };
+      });
+    }
     var employees = realEmployeesLoaded && window.realEmployees ? window.realEmployees.slice() : [];
     if (!employees.length) return USE_DEMO_FALLBACKS ? CAData.getExecutives() : [];
     var assignmentCounts = getEmployeeAssignmentCounts();
@@ -1473,10 +3928,16 @@ window.CA_CRM = (function () {
       demo_confirmation_rescheduled: metrics && metrics.demo_confirmations ? metrics.demo_confirmations.demo_confirmation_rescheduled : 0,
       demo_confirmation_rejected_after_reschedule: metrics && metrics.demo_confirmations ? metrics.demo_confirmations.demo_confirmation_rejected_after_reschedule : 0,
       target_achievement: totalLeads ? Math.round((assignedLeads / totalLeads) * 100) + '%' : '0%',
+      productivity: metrics ? metrics.productivity : null,
+      duplicate_monitoring: metrics ? metrics.duplicate_monitoring : null,
     };
   }
 
   function getDashboardPipelineBreakdown() {
+    var metrics = window.dashboardMetrics || {};
+    if (metrics.pipeline_breakdown && metrics.pipeline_breakdown.length) {
+      return metrics.pipeline_breakdown;
+    }
     var leads = getDashboardLeads();
     if (!leads.length) {
       if (USE_DEMO_FALLBACKS) return CAData.getPipelineBreakdown();
@@ -1517,6 +3978,10 @@ window.CA_CRM = (function () {
   }
 
   function getDashboardPriorityLeads() {
+    var metrics = window.dashboardMetrics || {};
+    if (metrics.priority_leads && metrics.priority_leads.length) {
+      return metrics.priority_leads.map(mapDashboardLeadSummary);
+    }
     var leads = getDashboardLeads();
     if (!leads.length) return USE_DEMO_FALLBACKS ? CAData.getPriorityLeads() : [];
     return leads.filter(function (lead) {
@@ -1551,7 +4016,8 @@ window.CA_CRM = (function () {
     var recordId = log.record_id || '';
     if (module === 'CA_MASTER' && recordId) {
       window._leadSegmentFilter = 'all';
-      if (typeof navigateTo === 'function') navigateTo('leads');
+      window._selectedLeadId = recordId;
+      if (typeof navigateTo === 'function') navigateTo(isEmployeeUser() ? 'leads' : 'ca-master');
       return;
     }
     if (module === 'LEAD_ASSIGNMENT_ENGINE') {
@@ -1574,26 +4040,26 @@ window.CA_CRM = (function () {
     if (!el) return;
     var actions = [
       { label: 'Add Lead', icon: 'user-plus', modal: 'add-lead' },
-      { label: 'Add Employee', icon: 'user', modal: 'add-employee' },
+      { label: 'Import Leads', icon: 'upload', page: 'bulk' },
       { label: 'Assign Lead', icon: 'user-check', modal: 'assign-lead' },
-      { label: 'Create Follow-up', icon: 'calendar-clock', modal: 'followup' },
-      { label: 'WhatsApp Campaign', icon: 'message-circle', page: 'whatsapp', campaign: 'whatsapp' },
-      { label: 'Email Campaign', icon: 'mail', page: 'email', campaign: 'email' },
-      { label: 'SMS Campaign', icon: 'smartphone', page: 'sms', campaign: 'sms' },
-      { label: 'Bulk Import', icon: 'upload', page: 'bulk' },
+      { label: 'Schedule Follow-up', icon: 'calendar-clock', modal: 'followup' },
+      { label: 'Communication', icon: 'messages-square', page: 'whatsapp' },
       { label: 'Reports', icon: 'bar-chart-3', page: 'reports' },
     ];
     el.innerHTML = actions.map(function (action) {
       if (action.modal) {
         return '<button type="button" class="dash-quick-action-btn" data-open-modal="' + action.modal + '">' +
-          '<i data-lucide="' + action.icon + '" class="h-4 w-4"></i><span>' + action.label + '</span></button>';
+          '<span class="dash-quick-action-btn__icon"><i data-lucide="' + action.icon + '" class="h-4 w-4"></i></span>' +
+          '<span class="dash-quick-action-btn__label">' + action.label + '</span></button>';
       }
       if (action.campaign) {
         return '<button type="button" class="dash-quick-action-btn" data-nav-page="' + action.page + '" data-open-campaign="' + action.campaign + '">' +
-          '<i data-lucide="' + action.icon + '" class="h-4 w-4"></i><span>' + action.label + '</span></button>';
+          '<span class="dash-quick-action-btn__icon"><i data-lucide="' + action.icon + '" class="h-4 w-4"></i></span>' +
+          '<span class="dash-quick-action-btn__label">' + action.label + '</span></button>';
       }
       return '<button type="button" class="dash-quick-action-btn" data-nav-page="' + action.page + '">' +
-        '<i data-lucide="' + action.icon + '" class="h-4 w-4"></i><span>' + action.label + '</span></button>';
+        '<span class="dash-quick-action-btn__icon"><i data-lucide="' + action.icon + '" class="h-4 w-4"></i></span>' +
+        '<span class="dash-quick-action-btn__label">' + action.label + '</span></button>';
     }).join('');
     el.querySelectorAll('[data-open-campaign]').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -1603,6 +4069,7 @@ window.CA_CRM = (function () {
           if (modal && typeof openModal === 'function') {
             configureCampaignModal(btn.getAttribute('data-open-campaign'));
             openModal(modal);
+            initCampaignScheduledDateField();
           }
         }, 150);
       });
@@ -1614,7 +4081,7 @@ window.CA_CRM = (function () {
     if (!el) return;
     var chips = [
       { label: 'Follow-ups', icon: 'calendar-clock', page: 'followups', filter: 'today' },
-      { label: 'Hot Leads', icon: 'flame', page: 'leads', leadFilter: 'hot' },
+      { label: 'Hot Leads', icon: 'flame', page: 'ca-master', leadFilter: 'hot' },
       { label: 'Do Not Disturb', icon: 'ban', page: 'consent-dnd', tab: 'dnd' },
       { label: 'Delivered', icon: 'send', page: 'whatsapp', commLogStatus: 'Delivered' },
       { label: 'WhatsApp', icon: 'message-circle', page: 'whatsapp' },
@@ -1650,12 +4117,11 @@ window.CA_CRM = (function () {
       ? ' data-activity-id="' + activityId + '"'
       : '';
     return '<button type="button" class="dash-activity-item' + extraClass + '"' + idAttr + '>' +
-      '<span class="dash-activity-avatar">' + escapeHtml(userInitials(log.performed_by || opts.userFallback || 'System')) + '</span>' +
-      '<span class="dash-activity-icon"><i data-lucide="' + activityModuleIcon(log.module_name) + '" class="h-4 w-4"></i></span>' +
+      '<span class="dash-activity-avatar" aria-hidden="true">' + escapeHtml(userInitials(log.performed_by || opts.userFallback || 'System')) + '</span>' +
+      '<span class="dash-activity-icon" aria-hidden="true"><i data-lucide="' + activityModuleIcon(log.module_name) + '" class="h-4 w-4"></i></span>' +
       '<span class="dash-activity-body">' +
-        '<span class="dash-activity-user">' + userLabel + '</span>' +
         '<span class="dash-activity-action">' + actionLabel + '</span>' +
-        '<span class="dash-activity-detail">' + detail + '</span>' +
+        '<span class="dash-activity-detail">' + userLabel + (detail ? ' · ' + detail : '') + '</span>' +
       '</span>' +
       '<span class="dash-activity-time">' + timeLabel + '</span>' +
     '</button>';
@@ -1663,22 +4129,27 @@ window.CA_CRM = (function () {
 
   function paintDashboardBarChart(el, rows, labelKey, valueKey) {
     if (!el) return;
+    el.dataset.chartReady = '1';
     if (!rows || !rows.length) {
-      el.innerHTML = '<p class="text-caption text-slate-400 p-3">No data available yet.</p>';
+      el.innerHTML = '<p class="dash-chart-empty">No data available yet.</p>';
       return;
     }
     var max = Math.max.apply(null, rows.map(function (row) { return row[valueKey] || 0; }).concat([1]));
-    el.innerHTML = rows.slice(0, 8).map(function (row) {
+    el.innerHTML = rows.slice(0, 8).map(function (row, idx) {
       var val = row[valueKey] || 0;
-      return '<div class="mgr-bar-row">' +
-        '<span class="mgr-bar-label">' + escapeHtml(row[labelKey] || '—') + '</span>' +
-        '<div class="mgr-bar-track"><div class="mgr-bar-fill" style="width:' + Math.round((val / max) * 100) + '%"></div></div>' +
+      var pct = Math.round((val / max) * 100);
+      var label = row[labelKey] || '—';
+      return '<div class="mgr-bar-row dash-bar-row" title="' + escapeHtml(label) + ': ' + val + '">' +
+        '<span class="mgr-bar-label" title="' + escapeHtml(label) + '">' + escapeHtml(label) + '</span>' +
+        '<div class="mgr-bar-track"><div class="mgr-bar-fill' + (idx % 2 ? ' mgr-bar-fill-alt' : '') + '" style="width:' + pct + '%" data-value="' + val + '"></div></div>' +
         '<span class="mgr-bar-val">' + val + '</span></div>';
     }).join('');
   }
 
   function renderDashboardCharts(reports) {
-    reports = reports || (window.dashboardMetrics && window.dashboardMetrics.reports) || {};
+    deferNonCriticalWork(function () {
+      reports = reports || (window.dashboardMetrics && window.dashboardMetrics.reports) || {};
+      setDashboardChartsLoading(false);
     paintDashboardBarChart(
       document.getElementById('dash-chart-source'),
       (reports.source_breakdown || []).map(function (d) { return { source: d.source, count: d.count }; }),
@@ -1705,21 +4176,37 @@ window.CA_CRM = (function () {
     );
     var monthlyEl = document.querySelector('[data-chart="monthly"]');
     if (monthlyEl) {
+      monthlyEl.dataset.chartReady = '1';
       paintReportChart(monthlyEl, (reports.monthly_trends || []).map(function (row) {
         return { label: row.month, value: row.new_leads || 0 };
       }));
     }
     var employeeEl = document.querySelector('[data-chart="employee"]');
     if (employeeEl) {
+      employeeEl.dataset.chartReady = '1';
       paintReportChart(employeeEl, (reports.employee_performance || []).slice(0, 8).map(function (row) {
         return { label: (row.employee_name || 'Exec').split(' ')[0], value: row.achievement_pct || 0 };
       }));
     }
+    });
   }
 
   function renderRecentActivity() {
     var el = document.getElementById('recent-activity-list');
     if (!el) return;
+    var preview = window.dashboardMetrics && window.dashboardMetrics.activity_preview;
+    if (preview && preview.length) {
+      el.innerHTML = preview.map(function (a) {
+        return renderActivityFeedItem(a);
+      }).join('');
+      el.querySelectorAll('.dash-activity-item').forEach(function (btn, idx) {
+        btn.addEventListener('click', function () {
+          navigateActivityRecord(preview[idx]);
+        });
+      });
+      icons();
+      return;
+    }
     apiFetch('/activity-logs?limit=8')
       .then(function (body) {
         var logs = unwrapActivityPayload(body).logs;
@@ -1745,6 +4232,368 @@ window.CA_CRM = (function () {
   function isEmployeeUser() {
     var u = window.__CRM_USER__ || {};
     return u.role === 'employee';
+  }
+
+  function canViewSalesList() {
+    return crmCanAction('sales_list', 'view');
+  }
+
+  function canEditSalesList() {
+    return crmCanAction('sales_list', 'edit');
+  }
+
+  function canViewSalesListHistory() {
+    return crmCanAction('sales_list', 'view') && (window.__CRM_USER__ || {}).role === 'super_admin';
+  }
+
+  function formatSalesCurrency(value) {
+    var amount = Number(value || 0);
+    return '₹' + amount.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  }
+
+  function salesPaymentBadge(status) {
+    var tone = 'slate';
+    if (status === 'Paid') tone = 'emerald';
+    else if (status === 'Partial') tone = 'amber';
+    else if (status === 'Overdue') tone = 'rose';
+    else if (status === 'Pending') tone = 'blue';
+    return '<span class="cam-cell-badge cam-cell-badge--' + tone + '">' + escapeHtml(status || '—') + '</span>';
+  }
+
+  function isAdminUser() {
+    var u = window.__CRM_USER__ || {};
+    return u.role === 'admin' || u.role === 'super_admin' || u.role === 'manager';
+  }
+
+  function releaseLeadLock() {
+    var id = window._editingLeadId;
+    if (!id || isAdminUser()) return Promise.resolve();
+    return apiFetch('/ca-masters/' + encodeURIComponent(id) + '/lock', { method: 'DELETE' }).catch(function () {});
+  }
+
+  function releaseLeadLockBeacon() {
+    var id = window._editingLeadId;
+    if (!id || isAdminUser()) return;
+    try {
+      fetch('/ca-masters/' + encodeURIComponent(id) + '/lock', {
+        method: 'DELETE',
+        headers: {
+          'X-CSRF-TOKEN': csrfToken(),
+          'Accept': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        keepalive: true,
+      });
+    } catch (e) { /* ignore */ }
+  }
+
+  function setLeadLockBadge(lead) {
+    var badge = document.getElementById('add-lead-lock-badge');
+    if (!badge) return;
+    var lock = (lead && lead.lock) || {};
+    badge.classList.add('hidden');
+    badge.textContent = '';
+    if (lock.is_locked_by_me) {
+      badge.textContent = '🟢 Editing';
+      badge.className = 'ml-2 text-xs font-medium text-emerald-700';
+      badge.classList.remove('hidden');
+    } else if (lock.is_locked_by_other) {
+      badge.textContent = '🔒 Locked by ' + (lock.locked_by_name || 'another employee');
+      badge.className = 'ml-2 text-xs font-medium text-amber-700';
+      badge.classList.remove('hidden');
+    }
+  }
+
+  var leadDuplicateCheckTimer = null;
+  window._leadDuplicateBlocked = false;
+
+  function formatDuplicateDate(value) {
+    if (!value) return '—';
+    try {
+      return new Date(value).toLocaleString();
+    } catch (e) {
+      return value;
+    }
+  }
+
+  function renderLeadDuplicateWarning(duplicate, potential) {
+    var box = document.getElementById('form-lead-duplicate-warning');
+    var submitBtn = document.getElementById('add-lead-submit-btn');
+    if (!box) return;
+
+    if (potential && potential.existing_lead) {
+      var pLead = potential.existing_lead;
+      box.innerHTML =
+        '<p class="font-semibold text-amber-700 mb-1">Potential Duplicate — similar number exists</p>' +
+        '<p class="text-sm text-amber-800">Prefix matches existing lead <strong>' + escapeHtml(pLead.firm_name || pLead.ca_name || 'Lead') + '</strong> (' + escapeHtml(potential.existing_number || pLead.mobile_no || '—') + ').</p>' +
+        '<p class="text-caption text-amber-700 mt-1">This attempt is logged for manager review. You may still save if the number is unique.</p>';
+      box.classList.remove('hidden');
+      window._leadDuplicateBlocked = false;
+      if (submitBtn) submitBtn.disabled = false;
+      return;
+    }
+
+    if (!duplicate || !duplicate.existing_lead) {
+      box.classList.add('hidden');
+      box.innerHTML = '';
+      window._leadDuplicateBlocked = false;
+      if (submitBtn) submitBtn.disabled = false;
+      return;
+    }
+
+    var lead = duplicate.existing_lead;
+    box.innerHTML =
+      '<p class="font-semibold text-red-700 mb-1">' + escapeHtml(duplicate.title || 'Duplicate Number Found') + '</p>' +
+      '<p class="text-sm text-red-800">This attempt has been logged for manager review.</p>' +
+      '<p><strong>CA Name:</strong> ' + escapeHtml(lead.ca_name || '—') + '</p>' +
+      '<p><strong>Firm Name:</strong> ' + escapeHtml(lead.firm_name || '—') + '</p>' +
+      '<p><strong>Added by:</strong> ' + escapeHtml(lead.added_by || '—') + '</p>' +
+      '<p><strong>Added on:</strong> ' + escapeHtml(formatDuplicateDate(lead.added_at)) + '</p>' +
+      '<p><strong>Status:</strong> ' + escapeHtml(lead.status || '—') + '</p>' +
+      '<p><strong>Assigned employee:</strong> ' + escapeHtml(lead.assigned_executive || '—') + '</p>';
+    box.classList.remove('hidden');
+    window._leadDuplicateBlocked = true;
+    window._lastDuplicateAttemptId = duplicate.attempt_id || null;
+    if (submitBtn) submitBtn.disabled = true;
+  }
+
+  function checkLeadMobileDuplicate(mobile, excludeCaId, fieldName) {
+    var digits = normalizeLeadMobileDigits(mobile);
+    if (!digits || digits.length < 8) {
+      var box = document.getElementById('form-lead-duplicate-warning');
+      if (box) {
+        box.classList.add('hidden');
+        box.innerHTML = '';
+      }
+      window._leadDuplicateBlocked = false;
+      if (document.getElementById('add-lead-submit-btn')) {
+        document.getElementById('add-lead-submit-btn').disabled = false;
+      }
+      return Promise.resolve(null);
+    }
+
+    var url = '/ca-masters/check-duplicate?mobile=' + encodeURIComponent(mobile) +
+      '&field_name=' + encodeURIComponent(fieldName || 'mobile_no');
+    if (excludeCaId) {
+      url += '&exclude_ca_id=' + encodeURIComponent(excludeCaId);
+    }
+
+    return apiFetch(url).then(function (body) {
+      var data = body.data || {};
+      if (data.potential_duplicate) {
+        renderLeadDuplicateWarning(null, data.potential_duplicate);
+      } else {
+        renderLeadDuplicateWarning(null);
+        if (window._lastDuplicateAttemptId) {
+          apiFetch('/duplicate-attempts/' + encodeURIComponent(window._lastDuplicateAttemptId) + '/mark-changed', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ final_number: mobile }),
+          }).catch(function () {});
+          window._lastDuplicateAttemptId = null;
+        }
+      }
+      return null;
+    }).catch(function (error) {
+      if (error.status === 409 && error.duplicate) {
+        renderLeadDuplicateWarning(error.duplicate);
+        return error.duplicate;
+      }
+      return null;
+    });
+  }
+
+  function scheduleLeadMobileDuplicateCheck(ev) {
+    var form = document.getElementById('form-add-lead');
+    if (!form) return;
+    var target = ev && ev.target ? ev.target : form.elements.mobile_no;
+    var fieldName = (target && target.name) ? target.name : 'mobile_no';
+    var mobileInput = form.elements[fieldName] || form.elements.mobile_no;
+    if (!mobileInput || mobileInput.readOnly || mobileInput.disabled) {
+      renderLeadDuplicateWarning(null);
+      return;
+    }
+
+    if (leadDuplicateCheckTimer) clearTimeout(leadDuplicateCheckTimer);
+    leadDuplicateCheckTimer = setTimeout(function () {
+      var excludeId = (document.getElementById('form-lead-ca-id') || {}).value || window._editingLeadId || '';
+      checkLeadMobileDuplicate(mobileInput.value, excludeId || null, fieldName);
+    }, 350);
+  }
+
+  function initLeadDuplicateChecks() {
+    var form = document.getElementById('form-add-lead');
+    if (!form || form.dataset.duplicateCheckBound === '1') return;
+    form.dataset.duplicateCheckBound = '1';
+
+    ['mobile_no', 'alternate_mobile_no'].forEach(function (fieldName) {
+      var input = form.elements[fieldName];
+      if (!input) return;
+      input.addEventListener('input', scheduleLeadMobileDuplicateCheck);
+      input.addEventListener('blur', scheduleLeadMobileDuplicateCheck);
+    });
+  }
+
+  var LEAD_FORM_LOCKABLE_FIELDS = [
+    'firm_name', 'ca_name', 'mobile_no', 'alternate_mobile_no', 'email_id', 'gst_no',
+    'state_id', 'city_id', 'team_size', 'existing_software', 'website', 'rating',
+    'is_newly_established', 'source_id', 'status', 'executive_id',
+  ];
+
+  var EMPLOYEE_ALWAYS_EDITABLE_FIELDS = [
+    'alternate_mobile_no', 'rating', 'is_newly_established', 'status', 'source_id',
+  ];
+
+  function leadFieldLockTooltip(fieldName) {
+    if (fieldName === 'mobile_no') {
+      return 'Primary mobile cannot be changed once saved.';
+    }
+    return 'Locked by Admin';
+  }
+
+  function setLeadFieldLockState(el, locked, tooltip) {
+    if (!el) return;
+    var wrapper = el.closest('div');
+    var label = wrapper ? wrapper.querySelector('label') : null;
+    var existingIcon = wrapper ? wrapper.querySelector('[data-lead-lock-icon]') : null;
+    var hint = null;
+    if (el.name === 'mobile_no') {
+      var formId = el.form && el.form.id;
+      hint = document.getElementById(
+        formId === 'form-lead-contact' ? 'form-lead-contact-mobile-hint' : 'form-lead-mobile-hint',
+      );
+    }
+
+    if (locked) {
+      var message = tooltip || leadFieldLockTooltip(el.name);
+      if (el.tagName === 'SELECT') {
+        el.disabled = true;
+        el.readOnly = false;
+      } else {
+        el.readOnly = true;
+        el.disabled = false;
+      }
+      el.classList.add('bg-slate-50', 'lead-field-locked');
+      el.setAttribute('title', message);
+      if (el.name === 'mobile_no' && hint) {
+        hint.textContent = message;
+        hint.classList.remove('hidden');
+      }
+      if (label && !existingIcon) {
+        var icon = document.createElement('span');
+        icon.setAttribute('data-lead-lock-icon', '1');
+        icon.className = 'lead-field-lock-icon';
+        icon.title = message;
+        icon.innerHTML = '<i data-lucide="lock" class="h-3.5 w-3.5"></i>';
+        label.appendChild(icon);
+      } else if (existingIcon) {
+        existingIcon.title = message;
+      }
+      return;
+    }
+
+    el.readOnly = false;
+    el.disabled = false;
+    el.classList.remove('bg-slate-50', 'lead-field-locked');
+    el.removeAttribute('title');
+    if (el.name === 'mobile_no' && hint) {
+      hint.classList.add('hidden');
+    }
+    if (existingIcon) existingIcon.remove();
+  }
+
+  function clearLeadFormLockDecorations(form) {
+    if (!form) return;
+    LEAD_FORM_LOCKABLE_FIELDS.forEach(function (name) {
+      setLeadFieldLockState(form.elements[name], false);
+    });
+    form.querySelectorAll('[data-lead-lock-icon]').forEach(function (icon) {
+      icon.remove();
+    });
+    var locationPair = form.querySelector('.sc-location-pair');
+    if (locationPair) {
+      ['state_id', 'city_id'].forEach(function (name) {
+        var select = form.elements[name];
+        if (select) {
+          select.disabled = false;
+        }
+      });
+    }
+    window._leadLockedFields = [];
+    renderLeadDuplicateWarning(null);
+  }
+
+  function applyLeadFormAccessRules(lead) {
+    var form = document.getElementById('form-add-lead');
+    if (!form) return;
+    var isEdit = !!(lead && lead.ca_id);
+    var lock = (lead && lead.lock) || {};
+    var lockedByOther = !!lock.is_locked_by_other;
+    var submitBtn = document.getElementById('add-lead-submit-btn');
+    var lockedFields = [];
+
+    clearLeadFormLockDecorations(form);
+
+    if (isEmployeeUser() && isEdit && lead.employee_locked_fields) {
+      lockedFields = lead.employee_locked_fields.slice();
+    } else if (isEmployeeUser() && isEdit) {
+      LEAD_FORM_LOCKABLE_FIELDS.forEach(function (name) {
+        if (EMPLOYEE_ALWAYS_EDITABLE_FIELDS.indexOf(name) >= 0) return;
+        var value = lead[name];
+        if (name === 'executive_id') {
+          lockedFields.push(name);
+          return;
+        }
+        if (value !== null && value !== undefined && String(value).trim() !== '' && value !== '—') {
+          lockedFields.push(name);
+        }
+      });
+    }
+
+    if (isEmployeeUser() && isEdit && !lockedByOther) {
+      lockedFields = lockedFields.filter(function (name) {
+        return EMPLOYEE_ALWAYS_EDITABLE_FIELDS.indexOf(name) < 0;
+      });
+      if (lockedFields.indexOf('executive_id') < 0) {
+        lockedFields.push('executive_id');
+      }
+    }
+
+    window._leadLockedFields = lockedByOther
+      ? LEAD_FORM_LOCKABLE_FIELDS.slice()
+      : lockedFields.slice();
+
+    LEAD_FORM_LOCKABLE_FIELDS.forEach(function (name) {
+      var el = form.elements[name];
+      if (!el) return;
+      var isLocked = lockedByOther || lockedFields.indexOf(name) >= 0;
+      if (EMPLOYEE_ALWAYS_EDITABLE_FIELDS.indexOf(name) >= 0 && isEmployeeUser() && isEdit) {
+        isLocked = lockedByOther;
+      } else if (name === 'executive_id' && isEmployeeUser() && isEdit) {
+        isLocked = true;
+      }
+      setLeadFieldLockState(el, isLocked, leadFieldLockTooltip(name));
+    });
+
+    if (lockedByOther) {
+      var locationPair = form.querySelector('.sc-location-pair');
+      if (locationPair) {
+        ['state_id', 'city_id'].forEach(function (name) {
+          var select = form.elements[name];
+          if (select) select.disabled = true;
+        });
+      }
+    }
+
+    if (submitBtn) {
+      submitBtn.disabled = lockedByOther;
+      submitBtn.classList.toggle('opacity-50', lockedByOther);
+      submitBtn.classList.toggle('pointer-events-none', lockedByOther);
+    }
+
+    setLeadLockBadge(lead);
+    scheduleLeadMobileDuplicateCheck();
+    icons();
   }
 
   function loadEmployeeDashboardFromDatabase(callback, forceRefresh) {
@@ -1782,16 +4631,197 @@ window.CA_CRM = (function () {
     });
   }
 
+  function formatDashboardUpdatedAt(ts) {
+    var when = ts ? new Date(ts) : new Date();
+    return when.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function parseDashboardMetricNumber(value) {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value === 'number') return value;
+    var cleaned = String(value).replace(/[^0-9.\-]/g, '');
+    if (!cleaned) return null;
+    var num = parseFloat(cleaned);
+    return isNaN(num) ? null : num;
+  }
+
+  function inferKpiTrend(card, value) {
+    var num = parseDashboardMetricNumber(value);
+    if (num === null) return null;
+    var negativeKeys = ['overdue_followups', 'demo_confirmation_rejected', 'demo_confirmation_rejected_after_reschedule', 'followups_overdue'];
+    var isNegative = negativeKeys.indexOf(card.key) >= 0;
+    if (isNegative) {
+      if (num === 0) {
+        return { dir: 'up', label: 'Clear', tone: 'success' };
+      }
+      return { dir: 'down', label: 'Needs attention', tone: 'danger' };
+    }
+    if (card.key === 'conversion' || card.key === 'conversion_pct' || card.key === 'demo_ratio') {
+      var threshold = card.key === 'demo_ratio' ? 30 : 50;
+      return {
+        dir: num >= threshold ? 'up' : 'down',
+        label: num >= threshold ? 'On track' : 'Below target',
+        tone: num >= threshold ? 'success' : 'warning',
+      };
+    }
+    if (num > 0) {
+      return { dir: 'up', label: 'Active', tone: 'neutral' };
+    }
+    return { dir: 'down', label: 'None', tone: 'muted' };
+  }
+
+  function renderDashboardKpiCard(card, value, mode) {
+    var display = value !== undefined && value !== null && value !== '' ? value : '—';
+    if (card.suffix && display !== '—') display = display + card.suffix;
+    var attrs = mode === 'employee'
+      ? ' data-emp-nav="' + card.nav + '"' +
+        (card.leadFilter ? ' data-emp-lead-filter="' + card.leadFilter + '"' : '') +
+        (card.followupFilter ? ' data-emp-followup-filter="' + card.followupFilter + '"' : '')
+      : ' data-nav-page="' + card.nav + '"' +
+        (card.leadFilter ? ' data-lead-filter="' + card.leadFilter + '"' : '') +
+        (card.followupFilter ? ' data-followup-filter="' + card.followupFilter + '"' : '');
+    var trend = inferKpiTrend(card, value);
+    var trendHtml = trend
+      ? '<span class="mgr-kpi-trend ' + trend.dir + ' mgr-kpi-trend--' + trend.tone + '">' +
+          '<i data-lucide="' + (trend.dir === 'up' ? 'trending-up' : 'trending-down') + '" class="h-3 w-3"></i>' +
+          '<span>' + escapeHtml(trend.label) + '</span></span>'
+      : '';
+    var desc = card.desc ? '<p class="mgr-kpi-desc">' + escapeHtml(card.desc) + '</p>' : '';
+    var updatedAt = window.__dashboardUpdatedAt || Date.now();
+    var accent = card.accent || (card.key || 'default').replace(/_/g, '-');
+    return '<button type="button" class="mgr-kpi-card dash-kpi-card dash-kpi-card--premium" data-accent="' + escapeHtml(accent) + '"' + attrs + ' data-kpi="' + escapeHtml(card.label) + '">' +
+      '<div class="mgr-kpi-top">' +
+        '<span class="mgr-kpi-icon"><i data-lucide="' + card.icon + '" class="h-4 w-4"></i></span>' +
+        trendHtml +
+      '</div>' +
+      '<p class="mgr-kpi-value" data-metric="' + (card.key || '') + '">' + escapeHtml(String(display)) + '</p>' +
+      '<p class="mgr-kpi-label">' + escapeHtml(card.label) + '</p>' +
+      desc +
+      '<div class="mgr-kpi-footer"><span class="mgr-kpi-updated">Updated ' + escapeHtml(formatDashboardUpdatedAt(updatedAt)) + '</span></div>' +
+    '</button>';
+  }
+
+  function renderDashboardKpiSections(containerId, sections, resolveValue, mode) {
+    var container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = sections.map(function (section) {
+      return '<section class="dash-kpi-section" aria-label="' + escapeHtml(section.title) + '">' +
+        '<h2 class="dash-kpi-section-title">' + escapeHtml(section.title) + '</h2>' +
+        '<div class="mgr-kpi-grid dash-kpi-grid dash-kpi-section-grid">' +
+        section.cards.map(function (card) {
+          return renderDashboardKpiCard(card, resolveValue(card), mode);
+        }).join('') +
+        '</div></section>';
+    }).join('');
+  }
+
+  var ADMIN_DASHBOARD_KPI_SECTIONS = [
+    {
+      title: 'Leads',
+      cards: [
+        { icon: 'users', label: 'Total Leads', key: 'total_leads', nav: 'ca-master', leadFilter: 'all', desc: 'All firms in master data' },
+        { icon: 'flame', label: 'Hot Leads', key: 'hot_leads', nav: 'ca-master', leadFilter: 'hot', desc: 'High-intent prospects' },
+        { icon: 'thermometer', label: 'Warm Leads', key: 'warm_leads', nav: 'ca-master', leadFilter: 'pipeline', desc: 'In active pipeline' },
+        { icon: 'snowflake', label: 'Cold Leads', key: 'cold_leads', nav: 'ca-master', leadFilter: 'cold', desc: 'Low engagement leads' },
+        { icon: 'trending-up', label: 'Conversion Rate', key: 'conversion', nav: 'analytics', desc: 'Lead-to-sale conversion' },
+      ],
+    },
+    {
+      title: 'Daily Work',
+      cards: [
+        { icon: 'phone', label: "Today's Calls", key: 'calls_total', nav: 'followups', desc: 'Scheduled calls today' },
+        { icon: 'calendar-clock', label: "Today's Follow-ups", key: 'followups_due_today', nav: 'followups', followupFilter: 'today', desc: 'Due for follow-up today' },
+        { icon: 'video', label: "Today's Meetings", key: 'meetings_today', nav: 'followups', desc: 'Demos and meetings' },
+        { icon: 'alert-circle', label: 'Overdue Follow-ups', key: 'overdue_followups', nav: 'followups', followupFilter: 'overdue', desc: 'Past due actions' },
+      ],
+    },
+    {
+      title: 'Demo',
+      cards: [
+        { icon: 'percent', label: 'Demo Ratio', key: 'demo_ratio', nav: 'analytics', desc: 'Demo completion rate' },
+        { icon: 'clock', label: 'Pending Confirmation', key: 'demo_confirmation_pending', nav: 'followups', desc: 'Awaiting client response' },
+        { icon: 'badge-check', label: 'Confirmed', key: 'demo_confirmation_confirmed', nav: 'followups', desc: 'Client confirmed demos' },
+        { icon: 'badge-x', label: 'Rejected', key: 'demo_confirmation_rejected', nav: 'followups', desc: 'Declined demo requests' },
+        { icon: 'calendar-clock', label: 'Rescheduled', key: 'demo_confirmation_rescheduled', nav: 'followups', desc: 'Moved to new slot' },
+        { icon: 'shield-alert', label: 'Rejected After Reschedule', key: 'demo_confirmation_rejected_after_reschedule', nav: 'followups', desc: 'Cancelled after reschedule' },
+      ],
+    },
+    {
+      title: 'Performance',
+      cards: [
+        { icon: 'user-check', label: 'Employees', key: 'active_employees', nav: 'employees', desc: 'Active team members' },
+        { icon: 'git-branch', label: 'Assignments', key: 'assignments', nav: 'assignment', desc: 'Leads assigned to team' },
+      ],
+    },
+  ];
+
+  var EMPLOYEE_DASHBOARD_KPI_SECTIONS = [
+    {
+      title: 'Leads',
+      cards: [
+        { icon: 'users', label: 'My Leads', key: 'my_leads', nav: 'leads', source: 'summary', desc: 'Total assigned to you' },
+        { icon: 'user-check', label: 'Assigned Leads', key: 'assigned_leads_today', nav: 'leads', source: 'today', desc: 'New assignments today' },
+        { icon: 'flame', label: 'Hot Leads', key: 'hot_leads', nav: 'leads', leadFilter: 'hot', source: 'summary', desc: 'High priority prospects' },
+        { icon: 'thermometer', label: 'Warm Leads', key: 'warm_leads', nav: 'leads', leadFilter: 'pipeline', source: 'summary', desc: 'In your pipeline' },
+        { icon: 'snowflake', label: 'Cold Leads', key: 'cold_leads', nav: 'leads', leadFilter: 'cold', source: 'summary', desc: 'Needs re-engagement' },
+        { icon: 'trending-up', label: 'Conversion Rate', key: 'conversion_pct', nav: 'leads', suffix: '%', source: 'summary', desc: 'Your conversion rate' },
+      ],
+    },
+    {
+      title: 'Daily Work',
+      cards: [
+        { icon: 'phone', label: "Today's Calls", key: 'todays_calls', nav: 'followups', source: 'summary', desc: 'Calls scheduled today' },
+        { icon: 'calendar-clock', label: "Today's Follow-ups", key: 'followups_due', nav: 'followups', followupFilter: 'today', source: 'today', desc: 'Due today' },
+        { icon: 'video', label: "Today's Meetings", key: 'meetings_today', nav: 'followups', source: 'today', desc: 'Demos and meetings' },
+        { icon: 'list-checks', label: "Today's Tasks", key: 'todays_tasks', nav: 'followups', source: 'summary', desc: 'Tasks for today' },
+        { icon: 'alert-circle', label: 'Overdue Follow-ups', key: 'followups_overdue', nav: 'followups', followupFilter: 'overdue', source: 'today', desc: 'Past due items' },
+        { icon: 'calendar-clock', label: 'My Follow-ups', key: 'my_followups', nav: 'followups', source: 'summary', desc: 'All your follow-ups' },
+        { icon: 'clock', label: 'Upcoming Tasks', key: 'upcoming_tasks', nav: 'followups', source: 'today', desc: 'Scheduled ahead' },
+      ],
+    },
+    {
+      title: 'Demo',
+      cards: [
+        { icon: 'presentation', label: "Today's Demos", key: 'my_demos', nav: 'followups', source: 'summary', desc: 'Demos scheduled today' },
+        { icon: 'video', label: 'My Meetings', key: 'my_meetings', nav: 'followups', source: 'summary', desc: 'All your meetings' },
+      ],
+    },
+    {
+      title: 'Performance',
+      cards: [
+        { icon: 'award', label: 'Achievement', key: 'todays_achievement', nav: 'leads', source: 'summary', desc: 'Today\'s progress' },
+        { icon: 'target', label: 'Target', key: 'todays_target', nav: 'leads', source: 'summary', desc: 'Daily target' },
+      ],
+    },
+  ];
+
   function renderEmployeeDashboard() {
-    loadEmployeeDashboardFromDatabase(function (data) {
-      if (!data) {
+    var cached = readDashboardMetricsCache();
+    var painted = false;
+    if (cached && cached.data) {
+      employeeDashboardData = cached.data;
+      employeeDashboardLoaded = true;
+      paintEmployeeDashboard(cached.data);
+      painted = true;
+    } else if (employeeDashboardData) {
+      paintEmployeeDashboard(employeeDashboardData);
+      painted = true;
+    } else {
+      paintEmployeeDashboardInstantShell();
+    }
+
+    loadDashboardMetricsFromDatabase(function (data, error, meta) {
+      if (meta && meta.background) return;
+      if (meta && meta.fromCache && painted) return;
+      if (error && !employeeDashboardData && !cached) {
         toast('Unable to load your dashboard', 'error');
         return;
       }
-      paintEmployeeDashboard(data);
+      if (!employeeDashboardData) return;
+      paintEmployeeDashboard(employeeDashboardData);
       if (window.CA_RBAC && typeof CA_RBAC.enforce === 'function') CA_RBAC.enforce();
       icons();
-    }, true);
+    });
   }
 
   function paintEmployeeDashboard(data) {
@@ -1806,65 +4836,290 @@ window.CA_CRM = (function () {
 
     var top = document.getElementById('emp-top-header');
     if (top) {
+      var roleBadge = crmUser.role_label || 'Employee';
       top.innerHTML =
-        '<div class="emp-top-left">' +
-          '<span class="emp-role-badge"><i data-lucide="briefcase" class="h-3.5 w-3.5"></i> ' + escapeHtml(welcome.designation || crmUser.designation || 'Sales Executive') + '</span>' +
-          '<h1 class="emp-greeting">' + escapeHtml(dashboardGreetingText(greeting, welcome.name || crmUser.name, welcome.designation || crmUser.designation)) + '</h1>' +
-          '<p class="emp-top-meta">' + escapeHtml(dateStr) + ' · ' + escapeHtml(timeStr) + ' · ' + escapeHtml(welcome.working_status || 'On track') + '</p>' +
+        '<div class="mgr-top-left">' +
+          '<span class="manager-role-badge"><i data-lucide="briefcase" class="h-3.5 w-3.5"></i> ' + escapeHtml(roleBadge) + '</span>' +
+          '<h1 class="text-page-title mgr-greeting">' + escapeHtml(dashboardGreetingText(greeting, welcome.name || crmUser.name, roleBadge)) + '</h1>' +
+          '<p class="mgr-top-meta">' + escapeHtml(dateStr) + ' · ' + escapeHtml(timeStr) + ' · ' + escapeHtml(welcome.working_status || 'On track') + '</p>' +
         '</div>';
     }
 
-    var kpiDefs = [
-      { icon: 'users', label: 'My Leads', key: 'my_leads', nav: 'leads' },
-      { icon: 'calendar-clock', label: 'My Follow-ups', key: 'my_followups', nav: 'followups' },
-      { icon: 'presentation', label: 'My Demos', key: 'my_demos', nav: 'followups' },
-      { icon: 'video', label: 'My Meetings', key: 'my_meetings', nav: 'followups' },
-      { icon: 'phone', label: "Today's Calls", key: 'todays_calls', nav: 'followups' },
-      { icon: 'list-checks', label: "Today's Tasks", key: 'todays_tasks', nav: 'followups' },
-      { icon: 'flame', label: 'Hot Leads', key: 'hot_leads', nav: 'leads', filter: 'hot' },
-      { icon: 'thermometer', label: 'Warm Leads', key: 'warm_leads', nav: 'leads', filter: 'pipeline' },
-      { icon: 'snowflake', label: 'Cold Leads', key: 'cold_leads', nav: 'leads', filter: 'cold' },
-      { icon: 'trending-up', label: 'Conversion', key: 'conversion_pct', nav: 'leads', suffix: '%' },
-      { icon: 'target', label: "Today's Target", key: 'todays_target', nav: 'leads' },
-      { icon: 'award', label: "Today's Achievement", key: 'todays_achievement', nav: 'leads' },
-    ];
-    var kpiGrid = document.getElementById('emp-kpi-grid');
-    if (kpiGrid) {
-      kpiGrid.innerHTML = kpiDefs.map(function (k) {
-        var val = summary[k.key];
-        if (k.suffix && val !== undefined && val !== null) val = val + k.suffix;
-        return '<button type="button" class="emp-kpi-card" data-emp-nav="' + k.nav + '"' +
-          (k.filter ? ' data-emp-lead-filter="' + k.filter + '"' : '') + '>' +
-          '<span class="emp-kpi-icon"><i data-lucide="' + k.icon + '" class="h-4 w-4"></i></span>' +
-          '<span class="emp-kpi-value">' + (val !== undefined ? val : '0') +
-          '<span class="emp-kpi-label">' + k.label + '</span></button>';
-      }).join('');
-    }
-
-    var todayGrid = document.getElementById('emp-today-grid');
-    if (todayGrid) {
-      var todayItems = [
-        { label: "Today's Follow-ups", value: todayWork.followups_due, nav: 'followups', filter: 'today' },
-        { label: 'Overdue Follow-ups', value: todayWork.followups_overdue, nav: 'followups', filter: 'overdue' },
-        { label: "Today's Meetings", value: todayWork.meetings_today, nav: 'followups' },
-        { label: "Today's Assigned Leads", value: todayWork.assigned_leads_today, nav: 'leads' },
-        { label: "Today's Calls", value: todayWork.calls_today, nav: 'followups' },
-        { label: 'Upcoming Tasks', value: todayWork.upcoming_tasks, nav: 'followups' },
-      ];
-      todayGrid.innerHTML = todayItems.map(function (item) {
-        return '<button type="button" class="emp-today-card" data-emp-nav="' + item.nav + '"' +
-          (item.filter ? ' data-emp-followup-filter="' + item.filter + '"' : '') + '>' +
-          '<span class="emp-today-value">' + (item.value || 0) +
-          '<span class="emp-today-label">' + item.label + '</span></button>';
-      }).join('');
-    }
+    renderDashboardKpiSections('emp-kpi-sections', EMPLOYEE_DASHBOARD_KPI_SECTIONS, function (card) {
+      return card.source === 'today' ? todayWork[card.key] : summary[card.key];
+    }, 'employee');
 
     renderEmployeeAssignedLeads(data.assigned_leads || []);
     renderEmployeeFollowups(data.followups || {});
-    renderEmployeeCalendar(data.calendar || []);
     renderEmployeeActivity(data.recent_activity || []);
     renderEmployeeQuickActions();
+    renderEmployeeProductivityPanel(data.productivity || {});
     initEmployeeDashboardInteractions();
+    loadEmployeeWorkflowLists();
+    icons();
+  }
+
+  function renderEmployeeProductivityPanel(productivity) {
+    var el = document.getElementById('emp-productivity-panel');
+    if (!el) return;
+    el.innerHTML =
+      '<div class="flex items-center justify-between gap-3 mb-3">' +
+        '<h2 class="text-card-heading">Today\'s Productivity</h2>' +
+      '</div>' +
+      '<div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">' +
+        productivityStatCard('Assigned Today', productivity.leads_assigned) +
+        productivityStatCard('Unique Leads', productivity.unique_leads) +
+        productivityStatCard('Duplicate Attempts', productivity.duplicate_attempts) +
+        productivityStatCard('Wrong Numbers', productivity.wrong_numbers) +
+        productivityStatCard('Verified Leads', productivity.verified_leads) +
+        productivityStatCard('Follow-ups Done', productivity.followups_completed) +
+        productivityStatCard('Quality Score', productivity.quality_score) +
+        productivityStatCard('Rank', productivity.rank ? '#' + productivity.rank : '—') +
+      '</div>';
+  }
+
+  function productivityStatCard(label, value) {
+    return '<div class="rounded-xl border border-slate-100 bg-slate-50 p-3">' +
+      '<p class="text-caption text-slate-500">' + escapeHtml(label) + '</p>' +
+      '<p class="text-lg font-semibold text-slate-900 mt-1">' + escapeHtml(String(value ?? '—')) + '</p>' +
+    '</div>';
+  }
+
+  function productivityInitials(name) {
+    return String(name || 'E').trim().split(/\s+/).map(function (part) { return part.charAt(0); }).join('').slice(0, 2).toUpperCase();
+  }
+
+  function productivityRankTone(rank, invertTone) {
+    if (invertTone) {
+      if (rank === 1) return 'needs';
+      if (rank === 2) return 'average';
+      return 'good';
+    }
+    if (rank === 1) return 'excellent';
+    if (rank === 2) return 'good';
+    if (rank === 3) return 'average';
+    return 'average';
+  }
+
+  function productivityValueTone(value, valueKey) {
+    var num = Number(value) || 0;
+    if (valueKey === 'followup_completion_pct') {
+      if (num >= 90) return 'excellent';
+      if (num >= 75) return 'good';
+      if (num >= 55) return 'average';
+      return 'needs';
+    }
+    if (valueKey === 'quality_score') {
+      if (num >= 80) return 'excellent';
+      if (num >= 65) return 'good';
+      if (num >= 45) return 'average';
+      return 'needs';
+    }
+    if (valueKey === 'duplicate_attempts') {
+      if (num <= 1) return 'excellent';
+      if (num <= 3) return 'good';
+      if (num <= 6) return 'average';
+      return 'needs';
+    }
+    if (num >= 8) return 'excellent';
+    if (num >= 5) return 'good';
+    if (num >= 2) return 'average';
+    return 'needs';
+  }
+
+  function productivityFormatValue(value, valueKey) {
+    var num = Number(value) || 0;
+    if (valueKey === 'followup_completion_pct') return num.toFixed(1) + '%';
+    if (valueKey === 'quality_score') return String(Math.round(num));
+    return String(num);
+  }
+
+  function productivityProgressWidth(value, valueKey, maxValue) {
+    var num = Number(value) || 0;
+    if (valueKey === 'followup_completion_pct') return Math.max(6, Math.min(100, num));
+    if (valueKey === 'quality_score') return Math.max(6, Math.min(100, num));
+    var max = Math.max(1, Number(maxValue) || 1);
+    return Math.max(6, Math.min(100, (num / max) * 100));
+  }
+
+  function productivityUpdatedLabel(dateValue) {
+    if (dateValue) {
+      try {
+        return 'Updated ' + formatDate(dateValue);
+      } catch (e) { /* fall through */ }
+    }
+    return 'Updated ' + formatDateTime(new Date().toISOString());
+  }
+
+  function productivityKpiCardHtml(config, rows, updatedLabel) {
+    var valueKey = config.valueKey;
+    var list = Array.isArray(rows) ? rows.slice(0, 5) : [];
+    var maxValue = list.reduce(function (max, row) {
+      return Math.max(max, Number(row[valueKey]) || 0);
+    }, 0);
+
+    var bodyHtml = '';
+    if (!list.length) {
+      bodyHtml =
+        '<div class="mgr-prod-kpi__empty">' +
+          '<span class="mgr-prod-kpi__empty-icon"><i data-lucide="bar-chart-2" class="h-5 w-5"></i></span>' +
+          '<p>No productivity data available.</p>' +
+        '</div>';
+    } else {
+      bodyHtml = '<ul class="mgr-prod-kpi__list">' + list.map(function (row, index) {
+        var rank = index + 1;
+        var rawValue = row[valueKey] ?? 0;
+        var rankTone = productivityRankTone(rank, config.invertTone);
+        var valueTone = config.invertTone && rank === 1
+          ? 'needs'
+          : productivityValueTone(rawValue, valueKey);
+        var progress = productivityProgressWidth(rawValue, valueKey, maxValue);
+        var animateValue = valueKey === 'followup_completion_pct'
+          ? Number(rawValue).toFixed(1)
+          : String(Math.round(Number(rawValue) || 0));
+        var suffix = valueKey === 'followup_completion_pct' ? '%' : '';
+        return '<li class="mgr-prod-kpi__row" data-prod-employee-id="' + escapeHtml(String(row.employee_id || '')) + '" title="View employee dashboard">' +
+          '<span class="mgr-prod-kpi__rank mgr-prod-kpi__rank--' + rankTone + '">#' + rank + '</span>' +
+          '<span class="mgr-prod-kpi__avatar" aria-hidden="true">' + escapeHtml(productivityInitials(row.employee_name)) + '</span>' +
+          '<div class="mgr-prod-kpi__meta">' +
+            '<span class="mgr-prod-kpi__name">' + escapeHtml(row.employee_name || 'Employee') + '</span>' +
+            '<div class="mgr-prod-kpi__metric">' +
+              '<div class="mgr-prod-kpi__bar" aria-hidden="true">' +
+                '<span class="mgr-prod-kpi__bar-fill mgr-prod-kpi__bar-fill--' + valueTone + '" style="width:' + progress + '%"></span>' +
+              '</div>' +
+              '<span class="mgr-prod-kpi__value mgr-prod-kpi__value--' + valueTone + '" data-prod-animate="' + escapeHtml(animateValue) + '" data-prod-suffix="' + suffix + '">0' + suffix + '</span>' +
+            '</div>' +
+          '</div>' +
+        '</li>';
+      }).join('') + '</ul>';
+    }
+
+    return '<article class="mgr-prod-kpi mgr-prod-kpi--' + config.tone + ' mgr-prod-kpi--enter" style="--prod-i:' + config.index + '">' +
+      '<header class="mgr-prod-kpi__head">' +
+        '<div class="mgr-prod-kpi__title-row">' +
+          '<span class="mgr-prod-kpi__icon mgr-prod-kpi__icon--' + config.tone + '"><i data-lucide="' + config.icon + '" class="h-4 w-4"></i></span>' +
+          '<h3 class="mgr-prod-kpi__title">' + escapeHtml(config.title) + '</h3>' +
+        '</div>' +
+        '<time class="mgr-prod-kpi__updated" datetime="' + escapeHtml(config.dateValue || '') + '">' + escapeHtml(updatedLabel) + '</time>' +
+      '</header>' +
+      '<div class="mgr-prod-kpi__body">' + bodyHtml + '</div>' +
+      '<footer class="mgr-prod-kpi__foot">' +
+        '<button type="button" class="mgr-prod-kpi__details" data-prod-details="' + escapeHtml(config.detailsSlug) + '">' +
+          'View Details <i data-lucide="arrow-right" class="h-3.5 w-3.5"></i>' +
+        '</button>' +
+      '</footer>' +
+    '</article>';
+  }
+
+  function animateProductivityValues(root) {
+    if (!root) return;
+    root.querySelectorAll('[data-prod-animate]').forEach(function (el) {
+      var target = parseFloat(el.getAttribute('data-prod-animate')) || 0;
+      var suffix = el.getAttribute('data-prod-suffix') || '';
+      var decimals = suffix === '%' ? 1 : 0;
+      var startTime = null;
+      var duration = 650;
+      function step(ts) {
+        if (!startTime) startTime = ts;
+        var progress = Math.min((ts - startTime) / duration, 1);
+        var eased = 1 - Math.pow(1 - progress, 3);
+        var current = target * eased;
+        el.textContent = (decimals ? current.toFixed(decimals) : String(Math.round(current))) + suffix;
+        if (progress < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    });
+  }
+
+  function bindProductivityPanelInteractions(root) {
+    if (!root || root._productivityBound) return;
+    root._productivityBound = true;
+
+    root.addEventListener('click', function (e) {
+      var detailsBtn = e.target.closest('[data-prod-details]');
+      if (detailsBtn) {
+        var slug = detailsBtn.getAttribute('data-prod-details');
+        if (slug === 'duplicate-attempts') {
+          if (typeof navigateTo === 'function') navigateTo('duplicate-attempts');
+          else toast('Open Duplicate Attempts to review.', 'info');
+          return;
+        }
+        if (typeof openReport === 'function') openReport(slug);
+        else if (typeof navigateTo === 'function') navigateTo('reports');
+        return;
+      }
+
+      var row = e.target.closest('[data-prod-employee-id]');
+      if (!row) return;
+      var employeeId = parseInt(row.getAttribute('data-prod-employee-id'), 10);
+      if (!employeeId) return;
+      applyManagerEmployeeFilter(employeeId);
+      toast('Dashboard filtered to selected employee', 'info');
+    });
+  }
+
+  function resolveManagerProductivity(metrics) {
+    metrics = metrics || window.dashboardMetrics || {};
+    var productivity = metrics.productivity;
+    if (productivity && typeof productivity === 'object') {
+      return productivity;
+    }
+    return null;
+  }
+
+  function renderManagerProductivityPanel(productivity) {
+    var el = document.getElementById('mgr-productivity-panel');
+    if (!el) return;
+
+    el.classList.remove('hidden');
+
+    productivity = productivity || resolveManagerProductivity(window.dashboardMetrics);
+
+    if (!productivity) {
+      el.innerHTML =
+        '<section class="mgr-productivity-hub mgr-productivity-hub--empty">' +
+          '<div class="mgr-prod-kpi__empty mgr-prod-kpi__empty--hub">' +
+            '<span class="mgr-prod-kpi__empty-icon"><i data-lucide="bar-chart-2" class="h-6 w-6"></i></span>' +
+            '<h3 class="mgr-productivity-hub__title">Lead Collection Productivity</h3>' +
+            '<p>No productivity data available.</p>' +
+          '</div>' +
+        '</section>';
+      icons();
+      return;
+    }
+
+    var updatedLabel = productivityUpdatedLabel(productivity.date);
+    var kpiDefs = [
+      { index: 0, key: 'top_performers', title: 'Top Performers', icon: 'trophy', tone: 'excellent', valueKey: 'quality_score', detailsSlug: 'duplicate_productivity', invertTone: false },
+      { index: 1, key: 'most_verified', title: 'Most Verified Leads', icon: 'badge-check', tone: 'good', valueKey: 'verified_leads', detailsSlug: 'duplicate_productivity', invertTone: false, dataKey: 'most_verified_leads' },
+      { index: 2, key: 'best_followup', title: 'Best Follow-up Rate', icon: 'phone-call', tone: 'good', valueKey: 'followup_completion_pct', detailsSlug: 'followup_performance', invertTone: false, dataKey: 'best_followup_rate' },
+      { index: 3, key: 'most_duplicates', title: 'Most Duplicate Attempts', icon: 'alert-triangle', tone: 'average', valueKey: 'duplicate_attempts', detailsSlug: 'duplicate-attempts', invertTone: true, dataKey: 'most_duplicate_attempts' },
+      { index: 4, key: 'lowest_quality', title: 'Lowest Quality Score', icon: 'trending-down', tone: 'needs', valueKey: 'quality_score', detailsSlug: 'duplicate_productivity', invertTone: true, dataKey: 'lowest_quality_score' },
+    ];
+
+    var cardsHtml = kpiDefs.map(function (def) {
+      var rows = productivity[def.dataKey || def.key];
+      if (def.key === 'lowest_quality' && (!rows || !rows.length)) {
+        rows = productivity.lowest_productivity;
+      }
+      return productivityKpiCardHtml(Object.assign({}, def, { dateValue: productivity.date || '' }), rows, updatedLabel);
+    }).join('');
+
+    el.innerHTML =
+      '<section class="mgr-productivity-hub">' +
+        '<header class="mgr-productivity-hub__head">' +
+          '<div class="mgr-productivity-hub__intro">' +
+            '<h2 class="mgr-productivity-hub__title">Lead Collection Productivity</h2>' +
+            '<p class="mgr-productivity-hub__sub">Employee rankings for today · Org duplicate rate <strong>' + escapeHtml(String(productivity.duplicate_percentage || 0)) + '%</strong></p>' +
+          '</div>' +
+          '<span class="mgr-productivity-hub__stamp"><i data-lucide="refresh-cw" class="h-3.5 w-3.5"></i> ' + escapeHtml(updatedLabel) + '</span>' +
+        '</header>' +
+        '<div class="mgr-productivity-hub__grid">' + cardsHtml + '</div>' +
+      '</section>';
+
+    bindProductivityPanelInteractions(el);
+    animateProductivityValues(el);
+    icons();
   }
 
   function renderEmployeeAssignedLeads(leads) {
@@ -1875,9 +5130,16 @@ window.CA_CRM = (function () {
       return;
     }
     el.innerHTML = leads.map(function (lead) {
-      return '<button type="button" class="emp-list-item" data-emp-open-lead="' + escapeHtml(lead.ca_id) + '">' +
-        '<span class="emp-list-main"><strong>' + escapeHtml(lead.firm_name) + '</strong><span class="text-caption text-slate-500">' + escapeHtml(lead.status) + '</span></span>' +
-        '<span class="emp-list-meta">P' + (lead.priority_score || 1) + ' · ' + escapeHtml(formatDate(lead.assigned_date)) + '</span></button>';
+      return '<div class="emp-list-item">' +
+        '<button type="button" class="emp-list-main text-left" data-emp-open-lead="' + escapeHtml(lead.ca_id) + '">' +
+          '<strong>' + escapeHtml(lead.firm_name) + '</strong>' +
+          '<span class="text-caption text-slate-500">' + escapeHtml(lead.status) + '</span></button>' +
+        '<span class="emp-list-meta flex flex-col items-end gap-1">' +
+          '<span>P' + (lead.priority_score || 1) + ' · ' + escapeHtml(formatDate(lead.assigned_date)) + '</span>' +
+          '<span class="flex gap-1">' +
+            iconBtn('phone', 'Call', 'data-emp-call-lead="' + escapeHtml(lead.ca_id) + '"', 'secondary') +
+            iconBtn('video', 'Demo', 'data-emp-schedule-demo="' + escapeHtml(lead.ca_id) + '"', 'secondary') +
+          '</span></span></div>';
     }).join('');
   }
 
@@ -1934,20 +5196,22 @@ window.CA_CRM = (function () {
     var el = document.getElementById('emp-quick-actions');
     if (!el) return;
     var actions = [
+      { label: 'Call / Mark Called', icon: 'phone', action: 'call' },
+      { label: 'Schedule Demo', icon: 'presentation', action: 'schedule-demo' },
+      { label: 'Update Demo Result', icon: 'clipboard-check', action: 'demo-result' },
       { label: 'Open My Leads', icon: 'users', nav: 'leads' },
-      { label: 'Create Follow-up', icon: 'calendar-plus', modal: 'followup' },
-      { label: 'Update Lead Status', icon: 'edit-3', nav: 'leads' },
-      { label: 'Complete Task', icon: 'check-circle', nav: 'followups' },
-      { label: 'Schedule Demo', icon: 'presentation', modal: 'followup' },
-      { label: 'View Calendar', icon: 'calendar', nav: 'followups' },
-      { label: 'Log Call', icon: 'phone', modal: 'followup' },
+      { label: 'Today Follow-ups', icon: 'calendar-clock', nav: 'followups' },
     ];
     el.innerHTML = actions.map(function (action) {
-      if (action.modal) {
-        return '<button type="button" class="emp-quick-btn" data-open-modal="' + action.modal + '">' +
+      if (action.action) {
+        return '<button type="button" class="emp-quick-btn dash-quick-action-btn" data-workflow-action="' + action.action + '">' +
           '<i data-lucide="' + action.icon + '" class="h-4 w-4"></i><span>' + action.label + '</span></button>';
       }
-      return '<button type="button" class="emp-quick-btn" data-emp-nav="' + action.nav + '">' +
+      if (action.modal) {
+        return '<button type="button" class="emp-quick-btn dash-quick-action-btn" data-open-modal="' + action.modal + '">' +
+          '<i data-lucide="' + action.icon + '" class="h-4 w-4"></i><span>' + action.label + '</span></button>';
+      }
+      return '<button type="button" class="emp-quick-btn dash-quick-action-btn" data-emp-nav="' + action.nav + '">' +
         '<i data-lucide="' + action.icon + '" class="h-4 w-4"></i><span>' + action.label + '</span></button>';
     }).join('');
   }
@@ -1971,29 +5235,97 @@ window.CA_CRM = (function () {
         icons();
         return;
       }
+      var callLeadBtn = e.target.closest('[data-emp-call-lead]');
+      if (callLeadBtn) {
+        openCallOutcomeModal(null, callLeadBtn.dataset.empCallLead);
+        return;
+      }
+      var scheduleDemoBtn = e.target.closest('[data-emp-schedule-demo]');
+      if (scheduleDemoBtn) {
+        openScheduleDemoModal(scheduleDemoBtn.dataset.empScheduleDemo);
+        return;
+      }
       if (e.target.closest('[data-emp-open-lead]')) {
-        if (typeof navigateTo === 'function') navigateTo('leads');
+        var leadBtn = e.target.closest('[data-emp-open-lead]');
+        var leadId = leadBtn && leadBtn.getAttribute('data-emp-open-lead');
+        if (leadId) {
+          window._pendingOpenLeadId = leadId;
+          if (typeof navigateTo === 'function') navigateTo(isEmployeeUser() ? 'leads' : 'ca-master');
+        }
         return;
       }
       if (e.target.closest('[data-emp-open-followup]')) {
         if (typeof navigateTo === 'function') navigateTo('followups');
+        return;
+      }
+      var wfBtn = e.target.closest('[data-workflow-action]');
+      if (wfBtn) {
+        handleWorkflowQuickAction(wfBtn.dataset.workflowAction);
+        return;
+      }
+      var demoResultBtn = e.target.closest('[data-emp-demo-result]');
+      if (demoResultBtn) {
+        openDemoResultModal(demoResultBtn.dataset.empDemoResult);
       }
     });
     bindModalTriggers(root);
   }
 
   function renderManagerDashboard() {
-    Promise.all([
-      new Promise(function (resolve) { loadDashboardMetricsFromDatabase(resolve); }),
-      new Promise(function (resolve) { loadLeadsFromDatabase(resolve); }),
-      new Promise(function (resolve) { loadEmployeesFromDatabase(resolve); }),
-      new Promise(function (resolve) { loadAssignmentsFromDatabase(resolve); }),
-      new Promise(function (resolve) { loadFollowUpsFromDatabase(resolve); }),
-    ]).then(function (results) {
-      var metrics = results[0];
-      paintManagerDashboard(buildDashboardDisplayMetrics(metrics));
+    var filterEmployeeId = getDashboardEmployeeFilterId();
+    var dateFilter = getDashboardDateFilter();
+    var isDefaultFilters = !filterEmployeeId && (!dateFilter.preset || dateFilter.preset === 'today');
+    var cached = isDefaultFilters ? readDashboardMetricsCache() : null;
+    var painted = false;
+
+    if (cached && cached.data) {
+      window.dashboardMetrics = cached.data;
+      dashboardMetricsLoaded = true;
+      paintManagerDashboard(buildDashboardDisplayMetrics(cached.data));
+      renderDashboardCharts(cached.data.reports);
+      painted = true;
+    } else if (window.dashboardMetrics && isDefaultFilters) {
+      paintManagerDashboard(buildDashboardDisplayMetrics(window.dashboardMetrics));
+      renderDashboardCharts(window.dashboardMetrics.reports);
+      painted = true;
+    } else if (!isDefaultFilters) {
+      paintDashboardInstantShell(true);
+    } else {
+      paintDashboardInstantShell(false);
+    }
+
+    loadDashboardMetricsFromDatabase(function onManagerDashboardMetrics(metrics, error, meta) {
+      if (meta && meta.background) return;
+      if (meta && meta.fromCache && painted) return;
+      if (error && !window.dashboardMetrics) {
+        if (recoverDashboardEmployeeFilterError(error, onManagerDashboardMetrics, { force: true, employeeId: null, dateFilter: dateFilter })) {
+          return;
+        }
+        if (!painted) {
+          showDashboardLoadError(error.message || 'Unable to load dashboard metrics.');
+        }
+        return;
+      }
+      if (!metrics && !window.dashboardMetrics) return;
+      if (metrics) window.dashboardMetrics = metrics;
+      paintManagerDashboard(buildDashboardDisplayMetrics(window.dashboardMetrics));
+      renderDashboardCharts(window.dashboardMetrics.reports);
       if (window.CA_RBAC && typeof CA_RBAC.enforce === 'function') CA_RBAC.enforce();
-    });
+    }, { force: !isDefaultFilters, employeeId: filterEmployeeId || null, dateFilter: dateFilter });
+  }
+
+  function preloadDashboardMetrics() {
+    if (!window.__CRM_USER__ || !window.__CRM_USER__.authenticated) return;
+    loadDashboardMetricsFromDatabase(null);
+  }
+
+  function deferNonCriticalWork(fn) {
+    if (typeof fn !== 'function') return;
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(fn, { timeout: 2000 });
+      return;
+    }
+    setTimeout(fn, 0);
   }
 
   function dashboardGreetingText(greeting, name, roleLabel) {
@@ -2009,6 +5341,70 @@ window.CA_CRM = (function () {
     return greeting + ', ' + displayName;
   }
 
+  function managerDashboardFiltersHtml() {
+    if (isEmployeeUser()) return '';
+    var dateOptions = [
+      ['today', 'Today'], ['yesterday', 'Yesterday'], ['last_7_days', 'Last 7 Days'],
+      ['last_15_days', 'Last 15 Days'], ['last_30_days', 'Last 30 Days'],
+      ['this_week', 'This Week'], ['last_week', 'Last Week'],
+      ['this_month', 'This Month'], ['last_month', 'Last Month'],
+      ['last_quarter', 'Last Quarter'], ['last_half_year', 'Last Half Year'],
+      ['this_year', 'This Year'], ['last_year', 'Last Year'], ['custom', 'Custom Range'],
+    ];
+    return '<div class="mgr-top-filters" id="mgr-employee-filter">' +
+      '<div class="mgr-dash-filters__controls">' +
+        '<div class="mgr-employee-combobox mgr-filter-sm" id="mgr-employee-combobox">' +
+          '<div class="mgr-employee-combobox__control">' +
+            '<button type="button" class="mgr-employee-combobox__trigger" id="mgr-employee-trigger" aria-haspopup="listbox" aria-expanded="false">' +
+              '<span class="mgr-employee-avatar" id="mgr-employee-avatar">ALL</span>' +
+              '<span class="mgr-employee-combobox__text" id="mgr-employee-selected-label">All Employees</span>' +
+              '<i data-lucide="chevron-down" class="mgr-employee-combobox__chevron h-4 w-4 text-slate-400"></i>' +
+            '</button>' +
+            '<button type="button" class="mgr-employee-clear-btn hidden" id="mgr-employee-clear" title="Clear Employee Filter" aria-label="Clear Employee Filter">' +
+              '<i data-lucide="x" class="h-4 w-4"></i><span class="mgr-employee-clear-btn__fallback" aria-hidden="true">×</span>' +
+            '</button>' +
+          '</div>' +
+          '<div class="mgr-employee-combobox__panel hidden" id="mgr-employee-panel" role="listbox">' +
+            '<div class="mgr-employee-combobox__search">' +
+              '<i data-lucide="search" class="h-4 w-4 text-slate-400"></i>' +
+              '<input type="search" id="mgr-employee-search" class="mgr-employee-combobox__input" placeholder="Search employee…" autocomplete="off" />' +
+            '</div>' +
+            '<div class="mgr-employee-combobox__list" id="mgr-employee-options"></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="mgr-date-combobox mgr-filter-sm" id="mgr-date-combobox">' +
+          '<button type="button" class="mgr-employee-combobox__trigger" id="mgr-date-trigger" aria-haspopup="listbox" aria-expanded="false">' +
+            '<span class="mgr-employee-avatar mgr-employee-avatar--date"><i data-lucide="calendar" class="h-3 w-3"></i></span>' +
+            '<span class="mgr-employee-combobox__text" id="mgr-date-selected-label">Today</span>' +
+            '<i data-lucide="chevron-down" class="h-3.5 w-3.5 text-slate-400"></i>' +
+          '</button>' +
+          '<div class="mgr-employee-combobox__panel hidden" id="mgr-date-panel" role="listbox">' +
+            '<div class="mgr-date-options" id="mgr-date-options">' +
+              dateOptions.map(function (opt) {
+                return '<button type="button" class="mgr-employee-option" data-date-preset="' + opt[0] + '">' +
+                  '<span class="mgr-employee-option__name">' + opt[1] + '</span></button>';
+              }).join('') +
+            '</div>' +
+            '<div class="mgr-date-custom hidden" id="mgr-date-custom">' +
+              '<div class="mgr-date-custom__fields">' +
+                '<label class="mgr-date-custom__field"><span>From</span><input type="date" id="mgr-date-from" class="input-field" data-crm-date-input data-allow-past data-hide-preview /></label>' +
+                '<label class="mgr-date-custom__field"><span>To</span><input type="date" id="mgr-date-to" class="input-field" data-crm-date-input data-allow-past data-hide-preview /></label>' +
+              '</div>' +
+              '<div class="mgr-date-custom__actions">' +
+                iconBtn('rotate-ccw', 'Reset', 'id="mgr-date-reset"', 'secondary') +
+                iconBtn('filter', 'Apply', 'id="mgr-date-apply"', 'primary') +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="mgr-dash-filters__loading hidden" id="mgr-dash-filter-loading">' +
+          '<span class="mgr-dash-spinner"></span><span>Updating…</span>' +
+        '</div>' +
+      '</div>' +
+      '<p class="mgr-top-filters__hint" id="mgr-employee-filter-hint">All Employees · Today</p>' +
+    '</div>';
+  }
+
   function paintManagerDashboard(m) {
     var crmUser = window.__CRM_USER__ || {};
     var displayName = crmUser.name || 'User';
@@ -2017,87 +5413,1020 @@ window.CA_CRM = (function () {
     var greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 17 ? 'Good afternoon' : 'Good evening';
     var dateStr = now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
     var greetingLine = dashboardGreetingText(greeting, displayName, roleLabel);
+    var metrics = window.dashboardMetrics || {};
+    var employeeFilter = metrics.employee_productivity || null;
 
     var top = document.getElementById('mgr-top-header');
     if (top) {
       top.innerHTML =
         '<div class="mgr-top-left">' +
           '<span class="manager-role-badge"><i data-lucide="layout-dashboard" class="h-3.5 w-3.5"></i> ' + escapeHtml(roleLabel) + '</span>' +
-          '<h1 class="mgr-greeting">' + escapeHtml(greetingLine) + '</h1>' +
-          '<p class="mgr-top-meta">' + escapeHtml(dateStr) + ' · ' + m.active_employees + ' executives · ' + m.total_leads + ' leads · ' + m.assigned_leads + ' assigned · ' + m.followups_due_today + ' follow-ups today</p>' +
-        '</div>';
+          '<h1 class="text-page-title mgr-greeting">' + escapeHtml(greetingLine) + '</h1>' +
+          '<p class="mgr-top-meta">' + escapeHtml(dateStr) + ' · ' + m.followups_due_today + ' follow-ups today</p>' +
+        '</div>' +
+        managerDashboardFiltersHtml();
     }
 
-    var kpiDefs = [
-      { icon: 'users', label: 'Total Leads', key: 'total_leads', nav: 'leads', leadFilter: 'all' },
-      { icon: 'flame', label: 'Hot Leads', key: 'hot_leads', nav: 'leads', leadFilter: 'hot' },
-      { icon: 'thermometer', label: 'Warm Leads', key: 'warm_leads', nav: 'leads', leadFilter: 'pipeline' },
-      { icon: 'snowflake', label: 'Cold Leads', key: 'cold_leads', nav: 'leads', leadFilter: 'cold' },
-      { icon: 'user-check', label: 'Employees', key: 'active_employees', nav: 'employees' },
-      { icon: 'git-branch', label: 'Assignments', key: 'assignments', nav: 'assignment' },
-      { icon: 'calendar-clock', label: "Today's Follow-ups", key: 'followups_due_today', nav: 'followups', followupFilter: 'today' },
-      { icon: 'alert-circle', label: 'Overdue Follow-ups', key: 'overdue_followups', nav: 'followups', followupFilter: 'overdue' },
-      { icon: 'trending-up', label: 'Conversion Rate', key: 'conversion', nav: 'analytics' },
-      { icon: 'percent', label: 'Demo Ratio', key: 'demo_ratio', nav: 'analytics' },
-      { icon: 'phone', label: 'Calls', key: 'calls_total', nav: 'followups' },
-      { icon: 'video', label: 'Meetings', key: 'meetings_today', nav: 'followups' },
-      { icon: 'clock', label: 'Pending Confirmation', key: 'demo_confirmation_pending', nav: 'followups' },
-      { icon: 'badge-check', label: 'Confirmed', key: 'demo_confirmation_confirmed', nav: 'followups' },
-      { icon: 'badge-x', label: 'Rejected', key: 'demo_confirmation_rejected', nav: 'followups' },
-      { icon: 'calendar-clock', label: 'Rescheduled', key: 'demo_confirmation_rescheduled', nav: 'followups' },
-      { icon: 'shield-alert', label: 'Rejected After Reschedule', key: 'demo_confirmation_rejected_after_reschedule', nav: 'followups' },
-    ];
-    var kpiGrid = document.getElementById('mgr-kpi-grid');
-    if (kpiGrid) {
-      kpiGrid.innerHTML = kpiDefs.map(function (k) {
-        return '<button type="button" class="mgr-kpi-card dash-kpi-card" data-nav-page="' + k.nav + '"' +
-          (k.leadFilter ? ' data-lead-filter="' + k.leadFilter + '"' : '') +
-          (k.followupFilter ? ' data-followup-filter="' + k.followupFilter + '"' : '') +
-          ' data-kpi="' + k.label + '">' +
-          '<div class="mgr-kpi-top"><span class="mgr-kpi-icon"><i data-lucide="' + k.icon + '" class="h-4 w-4"></i></span></div>' +
-          '<p class="mgr-kpi-value" data-metric="' + k.key + '">' + (m[k.key] !== undefined ? m[k.key] : '—') + '</p>' +
-          '<p class="mgr-kpi-label">' + k.label + '</p></button>';
-      }).join('');
-    }
+    ensureManagerEmployeeFilter();
+    renderManagerEmployeeProductivityPanel(employeeFilter);
 
+    renderDashboardKpiSections('mgr-kpi-sections', ADMIN_DASHBOARD_KPI_SECTIONS, function (card) {
+      return m[card.key];
+    }, 'admin');
+
+    if (getDashboardEmployeeFilterId()) {
+      renderManagerProductivityPanel(resolveManagerProductivity(metrics));
+    } else {
+      var prodSlot = document.getElementById('mgr-productivity-panel');
+      if (prodSlot) {
+        prodSlot.innerHTML = '';
+        prodSlot.classList.add('hidden');
+      }
+    }
     renderDashboardFilterChips(m);
+    renderDashboardQuickActions();
     renderSmsDashboardWidgets(m);
-    loadManagerFollowUpMetrics();
-    renderDashboardCharts(window.dashboardMetrics && window.dashboardMetrics.reports);
+    renderDuplicateMonitoringPanel(m.duplicate_monitoring || metrics.duplicate_monitoring);
+    renderDashboardCharts(metrics.reports);
     renderPipelineFunnel();
     renderPriorityList();
     renderTeamCards(getDashboardExecutives());
     renderTeamOverview(getDashboardExecutives());
     renderDashboardLeads();
-    renderRecentActivity();
+    if (metrics.activity_preview && metrics.activity_preview.length) {
+      renderRecentActivity();
+    }
     initDashboardInteractions(top);
+    deferNonCriticalWork(function () {
+      loadManagerFollowUpMetrics();
+      loadManagerWorkflowLists();
+      if (!metrics.activity_preview || !metrics.activity_preview.length) {
+        renderRecentActivity();
+      }
+    });
     icons();
+  }
+
+  var managerEmployeeFilterState = {
+    employees: [],
+    loaded: false,
+    open: false,
+    query: '',
+  };
+
+  function ensureManagerEmployeeFilter() {
+    var root = document.getElementById('mgr-employee-filter');
+    if (!root || isEmployeeUser()) {
+      if (root) root.classList.add('hidden');
+      return;
+    }
+    root.classList.remove('hidden');
+    bindManagerEmployeeFilter();
+    bindManagerDateFilter();
+    // Always sync label/clear immediately from localStorage (don't wait for employee list).
+    syncManagerEmployeeFilterLabel();
+    if (!managerEmployeeFilterState.loaded) {
+      loadManagerEmployeeFilterOptions();
+    } else {
+      renderManagerEmployeeFilterOptions();
+    }
+    syncManagerDateFilterLabel();
+  }
+
+  function bindManagerEmployeeFilter() {
+    var combobox = document.getElementById('mgr-employee-combobox');
+    var trigger = document.getElementById('mgr-employee-trigger');
+    var panel = document.getElementById('mgr-employee-panel');
+    var search = document.getElementById('mgr-employee-search');
+    if (!combobox || !trigger || !panel || !search) return;
+
+    trigger.addEventListener('click', function (e) {
+      if (e.target.closest('#mgr-employee-clear')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      closeManagerDateFilter();
+      managerEmployeeFilterState.open = !managerEmployeeFilterState.open;
+      panel.classList.toggle('hidden', !managerEmployeeFilterState.open);
+      combobox.classList.toggle('is-open', managerEmployeeFilterState.open);
+      trigger.setAttribute('aria-expanded', managerEmployeeFilterState.open ? 'true' : 'false');
+      if (managerEmployeeFilterState.open) {
+        search.focus();
+        search.select();
+      }
+      icons();
+    });
+
+    search.addEventListener('input', function () {
+      managerEmployeeFilterState.query = search.value || '';
+      renderManagerEmployeeFilterOptions();
+    });
+
+    // Document-level handlers survive dashboard repaints.
+    if (!document._mgrDashFilterOutsideBound) {
+      document._mgrDashFilterOutsideBound = true;
+      document.addEventListener('click', function (e) {
+        var clearBtn = e.target.closest('#mgr-employee-clear, #mgr-employee-clear-option');
+        if (clearBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          clearManagerEmployeeFilter();
+          return;
+        }
+        if (e.target.closest('#mgr-employee-combobox') || e.target.closest('#mgr-date-combobox')) return;
+        closeManagerEmployeeFilter();
+        closeManagerDateFilter();
+      });
+    }
+  }
+
+  function closeManagerEmployeeFilter() {
+    var combobox = document.getElementById('mgr-employee-combobox');
+    var panel = document.getElementById('mgr-employee-panel');
+    var trigger = document.getElementById('mgr-employee-trigger');
+    managerEmployeeFilterState.open = false;
+    if (panel) panel.classList.add('hidden');
+    if (combobox) combobox.classList.remove('is-open');
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+  }
+
+  function closeManagerDateFilter() {
+    var combobox = document.getElementById('mgr-date-combobox');
+    var panel = document.getElementById('mgr-date-panel');
+    var trigger = document.getElementById('mgr-date-trigger');
+    if (panel) panel.classList.add('hidden');
+    if (combobox) combobox.classList.remove('is-open');
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+  }
+
+  function bindManagerDateFilter() {
+    var combobox = document.getElementById('mgr-date-combobox');
+    var trigger = document.getElementById('mgr-date-trigger');
+    var panel = document.getElementById('mgr-date-panel');
+    var customWrap = document.getElementById('mgr-date-custom');
+    var options = document.getElementById('mgr-date-options');
+    var applyBtn = document.getElementById('mgr-date-apply');
+    var resetBtn = document.getElementById('mgr-date-reset');
+    if (!combobox || !trigger || !panel) return;
+
+    trigger.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeManagerEmployeeFilter();
+      var open = panel.classList.contains('hidden');
+      panel.classList.toggle('hidden', !open);
+      combobox.classList.toggle('is-open', open);
+      trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+      icons();
+    });
+
+    if (options) {
+      options.addEventListener('click', function (e) {
+        var btn = e.target.closest('[data-date-preset]');
+        if (!btn) return;
+        var preset = btn.getAttribute('data-date-preset');
+        if (preset === 'custom') {
+          if (customWrap) customWrap.classList.remove('hidden');
+          document.querySelectorAll('#mgr-date-options [data-date-preset]').forEach(function (el) {
+            el.classList.toggle('is-active', el.getAttribute('data-date-preset') === 'custom');
+          });
+          if (window.CrmDateTimePicker && customWrap) {
+            window.CrmDateTimePicker.initAll(customWrap);
+          }
+          return;
+        }
+        if (customWrap) customWrap.classList.add('hidden');
+        setDashboardDateFilter(preset, '', '');
+        closeManagerDateFilter();
+        syncManagerDateFilterLabel();
+        refreshDashboardFilters();
+      });
+    }
+
+    if (applyBtn) {
+      applyBtn.addEventListener('click', function () {
+        var fromEl = document.getElementById('mgr-date-from');
+        var toEl = document.getElementById('mgr-date-to');
+        var from = fromEl ? fromEl.value : '';
+        var to = toEl ? toEl.value : '';
+        if (!from || !to) {
+          toast('Select both From and To dates.', 'warning');
+          return;
+        }
+        if (from > to) {
+          toast('From date must be before To date.', 'warning');
+          return;
+        }
+        setDashboardDateFilter('custom', from, to);
+        closeManagerDateFilter();
+        syncManagerDateFilterLabel();
+        refreshDashboardFilters();
+      });
+    }
+
+    if (resetBtn) {
+      resetBtn.addEventListener('click', function () {
+        setDashboardDateFilter('today', '', '');
+        var fromEl = document.getElementById('mgr-date-from');
+        var toEl = document.getElementById('mgr-date-to');
+        if (fromEl) fromEl.value = '';
+        if (toEl) toEl.value = '';
+        if (customWrap) customWrap.classList.add('hidden');
+        closeManagerDateFilter();
+        syncManagerDateFilterLabel();
+        refreshDashboardFilters();
+      });
+    }
+  }
+
+  function syncManagerDateFilterLabel() {
+    var dateFilter = getDashboardDateFilter();
+    var labelEl = document.getElementById('mgr-date-selected-label');
+    var label = DASHBOARD_DATE_PRESETS[dateFilter.preset] || 'Today';
+    if (dateFilter.preset === 'custom' && dateFilter.from && dateFilter.to) {
+      label = dateFilter.from + ' – ' + dateFilter.to;
+    }
+    if (labelEl) labelEl.textContent = label;
+    document.querySelectorAll('#mgr-date-options [data-date-preset]').forEach(function (el) {
+      el.classList.toggle('is-active', el.getAttribute('data-date-preset') === dateFilter.preset);
+    });
+    var customWrap = document.getElementById('mgr-date-custom');
+    if (customWrap) customWrap.classList.toggle('hidden', dateFilter.preset !== 'custom');
+    syncManagerFilterHint();
+  }
+
+  function loadManagerEmployeeFilterOptions() {
+    apiFetch('/dashboard/productivity-employees')
+      .then(function (body) {
+        managerEmployeeFilterState.employees = body.data || [];
+        managerEmployeeFilterState.loaded = true;
+        if (clearStaleDashboardEmployeeFilter() && window._currentPageId === 'dashboard') {
+          renderManagerDashboard();
+          return;
+        }
+        renderManagerEmployeeFilterOptions();
+        syncManagerEmployeeFilterLabel();
+      })
+      .catch(function () {
+        managerEmployeeFilterState.employees = [];
+        managerEmployeeFilterState.loaded = true;
+        renderManagerEmployeeFilterOptions();
+        syncManagerEmployeeFilterLabel();
+      });
+  }
+
+  function renderManagerEmployeeFilterOptions() {
+    var list = document.getElementById('mgr-employee-options');
+    if (!list) return;
+    var query = (managerEmployeeFilterState.query || '').trim().toLowerCase();
+    var selectedId = getDashboardEmployeeFilterId();
+    var rows = [{ employee_id: null, name: 'All Employees', initials: 'ALL', role: 'Organization', city: '' }]
+      .concat(managerEmployeeFilterState.employees || []);
+
+    if (query) {
+      rows = rows.filter(function (row) {
+        return String(row.name || '').toLowerCase().indexOf(query) >= 0
+          || String(row.role || '').toLowerCase().indexOf(query) >= 0
+          || String(row.city || '').toLowerCase().indexOf(query) >= 0;
+      });
+    }
+
+    if (!rows.length) {
+      list.innerHTML = '<p class="text-caption text-slate-400 p-3">No employees found.</p>';
+      return;
+    }
+
+    var html = '';
+    if (selectedId) {
+      html += '<button type="button" class="mgr-employee-option mgr-employee-option--clear" id="mgr-employee-clear-option" role="option">' +
+        '<span class="mgr-employee-avatar mgr-employee-avatar--clear">×</span>' +
+        '<span class="mgr-employee-option__meta">' +
+          '<span class="mgr-employee-option__name">Clear Employee Filter</span>' +
+          '<span class="mgr-employee-option__sub">Back to organization dashboard</span>' +
+        '</span>' +
+      '</button>';
+    }
+
+    html += rows.map(function (row) {
+      var id = row.employee_id;
+      var active = (id === null && !selectedId) || (selectedId && String(id) === String(selectedId));
+      var sub = [row.role, row.city].filter(Boolean).join(' · ');
+      return '<button type="button" class="mgr-employee-option' + (active ? ' is-active' : '') + '" data-employee-id="' + (id == null ? '' : id) + '" role="option" aria-selected="' + (active ? 'true' : 'false') + '">' +
+        '<span class="mgr-employee-avatar">' + escapeHtml(row.initials || 'E') + '</span>' +
+        '<span class="mgr-employee-option__meta">' +
+          '<span class="mgr-employee-option__name">' + escapeHtml(row.name) + '</span>' +
+          (sub ? '<span class="mgr-employee-option__sub">' + escapeHtml(sub) + '</span>' : '') +
+        '</span>' +
+      '</button>';
+    }).join('');
+
+    list.innerHTML = html;
+
+    var clearOption = document.getElementById('mgr-employee-clear-option');
+    if (clearOption) {
+      clearOption.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        clearManagerEmployeeFilter();
+      });
+    }
+
+    list.querySelectorAll('[data-employee-id]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var value = btn.getAttribute('data-employee-id');
+        applyManagerEmployeeFilter(value ? parseInt(value, 10) : null);
+      });
+    });
+  }
+
+  function syncManagerEmployeeFilterLabel() {
+    var selectedId = getDashboardEmployeeFilterId();
+    var labelEl = document.getElementById('mgr-employee-selected-label');
+    var avatarEl = document.getElementById('mgr-employee-avatar');
+    var clearBtn = document.getElementById('mgr-employee-clear');
+    var combobox = document.getElementById('mgr-employee-combobox');
+    var selected = null;
+    if (selectedId) {
+      selected = (managerEmployeeFilterState.employees || []).find(function (row) {
+        return String(row.employee_id) === String(selectedId);
+      });
+    }
+    if (labelEl) labelEl.textContent = selected ? selected.name : (selectedId ? ('Employee #' + selectedId) : 'All Employees');
+    if (avatarEl) avatarEl.textContent = selected ? (selected.initials || 'E') : (selectedId ? 'E' : 'ALL');
+    if (combobox) combobox.classList.toggle('has-employee-filter', !!selectedId);
+    if (clearBtn) {
+      clearBtn.classList.toggle('hidden', !selectedId);
+      clearBtn.setAttribute('aria-hidden', selectedId ? 'false' : 'true');
+      clearBtn.disabled = !selectedId;
+      if (selectedId) icons();
+    }
+    syncManagerFilterHint();
+  }
+
+  function clearManagerEmployeeFilter() {
+    var selectedId = getDashboardEmployeeFilterId();
+    if (!selectedId) return;
+    try {
+      localStorage.removeItem('crm_dashboard_employee_id');
+      localStorage.setItem('crm_dashboard_employee_id', 'all');
+    } catch (e) { /* ignore */ }
+    setDashboardEmployeeFilterId(null);
+    managerEmployeeFilterState.query = '';
+    var search = document.getElementById('mgr-employee-search');
+    if (search) search.value = '';
+    closeManagerEmployeeFilter();
+    syncManagerEmployeeFilterLabel();
+    renderManagerEmployeeFilterOptions();
+    refreshDashboardFilters();
+    toast('Showing organization dashboard', 'info');
+  }
+
+  function syncManagerFilterHint() {
+    var hintEl = document.getElementById('mgr-employee-filter-hint');
+    if (!hintEl) return;
+    var selectedId = getDashboardEmployeeFilterId();
+    var selected = null;
+    if (selectedId) {
+      selected = (managerEmployeeFilterState.employees || []).find(function (row) {
+        return String(row.employee_id) === String(selectedId);
+      });
+    }
+    var dateFilter = getDashboardDateFilter();
+    var dateLabel = DASHBOARD_DATE_PRESETS[dateFilter.preset] || 'Today';
+    if (dateFilter.preset === 'custom' && dateFilter.from && dateFilter.to) {
+      dateLabel = dateFilter.from + ' – ' + dateFilter.to;
+    }
+    hintEl.textContent = (selected ? selected.name : 'All Employees') + ' · ' + dateLabel;
+  }
+
+  function applyManagerEmployeeFilter(employeeId) {
+    setDashboardEmployeeFilterId(employeeId || null);
+    managerEmployeeFilterState.query = '';
+    var search = document.getElementById('mgr-employee-search');
+    if (search) search.value = '';
+    closeManagerEmployeeFilter();
+    syncManagerEmployeeFilterLabel();
+    renderManagerEmployeeFilterOptions();
+    refreshDashboardFilters();
+  }
+
+  function refreshDashboardFilters() {
+    var employeeId = getDashboardEmployeeFilterId();
+    var dateFilter = getDashboardDateFilter();
+    var dash = document.querySelector('.mgr-dashboard');
+    var loading = document.getElementById('mgr-dash-filter-loading');
+    if (dash) dash.classList.add('is-loading-employee');
+    if (loading) loading.classList.remove('hidden');
+
+    loadDashboardMetricsFromDatabase(function (metrics, error) {
+      if (dash) dash.classList.remove('is-loading-employee');
+      if (loading) loading.classList.add('hidden');
+      if (error || !metrics) {
+        toast(error && error.message ? error.message : 'Unable to load dashboard filters', 'error');
+        return;
+      }
+      window.dashboardMetrics = metrics;
+      paintManagerDashboard(buildDashboardDisplayMetrics(metrics));
+      renderDashboardCharts(metrics.reports);
+    }, { force: true, employeeId: employeeId || null, dateFilter: dateFilter });
+  }
+
+  function renderManagerEmployeeProductivityPanel(payload) {
+    var panel = document.getElementById('mgr-employee-productivity-panel');
+    if (!panel) return;
+
+    if (!payload || !payload.metrics || payload.scope !== 'employee') {
+      panel.classList.add('hidden');
+      panel.innerHTML = '';
+      return;
+    }
+
+    panel.classList.remove('hidden');
+    if (payload.scope === 'employee' && payload.has_activity === false) {
+      panel.innerHTML =
+        '<div class="flex items-center justify-between gap-3 mb-2">' +
+          '<h2 class="text-card-heading">Employee Productivity</h2>' +
+          '<span class="text-caption text-slate-500">' + escapeHtml((payload.employee && payload.employee.name) || 'Employee') + '</span>' +
+        '</div>' +
+        '<p class="text-sm text-slate-500">No activity found for this employee.</p>';
+      return;
+    }
+
+    var metrics = payload.metrics;
+    var dateLabel = (payload.date_range && payload.date_range.label) || '';
+    var title = payload.scope === 'employee' && payload.employee
+      ? (payload.employee.name + ' · Productivity')
+      : 'Organization Productivity';
+    if (dateLabel) title += ' · ' + dateLabel;
+
+    function section(titleText, cards) {
+      return '<div class="mgr-emp-prod-section">' +
+        '<h3 class="mgr-emp-prod-section__title">' + escapeHtml(titleText) + '</h3>' +
+        '<div class="mgr-emp-prod-grid">' + cards.map(function (card) {
+          return '<div class="mgr-emp-prod-card">' +
+            '<p class="mgr-emp-prod-card__label">' + escapeHtml(card.label) + '</p>' +
+            '<p class="mgr-emp-prod-card__value">' + escapeHtml(String(card.value ?? '—')) + '</p>' +
+          '</div>';
+        }).join('') + '</div></div>';
+    }
+
+    var nextFollowup = metrics.followups && metrics.followups.next_upcoming
+      ? ((metrics.followups.next_upcoming.firm_name || 'Lead') + ' · ' + formatDateTime(metrics.followups.next_upcoming.scheduled_date))
+      : '—';
+
+    panel.innerHTML =
+      '<div class="flex items-center justify-between gap-3 mb-3">' +
+        '<h2 class="text-card-heading">' + escapeHtml(title) + '</h2>' +
+      '</div>' +
+      section('Lead Metrics', [
+        { label: 'Total Assigned', value: metrics.leads.total_assigned },
+        { label: 'New Leads', value: metrics.leads.new_leads },
+        { label: 'Hot / Warm / Cold', value: metrics.leads.hot_leads + ' / ' + metrics.leads.warm_leads + ' / ' + metrics.leads.cold_leads },
+        { label: 'In Pipeline', value: metrics.leads.in_pipeline },
+        { label: 'Converted / Won', value: metrics.leads.converted },
+        { label: 'Lost / Dead', value: metrics.leads.lost },
+        { label: 'Conversion Rate', value: metrics.leads.conversion_rate + '%' },
+      ]) +
+      section('Daily Work', [
+        { label: "Today's Calls", value: metrics.daily_work.todays_calls },
+        { label: "Today's Follow-ups", value: metrics.daily_work.todays_followups },
+        { label: "Today's Meetings", value: metrics.daily_work.todays_meetings },
+        { label: 'Overdue Follow-ups', value: metrics.daily_work.overdue_followups },
+      ]) +
+      section('Demo Metrics', [
+        { label: 'Demos Scheduled', value: metrics.demos.demos_scheduled },
+        { label: 'Demos Completed', value: metrics.demos.demos_completed },
+        { label: 'Demo Conversion', value: metrics.demos.demo_conversion_rate + '%' },
+        { label: 'Missed Demos', value: metrics.demos.missed_demos },
+      ]) +
+      section('Communication', [
+        { label: 'Emails Sent', value: metrics.communication.emails_sent },
+        { label: 'SMS Sent', value: metrics.communication.sms_sent },
+        { label: 'WhatsApp Sent', value: metrics.communication.whatsapp_sent },
+        { label: 'Customer Replies', value: metrics.communication.customer_replies },
+      ]) +
+      section('Performance', [
+        { label: 'Target Assigned', value: metrics.performance.target_assigned },
+        { label: 'Target Achieved', value: metrics.performance.target_achieved },
+        { label: 'Pending Target', value: metrics.performance.pending_target },
+        { label: 'Productivity %', value: metrics.performance.productivity_pct + '%' },
+      ]) +
+      section('Follow-up', [
+        { label: 'Pending', value: metrics.followups.pending },
+        { label: 'Completed', value: metrics.followups.completed },
+        { label: 'Missed', value: metrics.followups.missed },
+        { label: 'Next Upcoming', value: nextFollowup },
+      ]);
+  }
+
+  function renderDuplicateMonitoringPanel(dm) {
+    var root = document.getElementById('mgr-duplicate-monitoring');
+    if (!root) return;
+    if (!dm) {
+      root.classList.add('hidden');
+      return;
+    }
+    root.classList.remove('hidden');
+
+    var typeLabel = function (type) {
+      if (type === 'potential_duplicate') return '<span class="badge badge-warning">Potential Duplicate</span>';
+      if (type === 'duplicate') return '<span class="badge badge-danger">Duplicate</span>';
+      return '<span class="badge">' + escapeHtml(type || '—') + '</span>';
+    };
+
+    var statusLabel = function (status) {
+      if (status === 'resolved') return '<span class="badge badge-success">Resolved</span>';
+      if (status === 'changed' || status === 'changed_number') return '<span class="badge badge-brand">Changed</span>';
+      return '<span class="badge badge-warning">Open</span>';
+    };
+
+    var recentRows = (dm.recent || []).map(function (row) {
+      return '<tr class="ca-table-row">' +
+        '<td>' + escapeHtml(row.employee_name || '—') + '</td>' +
+        '<td class="font-mono text-sm">' + escapeHtml(row.duplicate_number || '—') + '</td>' +
+        '<td>' + escapeHtml(row.existing_lead_name || '—') + '</td>' +
+        '<td class="font-mono text-sm">' + escapeHtml(row.saved_number || '—') + '</td>' +
+        '<td>' + escapeHtml(formatDuplicateDate(row.attempted_at)) + '</td>' +
+        '<td>' + typeLabel(row.attempt_type) + '</td>' +
+        '<td>' + statusLabel(row.status) + '</td>' +
+      '</tr>';
+    }).join('') || '<tr><td colspan="7" class="text-center text-slate-500 p-4">No duplicate attempts logged yet.</td></tr>';
+
+    var topRows = (dm.top_employees || []).map(function (row, i) {
+      return '<div class="mgr-dup-top-row"><span class="mgr-dup-rank">' + (i + 1) + '</span>' +
+        '<strong>' + escapeHtml(row.employee_name) + '</strong>' +
+        '<span class="text-rose-600 font-semibold">' + row.attempt_count + '</span></div>';
+    }).join('') || '<p class="text-caption text-slate-500">No data this month.</p>';
+
+    var trendBars = (dm.trend || []).map(function (point) {
+      var max = Math.max.apply(null, (dm.trend || []).map(function (p) { return p.count; }).concat([1]));
+      var pct = Math.round((point.count / max) * 100);
+      return '<div class="mgr-dup-trend-col" title="' + escapeHtml(point.month) + ': ' + point.count + '">' +
+        '<div class="mgr-dup-trend-bar" style="height:' + Math.max(pct, 8) + '%"></div>' +
+        '<span class="mgr-dup-trend-label">' + escapeHtml((point.month || '').slice(5)) + '</span></div>';
+    }).join('');
+
+    root.innerHTML =
+      '<div class="mgr-panel-head">' +
+        '<h3 class="mgr-panel-title"><i data-lucide="shield-alert" class="h-5 w-5 text-rose-500"></i> Duplicate Monitoring</h3>' +
+        '<button type="button" class="mgr-link-btn" data-nav-page="duplicate-attempts">View all</button>' +
+      '</div>' +
+      '<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-4">' +
+        '<div class="mgr-fu-stat"><span class="text-caption text-slate-500">Today</span><strong>' + (dm.today || 0) + '</strong></div>' +
+        '<div class="mgr-fu-stat"><span class="text-caption text-slate-500">This Week</span><strong>' + (dm.this_week || 0) + '</strong></div>' +
+        '<div class="mgr-fu-stat"><span class="text-caption text-slate-500">This Month</span><strong>' + (dm.this_month || 0) + '</strong></div>' +
+        '<div class="mgr-fu-stat"><span class="text-caption text-slate-500">Total</span><strong>' + (dm.total || 0) + '</strong></div>' +
+        '<div class="mgr-fu-stat"><span class="text-caption text-slate-500">Exact Duplicates</span><strong class="text-rose-600">' + (dm.duplicate_count || 0) + '</strong></div>' +
+        '<div class="mgr-fu-stat"><span class="text-caption text-slate-500">Potential</span><strong class="text-amber-600">' + (dm.potential_duplicate_count || 0) + '</strong></div>' +
+        '<div class="mgr-fu-stat">' + iconBtn('download', 'Export', 'id="mgr-dup-export-btn"', 'secondary') + '</div>' +
+      '</div>' +
+      '<div class="mgr-grid-2 mb-4">' +
+        '<div><h4 class="text-sm font-semibold mb-2">Top Employees (This Month)</h4><div class="mgr-dup-top-list">' + topRows + '</div></div>' +
+        '<div><h4 class="text-sm font-semibold mb-2">6-Month Trend</h4><div class="mgr-dup-trend">' + (trendBars || '<p class="text-caption text-slate-500">No trend data.</p>') + '</div></div>' +
+      '</div>' +
+      '<h4 class="text-sm font-semibold mb-2">Recent Duplicate Attempts</h4>' +
+      '<div class="overflow-x-auto scrollbar-thin"><table class="ca-table w-full mgr-table"><thead><tr>' +
+        '<th>Employee</th><th>Duplicate #</th><th>Existing Lead</th><th>Saved #</th><th>Time</th><th>Type</th><th>Status</th>' +
+      '</tr></thead><tbody>' + recentRows + '</tbody></table></div>';
+
+    var exportBtn = document.getElementById('mgr-dup-export-btn');
+    if (exportBtn && !exportBtn._dupBound) {
+      exportBtn._dupBound = true;
+      exportBtn.addEventListener('click', function () {
+        fetchExportResponse('/duplicate-attempts/export')
+          .then(function (result) {
+            if (result.kind === 'file') {
+              triggerFileDownload(result.blob, result.filename);
+            }
+          })
+          .catch(function (err) {
+            toast(err.message || 'Export failed', 'error');
+          });
+      });
+    }
+    icons();
+  }
+
+  function paintManagerFollowUpMetrics(d) {
+    setText('mgr-fu-today', d.today);
+    setText('mgr-fu-upcoming', d.upcoming);
+    setText('mgr-fu-completed-today', d.completed_today);
+    setText('mgr-fu-missed', d.missed);
+    setText('mgr-fu-overdue', d.overdue);
+    setText('mgr-fu-conversion', (d.followup_conversion_pct || 0) + '%');
+    setText('mgr-fu-demo-conversion', (d.demo_conversion_pct || 0) + '%');
+    var list = document.getElementById('mgr-fu-employee-list');
+    if (list) {
+      list.innerHTML = (d.employees || []).map(function (row) {
+        return '<div class="mgr-fu-emp-row"><strong>' + escapeHtml(row.name) + '</strong>' +
+          '<span>Pending: ' + row.pending_followups + '</span>' +
+          '<span class="text-rose-600">Overdue: ' + row.overdue_followups + '</span>' +
+          '<span>Tasks: ' + row.pending_tasks + '</span></div>';
+      }).join('') || '<p class="text-caption text-slate-500">No active employees.</p>';
+    }
   }
 
   function loadManagerFollowUpMetrics() {
     var panel = document.getElementById('mgr-followup-automation-panel');
     if (!panel) return;
+    var embedded = window.dashboardMetrics && window.dashboardMetrics.followup_manager;
+    if (embedded) {
+      paintManagerFollowUpMetrics(embedded);
+      return;
+    }
     apiFetch('/follow-ups/manager-metrics')
       .then(function (body) {
-        var d = body.data || {};
-        setText('mgr-fu-today', d.today);
-        setText('mgr-fu-upcoming', d.upcoming);
-        setText('mgr-fu-completed-today', d.completed_today);
-        setText('mgr-fu-missed', d.missed);
-        setText('mgr-fu-overdue', d.overdue);
-        setText('mgr-fu-conversion', (d.followup_conversion_pct || 0) + '%');
-        setText('mgr-fu-demo-conversion', (d.demo_conversion_pct || 0) + '%');
-        var list = document.getElementById('mgr-fu-employee-list');
-        if (list) {
-          list.innerHTML = (d.employees || []).map(function (row) {
-            return '<div class="mgr-fu-emp-row"><strong>' + escapeHtml(row.name) + '</strong>' +
-              '<span>Pending: ' + row.pending_followups + '</span>' +
-              '<span class="text-rose-600">Overdue: ' + row.overdue_followups + '</span>' +
-              '<span>Tasks: ' + row.pending_tasks + '</span></div>';
-          }).join('') || '<p class="text-caption text-slate-500">No active employees.</p>';
-        }
+        paintManagerFollowUpMetrics(body.data || {});
       })
-      .catch(function () {});
+      .catch(function () {
+        var list = document.getElementById('mgr-fu-employee-list');
+        if (list) list.innerHTML = '<p class="text-caption text-rose-500">Unable to load follow-up metrics.</p>';
+      });
+  }
+
+  var workflowListsData = null;
+  var workflowListTab = 'demo_scheduled';
+
+  function loadEmployeeWorkflowLists() {
+    var el = document.getElementById('emp-demo-schedule');
+    if (!el) return;
+    apiFetch('/workflow/lists')
+      .then(function (body) {
+        workflowListsData = body.data || {};
+        renderEmployeeDemoSchedule(workflowListsData.demo_scheduled || []);
+      })
+      .catch(function () {
+        el.innerHTML = '<p class="text-caption text-slate-400 p-3">Unable to load demos.</p>';
+      });
+  }
+
+  function renderEmployeeDemoSchedule(items) {
+    var el = document.getElementById('emp-demo-schedule');
+    if (!el) return;
+    if (!items.length) {
+      el.innerHTML = '<p class="text-caption text-slate-400 p-3">No demos scheduled.</p>';
+      return;
+    }
+    el.innerHTML = items.map(function (demo) {
+      var firm = (demo.lead && demo.lead.firm_name) || demo.firm_name || 'Lead #' + demo.ca_id;
+      return '<div class="emp-list-item">' +
+        '<span class="emp-list-main"><strong>' + escapeHtml(firm) + '</strong>' +
+        '<span class="text-caption text-slate-500">' + escapeHtml(formatDateTime(demo.demo_at)) + '</span></span>' +
+        iconBtn('clipboard-check', 'Result', 'data-emp-demo-result="' + demo.id + '"', 'secondary') + '</div>';
+    }).join('');
+    icons();
+  }
+
+  function loadManagerWorkflowLists() {
+    var panel = document.getElementById('mgr-workflow-panel');
+    if (!panel) return;
+    apiFetch('/workflow/lists')
+      .then(function (body) {
+        workflowListsData = body.data || {};
+        paintManagerWorkflowLists(workflowListsData);
+      })
+      .catch(function () {
+        var list = document.getElementById('mgr-workflow-list');
+        if (list) list.innerHTML = '<p class="text-caption text-rose-500">Unable to load workflow lists.</p>';
+      });
+  }
+
+  function paintManagerWorkflowLists(data) {
+    var countsEl = document.getElementById('mgr-workflow-counts');
+    var tabsEl = document.getElementById('mgr-workflow-tabs');
+    var listEl = document.getElementById('mgr-workflow-list');
+    var perfEl = document.getElementById('mgr-workflow-performance');
+    if (!countsEl || !tabsEl || !listEl) return;
+
+    var counts = data.counts || {};
+    var tabs = [
+      { id: 'demo_scheduled', label: 'Demo Scheduled', count: counts.demo_scheduled || 0 },
+      { id: 'todays_calls', label: "Today's Calls", count: counts.todays_calls || 0 },
+      { id: 'interested', label: 'Interested', count: counts.interested || 0 },
+      { id: 'not_interested', label: 'Not Interested', count: counts.not_interested || 0 },
+      { id: 'hold', label: 'Hold', count: counts.hold || 0 },
+      { id: 'purchased', label: 'Purchased', count: counts.purchased || 0 },
+    ];
+
+    countsEl.innerHTML = tabs.map(function (tab) {
+      return '<div class="mgr-fu-stat"><span class="text-caption text-slate-500">' + escapeHtml(tab.label) + '</span><strong>' + tab.count + '</strong></div>';
+    }).join('');
+
+    if (!tabs.some(function (t) { return t.id === workflowListTab; })) {
+      workflowListTab = 'demo_scheduled';
+    }
+
+    tabsEl.innerHTML = tabs.map(function (tab) {
+      return '<button type="button" class="emp-tab' + (workflowListTab === tab.id ? ' active' : '') + '" data-wf-tab="' + tab.id + '">' +
+        escapeHtml(tab.label) + ' (' + tab.count + ')</button>';
+    }).join('');
+
+    tabsEl.querySelectorAll('[data-wf-tab]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        workflowListTab = btn.dataset.wfTab;
+        paintManagerWorkflowLists(workflowListsData || data);
+      });
+    });
+
+    listEl.innerHTML = renderWorkflowListRows(workflowListTab, data);
+
+    if (perfEl) {
+      var rows = data.employee_performance || [];
+      if (!rows.length) {
+        perfEl.innerHTML = '';
+      } else {
+        perfEl.innerHTML =
+          '<h4 class="text-sm font-semibold mb-2">Employee-wise Performance</h4>' +
+          '<div class="overflow-x-auto"><table class="ca-table w-full mgr-table"><thead><tr><th>Employee</th><th>Calls</th><th>Demos</th><th>Purchases</th></tr></thead><tbody>' +
+          rows.map(function (row) {
+            return '<tr><td>' + escapeHtml(row.name) + '</td><td>' + row.calls + '</td><td>' + row.demos + '</td><td>' + row.purchases + '</td></tr>';
+          }).join('') +
+          '</tbody></table></div>';
+      }
+    }
+    icons();
+  }
+
+  function renderWorkflowListRows(tab, data) {
+    var items = (data && data[tab]) || [];
+    if (!items.length) {
+      return '<p class="text-caption text-slate-400 p-3">No records in this list.</p>';
+    }
+
+    if (tab === 'purchased') {
+      return items.map(function (row) {
+        return '<div class="emp-list-item">' +
+          '<span class="emp-list-main"><strong>' + escapeHtml(row.customer_name || row.firm_name || '—') + '</strong>' +
+          '<span class="text-caption text-slate-500">' + escapeHtml(row.firm_name || '') + ' · ' + escapeHtml(row.mobile_no || '') + ' · ' + escapeHtml(row.email_id || '') + '</span></span>' +
+          '<span class="emp-list-meta">' + escapeHtml(formatDate(row.purchase_date)) +
+          '<br>Ref: ' + escapeHtml(row.reference_employee_name || (row.employee && row.employee.name) || '—') +
+          '<br>By: ' + escapeHtml((row.assigned_by && row.assigned_by.name) || '—') +
+          '<br>' + escapeHtml(row.status || 'Purchased') + '</span></div>';
+      }).join('');
+    }
+
+    if (tab === 'todays_calls') {
+      return items.map(function (row) {
+        var firm = (row.lead && row.lead.firm_name) || ('Lead #' + row.ca_id);
+        return '<div class="emp-list-item">' +
+          '<span class="emp-list-main"><strong>' + escapeHtml(firm) + '</strong>' +
+          '<span class="text-caption text-slate-500">' + escapeHtml(row.call_status) + ' · ' + escapeHtml((row.employee && row.employee.name) || '') + '</span></span>' +
+          '<span class="emp-list-meta">' + escapeHtml(formatDateTime(row.called_at)) + '</span></div>';
+      }).join('');
+    }
+
+    if (tab === 'demo_scheduled') {
+      return items.map(function (row) {
+        var firm = (row.lead && row.lead.firm_name) || row.firm_name || ('Lead #' + row.ca_id);
+        return '<div class="emp-list-item">' +
+          '<span class="emp-list-main"><strong>' + escapeHtml(firm) + '</strong>' +
+          '<span class="text-caption text-slate-500">' + escapeHtml((row.employee && row.employee.name) || '') +
+          (row.meeting_link ? ' · <a href="' + escapeHtml(row.meeting_link) + '" target="_blank" rel="noopener">Link</a>' : '') +
+          '</span></span>' +
+          '<span class="emp-list-meta">' + escapeHtml(formatDateTime(row.demo_at)) + '</span></div>';
+      }).join('');
+    }
+
+    return items.map(function (row) {
+      var firm = (row.lead && row.lead.firm_name) || ('Lead #' + row.ca_id);
+      return '<div class="emp-list-item">' +
+        '<span class="emp-list-main"><strong>' + escapeHtml(firm) + '</strong>' +
+        '<span class="text-caption text-slate-500">' + escapeHtml(row.result || '') + ' · ' + escapeHtml((row.employee && row.employee.name) || '') + '</span></span>' +
+        '<span class="emp-list-meta">' + escapeHtml(formatDateTime(row.created_at)) + '</span></div>';
+    }).join('');
+  }
+
+  function handleWorkflowQuickAction(action) {
+    var leadId = window._selectedLeadId || (window.CAData && CAData.getSelectedLeadId && CAData.getSelectedLeadId());
+    if (action === 'call') {
+      openCallOutcomeModal(null, leadId || '');
+      return;
+    }
+    if (action === 'schedule-demo') {
+      openScheduleDemoModal(leadId);
+      return;
+    }
+    if (action === 'demo-result') {
+      var demos = (workflowListsData && workflowListsData.demo_scheduled) || [];
+      if (!demos.length) {
+        toast('No scheduled demos to update.', 'warning');
+        return;
+      }
+      openDemoResultModal(demos[0].id);
+    }
+  }
+
+  function openScheduleDemoModal(caId) {
+    var modal = document.getElementById('modal-schedule-demo');
+    var form = document.getElementById('form-schedule-demo');
+    if (!modal || !form) return;
+    form.reset();
+    var caEl = document.getElementById('schedule-demo-ca-id');
+    if (caEl) caEl.value = caId || '';
+    if (!caEl || !caEl.value) {
+      toast('Select a lead first, then schedule a demo.', 'warning');
+      if (typeof navigateTo === 'function') navigateTo(isEmployeeUser() ? 'leads' : 'ca-master');
+      return;
+    }
+    openModal(modal);
+    icons();
+  }
+
+  var demoPurchaseOptionsCache = null;
+
+  function ensureDemoPurchaseOptions() {
+    if (demoPurchaseOptionsCache) {
+      return Promise.resolve(demoPurchaseOptionsCache);
+    }
+    return apiFetch('/workflow/options')
+      .then(function (body) {
+        var data = body.data || {};
+        demoPurchaseOptionsCache = {
+          plans: data.purchase_plans || ['CRM Annual', 'CRM Half-Yearly', 'CRM Quarterly', 'CRM Monthly'],
+          plan_configs: data.plan_configs || {},
+        };
+        return demoPurchaseOptionsCache;
+      })
+      .catch(function () {
+        demoPurchaseOptionsCache = {
+          plans: ['CRM Annual', 'CRM Half-Yearly', 'CRM Quarterly', 'CRM Monthly'],
+          plan_configs: {},
+        };
+        return demoPurchaseOptionsCache;
+      });
+  }
+
+  function ensureSalesListOptionsCache() {
+    if (salesListOptionsCache) {
+      return Promise.resolve(salesListOptionsCache);
+    }
+    return apiFetch('/sales-list/options')
+      .then(function (body) {
+        salesListOptionsCache = body.data || {};
+        return salesListOptionsCache;
+      })
+      .catch(function () {
+        return ensureDemoPurchaseOptions();
+      });
+  }
+
+  function populateDemoResultPlanSelect(selectedPlan) {
+    var planSelect = document.getElementById('demo-result-plan');
+    if (!planSelect) return;
+    var options = demoPurchaseOptionsCache || salesListOptionsCache || {};
+    var plans = options.plans || options.purchase_plans || ['CRM Annual', 'CRM Half-Yearly', 'CRM Quarterly', 'CRM Monthly'];
+    planSelect.innerHTML = plans.map(function (plan) {
+      return '<option value="' + plan + '">' + plan + '</option>';
+    }).join('');
+    if (selectedPlan) planSelect.value = selectedPlan;
+    if (!planSelect.value && plans.length) planSelect.value = plans[0];
+  }
+
+  function formatSaleMonthLabel(dateString) {
+    if (!dateString) return '—';
+    var parts = dateString.split('-');
+    if (parts.length < 2) return dateString;
+    var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    var monthIndex = parseInt(parts[1], 10) - 1;
+    return (months[monthIndex] || parts[1]) + ' ' + parts[0];
+  }
+
+  function syncDemoPurchasePreview(applyPlanDefaults) {
+    var options = demoPurchaseOptionsCache || salesListOptionsCache || {};
+    var plan = (document.getElementById('demo-result-plan') || {}).value || '';
+    var purchaseDate = (document.getElementById('demo-result-purchase-date') || {}).value || '';
+    var planConfig = (options.plan_configs || {})[plan] || {};
+    var coolingInput = document.getElementById('demo-result-cooling');
+    var pointsInput = document.getElementById('demo-result-points');
+    var totalInput = document.getElementById('demo-result-total');
+    var monthInput = document.getElementById('demo-result-sale-month');
+
+    if (monthInput) monthInput.value = formatSaleMonthLabel(purchaseDate);
+
+    if (applyPlanDefaults && planConfig) {
+      if (coolingInput && planConfig.cooling_period_days != null) {
+        coolingInput.value = String(planConfig.cooling_period_days);
+      }
+      if (pointsInput && planConfig.points != null) {
+        pointsInput.value = String(planConfig.points);
+      }
+      if (totalInput && planConfig.default_amount != null && (!totalInput.value || totalInput.value === '0')) {
+        totalInput.value = String(planConfig.default_amount);
+      }
+    }
+
+    var expiryInput = document.getElementById('demo-result-expiry');
+    if (expiryInput) {
+      var expiry = purchaseDate && planConfig.duration_months
+        ? addMonthsToDateString(purchaseDate, planConfig.duration_months)
+        : '';
+      expiryInput.value = expiry || '—';
+    }
+
+    var total = parseFloat((document.getElementById('demo-result-total') || {}).value || '0');
+    var received = parseFloat((document.getElementById('demo-result-received') || {}).value || '0');
+    var balance = Math.max(0, Math.round((total - received) * 100) / 100);
+    var balanceInput = document.getElementById('demo-result-balance');
+    if (balanceInput) balanceInput.value = formatSalesCurrency(balance);
+
+    var statusEl = document.getElementById('demo-result-payment-status');
+    if (statusEl) {
+      var expiryDate = expiryInput && expiryInput.value !== '—' ? expiryInput.value : '';
+      statusEl.innerHTML = salesPaymentBadge(previewSalesListPaymentStatus(total, received, expiryDate));
+    }
+  }
+
+  function prefillDemoPurchaseFields(context) {
+    context = context || {};
+    var today = new Date().toISOString().slice(0, 10);
+    var purchaseDateInput = document.getElementById('demo-result-purchase-date');
+    if (purchaseDateInput && !purchaseDateInput.value) purchaseDateInput.value = today;
+    var customerInput = document.getElementById('demo-result-customer');
+    if (customerInput) customerInput.value = context.customer_name || context.ca_name || '';
+    var firmInput = document.getElementById('demo-result-firm');
+    if (firmInput) firmInput.value = context.firm_name || '';
+    var mobileInput = document.getElementById('demo-result-mobile');
+    if (mobileInput) mobileInput.value = context.mobile_no || '';
+    var cityInput = document.getElementById('demo-result-city');
+    if (cityInput) cityInput.value = context.city_name || '';
+    var referenceInput = document.getElementById('demo-result-reference');
+    if (referenceInput) referenceInput.value = context.employee_name || context.reference_name || '';
+    var executiveSelect = document.getElementById('demo-result-executive');
+    if (executiveSelect && context.employee_id) {
+      setSelectValueIfValid(executiveSelect, context.employee_id);
+    }
+    populateDemoResultPlanSelect(context.plan_purchased || 'CRM Annual');
+    syncDemoPurchasePreview(true);
+  }
+
+  function openDemoResultModal(scheduleId, contextLabel, leadContext) {
+    var modal = document.getElementById('modal-demo-result');
+    var form = document.getElementById('form-demo-result');
+    if (!modal || !form) return;
+    form.reset();
+    var idEl = document.getElementById('demo-result-schedule-id');
+    if (idEl) idEl.value = scheduleId || '';
+    var purchaseWrap = document.getElementById('demo-result-purchase-wrap');
+    if (purchaseWrap) purchaseWrap.classList.add('hidden');
+    var context = document.getElementById('demo-result-context');
+    if (context) {
+      if (contextLabel) {
+        context.textContent = contextLabel;
+        context.classList.remove('hidden');
+      } else {
+        context.textContent = '';
+        context.classList.add('hidden');
+      }
+    }
+    ensureDemoPurchaseOptions().then(function () {
+      prefillDemoPurchaseFields(leadContext || {});
+      enhanceEntityLookups(modal);
+    });
+    openModal(modal);
+    var resultSelect = document.getElementById('demo-result-select');
+    if (resultSelect) resultSelect.focus();
+    icons();
+  }
+
+  function openDemoResultForFollowup(followupId, caId) {
+    if (!followupId && !caId) {
+      toast('Follow-up record is missing. Refresh and try again.', 'warning');
+      return;
+    }
+    var followupPromise = followupId
+      ? resolveFollowupById(followupId)
+      : Promise.resolve(findFollowupInCache(followupId));
+    followupPromise
+      .then(function (followup) {
+        var resolvedCaId = caId || (followup && followup.ca_id);
+        var qs = followupId
+          ? ('followup_id=' + encodeURIComponent(followupId))
+          : ('ca_id=' + encodeURIComponent(resolvedCaId || ''));
+        return apiFetch('/workflow/demos/resolve?' + qs).then(function (body) {
+          return { body: body, followup: followup, caId: resolvedCaId };
+        });
+      })
+      .then(function (result) {
+        if (!result) return;
+        var schedule = (result.body.data && result.body.data.demo_schedule) || null;
+        if (!schedule || !schedule.id) {
+          toast('No demo schedule is linked to this follow-up yet.', 'warning');
+          return;
+        }
+        var firm = (result.followup && result.followup.firm_name) || schedule.firm_name || ('Lead #' + (result.caId || schedule.ca_id));
+        openDemoResultModal(schedule.id, 'After-demo remark for ' + firm, {
+          ca_name: (result.followup && result.followup.customer_name) || schedule.customer_name,
+          customer_name: (result.followup && result.followup.customer_name) || schedule.customer_name,
+          firm_name: firm,
+          mobile_no: (result.followup && result.followup.mobile_no) || schedule.mobile_no,
+          city_name: (result.followup && result.followup.city_name) || '',
+          employee_id: schedule.employee_id,
+          employee_name: schedule.employee_name || (result.followup && result.followup.employee_name),
+        });
+      })
+      .catch(function (err) {
+        if (err.status === 403) return;
+        toast(err.message || 'Unable to open demo result', 'warning');
+      });
   }
 
   function renderPipelineFunnel() {
@@ -2137,7 +6466,7 @@ window.CA_CRM = (function () {
       btn.addEventListener('click', function () {
         window._selectedLeadId = btn.dataset.leadId;
         if (typeof CAData !== 'undefined' && CAData.setSelectedLeadId) CAData.setSelectedLeadId(btn.dataset.leadId);
-        if (typeof navigateTo === 'function') navigateTo('leads');
+        if (typeof navigateTo === 'function') navigateTo(isEmployeeUser() ? 'leads' : 'ca-master');
       });
     });
   }
@@ -2218,9 +6547,11 @@ window.CA_CRM = (function () {
       });
     });
     root.querySelectorAll('.mgr-funnel-row').forEach(function (row) {
+      if (row._dashFunnelBound) return;
+      row._dashFunnelBound = true;
       row.addEventListener('click', function () {
         window._leadSegmentFilter = 'pipeline';
-        if (typeof navigateTo === 'function') navigateTo('leads');
+        if (typeof navigateTo === 'function') navigateTo('ca-master');
       });
     });
     if (top) bindModalTriggers(top);
@@ -2263,9 +6594,11 @@ window.CA_CRM = (function () {
   function renderDashboardLeads() {
     var el = document.getElementById('dashboard-leads-table');
     if (!el) return;
-    var leads = getDashboardLeads();
+    var metrics = window.dashboardMetrics || {};
+    var leads = (metrics.recent_leads || []).map(mapDashboardLeadSummary);
+    if (!leads.length) leads = getDashboardLeads();
     if (!leads.length) {
-      el.innerHTML = emptyTableRow(4, 'No leads yet — add firms from CA Master.');
+      el.innerHTML = emptyTableRow(4, 'No leads yet — add firms from Master Data.');
       return;
     }
     el.innerHTML = leads.slice(0, 6).map(function (l) {
@@ -2285,11 +6618,16 @@ window.CA_CRM = (function () {
   }
 
   function getRealLeadsFiltered() {
-    var leads = (window.realLeads || []).slice();
+    var source = document.getElementById('kanban-board') && kanbanLeadsLoaded
+      ? (window.kanbanLeads || [])
+      : (window._listingLeadsPage && window._listingLeadsPage.length
+        ? window._listingLeadsPage
+        : (window.realLeads || []));
+    var leads = source.slice();
     var segment = getLeadFilter();
     if (!segment || segment === 'all') return leads;
     if (segment === 'new') {
-      return leads.filter(function (l) { return l.status === 'New' || l.stage === 'New Lead'; });
+      return leads.filter(function (l) { return l.is_newly_established || l.status === 'New' || l.stage === 'New Lead'; });
     }
     if (segment === 'hot') {
       return leads.filter(function (l) { return l.status === 'Hot'; });
@@ -2338,7 +6676,19 @@ window.CA_CRM = (function () {
     var designationInput = form.querySelector('[name="designation"]');
     var mobileInput = form.querySelector('[name="mobile_no"]');
     if (nameInput) nameInput.value = u.name || '';
-    if (emailInput) emailInput.value = u.email || '';
+    if (emailInput) {
+      emailInput.value = u.email || '';
+      var emailHint = document.getElementById('profile-edit-email-hint');
+      if (u.role === 'super_admin') {
+        emailInput.readOnly = true;
+        emailInput.classList.add('bg-slate-50');
+        if (emailHint) emailHint.classList.remove('hidden');
+      } else {
+        emailInput.readOnly = false;
+        emailInput.classList.remove('bg-slate-50');
+        if (emailHint) emailHint.classList.add('hidden');
+      }
+    }
     var roleDisplay = document.getElementById('profile-edit-role-display');
     if (roleDisplay) roleDisplay.textContent = u.role_label || u.role || '—';
     var desigWrap = document.getElementById('profile-field-designation');
@@ -2364,6 +6714,79 @@ window.CA_CRM = (function () {
     if (typeof closeDetailDrawer === 'function') closeDetailDrawer();
     openModal(modal);
     icons();
+  }
+
+  function renderLoginEmailChangeStatus(data) {
+    var currentDisplay = document.getElementById('login-email-current-display');
+    var verifiedBadge = document.getElementById('login-email-status-badge');
+    var pendingBadge = document.getElementById('login-email-pending-badge');
+    var expiredBadge = document.getElementById('login-email-expired-badge');
+    var failedBadge = document.getElementById('login-email-failed-badge');
+    var pendingPanel = document.getElementById('login-email-pending-panel');
+    var pendingText = document.getElementById('login-email-pending-text');
+    var pendingTarget = document.getElementById('login-email-pending-target');
+    var pendingExpires = document.getElementById('login-email-pending-expires');
+    var expiredPanel = document.getElementById('login-email-expired-panel');
+    var expiredText = document.getElementById('login-email-expired-text');
+    var changeFields = document.getElementById('login-email-change-fields');
+    var submitBtn = document.getElementById('change-login-email-submit-btn');
+    var currentEmail = (data && data.current_email) || (window.__CRM_USER__ && window.__CRM_USER__.email) || '';
+    var status = (data && data.verification_status) || 'verified';
+    var pending = data && data.pending_verification;
+    var lastRequest = data && data.last_request;
+
+    if (currentDisplay) {
+      if (currentDisplay.tagName === 'INPUT') currentDisplay.value = currentEmail;
+      else currentDisplay.textContent = currentEmail || '—';
+    }
+
+    if (verifiedBadge) verifiedBadge.classList.toggle('hidden', status !== 'verified');
+    if (pendingBadge) pendingBadge.classList.toggle('hidden', status !== 'pending_verification');
+    if (expiredBadge) expiredBadge.classList.toggle('hidden', status !== 'expired');
+    if (failedBadge) failedBadge.classList.toggle('hidden', status !== 'failed' && status !== 'cancelled');
+
+    var hasPending = status === 'pending_verification' && !!pending;
+    if (pendingPanel) pendingPanel.classList.toggle('hidden', !hasPending);
+    if (pendingTarget && pending) pendingTarget.textContent = pending.new_email || '—';
+    if (pendingExpires && pending && pending.expires_at) {
+      var hoursLeft = Math.max(1, Math.ceil((new Date(pending.expires_at).getTime() - Date.now()) / 3600000));
+      pendingExpires.textContent = hoursLeft + (hoursLeft === 1 ? ' Hour' : ' Hours');
+    } else if (pendingExpires) {
+      pendingExpires.textContent = '24 Hours';
+    }
+    if (pendingText && pending) {
+      pendingText.textContent = 'Waiting for verification at ' + pending.new_email + '. The link expires ' + (pending.expires_at ? new Date(pending.expires_at).toLocaleString() : 'soon') + '.';
+    }
+
+    if (expiredPanel) expiredPanel.classList.toggle('hidden', status !== 'expired');
+    if (expiredText && status === 'expired' && lastRequest) {
+      expiredText.textContent = 'The verification request for ' + lastRequest.new_email + ' has expired. You can submit a new login email change below.';
+    }
+
+    if (changeFields) changeFields.classList.toggle('hidden', hasPending);
+    if (submitBtn) submitBtn.classList.toggle('hidden', hasPending);
+  }
+
+  function openChangeLoginEmailModal() {
+    var modal = document.getElementById('modal-change-login-email');
+    var form = document.getElementById('form-change-login-email');
+    if (!modal || !form) return;
+
+    if (typeof closeDetailDrawer === 'function') closeDetailDrawer();
+    form.reset();
+    renderLoginEmailChangeStatus({ current_email: (window.__CRM_USER__ || {}).email || '', verification_status: 'verified' });
+    openModal(modal);
+    if (typeof initPasswordToggleButtons === 'function') initPasswordToggleButtons(modal);
+    icons();
+
+    apiFetch('/auth/login-email-change')
+      .then(function (body) {
+        renderLoginEmailChangeStatus(body.data || body);
+        icons();
+      })
+      .catch(function (error) {
+        toast(error.message || 'Unable to load login email settings', error.status === 403 ? 'warning' : 'error');
+      });
   }
 
   function demoConfirmationStatusBadge(status) {
@@ -2425,16 +6848,51 @@ window.CA_CRM = (function () {
         { label: 'Team Size', value: data.team },
         { label: 'Software', value: data.software },
         { label: 'Website', value: data.website },
-        { label: 'Rating', value: data.rating + ' / 5' },
+        { label: 'Google Maps', value: lead.google_maps_url
+          ? '<a class="text-brand hover:underline" href="' + escapeHtml(lead.google_maps_url) + '" target="_blank" rel="noopener noreferrer">Open in Maps</a>'
+          : '—' },
+        { label: 'Google Place ID', value: lead.google_place_id || '—' },
+        { label: 'Google Coordinates', value: lead.latitude != null && lead.longitude != null
+          ? String(lead.latitude) + ', ' + String(lead.longitude)
+          : '—' },
+        { label: 'Google Address', value: lead.verified_address || lead.address || '—' },
+        { label: 'Google Rating', value: lead.google_rating != null
+          ? String(lead.google_rating) + (lead.google_review_count != null ? ' (' + lead.google_review_count + ' reviews)' : '')
+          : '—' },
+        { label: 'Google Status', value: formatGoogleBusinessStatus(lead.google_business_status) },
+        { label: 'Google Verified', value: lead.verified_from_google ? 'Yes' : 'No' },
+        { label: 'Google Researched', value: lead.researched_at ? formatDateTime(lead.researched_at) : '—' },
+        { label: 'CRM Rating', value: data.rating + ' / 5' },
         { label: 'New Firm', value: data.newFirm ? 'Yes' : 'No' },
-        { label: 'Executive', value: data.executive },
+        { label: 'Employee', value: data.executive },
         { label: 'Stage', value: data.stage },
         { label: 'Status', value: data.status },
         { label: 'Source', value: data.source },
         { label: 'Last Action', value: data.last_action },
       ],
-      extraHtml: '<div id="lead-demo-confirmation-section"><p class="text-caption text-slate-400 mt-4">Loading confirmation…</p></div>',
+      extraHtml: (canUseLeadQuickActions(lead)
+        ? '<div class="mt-4"><button type="button" class="btn-secondary btn-sm" data-lead-drawer-google="' + escapeHtml(String(lead.ca_id)) + '">' +
+          '<i data-lucide="map-pin" class="h-4 w-4"></i> Google Places Lookup</button></div>'
+        : '') +
+        '<div id="lead-email-communications-section"><p class="text-caption text-slate-400 mt-4">Loading communication history…</p></div>' +
+        '<div id="lead-demo-confirmation-section"><p class="text-caption text-slate-400 mt-4">Loading confirmation…</p></div>',
     });
+    apiFetch('/ca-masters/' + encodeURIComponent(lead.ca_id) + '/email-communications')
+      .then(function (body) {
+        var section = document.getElementById('lead-email-communications-section');
+        if (!section) return;
+        var payload = body.data || {};
+        if (!(payload.items || []).length && !(payload.threads || []).length) {
+          section.outerHTML = '';
+          return;
+        }
+        section.outerHTML = renderLeadEmailTimelineSection(payload);
+        icons();
+      })
+      .catch(function () {
+        var section = document.getElementById('lead-email-communications-section');
+        if (section) section.outerHTML = '';
+      });
     apiFetch('/ca-masters/' + encodeURIComponent(lead.ca_id) + '/demo-confirmation')
       .then(function (body) {
         var payload = body.data || {};
@@ -2485,64 +6943,321 @@ window.CA_CRM = (function () {
     if (openDrawer) openLeadDrawer(lead);
   }
 
+  function setLeadsView(viewId) {
+    document.querySelectorAll('.ca-tab-panel[data-tab-group="leads-view"]').forEach(function (panel) {
+      panel.classList.toggle('active', panel.dataset.panel === viewId);
+    });
+    renderLeadKpis();
+    if (viewId === 'pipeline') loadKanbanLeads();
+    else if (window.CA_LISTING_SEARCH) reloadListing('ca_masters');
+    else renderLeadsTable();
+  }
+
+  function applyLeadSegment(segmentId) {
+    window._leadSegmentFilter = segmentId || 'all';
+    if (window.CA_LISTING_SEARCH) {
+      CA_LISTING_SEARCH.setState('ca_masters', {
+        page: 1,
+        filters: Object.assign(
+          {},
+          readCaMasterColumnFilters(),
+          { segment: !segmentId || segmentId === 'all' ? '' : segmentId },
+        ),
+      });
+    }
+    if (isLeadsPipelineTabActive()) {
+      renderLeadKpis();
+      loadKanbanLeads();
+    } else {
+      setLeadsView('all');
+    }
+  }
+
   function renderLeadKpis() {
     var el = document.getElementById('leads-kpi-strip');
     if (!el) return;
-    var m = window.dashboardMetrics || {};
-    if (!dashboardMetricsLoaded && m.total_leads === undefined) {
-      el.innerHTML = '<p class="text-caption text-slate-400 px-2 py-3">Loading KPIs…</p>';
-      loadDashboardMetricsFromDatabase(function (metrics) {
-        window.dashboardMetrics = metrics || {};
-        renderLeadKpis();
-      });
-      return;
+    var activeSegment = getLeadFilter();
+    if (activeSegment === 'hot' || activeSegment === 'new') {
+      activeSegment = 'all';
+      window._leadSegmentFilter = 'all';
+      if (window.CA_LISTING_SEARCH) {
+        var state = CA_LISTING_SEARCH.getState('ca_masters');
+        var filters = Object.assign({}, state.filters || {});
+        if (filters.segment === 'hot' || filters.segment === 'new') {
+          delete filters.segment;
+          CA_LISTING_SEARCH.setState('ca_masters', { filters: filters });
+        }
+      }
     }
-    var counts = {
-      all: m.total_leads || 0,
-      new: m.new_leads || 0,
-      hot: m.hot_leads || 0,
-      pipeline: m.pipeline_leads || 0,
-      lost: m.lost_leads || 0,
-    };
-    var active = getLeadFilter();
-    var chips = [
-      { id: 'all', label: 'All Leads', count: counts.all, icon: 'users' },
-      { id: 'new', label: 'New', count: counts.new, icon: 'sparkles' },
-      { id: 'hot', label: 'Hot', count: counts.hot, icon: 'flame' },
-      { id: 'pipeline', label: 'In Pipeline', count: counts.pipeline, icon: 'git-branch' },
-      { id: 'lost', label: 'Lost', count: counts.lost, icon: 'user-x' },
+    var activeView = isLeadsPipelineTabActive() ? 'pipeline' : 'all';
+    var items = [
+      { kind: 'view', id: 'pipeline', label: 'Pipeline', icon: 'git-branch' },
+      { kind: 'view', id: 'all', label: 'All Leads', icon: 'list' },
+      { kind: 'segment', id: 'pipeline', label: 'In Pipeline', icon: 'columns-3' },
     ];
-    el.innerHTML = chips.map(function (c) {
-      return '<button type="button" class="leads-kpi-chip' + (active === c.id ? ' active' : '') + '" data-lead-segment="' + c.id + '">' +
-        '<i data-lucide="' + c.icon + '" class="h-4 w-4"></i>' +
-        '<span class="leads-kpi-label">' + c.label +
-        '<span class="leads-kpi-count">' + c.count + '</span></button>';
+    if (canViewSalesList()) {
+      items.push({ kind: 'segment', id: 'negotiation', label: 'Negotiation', icon: 'handshake' });
+    }
+    items.push({ kind: 'segment', id: 'lost', label: 'Lost', icon: 'user-x' });
+    var chipsHtml = items.map(function (item) {
+      var isActive = item.kind === 'view'
+        ? activeView === item.id
+        : item.kind === 'nav'
+          ? false
+          : activeSegment === item.id;
+      var attrs = item.kind === 'view'
+        ? 'data-leads-view="' + item.id + '"'
+        : item.kind === 'nav'
+          ? 'data-leads-nav="' + item.id + '"'
+          : 'data-lead-segment="' + item.id + '"';
+      return '<button type="button" class="leads-kpi-chip cam-control-chip' + (isActive ? ' active' : '') + '" ' + attrs +
+        ' title="' + item.label + '" aria-label="' + item.label + '">' +
+        '<i data-lucide="' + item.icon + '" class="h-4 w-4"></i>' +
+        '<span class="leads-kpi-label">' + item.label + '</span></button>';
     }).join('');
-    el.querySelectorAll('[data-lead-segment]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        window._leadSegmentFilter = btn.dataset.leadSegment;
-        if (window.CA_LISTING_SEARCH) CA_LISTING_SEARCH.setState('ca_masters', { page: 1, filters: { segment: btn.dataset.leadSegment === 'all' ? '' : btn.dataset.leadSegment } });
-        renderLeadsHub();
-        toast('Showing ' + btn.querySelector('.leads-kpi-label').textContent + ' (' + btn.querySelector('.leads-kpi-count').textContent + ')', 'info');
+    el.innerHTML =
+      '<div class="leads-kpi-chips cam-control-chips">' + chipsHtml + '</div>' +
+      (crmCanAction('leads', 'create')
+        ? '<div class="leads-kpi-actions" role="toolbar" aria-label="Lead actions">' +
+            '<button type="button" class="crm-toolbar-icon-btn crm-toolbar-icon-btn--primary" data-open-modal="add-lead" id="leads-kpi-add-btn" title="Add Lead" aria-label="Add Lead">' +
+              '<i data-lucide="plus" class="h-4 w-4"></i></button>' +
+          '</div>'
+        : '');
+    if (!el._kpiStripBound) {
+      el._kpiStripBound = true;
+      el.addEventListener('click', function (e) {
+        var navBtn = e.target.closest('[data-leads-nav]');
+        if (navBtn) {
+          if (typeof navigateTo === 'function') navigateTo(navBtn.getAttribute('data-leads-nav'));
+          return;
+        }
+        var viewBtn = e.target.closest('[data-leads-view]');
+        if (viewBtn) {
+          setLeadsView(viewBtn.getAttribute('data-leads-view'));
+          return;
+        }
+        var btn = e.target.closest('[data-lead-segment]');
+        if (!btn) return;
+        applyLeadSegment(btn.dataset.leadSegment);
+        toast('Showing ' + btn.querySelector('.leads-kpi-label').textContent, 'info');
       });
-    });
+    }
+    bindModalTriggers(el);
     icons();
   }
 
-  function renderLeadsHub() {
-    renderLeadKpis();
-    renderLeadsTable();
-    renderKanbanFromData();
-    initLeadActions();
-    bindModalTriggers(document.getElementById('leads-selected-bar') || document);
-    var selId = CAData.getSelectedLeadId();
-    if (selId) {
-      highlightLeadSelection(selId);
-      updateSelectedLeadBar(getLeadRecord(selId));
-    } else {
-      updateSelectedLeadBar(null);
+  function showCamPrimaryViews() {
+    var primary = document.getElementById('cam-primary-views');
+    var secondary = document.getElementById('cam-secondary-views');
+    if (primary) primary.classList.remove('hidden');
+    if (secondary) secondary.classList.add('hidden');
+    var hub = document.getElementById('cam-hub');
+    if (hub) hub.dataset.camSecondary = '';
+  }
+
+  function showCamSecondaryView(view) {
+    var primary = document.getElementById('cam-primary-views');
+    var secondary = document.getElementById('cam-secondary-views');
+    var masters = document.getElementById('cam-secondary-masters');
+    var bulk = document.getElementById('cam-secondary-bulk');
+    var title = document.getElementById('cam-secondary-title');
+    if (primary) primary.classList.add('hidden');
+    if (secondary) secondary.classList.remove('hidden');
+    if (masters) masters.classList.toggle('hidden', view !== 'masters');
+    if (bulk) bulk.classList.toggle('hidden', view !== 'bulk');
+    if (title) title.textContent = view === 'masters' ? 'Master Tables' : 'Bulk Tools';
+    var hub = document.getElementById('cam-hub');
+    if (hub) hub.dataset.camSecondary = view || '';
+    if (view === 'bulk') {
+      if (typeof initBulkImportWizard === 'function') initBulkImportWizard();
+      if (typeof initBulkAssignmentPanel === 'function') initBulkAssignmentPanel();
+      if (typeof initBulkExportPanel === 'function') initBulkExportPanel();
+      if (typeof initBulkStatusUpdatePanel === 'function') initBulkStatusUpdatePanel();
+      if (typeof loadBulkOperationsHistory === 'function') loadBulkOperationsHistory();
+    }
+    if (view === 'masters' && typeof renderMasterTables === 'function') {
+      renderMasterTables();
     }
     icons();
+  }
+
+  function setCamView(viewId) {
+    showCamPrimaryViews();
+    document.querySelectorAll('.ca-tab-panel[data-tab-group="cam-view"]').forEach(function (panel) {
+      panel.classList.toggle('active', panel.dataset.panel === viewId);
+    });
+    renderCamKpis();
+    if (viewId === 'pipeline') loadKanbanLeads();
+    else renderCaMasterTable();
+  }
+
+  function applyCamSegment(segmentId) {
+    window._leadSegmentFilter = segmentId || 'all';
+    if (window.CA_LISTING_SEARCH) {
+      CA_LISTING_SEARCH.setState('ca_masters', {
+        page: 1,
+        filters: Object.assign(
+          {},
+          readCaMasterFiltersFromBar(),
+          readCaMasterColumnFilters(),
+          { segment: !segmentId || segmentId === 'all' ? '' : segmentId },
+        ),
+      });
+    }
+    showCamPrimaryViews();
+    if (isCamPipelineTabActive()) {
+      renderCamKpis();
+      loadKanbanLeads();
+    } else {
+      setCamView('all');
+    }
+  }
+
+  function renderCamKpis() {
+    var el = document.getElementById('cam-kpi-strip');
+    if (!el) return;
+    var activeSegment = getLeadFilter();
+    if (activeSegment === 'hot') {
+      activeSegment = 'all';
+      window._leadSegmentFilter = 'all';
+      if (window.CA_LISTING_SEARCH) {
+        var state = CA_LISTING_SEARCH.getState('ca_masters');
+        var filters = Object.assign({}, state.filters || {});
+        if (filters.segment === 'hot') {
+          delete filters.segment;
+          CA_LISTING_SEARCH.setState('ca_masters', { filters: filters });
+        }
+      }
+    }
+    var activeView = isCamPipelineTabActive() ? 'pipeline' : 'all';
+    if (activeSegment === 'pipeline' || activeSegment === 'lost') {
+      activeSegment = 'all';
+      window._leadSegmentFilter = 'all';
+      if (window.CA_LISTING_SEARCH) {
+        var clearState = CA_LISTING_SEARCH.getState('ca_masters');
+        var clearFilters = Object.assign({}, clearState.filters || {});
+        if (clearFilters.segment === 'pipeline' || clearFilters.segment === 'lost') {
+          delete clearFilters.segment;
+          CA_LISTING_SEARCH.setState('ca_masters', { filters: clearFilters });
+        }
+      }
+    }
+    var items = [
+      { kind: 'view', id: 'pipeline', label: 'Master Pipeline', icon: 'git-branch' },
+      { kind: 'view', id: 'all', label: 'All Firms', icon: 'list' },
+      { kind: 'segment', id: 'new', label: 'New', icon: 'sparkles' },
+    ];
+    var chipsHtml = items.map(function (item) {
+      var isActive = item.kind === 'view'
+        ? activeView === item.id
+        : activeSegment === item.id;
+      var attrs = item.kind === 'view'
+        ? 'data-cam-view="' + item.id + '"'
+        : 'data-cam-segment="' + item.id + '"';
+      return '<button type="button" class="leads-kpi-chip cam-control-chip' + (isActive ? ' active' : '') + '" ' + attrs +
+        ' title="' + item.label + '" aria-label="' + item.label + '">' +
+        '<i data-lucide="' + item.icon + '" class="h-4 w-4"></i>' +
+        '<span class="leads-kpi-label">' + item.label + '</span></button>';
+    }).join('');
+    var addFirmBtn = crmCanAction('ca_master', 'create')
+      ? '<button type="button" class="crm-toolbar-icon-btn crm-toolbar-icon-btn--primary" data-open-modal="add-lead" id="cam-add-firm-btn" title="Add Firm" aria-label="Add Firm">' +
+        '<i data-lucide="plus" class="h-4 w-4"></i></button>'
+      : '';
+    var firmActions = '';
+    if (crmCanAction('ca_master', 'import')) {
+      firmActions += iconBtn('file-spreadsheet', 'Import Excel', 'data-inbox-action="import" data-inbox-table="ca-master-data-table" data-inbox-module="ca-master" id="cam-import-btn"');
+    }
+    if (crmCanAction('ca_master', 'export')) {
+      firmActions += iconBtn('download', 'Export', 'data-inbox-action="export" data-inbox-table="ca-master-data-table" data-inbox-module="ca-master" id="cam-export-btn"');
+    }
+    firmActions += addFirmBtn;
+    el.innerHTML =
+      '<div class="leads-kpi-chips cam-control-chips">' + chipsHtml + '</div>' +
+      (firmActions
+        ? '<div class="leads-kpi-actions" role="toolbar" aria-label="Firm actions">' + firmActions + '</div>'
+        : '');
+    if (!el._camKpiBound) {
+      el._camKpiBound = true;
+      el.addEventListener('click', function (e) {
+        var viewBtn = e.target.closest('[data-cam-view]');
+        if (viewBtn) {
+          setCamView(viewBtn.getAttribute('data-cam-view'));
+          return;
+        }
+        var segmentBtn = e.target.closest('[data-cam-segment]');
+        if (!segmentBtn) return;
+        var segmentId = segmentBtn.getAttribute('data-cam-segment');
+        applyCamSegment(segmentId);
+        toast('Showing ' + segmentBtn.querySelector('.leads-kpi-label').textContent, 'info');
+      });
+    }
+    bindModalTriggers(el);
+    applyMasterDataRbac();
+    icons();
+  }
+
+  function bindLeadsColumnFilters() {
+    var hub = document.getElementById('leads-hub');
+    if (!hub || hub._leadsColFilterBound) return;
+    hub._leadsColFilterBound = true;
+    var timer = null;
+    hub.addEventListener('input', function (e) {
+      var input = e.target.closest('.crm-col-filter-input[data-col-filter-group="ca_masters"]');
+      if (!input) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(function () {
+        var segment = getLeadFilter();
+        if (window.CA_LISTING_SEARCH) {
+          CA_LISTING_SEARCH.setState('ca_masters', {
+            page: 1,
+            filters: Object.assign(
+              {},
+              readCaMasterColumnFilters(),
+              { segment: segment && segment !== 'all' ? segment : '' },
+            ),
+          });
+          reloadListing('ca_masters');
+        }
+      }, 320);
+    });
+  }
+
+  function renderLeadsHub() {
+    return ensureLeadsHubData(function () {
+      renderLeadKpis();
+      bindLeadsColumnFilters();
+      var pipelineActive = isLeadsPipelineTabActive();
+      var allActive = isLeadsAllTabActive();
+      var finishHub = function () {
+        initLeadActions();
+        bindModalTriggers(document.getElementById('leads-selected-bar') || document);
+        var pendingLeadId = window._pendingOpenLeadId;
+        if (pendingLeadId) {
+          window._pendingOpenLeadId = null;
+          selectLead(pendingLeadId, true);
+        } else {
+          var selId = CAData.getSelectedLeadId();
+          if (selId) {
+            highlightLeadSelection(selId);
+            updateSelectedLeadBar(getLeadRecord(selId));
+          } else {
+            updateSelectedLeadBar(null);
+          }
+        }
+        icons();
+      };
+      if (window.CA_LISTING_SEARCH && document.getElementById('leads-data-table') && allActive) {
+        return reloadListing('ca_masters').then(function () {
+          if (pipelineActive) return loadKanbanLeads();
+          return null;
+        }).then(finishHub);
+      }
+      if (pipelineActive) {
+        return loadKanbanLeads().then(finishHub);
+      }
+      renderLeadsTable();
+      finishHub();
+    });
   }
 
   function renderLeadsTable(pageLeads) {
@@ -2550,6 +7265,9 @@ window.CA_CRM = (function () {
     if (!el) return;
 
     if (pageLeads === undefined && window.CA_LISTING_SEARCH) {
+      if (leadsHubLoading && !el.querySelector('tr.ca-table-row')) {
+        setLeadsHubLoadingState(true);
+      }
       reloadListing('ca_masters');
       return;
     }
@@ -2558,23 +7276,33 @@ window.CA_CRM = (function () {
 
     el.innerHTML = leads.length ? leads.map(function (l) {
       var data = JSON.stringify(CAData.leadToRowData(l)).replace(/'/g, '&#39;');
-      return '<tr class="ca-table-row" data-lead-id="' + l.ca_id + '" data-row=\'' + data + '\'>' +
-        '<td class="font-medium">' + l.firm_name + '</td>' +
-        '<td>' + l.ca_name + '</td>' +
-        '<td>' + renderPhoneCell(l.mobile_no) + '</td>' +
-        '<td>' + renderPhoneCell(l.alternate_mobile_no) + '</td>' +
-        '<td>' + l.city + '</td>' +
-        '<td>' + l.stage + '</td>' +
-        '<td>' + statusBadge(l.status) + '</td>' +
-        '<td>' + l.executive + '</td>' +
-        '<td>' + l.source + '</td>' +
-        '<td>' + stars(l.priority) + '</td>' +
-        '<td class="text-caption">' + l.updated + '</td>' +
-        renderLeadQuickActionsCell(l) +
+      var executive = l.executive && l.executive !== 'Unassigned'
+        ? compactTextCell(l.executive)
+        : '<span class="cam-cell-text cam-cell-empty">Unassigned</span>';
+      return '<tr class="ca-table-row crm-table-row" data-lead-id="' + l.ca_id + '" data-row=\'' + data + '\'>' +
+        renderInboxCheckCell('leads-data-table', l.ca_id) +
+        '<td class="sticky-left-2 crm-td-firm font-medium text-slate-900">' + firmNameCell(l.firm_name) + '</td>' +
+        '<td class="sticky-left-3 crm-td-ca font-medium text-slate-900">' + caNameCell(l.ca_name) + '</td>' +
+        '<td class="crm-td-mobile">' + camPhoneCell(l.mobile_no) + '</td>' +
+        renderLeadCallLogQuickCell(l) +
+        '<td class="crm-td-mobile">' + camPhoneCell(l.alternate_mobile_no) + '</td>' +
+        '<td class="crm-td-geo">' + compactTextCell(l.city) + '</td>' +
+        '<td class="crm-td-geo">' + compactTextCell(l.stage) + '</td>' +
+        '<td class="crm-td-status"><span class="cam-cell-badge">' + statusBadge(l.status) + '</span></td>' +
+        '<td class="crm-td-person">' + executive + '</td>' +
+        '<td class="crm-td-source">' + compactTextCell(l.source) + '</td>' +
+        '<td class="crm-td-rating"><span class="cam-cell-rating">' + stars(l.priority) + '</span></td>' +
+        '<td class="crm-td-date"><span class="cam-cell-text cam-cell-mono text-slate-500" title="' + escapeHtml(l.updated) + '">' + escapeHtml(l.updated) + '</span></td>' +
+        renderLeadResearchQuickCell(l) +
+        renderCrmRowActionsCell(l) +
       '</tr>';
-    }).join('') : emptyTableRow(12, 'No leads yet. Click Add Lead to create one.');
+    }).join('') : emptyTableRow(15, isEmployeeUser()
+      ? 'No assigned leads yet. Leads assigned to you will appear here.'
+      : 'No leads yet. Click Add Lead to create one.');
     bindLeadRows(el);
-    bindLeadQuickActions(el);
+    bindCrmRowActions(el);
+    bindCrmActionsDismiss();
+    syncInboxChecks('leads-data-table');
     icons();
   }
 
@@ -2587,51 +7315,45 @@ window.CA_CRM = (function () {
     }
     var employees = pageEmployees || window.realEmployees || [];
     el.innerHTML = employees.length ? employees.map(function (e) {
-      return '<tr class="ca-table-row" data-employee-id="' + e.employee_id + '">' +
-        '<td class="font-medium">' + e.name + '</td>' +
-        '<td>' + e.email_id + '</td>' +
-        '<td>' + e.mobile_no + '</td>' +
-        '<td>' + e.role + '</td>' +
+      return '<tr class="ca-table-row crm-table-row" data-employee-id="' + e.employee_id + '">' +
+        renderInboxCheckCell('employees-data-table', e.employee_id) +
+        '<td class="sticky-left-2 font-medium">' + escapeHtml(e.name || '—') + '</td>' +
+        '<td>' + escapeHtml(e.email_id || '—') + '</td>' +
+        '<td>' + escapeHtml(e.mobile_no || '—') + '</td>' +
+        '<td>' + escapeHtml(e.role || '—') + '</td>' +
         '<td>' + loginStatusBadge(e.login_status, e.login_status_label) + '</td>' +
-        '<td>' + e.city + '</td>' +
+        '<td>' + escapeHtml(e.city || '—') + '</td>' +
         '<td>' + formatDate(e.date_of_joining) + '</td>' +
-        '<td><span class="badge-success">' + e.status + '</span></td>' +
-        '<td class="text-right whitespace-nowrap">' +
-          '<button type="button" class="btn-secondary btn-sm" data-employee-edit="' + e.employee_id + '">Edit</button> ' +
-          '<button type="button" class="btn-secondary btn-sm" data-employee-delete="' + e.employee_id + '">Delete</button>' +
-        '</td>' +
+        '<td><span class="badge-success">' + escapeHtml(e.status || '—') + '</span></td>' +
+        renderEmployeeActionsCell(e) +
       '</tr>';
-    }).join('') : '<tr><td colspan="9" class="text-center text-slate-500 p-4">No employees yet.</td></tr>';
-    bindEmployeeRowActions(el);
+    }).join('') : '<tr><td colspan="10" class="text-center text-slate-500 p-4">No employees yet.</td></tr>';
+    bindCrmRowActions(el);
+    syncInboxChecks('employees-data-table');
   }
 
   function bindEmployeeRowActions(container) {
-    if (!container) return;
-    container.querySelectorAll('[data-employee-edit]').forEach(function (btn) {
-      if (btn._empEditBound) return;
-      btn._empEditBound = true;
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        openEmployeeFormForEdit(btn.getAttribute('data-employee-edit'));
-      });
-    });
-    container.querySelectorAll('[data-employee-delete]').forEach(function (btn) {
-      if (btn._empDelBound) return;
-      btn._empDelBound = true;
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        var id = btn.getAttribute('data-employee-delete');
-        if (!window.confirm('Archive this employee?')) return;
-        apiFetch('/employees/' + encodeURIComponent(id), { method: 'DELETE' })
-          .then(function () {
-            toast('Employee archived', 'success');
-            realEmployeesLoaded = false;
-            refreshAll();
-          })
-          .catch(function (err) {
-            toast(err.message || 'Unable to delete employee', 'error');
-          });
-      });
+    bindCrmRowActions(container);
+  }
+
+  function getEmployeeActionItems() {
+    var items = [];
+    if (crmCanAction('employees', 'edit')) {
+      items.push({ action: 'edit', label: 'Edit', icon: 'pencil' });
+    }
+    if (crmCanAction('employees', 'delete')) {
+      items.push({ action: 'delete', label: 'Delete', icon: 'trash-2', danger: true });
+    }
+    return items;
+  }
+
+  function renderEmployeeActionsCell(employee) {
+    if (!window.CAActionDropdown) return '<td class="crm-actions-cell text-right"><span class="cam-cell-empty">—</span></td>';
+    return CAActionDropdown.renderCell(getEmployeeActionItems(), {
+      scope: 'employee',
+      rowId: employee.employee_id,
+      cellClass: 'crm-actions-cell text-right',
+      ariaLabel: 'Employee actions',
     });
   }
 
@@ -2655,65 +7377,410 @@ window.CA_CRM = (function () {
     if (window.CA_STATE_CITY) {
       window.CA_STATE_CITY.prepareModal(modal);
     }
-    openModal(modal);
+    openExclusiveCrmModal(modal);
   }
 
-  function renderAssignmentTable(pageAssignments) {
+  function assignmentStatusBadge(status) {
+    var normalized = String(status || 'Active').toLowerCase();
+    if (normalized === 'active') return '<span class="badge badge-success">Active</span>';
+    if (normalized === 'paused') return '<span class="badge badge-warning">Paused</span>';
+    if (normalized === 'inactive') return '<span class="badge badge-neutral">Inactive</span>';
+    return '<span class="badge badge-brand">' + escapeHtml(status || '—') + '</span>';
+  }
+
+  function getAssignmentActionItems(assignment) {
+    var items = [];
+    var status = String((assignment && assignment.status) || 'Active').toLowerCase();
+    if (crmCanAction('assignment', 'view')) {
+      items.push({ action: 'view', label: 'View', icon: 'eye' });
+    }
+    if (crmCanAction('assignment', 'create') || crmCanAction('assignment', 'edit')) {
+      items.push({ action: 'reassign', label: 'Reassign', icon: 'user-check' });
+    }
+    if (crmCanAction('assignment', 'edit')) {
+      if (status === 'active') {
+        items.push({ action: 'pause', label: 'Pause Assignment', icon: 'pause-circle' });
+      } else if (status === 'paused') {
+        items.push({ action: 'resume', label: 'Resume Assignment', icon: 'play-circle' });
+      }
+    }
+    if (crmCanAction('assignment', 'delete')) {
+      items.push({ action: 'delete', label: 'Delete', icon: 'trash-2', danger: true });
+    }
+    return items;
+  }
+
+  function renderAssignmentActionsCell(assignment) {
+    var id = assignment.assignment_id;
+    var items = getAssignmentActionItems(assignment);
+    if (!window.CAActionDropdown) {
+      return '<td class="assign-col-more sticky-right"><span class="assign-cell-empty">—</span></td>';
+    }
+    return CAActionDropdown.renderCell(items, {
+      scope: 'assignment',
+      rowId: id,
+      cellClass: 'assign-col-more sticky-right crm-actions-cell',
+      ariaLabel: 'Assignment actions',
+    });
+  }
+
+  function upsertAssignmentInCache(assignment) {
+    if (!assignment || assignment.assignment_id == null) return;
+    window.realAssignments = (window.realAssignments || []).map(function (a) {
+      return String(a.assignment_id) === String(assignment.assignment_id)
+        ? Object.assign({}, a, assignment)
+        : a;
+    });
+  }
+
+  function refreshAssignmentRowUi(assignment) {
+    if (!assignment) return;
+    var id = assignment.assignment_id;
+    var row = document.querySelector('tr.assign-table-row[data-assignment-id="' + id + '"]');
+    if (row) {
+      var statusCell = row.querySelector('.assign-col-status');
+      if (statusCell) statusCell.innerHTML = assignmentStatusBadge(assignment.status);
+      var moreCell = row.querySelector('.assign-col-more');
+      if (moreCell) {
+        var temp = document.createElement('table');
+        temp.innerHTML = '<tbody>' + renderAssignmentTableRow(assignment) + '</tbody>';
+        var newMore = temp.querySelector('.assign-col-more');
+        if (newMore) moreCell.replaceWith(newMore);
+      }
+    }
+    var card = document.querySelector('.assign-mobile-card[data-assignment-id="' + id + '"]');
+    if (card) {
+      var tempCard = document.createElement('div');
+      tempCard.innerHTML = renderAssignmentMobileCard(assignment);
+      var newCard = tempCard.firstElementChild;
+      if (newCard) card.replaceWith(newCard);
+    }
+    icons();
+  }
+
+  function setAssignmentStatus(assignmentId, status) {
+    return apiFetch('/lead-assignments/' + encodeURIComponent(assignmentId) + '/status', {
+      method: 'PATCH',
+      body: JSON.stringify({ status: status }),
+    }).then(function (body) {
+      var updated = body.data || body;
+      var merged = Object.assign({}, (window.realAssignments || []).find(function (a) {
+        return String(a.assignment_id) === String(assignmentId);
+      }) || {}, updated);
+      upsertAssignmentInCache(merged);
+      refreshAssignmentRowUi(merged);
+      invalidateDataCaches(['metrics', 'segment_counts']);
+      toast(status === 'Paused' ? 'Assignment paused' : 'Assignment resumed', 'success');
+      return merged;
+    });
+  }
+
+  window._assignmentBulkSelected = window._assignmentBulkSelected || {};
+
+  function getAssignmentBulkSelectedIds() {
+    return Object.keys(window._assignmentBulkSelected || {}).filter(function (id) {
+      return window._assignmentBulkSelected[id];
+    });
+  }
+
+  function updateAssignmentBulkBar() {
+    var ids = getAssignmentBulkSelectedIds();
+    var bar = document.getElementById('assignment-bulk-bar');
+    var countEl = document.getElementById('assignment-bulk-count');
+    if (countEl) countEl.textContent = ids.length + ' selected';
+    if (bar) {
+      bar.classList.toggle('hidden', ids.length === 0);
+      if (ids.length > 0) icons();
+    }
+  }
+
+  function clearAssignmentBulkSelection() {
+    window._assignmentBulkSelected = {};
+    document.querySelectorAll('.assignment-row-check').forEach(function (cb) { cb.checked = false; });
+    var selectAll = document.getElementById('assignment-select-all');
+    if (selectAll) selectAll.checked = false;
+    updateAssignmentBulkBar();
+  }
+
+  function updateAssignmentTotalLabel(pagination, assignments) {
+    var label = document.getElementById('assignment-total-label');
+    if (!label) return;
+    var total = pagination && pagination.total != null
+      ? pagination.total
+      : (assignments ? assignments.length : 0);
+    label.textContent = 'Showing: ' + total + ' Assignment' + (total === 1 ? '' : 's');
+  }
+
+  function customizeAssignmentPaginationSummary(pagination) {
+    if (!pagination || !window.CATablePagination) return;
+  }
+
+  function assignLeadCell(name) {
+    var raw = name == null || String(name).trim() === '' ? '' : String(name).trim();
+    if (!raw) return '<span class="assign-cell-empty">—</span>';
+    var escaped = escapeHtml(raw);
+    return '<span class="assign-lead-name crm-firm-cell" title="' + escaped + '">' + escaped + '</span>';
+  }
+
+  function assignTextCell(text) {
+    var raw = text == null || String(text).trim() === '' ? '' : String(text).trim();
+    if (!raw) return '<span class="assign-cell-empty">—</span>';
+    var escaped = escapeHtml(raw);
+    return '<span class="assign-cell-text" title="' + escaped + '">' + escaped + '</span>';
+  }
+
+  function renderAssignmentTableRow(a) {
+    var checked = window._assignmentBulkSelected && window._assignmentBulkSelected[String(a.assignment_id)];
+    return '<tr class="assign-table-row" data-assignment-id="' + a.assignment_id + '">' +
+      '<td class="assign-col-check sticky-left"><input type="checkbox" class="assignment-row-check" data-assignment-id="' + a.assignment_id + '"' + (checked ? ' checked' : '') + ' aria-label="Select assignment" /></td>' +
+      '<td class="assign-col-lead sticky-left-2 crm-td-firm">' + assignLeadCell(a.firm_name) + '</td>' +
+      '<td class="assign-col-exec">' + assignTextCell(a.executive || a.employee_name) + '</td>' +
+      '<td class="assign-col-num">' + escapeHtml(String(a.target_leads != null ? a.target_leads : '—')) + '</td>' +
+      '<td class="assign-col-num">' + escapeHtml(String(a.achieved_leads != null ? a.achieved_leads : '—')) + '</td>' +
+      '<td class="assign-col-status">' + assignmentStatusBadge(a.status) + '</td>' +
+      '<td class="assign-col-date">' + escapeHtml(formatDate(a.assigned_date)) + '</td>' +
+      renderAssignmentActionsCell(a) +
+    '</tr>';
+  }
+
+  function renderAssignmentMobileCard(a) {
+    var items = getAssignmentActionItems(a);
+    var menuHtml = (window.CAActionDropdown && items.length)
+      ? CAActionDropdown.renderInline(items, {
+        scope: 'assignment',
+        rowId: a.assignment_id,
+        ariaLabel: 'Assignment actions',
+      })
+      : '';
+    return '<article class="assign-mobile-card" data-assignment-id="' + a.assignment_id + '">' +
+      '<div class="assign-mobile-card__top">' +
+        '<label class="assign-mobile-card__check"><input type="checkbox" class="assignment-row-check" data-assignment-id="' + a.assignment_id + '"' +
+          ((window._assignmentBulkSelected && window._assignmentBulkSelected[String(a.assignment_id)]) ? ' checked' : '') + ' aria-label="Select assignment" /></label>' +
+        '<div class="assign-mobile-card__title">' +
+          '<p class="assign-lead-name">' + escapeHtml(a.firm_name || '—') + '</p>' +
+          '<p class="assign-mobile-card__exec">' + escapeHtml(a.executive || a.employee_name || '—') + '</p>' +
+        '</div>' +
+        menuHtml +
+      '</div>' +
+      '<div class="assign-mobile-card__meta">' +
+        '<span>Target <strong>' + escapeHtml(String(a.target_leads != null ? a.target_leads : '—')) + '</strong></span>' +
+        '<span>Achieved <strong>' + escapeHtml(String(a.achieved_leads != null ? a.achieved_leads : '—')) + '</strong></span>' +
+        assignmentStatusBadge(a.status) +
+        '<span class="assign-mobile-card__date">' + escapeHtml(formatDate(a.assigned_date)) + '</span>' +
+      '</div>' +
+    '</article>';
+  }
+
+  function renderAssignmentTable(pageAssignments, pagination) {
     var el = document.getElementById('assignment-data-table');
+    var cards = document.getElementById('assignment-mobile-cards');
     if (!el) return;
     if (pageAssignments === undefined && window.CA_LISTING_SEARCH) {
       reloadListing('lead_assignments');
       return;
     }
     var assignments = pageAssignments || window.realAssignments || [];
-    el.innerHTML = assignments.length ? assignments.map(function (a) {
-      return '<tr class="ca-table-row">' +
-        '<td class="font-medium">' + (a.firm_name || '—') + '</td>' +
-        '<td>' + (a.executive || a.employee_name || '—') + '</td>' +
-        '<td><span class="badge' + (a.assignment_type === 'Manual' ? ' bg-amber-50 text-amber-700' : '-brand') + '">' + (a.assignment_type || 'Manual') + '</span></td>' +
-        '<td>' + escapeHtml(bulkAssignReasonLabel(a.reason) !== '—' ? bulkAssignReasonLabel(a.reason) : (a.rotation_logic_used || '—')) + '</td>' +
-        '<td>' + stars(a.priority_score || 1) + '</td>' +
-        '<td>' + (a.target_leads || '—') + '</td>' +
-        '<td>' + (a.achieved_leads || '—') + '</td>' +
-        '<td><span class="badge-success">' + (a.status || 'Active') + '</span></td>' +
-        '<td>' + formatDate(a.assigned_date) + '</td>' +
-        '<td class="text-right whitespace-nowrap">' +
-          '<button type="button" class="btn-secondary btn-sm" data-assignment-edit="' + a.assignment_id + '">Edit</button> ' +
-          '<button type="button" class="btn-secondary btn-sm" data-assignment-delete="' + a.assignment_id + '">Delete</button>' +
-        '</td>' +
-      '</tr>';
-    }).join('') : '<tr><td colspan="10" class="text-center text-slate-500 p-4">No assignments yet.</td></tr>';
+    el.innerHTML = assignments.length
+      ? assignments.map(renderAssignmentTableRow).join('')
+      : '<tr><td colspan="8" class="text-center text-slate-500 p-6">No assignments found.</td></tr>';
+    if (cards) {
+      cards.innerHTML = assignments.length
+        ? assignments.map(renderAssignmentMobileCard).join('')
+        : '<p class="assign-mobile-empty">No assignments found.</p>';
+    }
+    updateAssignmentTotalLabel(pagination, assignments);
     bindAssignmentRowActions(el);
+    if (cards) bindAssignmentRowActions(cards);
+    bindCrmRowActions(document.getElementById('assignment-table-wrap'));
+    icons();
+  }
+
+  function deleteAssignmentById(id) {
+    if (!id) return Promise.resolve();
+    return apiFetch('/lead-assignments/' + encodeURIComponent(id), { method: 'DELETE' });
+  }
+
+  function handleAssignmentMenuAction(action, assignmentId) {
+    var assignment = (window.realAssignments || []).find(function (a) {
+      return String(a.assignment_id) === String(assignmentId);
+    });
+    if (!assignment && action !== 'delete') {
+      toast('Assignment not found', 'error');
+      return;
+    }
+    if (action === 'view') {
+      if (assignment.ca_id && typeof selectLead === 'function') {
+        selectLead(assignment.ca_id, true);
+      } else {
+        toast('Lead details unavailable', 'warning');
+      }
+      return;
+    }
+    if (action === 'reassign') {
+      openAssignmentFormForEdit(assignmentId);
+      return;
+    }
+    if (action === 'pause') {
+      setAssignmentStatus(assignmentId, 'Paused').catch(function (err) {
+        toast(err.message || 'Unable to pause assignment', 'error');
+      });
+      return;
+    }
+    if (action === 'resume') {
+      setAssignmentStatus(assignmentId, 'Active').catch(function (err) {
+        toast(err.message || 'Unable to resume assignment', 'error');
+      });
+      return;
+    }
+    if (action === 'delete') {
+      if (!window.confirm('Remove this assignment?')) return;
+      deleteAssignmentById(assignmentId)
+        .then(function () {
+          toast('Assignment removed', 'success');
+          delete window._assignmentBulkSelected[String(assignmentId)];
+          realAssignmentsLoaded = false;
+          refreshAll();
+        })
+        .catch(function (err) {
+          toast(err.message || 'Unable to delete assignment', 'error');
+        });
+    }
+  }
+
+  function ensureAssignmentActionsDelegated() {
+    bindCrmRowActions(document);
   }
 
   function bindAssignmentRowActions(container) {
     if (!container) return;
-    container.querySelectorAll('[data-assignment-edit]').forEach(function (btn) {
-      if (btn._assignEditBound) return;
-      btn._assignEditBound = true;
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        openAssignmentFormForEdit(btn.getAttribute('data-assignment-edit'));
+    ensureAssignmentActionsDelegated();
+    container.querySelectorAll('.assignment-row-check').forEach(function (cb) {
+      if (cb._assignCheckBound) return;
+      cb._assignCheckBound = true;
+      cb.addEventListener('change', function () {
+        var id = cb.getAttribute('data-assignment-id');
+        if (!window._assignmentBulkSelected) window._assignmentBulkSelected = {};
+        if (cb.checked) window._assignmentBulkSelected[id] = true;
+        else delete window._assignmentBulkSelected[id];
+        updateAssignmentBulkBar();
+        var selectAll = document.getElementById('assignment-select-all');
+        if (selectAll) {
+          var pageChecks = Array.prototype.slice.call(document.querySelectorAll('#assignment-data-table .assignment-row-check, #assignment-mobile-cards .assignment-row-check'));
+          var uniqueIds = {};
+          pageChecks.forEach(function (item) { uniqueIds[item.dataset.assignmentId] = item.checked; });
+          var values = Object.keys(uniqueIds).map(function (key) { return uniqueIds[key]; });
+          selectAll.checked = values.length > 0 && values.every(Boolean);
+          selectAll.indeterminate = values.some(Boolean) && !values.every(Boolean);
+        }
       });
     });
-    container.querySelectorAll('[data-assignment-delete]').forEach(function (btn) {
-      if (btn._assignDelBound) return;
-      btn._assignDelBound = true;
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        var id = btn.getAttribute('data-assignment-delete');
-        if (!window.confirm('Remove this assignment?')) return;
-        apiFetch('/lead-assignments/' + encodeURIComponent(id), { method: 'DELETE' })
-          .then(function () {
-            toast('Assignment removed', 'success');
-            realAssignmentsLoaded = false;
-            refreshAll();
-          })
-          .catch(function (err) {
-            toast(err.message || 'Unable to delete assignment', 'error');
-          });
-      });
+  }
+
+  function populateAssignmentExecutiveFilter() {
+    var sel = document.getElementById('assignment-executive-filter');
+    if (!sel) return;
+    enhanceEntityLookups(sel.parentElement || document);
+  }
+
+  function applyAssignmentActiveFilters() {
+    if (!window.CA_LISTING_SEARCH) return;
+    var search = document.getElementById('assignment-search');
+    var status = document.getElementById('assignment-status-filter');
+    var executive = document.getElementById('assignment-executive-filter');
+    var type = document.getElementById('assignment-type-filter');
+    var filters = {};
+    if (status && status.value) filters.status = status.value;
+    if (executive && executive.value) filters.employee_id = executive.value;
+    if (type && type.value) filters.assignment_type = type.value;
+    CA_LISTING_SEARCH.setState('lead_assignments', {
+      search: search ? search.value.trim() : '',
+      page: 1,
+      filters: filters,
     });
+    reloadListing('lead_assignments');
+  }
+
+  function resetAssignmentActiveFilters() {
+    if (!window.CA_LISTING_SEARCH) return;
+    ['assignment-search', 'assignment-status-filter', 'assignment-executive-filter', 'assignment-type-filter'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      if (el.tagName === 'SELECT') {
+        if (el.dataset.crmEntityLookup && window.CrmEntityLookup) {
+          window.CrmEntityLookup.setValue(el, '', null);
+        } else {
+          el.selectedIndex = 0;
+        }
+      } else {
+        el.value = '';
+      }
+    });
+    CA_LISTING_SEARCH.clearState('lead_assignments');
+    reloadListing('lead_assignments');
+  }
+
+  function bindAssignmentActiveSection() {
+    var toolbar = document.querySelector('[data-listing-toolbar="lead_assignments"]');
+    if (!toolbar || toolbar._assignmentActiveBound) return;
+    toolbar._assignmentActiveBound = true;
+
+    var debounceTimer = null;
+    var search = document.getElementById('assignment-search');
+    if (search) {
+      search.addEventListener('input', function () {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(applyAssignmentActiveFilters, 300);
+      });
+      search.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          applyAssignmentActiveFilters();
+        }
+      });
+    }
+    ['assignment-status-filter', 'assignment-executive-filter', 'assignment-type-filter'].forEach(function (id) {
+      document.getElementById(id)?.addEventListener('change', applyAssignmentActiveFilters);
+    });
+    document.getElementById('assignment-filters-reset')?.addEventListener('click', function () {
+      resetAssignmentActiveFilters();
+    });
+    document.getElementById('assignment-export-btn')?.addEventListener('click', function () {
+      if (window.CA_LISTING_SEARCH) CA_LISTING_SEARCH.exportListing('lead_assignments');
+    });
+
+    var selectAll = document.getElementById('assignment-select-all');
+    if (selectAll) {
+      selectAll.addEventListener('change', function () {
+        if (!window._assignmentBulkSelected) window._assignmentBulkSelected = {};
+        document.querySelectorAll('#assignment-data-table .assignment-row-check').forEach(function (cb) {
+          cb.checked = selectAll.checked;
+          var id = cb.getAttribute('data-assignment-id');
+          if (selectAll.checked) window._assignmentBulkSelected[id] = true;
+          else delete window._assignmentBulkSelected[id];
+        });
+        document.querySelectorAll('#assignment-mobile-cards .assignment-row-check').forEach(function (cb) {
+          cb.checked = selectAll.checked;
+        });
+        selectAll.indeterminate = false;
+        updateAssignmentBulkBar();
+      });
+    }
+
+    ensureInboxSelectionBound();
+  }
+
+  function initAssignmentPage() {
+    if (!document.getElementById('assignment-page-root')) return;
+    bindAssignmentActiveSection();
+    bindAssignmentListingToolbar('assignment_histories', 'assignment-history-search');
+    populateAssignmentExecutiveFilter();
+    syncAssignmentRotationToggles();
+    ensureAssignmentActionsDelegated();
+    var importBtn = document.getElementById('assignment-import-btn');
+    if (importBtn) importBtn.classList.toggle('hidden', !crmCanAction('ca_master', 'import'));
+    var exportBtn = document.getElementById('assignment-export-btn');
+    if (exportBtn) exportBtn.classList.toggle('hidden', !crmCanAction('assignment', 'export'));
+    icons();
   }
 
   function openAssignmentFormForEdit(assignmentId) {
@@ -2732,8 +7799,8 @@ window.CA_CRM = (function () {
       populateSelects();
       var leadSelect = document.getElementById('form-assign-lead-select');
       var execSelect = document.getElementById('form-assign-executive');
-      if (leadSelect) leadSelect.value = assignment.ca_id || '';
-      if (execSelect) execSelect.value = assignment.employee_id || '';
+      if (leadSelect) setSelectValueIfValid(leadSelect, assignment.ca_id || '');
+      if (execSelect) setSelectValueIfValid(execSelect, assignment.employee_id || '');
       openModal(modal);
     });
   }
@@ -2747,15 +7814,72 @@ window.CA_CRM = (function () {
     }
     var histories = rows || [];
     el.innerHTML = histories.length ? histories.map(function (h) {
-      return '<tr class="ca-table-row">' +
-        '<td>' + escapeHtml(h.previous_employee || 'Unassigned') + '</td>' +
-        '<td>' + escapeHtml(h.new_employee || '—') + '</td>' +
-        '<td>' + escapeHtml(h.firm_name || '—') + '</td>' +
-        '<td>' + escapeHtml(h.assigned_by_name || h.assigned_by || 'System') + '</td>' +
-        '<td>' + escapeHtml(bulkAssignReasonLabel(h.reason) !== '—' ? bulkAssignReasonLabel(h.reason) : (h.assignment_type || '—')) + '</td>' +
-        '<td>' + formatDateTime(h.assigned_at) + '</td>' +
+      return '<tr class="ca-table-row crm-table-row assign-table-row">' +
+        '<td class="crm-td-person">' + escapeHtml(h.previous_employee || 'Unassigned') + '</td>' +
+        '<td class="crm-td-person">' + escapeHtml(h.new_employee || '—') + '</td>' +
+        '<td class="crm-td-firm font-medium">' + escapeHtml(h.firm_name || '—') + '</td>' +
+        '<td class="crm-td-person">' + escapeHtml(h.assigned_by_name || h.assigned_by || 'System') + '</td>' +
+        '<td class="crm-td-source">' + escapeHtml(bulkAssignReasonLabel(h.reason) !== '—' ? bulkAssignReasonLabel(h.reason) : (h.assignment_type || '—')) + '</td>' +
+        '<td class="crm-td-date"><span class="cam-cell-text cam-cell-mono">' + escapeHtml(formatDateTime(h.assigned_at)) + '</span></td>' +
       '</tr>';
     }).join('') : '<tr><td colspan="6" class="text-center text-slate-500 p-4">No assignment history yet.</td></tr>';
+  }
+
+  function syncAssignmentRotationToggles() {
+    if (!document.getElementById('assign-rotation-section')) return;
+    apiFetch('/settings/data')
+      .then(function (body) {
+        var assignment = (body.data || {}).assignment || {};
+        var map = {
+          'assign-rotation-round-robin': assignment.auto_assignment !== false,
+          'assign-rotation-workload': assignment.workload_balancing !== false,
+          'assign-rotation-priority': assignment.auto_assignment !== false,
+          'assign-rotation-city': assignment.city_routing !== false,
+          'assign-rotation-hot': assignment.hot_lead_priority !== false,
+        };
+        Object.keys(map).forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) el.checked = !!map[id];
+        });
+      })
+      .catch(function () {});
+  }
+
+  function bindAssignmentListingToolbar(listingKey, searchId, filterId) {
+    var root = document.querySelector('[data-listing-toolbar="' + listingKey + '"]');
+    if (!root || root._assignmentToolbarBound) return;
+    root._assignmentToolbarBound = true;
+    var search = document.getElementById(searchId);
+    var filter = filterId ? document.getElementById(filterId) : null;
+    var debounceTimer = null;
+
+    function apply() {
+      if (!window.CA_LISTING_SEARCH) return;
+      var current = CA_LISTING_SEARCH.getState(listingKey);
+      var filters = Object.assign({}, current.filters || {});
+      if (filter && filter.value) filters.status = filter.value;
+      else delete filters.status;
+      CA_LISTING_SEARCH.setState(listingKey, {
+        search: search ? search.value.trim() : '',
+        page: 1,
+        filters: filters,
+      });
+      reloadListing(listingKey);
+    }
+
+    if (search) {
+      search.addEventListener('input', function () {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(apply, 300);
+      });
+      search.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          apply();
+        }
+      });
+    }
+    if (filter) filter.addEventListener('change', apply);
   }
 
   function renderAssignmentKpis() {
@@ -2793,17 +7917,9 @@ window.CA_CRM = (function () {
     setKpi('fu-kpi-completed', completed);
   }
 
-  function renderFollowupCalendarFromData() {
-    var container = document.getElementById('followup-calendar');
-    if (!container) return;
-    var followups = window.realFollowUps || [];
-    var now = new Date();
-    var year = now.getFullYear();
-    var month = now.getMonth();
-    var firstDay = new Date(year, month, 1).getDay();
-    var daysInMonth = new Date(year, month + 1, 0).getDate();
+  function buildFollowupCalendarEvents(followups, year, month) {
     var eventsByDay = {};
-    followups.forEach(function (f) {
+    (followups || []).forEach(function (f) {
       if (!f.scheduled_date) return;
       var d = new Date(f.scheduled_date);
       if (d.getFullYear() === year && d.getMonth() === month) {
@@ -2811,20 +7927,164 @@ window.CA_CRM = (function () {
         eventsByDay[day] = (eventsByDay[day] || 0) + 1;
       }
     });
+    return eventsByDay;
+  }
+
+  function paintFollowupCalendar(eventsByDay) {
+    var container = document.getElementById('followup-calendar');
+    if (!container) return;
+
+    var now = new Date();
+    var year = now.getFullYear();
+    var month = now.getMonth();
+    var firstDay = new Date(year, month, 1).getDay();
+    var daysInMonth = new Date(year, month + 1, 0).getDate();
+    var selectedDay = window._followupCalSelectedDay || null;
+    eventsByDay = eventsByDay || {};
+
     var days = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
     var monthLabel = now.toLocaleString('en-IN', { month: 'long', year: 'numeric' });
     var html = '<div class="ca-cal-grid mb-2">' + days.map(function (d) {
       return '<div class="text-caption font-medium text-slate-400 py-1">' + d + '</div>';
     }).join('') + '</div><div class="ca-cal-grid">';
-    for (var blank = 0; blank < firstDay; blank++) html += '<div></div>';
+    for (var blank = 0; blank < firstDay; blank++) html += '<div class="ca-cal-empty"></div>';
     for (var i = 1; i <= daysInMonth; i++) {
       var cls = 'ca-cal-day';
-      if (i === now.getDate()) cls += ' today';
+      if (i === now.getDate() && !selectedDay) cls += ' today';
+      if (selectedDay && i === selectedDay) cls += ' is-selected';
       if (eventsByDay[i]) cls += ' has-event';
-      html += '<div class="' + cls + '" data-day="' + i + '" title="' + (eventsByDay[i] || 0) + ' follow-up(s)">' + i + '</div>';
+      var dayCount = eventsByDay[i] || 0;
+      var title = dayCount ? (dayCount + ' follow-up' + (dayCount === 1 ? '' : 's')) : 'No follow-ups';
+      html += '<button type="button" class="' + cls + '" data-cal-day="' + i + '" data-cal-year="' + year +
+        '" data-cal-month="' + month + '" title="' + title + '" aria-label="' + title + ' on ' + i + '">' + i + '</button>';
     }
-    html += '</div><p class="text-caption text-slate-500 mt-3 text-center">' + monthLabel + ' — ' + followups.length + ' follow-ups loaded</p>';
+    html += '</div>' +
+      '<div class="crm-cal-footer mt-3">' +
+        '<p class="crm-cal-footer__title">Follow-up Schedule</p>' +
+        '<p class="crm-cal-footer__month">' + monthLabel + '</p>' +
+        (selectedDay
+          ? '<button type="button" class="mgr-link-btn mt-2" id="followup-cal-clear-day">Show all dates</button>'
+          : '') +
+      '</div>';
     container.innerHTML = html;
+    bindFollowupCalendarClicks(container);
+  }
+
+  function renderFollowupCalendarFromData() {
+    var container = document.getElementById('followup-calendar');
+    if (!container) return;
+
+    var now = new Date();
+    var year = now.getFullYear();
+    var month = now.getMonth();
+    var cached = window._followupCalEvents;
+    var hasCache = cached && cached.year === year && cached.month === month;
+
+    // Prefer full-month cache so day-filtered table reloads don't wipe markers.
+    if (hasCache) {
+      paintFollowupCalendar(cached.eventsByDay);
+      return;
+    }
+
+    // Paint from the current page while the full-month request is in flight.
+    paintFollowupCalendar(buildFollowupCalendarEvents(window.realFollowUps || [], year, month));
+
+    if (window._followupCalLoading) return;
+    window._followupCalLoading = true;
+    apiFetch('/follow-ups' + listingAllQuery('follow_ups'))
+      .then(function (body) {
+        var items = unwrapList(body);
+        var eventsByDay = buildFollowupCalendarEvents(items, year, month);
+        window._followupCalEvents = { year: year, month: month, eventsByDay: eventsByDay };
+        paintFollowupCalendar(eventsByDay);
+      })
+      .catch(function () {
+        var eventsByDay = buildFollowupCalendarEvents(window.realFollowUps || [], year, month);
+        window._followupCalEvents = { year: year, month: month, eventsByDay: eventsByDay };
+        paintFollowupCalendar(eventsByDay);
+      })
+      .finally(function () {
+        window._followupCalLoading = false;
+      });
+  }
+
+  function bindFollowupCalendarClicks(container) {
+    if (!container) return;
+    container.querySelectorAll('[data-cal-day]').forEach(function (dayBtn) {
+      dayBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var day = parseInt(dayBtn.getAttribute('data-cal-day'), 10);
+        var year = parseInt(dayBtn.getAttribute('data-cal-year'), 10);
+        var month = parseInt(dayBtn.getAttribute('data-cal-month'), 10);
+        if (!day) return;
+        filterFollowupsByCalendarDay(year, month, day);
+      });
+    });
+    var clearBtn = container.querySelector('#followup-cal-clear-day');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        clearFollowupCalendarDayFilter();
+      });
+    }
+  }
+
+  function pad2(n) {
+    return String(n).padStart(2, '0');
+  }
+
+  function filterFollowupsByCalendarDay(year, month, day) {
+    var dateStr = year + '-' + pad2(month + 1) + '-' + pad2(day);
+    window._followupCalSelectedDay = day;
+    window._followupDateFilter = '';
+
+    // Clear other follow-up filters so the day range is the only active filter.
+    document.querySelectorAll('[data-fu-type]').forEach(function (chip) {
+      chip.classList.remove('active');
+    });
+    setFollowupKpiActive('');
+    setFollowupTypePanels('list');
+
+    if (window.CA_LISTING_SEARCH) {
+      CA_LISTING_SEARCH.setState('follow_ups', {
+        page: 1,
+        filters: { from: dateStr, to: dateStr },
+      });
+      reloadListing('follow_ups');
+    } else {
+      var filtered = (window.realFollowUps || []).filter(function (f) {
+        if (!f.scheduled_date) return false;
+        var d = new Date(f.scheduled_date);
+        return d.getFullYear() === year && d.getMonth() === month && d.getDate() === day;
+      });
+      renderFollowupsTable(filtered);
+      renderFollowupCalendarFromData();
+    }
+
+    var count = (window._followupCalEvents && window._followupCalEvents.eventsByDay)
+      ? (window._followupCalEvents.eventsByDay[day] || 0)
+      : 0;
+    toast(
+      count
+        ? ('Showing ' + count + ' follow-up' + (count === 1 ? '' : 's') + ' on ' + pad2(day) + '/' + pad2(month + 1) + '/' + year)
+        : ('No follow-ups on ' + pad2(day) + '/' + pad2(month + 1) + '/' + year),
+      count ? 'info' : 'warning'
+    );
+  }
+
+  function clearFollowupCalendarDayFilter() {
+    window._followupCalSelectedDay = null;
+    window._followupDateFilter = '';
+    setFollowupKpiActive('');
+    if (window.CA_LISTING_SEARCH) {
+      CA_LISTING_SEARCH.setState('follow_ups', { page: 1, filters: {} });
+      reloadListing('follow_ups');
+    } else {
+      renderFollowupsTable();
+      renderFollowupCalendarFromData();
+    }
+    toast('Showing all follow-ups', 'info');
   }
 
   function readAuditFiltersFromForm() {
@@ -2914,6 +8174,173 @@ window.CA_CRM = (function () {
     }
   }
 
+  var duplicateAttemptsState = { page: 1, filters: {} };
+
+  function readDuplicateAttemptFilters() {
+    return {
+      search: (document.getElementById('dup-attempts-search') || {}).value || '',
+      attempt_type: (document.getElementById('dup-attempts-type') || {}).value || '',
+      status: (document.getElementById('dup-attempts-status') || {}).value || '',
+      from: (document.getElementById('dup-attempts-from') || {}).value || '',
+      to: (document.getElementById('dup-attempts-to') || {}).value || '',
+    };
+  }
+
+  function duplicateAttemptTypeBadge(type) {
+    if (type === 'potential_duplicate') return '<span class="badge badge-warning">Potential Duplicate</span>';
+    if (type === 'duplicate') return '<span class="badge badge-danger">Duplicate</span>';
+    return '<span class="badge">' + escapeHtml(type || '—') + '</span>';
+  }
+
+  function duplicateAttemptStatusBadge(status) {
+    if (status === 'resolved') return '<span class="badge badge-success">Resolved</span>';
+    if (status === 'changed' || status === 'changed_number') return '<span class="badge badge-brand">Changed</span>';
+    return '<span class="badge badge-warning">Open</span>';
+  }
+
+  function renderDuplicateAttemptsMetrics(metrics) {
+    var el = document.getElementById('dup-attempts-metrics');
+    if (!el || !metrics) return;
+    el.innerHTML = [
+      { label: 'Today', value: metrics.today, cls: '' },
+      { label: 'This Week', value: metrics.this_week, cls: '' },
+      { label: 'This Month', value: metrics.this_month, cls: '' },
+      { label: 'Total', value: metrics.total, cls: '' },
+      { label: 'Exact Duplicates', value: metrics.duplicate_count, cls: 'text-rose-600' },
+      { label: 'Potential', value: metrics.potential_duplicate_count, cls: 'text-amber-600' },
+    ].map(function (item) {
+      return '<div class="card p-4"><p class="text-caption text-slate-500">' + item.label + '</p>' +
+        '<p class="text-2xl font-semibold ' + item.cls + '">' + (item.value || 0) + '</p></div>';
+    }).join('');
+  }
+
+  function renderDuplicateAttemptsTable(result) {
+    var tbody = document.getElementById('dup-attempts-table');
+    var footer = document.getElementById('dup-attempts-pagination');
+    if (!tbody) return;
+    var items = (result && result.items) || [];
+    tbody.innerHTML = items.length ? items.map(function (row) {
+      var leadLink = row.matched_lead_id
+        ? '<button type="button" class="mgr-link-btn" data-lead-view="' + row.matched_lead_id + '">' + escapeHtml(row.existing_lead_name || 'Lead #' + row.matched_lead_id) + '</button>'
+        : escapeHtml(row.existing_lead_name || '—');
+      return '<tr class="ca-table-row">' +
+        '<td>' + escapeHtml(row.employee_name || '—') + '</td>' +
+        '<td class="font-mono text-sm">' + escapeHtml(row.duplicate_number || '—') + '</td>' +
+        '<td>' + leadLink + '</td>' +
+        '<td class="font-mono text-sm">' + escapeHtml(row.saved_number || '—') + '</td>' +
+        '<td>' + escapeHtml(formatDuplicateDate(row.attempted_at)) + '</td>' +
+        '<td>' + duplicateAttemptTypeBadge(row.attempt_type) + '</td>' +
+        '<td>' + duplicateAttemptStatusBadge(row.status) + '</td>' +
+        '<td><button type="button" class="btn-secondary btn-sm" data-dup-view="' + row.id + '" title="View details"><i data-lucide="eye" class="h-4 w-4"></i></button></td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="8" class="text-center text-slate-500 p-4">No duplicate attempts found.</td></tr>';
+
+    tbody.querySelectorAll('[data-lead-view]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        window._selectedLeadId = btn.getAttribute('data-lead-view');
+        if (typeof navigateTo === 'function') navigateTo(isEmployeeUser() ? 'leads' : 'ca-master');
+      });
+    });
+
+    tbody.querySelectorAll('[data-dup-view]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var row = items.find(function (r) { return String(r.id) === btn.getAttribute('data-dup-view'); });
+        if (!row) return;
+        toast(
+          'Attempt #' + row.id + ' · ' + (row.employee_name || 'Employee') +
+          ' · ' + (row.duplicate_number || '—') +
+          (row.number_changed ? ' · number was changed before save' : ''),
+          'info'
+        );
+      });
+    });
+
+    if (footer && result && result.pagination) {
+      var p = result.pagination;
+      footer.innerHTML = '<div class="flex items-center justify-between gap-3 p-3">' +
+        '<span class="text-caption text-slate-500">Page ' + p.current_page + ' of ' + p.last_page + ' · ' + p.total + ' records</span>' +
+        '<div class="flex gap-2">' +
+          '<button type="button" class="btn-secondary btn-sm" id="dup-attempts-prev"' + (p.current_page <= 1 ? ' disabled' : '') + '>Previous</button>' +
+          '<button type="button" class="btn-secondary btn-sm" id="dup-attempts-next"' + (p.current_page >= p.last_page ? ' disabled' : '') + '>Next</button>' +
+        '</div></div>';
+      var prev = document.getElementById('dup-attempts-prev');
+      var next = document.getElementById('dup-attempts-next');
+      if (prev) prev.addEventListener('click', function () { loadDuplicateAttemptsPage(p.current_page - 1); });
+      if (next) next.addEventListener('click', function () { loadDuplicateAttemptsPage(p.current_page + 1); });
+    }
+    icons();
+  }
+
+  function buildDuplicateAttemptsQuery(page) {
+    var f = duplicateAttemptsState.filters;
+    var qs = 'per_page=25&page=' + (page || 1);
+    if (f.search) qs += '&search=' + encodeURIComponent(f.search);
+    if (f.attempt_type) qs += '&attempt_type=' + encodeURIComponent(f.attempt_type);
+    if (f.status) qs += '&status=' + encodeURIComponent(f.status);
+    if (f.from) qs += '&from=' + encodeURIComponent(f.from);
+    if (f.to) qs += '&to=' + encodeURIComponent(f.to);
+    return qs;
+  }
+
+  function loadDuplicateAttemptsPage(page) {
+    duplicateAttemptsState.page = page || 1;
+    apiFetch('/duplicate-attempts?' + buildDuplicateAttemptsQuery(duplicateAttemptsState.page))
+      .then(function (body) {
+        renderDuplicateAttemptsTable(body.data || {});
+      })
+      .catch(function (err) {
+        toast(err.message || 'Unable to load duplicate attempts', 'error');
+      });
+  }
+
+  function initDuplicateAttemptsPage() {
+    var root = document.getElementById('dup-attempts-table');
+    if (!root || root.dataset.dupBound === '1') return;
+    root.dataset.dupBound = '1';
+
+    duplicateAttemptsState.filters = readDuplicateAttemptFilters();
+
+    apiFetch('/duplicate-attempts/metrics')
+      .then(function (body) {
+        renderDuplicateAttemptsMetrics(body.data || {});
+      })
+      .catch(function () {});
+
+    loadDuplicateAttemptsPage(1);
+
+    var applyBtn = document.getElementById('dup-attempts-apply');
+    var clearBtn = document.getElementById('dup-attempts-clear');
+    var exportBtn = document.getElementById('dup-attempts-export-btn');
+
+    if (applyBtn) {
+      applyBtn.addEventListener('click', function () {
+        duplicateAttemptsState.filters = readDuplicateAttemptFilters();
+        loadDuplicateAttemptsPage(1);
+      });
+    }
+    if (clearBtn) {
+      clearBtn.addEventListener('click', function () {
+        ['dup-attempts-search', 'dup-attempts-type', 'dup-attempts-status', 'dup-attempts-from', 'dup-attempts-to'].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) el.value = '';
+        });
+        duplicateAttemptsState.filters = {};
+        loadDuplicateAttemptsPage(1);
+      });
+    }
+    if (exportBtn) {
+      exportBtn.addEventListener('click', function () {
+        fetchExportResponse('/duplicate-attempts/export?' + buildDuplicateAttemptsQuery(duplicateAttemptsState.page).replace(/page=\d+&?/, ''))
+          .then(function (result) {
+            if (result.kind === 'file') triggerFileDownload(result.blob, result.filename);
+          })
+          .catch(function (err) {
+            toast(err.message || 'Export failed', 'error');
+          });
+      });
+    }
+  }
+
   function formatDateTime(value) {
     if (!value) return '—';
     var d = new Date(value);
@@ -2939,6 +8366,452 @@ window.CA_CRM = (function () {
     return '<span class="badge ' + (map[status] || 'badge-brand') + '">' + (status || 'Pending');
   }
 
+  function isDemoFollowupType(followup) {
+    var type = String((followup && followup.followup_type) || '').toLowerCase();
+    return type.indexOf('demo') >= 0;
+  }
+
+  function isFollowupOpenStatus(status) {
+    var normalized = String(status || '').toLowerCase();
+    return ['completed', 'closed', 'done'].indexOf(normalized) < 0;
+  }
+
+  function rebuildFollowupIndex(followups) {
+    var index = {};
+    (followups || []).forEach(function (f) {
+      if (f && f.followup_id != null && f.followup_id !== '') {
+        index[String(f.followup_id)] = f;
+      }
+    });
+    window._followupById = index;
+  }
+
+  function upsertFollowupInCache(followup) {
+    if (!followup || followup.followup_id == null || followup.followup_id === '') return;
+    var key = String(followup.followup_id);
+    if (!window._followupById) window._followupById = {};
+    window._followupById[key] = followup;
+    if (!window.realFollowUps) window.realFollowUps = [];
+    var idx = window.realFollowUps.findIndex(function (f) {
+      return String(f.followup_id) === key;
+    });
+    if (idx >= 0) window.realFollowUps[idx] = followup;
+  }
+
+  function removeFollowupFromCache(followupId) {
+    if (followupId == null || followupId === '') return;
+    var key = String(followupId);
+    if (window._followupById) delete window._followupById[key];
+    if (window.realFollowUps) {
+      window.realFollowUps = window.realFollowUps.filter(function (f) {
+        return String(f.followup_id) !== key;
+      });
+    }
+  }
+
+  function preloadFollowupActionData() {
+    if (!document.getElementById('followups-data-table')) return;
+    if (!window._formSelectDataReady) ensureFormSelectData();
+  }
+
+  function refreshFollowupsPage(options) {
+    options = options || {};
+    if (options.metrics !== false) {
+      dashboardMetricsLoaded = false;
+      loadDashboardMetricsFromDatabase(function () {
+        renderFollowupKpis();
+      });
+    } else {
+      renderFollowupKpis();
+    }
+    if (options.calendar) {
+      window._followupCalEvents = null;
+      renderFollowupCalendarFromData();
+    }
+    if (options.reload && window.CA_LISTING_SEARCH) {
+      return reloadListing('follow_ups');
+    }
+    return Promise.resolve();
+  }
+
+  function setFollowupFormBusy(busy) {
+    var form = document.getElementById('form-followup');
+    if (!form) return;
+    form.classList.toggle('crm-form-loading', !!busy);
+    form.setAttribute('aria-busy', busy ? 'true' : 'false');
+  }
+
+  function findFollowupInCache(followupId) {
+    if (followupId === null || followupId === undefined || followupId === '') return null;
+    var key = String(followupId);
+    if (window._followupById && window._followupById[key]) return window._followupById[key];
+    return (window.realFollowUps || []).find(function (f) {
+      return String(f.followup_id) === key;
+    }) || null;
+  }
+
+  function fetchFollowupById(followupId) {
+    return apiFetch('/follow-ups/' + encodeURIComponent(followupId))
+      .then(function (body) {
+        var row = body && body.data ? body.data : null;
+        if (row) upsertFollowupInCache(row);
+        return row;
+      })
+      .catch(function (err) {
+        if (err.status === 403) {
+          return Promise.reject(new Error('You do not have permission to view this follow-up.'));
+        }
+        if (err.status === 404) {
+          return Promise.reject(new Error('This follow-up could not be found. It may have been removed.'));
+        }
+        throw err;
+      });
+  }
+
+  function resolveFollowupById(followupId) {
+    var cached = findFollowupInCache(followupId);
+    if (cached) return Promise.resolve(cached);
+    return fetchFollowupById(followupId);
+  }
+
+  function getFollowupActionItems(followup) {
+    if (!followup || followup.followup_id == null || followup.followup_id === '') return [];
+    var items = [];
+    var caAttrs = followup.ca_id ? { 'ca-id': String(followup.ca_id) } : null;
+    var open = isFollowupOpenStatus(followup.status);
+
+    if (crmCanAction('followups', 'view')) {
+      items.push({ action: 'view', label: 'View', icon: 'eye', dataAttrs: caAttrs || undefined });
+    }
+    if (crmCanAction('followups', 'edit')) {
+      items.push({ action: 'edit', label: 'Edit / Reschedule', icon: 'pencil', dataAttrs: caAttrs || undefined });
+      if (open) {
+        items.push({
+          action: 'complete',
+          label: 'Mark Completed',
+          icon: 'check-circle',
+          dataAttrs: caAttrs || undefined,
+        });
+      }
+      if (isDemoFollowupType(followup)) {
+        items.push({
+          action: 'demo-result',
+          label: 'Update Demo Result',
+          icon: 'clipboard-check',
+          dataAttrs: caAttrs || undefined,
+        });
+      }
+    }
+    if (crmCanAction('followups', 'delete')) {
+      items.push({ action: 'delete', label: 'Delete', icon: 'trash-2', dataAttrs: caAttrs || undefined });
+    }
+    return items;
+  }
+
+  function showFollowupDetailDrawer(followup, loading) {
+    if (typeof openDetailDrawer !== 'function') {
+      toast('Details view is unavailable.', 'warning');
+      return;
+    }
+    if (loading) {
+      openDetailDrawer({
+        firm: followup.firm_name || ('Follow-up #' + followup.followup_id),
+        fields: [],
+        extraHtml: '<div class="crm-inline-loading"><i data-lucide="loader-2" class="h-5 w-5 animate-spin text-brand"></i><span>Loading details…</span></div>',
+      });
+      iconsIn(document.getElementById('detail-drawer'));
+      return;
+    }
+    openDetailDrawer({
+      firm: followup.firm_name || ('Follow-up #' + followup.followup_id),
+      fields: [
+        { label: 'Follow-up ID', value: String(followup.followup_id) },
+        { label: 'Type', value: followup.followup_type || '—' },
+        { label: 'Status', value: followup.status || '—' },
+        { label: 'Executive', value: followup.executive || followup.employee_name || '—' },
+        { label: 'Scheduled', value: formatDateTime(followup.scheduled_date) },
+        { label: 'Next Follow-up', value: formatDate(followup.next_followup_date) },
+        { label: 'Outcome', value: followup.outcome || '—' },
+        { label: 'Remarks', value: followup.remarks || '—' },
+        { label: 'Priority', value: followup.priority || '—' },
+      ],
+    });
+    iconsIn(document.getElementById('detail-drawer'));
+  }
+
+  function openFollowupDetails(followupId) {
+    var cached = findFollowupInCache(followupId);
+    if (cached) {
+      showFollowupDetailDrawer(cached);
+      return;
+    }
+    showFollowupDetailDrawer({ followup_id: followupId }, true);
+    fetchFollowupById(followupId)
+      .then(function (followup) {
+        if (!followup) {
+          toast('Follow-up not found. Refresh and try again.', 'warning');
+          return;
+        }
+        showFollowupDetailDrawer(followup);
+      })
+      .catch(function (err) {
+        if (err.status === 403) return;
+        toast(err.message || 'Unable to load follow-up details', 'warning');
+      });
+  }
+
+  function markFollowupCompleted(followupId) {
+    if (!crmCanAction('followups', 'edit')) return;
+    var cached = findFollowupInCache(followupId);
+    if (cached && !isFollowupOpenStatus(cached.status)) {
+      toast('This follow-up is already completed.', 'info');
+      return;
+    }
+    var row = document.querySelector('tr[data-followup-id="' + followupId + '"]');
+    if (row) row.classList.add('crm-row-busy');
+    var previous = cached ? Object.assign({}, cached) : null;
+    if (cached) {
+      var optimistic = Object.assign({}, cached, { status: 'Completed' });
+      upsertFollowupInCache(optimistic);
+      updateFollowupTableRow(followupId, optimistic);
+    }
+    apiFetch('/follow-ups/' + encodeURIComponent(followupId), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'Completed' }),
+    })
+      .then(function (body) {
+        if (row) row.classList.remove('crm-row-busy');
+        var updated = body && body.data ? body.data : null;
+        if (updated) {
+          upsertFollowupInCache(updated);
+          updateFollowupTableRow(followupId, updated);
+        }
+        toast('Follow-up marked as completed', 'success');
+        refreshFollowupsPage({ reload: false, calendar: true });
+      })
+      .catch(function (err) {
+        if (row) row.classList.remove('crm-row-busy');
+        if (previous) {
+          upsertFollowupInCache(previous);
+          updateFollowupTableRow(followupId, previous);
+        }
+        if (err.status === 403) return;
+        toast(err.message || 'Unable to update follow-up', 'error');
+      });
+  }
+
+  function loadRecycleBin() {
+    var tbody = document.getElementById('recycle-bin-table');
+    var countEl = document.getElementById('recycle-bin-count');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-slate-500 p-4">Loading recycle bin…</td></tr>';
+
+    apiFetch('/ca-masters/trashed')
+      .then(function (body) {
+        var rows = body.data || [];
+        window._recycleBinRows = rows;
+        if (countEl) countEl.textContent = rows.length + ' item' + (rows.length === 1 ? '' : 's');
+        renderRecycleBinTable(rows);
+      })
+      .catch(function (err) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-rose-500 p-4">' +
+          escapeHtml(err.message || 'Unable to load recycle bin') + '</td></tr>';
+        if (countEl) countEl.textContent = '0 items';
+      });
+  }
+
+  function renderRecycleBinTable(rows) {
+    var tbody = document.getElementById('recycle-bin-table');
+    if (!tbody) return;
+    if (!rows || !rows.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-slate-500 p-4">Recycle bin is empty.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = rows.map(function (row) {
+      return '<tr class="ca-table-row" data-recycle-id="' + row.ca_id + '">' +
+        '<td><input type="checkbox" class="recycle-bin-check" data-ca-id="' + row.ca_id + '" aria-label="Select lead" /></td>' +
+        '<td class="font-medium">' + escapeHtml(row.firm_name || '—') + '</td>' +
+        '<td>' + escapeHtml(row.ca_name || '—') + '</td>' +
+        '<td>' + escapeHtml(row.mobile_no || '—') + '</td>' +
+        '<td>' + escapeHtml(row.city || '—') + '</td>' +
+        '<td>' + escapeHtml(row.status || '—') + '</td>' +
+        '<td><span class="cam-cell-text cam-cell-mono">' + escapeHtml(formatDateTime(row.deleted_at)) + '</span></td>' +
+        '<td class="flex flex-wrap gap-1">' +
+          iconBtn('rotate-ccw', 'Restore', 'data-recycle-restore="' + row.ca_id + '"', 'secondary') +
+          iconBtn('trash-2', 'Delete Forever', 'data-recycle-force="' + row.ca_id + '"', 'danger') +
+        '</td>' +
+      '</tr>';
+    }).join('');
+
+    tbody.querySelectorAll('[data-recycle-restore]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        restoreRecycleLead(btn.getAttribute('data-recycle-restore'));
+      });
+    });
+    tbody.querySelectorAll('[data-recycle-force]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        forceDeleteRecycleLead(btn.getAttribute('data-recycle-force'));
+      });
+    });
+    icons();
+  }
+
+  function getRecycleSelectedIds() {
+    return Array.from(document.querySelectorAll('.recycle-bin-check:checked'))
+      .map(function (cb) { return parseInt(cb.getAttribute('data-ca-id'), 10); })
+      .filter(function (id) { return id > 0; });
+  }
+
+  function restoreRecycleLead(caId) {
+    apiFetch('/ca-masters/' + encodeURIComponent(caId) + '/restore', { method: 'POST' })
+      .then(function () {
+        toast('Lead restored', 'success');
+        loadRecycleBin();
+        invalidateDataCaches(['metrics', 'segment_counts', 'leads', 'ca_masters']);
+      })
+      .catch(function (err) {
+        toast(err.message || 'Unable to restore lead', 'error');
+      });
+  }
+
+  function forceDeleteRecycleLead(caId) {
+    if (!window.confirm('Permanently delete this lead? This cannot be undone.')) return;
+    apiFetch('/ca-masters/' + encodeURIComponent(caId) + '/force', { method: 'DELETE' })
+      .then(function () {
+        toast('Lead permanently deleted', 'success');
+        loadRecycleBin();
+      })
+      .catch(function (err) {
+        toast(err.message || 'Unable to permanently delete lead', 'error');
+      });
+  }
+
+  function bindRecycleBinActions() {
+    var refreshBtn = document.getElementById('recycle-bin-refresh');
+    var restoreBtn = document.getElementById('recycle-bin-restore-selected');
+    var deleteBtn = document.getElementById('recycle-bin-delete-selected');
+    var selectAll = document.getElementById('recycle-bin-select-all');
+    if (refreshBtn && !refreshBtn._bound) {
+      refreshBtn._bound = true;
+      refreshBtn.addEventListener('click', loadRecycleBin);
+    }
+    if (selectAll && !selectAll._bound) {
+      selectAll._bound = true;
+      selectAll.addEventListener('change', function () {
+        document.querySelectorAll('.recycle-bin-check').forEach(function (cb) {
+          cb.checked = selectAll.checked;
+        });
+      });
+    }
+    if (restoreBtn && !restoreBtn._bound) {
+      restoreBtn._bound = true;
+      restoreBtn.addEventListener('click', function () {
+        var ids = getRecycleSelectedIds();
+        if (!ids.length) {
+          toast('Select at least one lead', 'warning');
+          return;
+        }
+        apiFetch('/ca-masters/trashed/restore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ca_ids: ids }),
+        })
+          .then(function (body) {
+            var count = (body.data && body.data.restored_count) || ids.length;
+            toast(count + ' lead(s) restored', 'success');
+            loadRecycleBin();
+            invalidateDataCaches(['metrics', 'segment_counts', 'leads', 'ca_masters']);
+          })
+          .catch(function (err) {
+            toast(err.message || 'Unable to restore selected leads', 'error');
+          });
+      });
+    }
+    if (deleteBtn && !deleteBtn._bound) {
+      deleteBtn._bound = true;
+      deleteBtn.addEventListener('click', function () {
+        var ids = getRecycleSelectedIds();
+        if (!ids.length) {
+          toast('Select at least one lead', 'warning');
+          return;
+        }
+        if (!window.confirm('Permanently delete ' + ids.length + ' selected lead(s)? This cannot be undone.')) return;
+        apiFetch('/ca-masters/trashed/force-delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ca_ids: ids }),
+        })
+          .then(function (body) {
+            var count = (body.data && body.data.deleted_count) || ids.length;
+            toast(count + ' lead(s) permanently deleted', 'success');
+            loadRecycleBin();
+          })
+          .catch(function (err) {
+            toast(err.message || 'Unable to permanently delete selected leads', 'error');
+          });
+      });
+    }
+  }
+
+  function buildFollowupRowHtml(f) {
+    var rowClass = 'ca-table-row crm-table-row' + (f.status === 'Overdue' ? ' followup-row-overdue' : '');
+    var rescheduled = f.is_rescheduled ? ' <span class="badge badge-brand">Rescheduled</span>' : '';
+    var outcomeBadge = f.outcome
+      ? ' <span class="badge badge-brand">' + escapeHtml(f.outcome) + '</span>'
+      : '';
+    var remarksText = f.remarks || f.outcome || '—';
+    var followupId = f.followup_id;
+    var actionsCell = (followupId == null || followupId === '')
+      ? '<td class="sticky-right crm-actions-cell crm-actions-cell--inline"><span class="cam-cell-empty">—</span></td>'
+      : (window.CAActionDropdown
+        ? CAActionDropdown.renderCell(getFollowupActionItems(f), {
+          scope: 'followup',
+          rowId: followupId,
+          cellClass: 'sticky-right crm-actions-cell crm-actions-cell--inline',
+          ariaLabel: 'Follow-up actions',
+        })
+        : '<td class="sticky-right crm-actions-cell"><span class="cam-cell-empty">—</span></td>');
+    return '<tr class="' + rowClass + '" data-followup-id="' + followupId + '">' +
+      renderInboxCheckCell('followups-data-table', f.followup_id) +
+      '<td class="crm-td-status">' + compactTextCell(f.followup_type) + outcomeBadge + rescheduled + '</td>' +
+      '<td class="sticky-left-2 crm-td-firm font-medium">' + firmNameCell(f.firm_name) + '</td>' +
+      '<td class="crm-td-person">' + compactTextCell(f.executive || f.employee_name) + '</td>' +
+      '<td class="crm-td-remarks">' + compactTextCell(remarksText) + '</td>' +
+      '<td class="crm-td-date"><span class="cam-cell-text cam-cell-mono">' + escapeHtml(formatDateTime(f.scheduled_date)) + '</span></td>' +
+      '<td class="crm-td-date"><span class="cam-cell-text cam-cell-mono">' + escapeHtml(formatDate(f.next_followup_date)) + '</span></td>' +
+      '<td class="crm-td-status"><span class="cam-cell-badge">' + followupStatusBadge(f.status) + '</span></td>' +
+      actionsCell +
+    '</tr>';
+  }
+
+  function updateFollowupTableRow(followupId, followup) {
+    var el = document.getElementById('followups-data-table');
+    if (!el || !followup) return;
+    var row = el.querySelector('tr[data-followup-id="' + followupId + '"]');
+    if (!row) return;
+    var temp = document.createElement('tbody');
+    temp.innerHTML = buildFollowupRowHtml(followup);
+    var newRow = temp.firstElementChild;
+    if (!newRow) return;
+    row.replaceWith(newRow);
+    iconsIn(newRow);
+    bindCrmRowActions(el);
+    syncInboxChecks('followups-data-table');
+  }
+
+  function removeFollowupTableRow(followupId) {
+    var el = document.getElementById('followups-data-table');
+    if (!el) return;
+    var row = el.querySelector('tr[data-followup-id="' + followupId + '"]');
+    if (row) row.remove();
+    if (!el.querySelector('tr[data-followup-id]')) {
+      el.innerHTML = '<tr><td colspan="9" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
+    }
+    renderFollowupKpis();
+  }
+
   function renderFollowupsTable(pageFollowups) {
     var el = document.getElementById('followups-data-table');
     if (!el) return;
@@ -2947,86 +8820,116 @@ window.CA_CRM = (function () {
       return;
     }
     var followups = pageFollowups || window.realFollowUps || [];
-    el.innerHTML = followups.length ? followups.map(function (f) {
-      var rowClass = 'ca-table-row' + (f.status === 'Overdue' ? ' followup-row-overdue' : '');
-      var rescheduled = f.is_rescheduled ? ' <span class="badge badge-brand">Rescheduled</span>' : '';
-      return '<tr class="' + rowClass + '">' +
-        '<td>' + (f.followup_type || '—') + rescheduled + '</td>' +
-        '<td>' + (f.firm_name || '—') + '</td>' +
-        '<td>' + (f.executive || f.employee_name || '—') + '</td>' +
-        '<td>' + (f.remarks || '—') + '</td>' +
-        '<td>' + formatDateTime(f.scheduled_date) + '</td>' +
-        '<td>' + formatDate(f.next_followup_date) + '</td>' +
-        '<td>' + followupStatusBadge(f.status) + '</td>' +
-        '<td class="text-right whitespace-nowrap">' +
-          '<button type="button" class="btn-secondary btn-sm" data-followup-edit="' + f.followup_id + '">Edit</button> ' +
-          (['Completed', 'Closed'].indexOf(f.status || '') < 0
-            ? '<button type="button" class="btn-primary btn-sm" data-followup-outcome="' + f.followup_id + '" data-ca-id="' + f.ca_id + '">Log Outcome</button> '
-            : '') +
-          '<button type="button" class="btn-secondary btn-sm" data-followup-delete="' + f.followup_id + '">Delete</button>' +
+    rebuildFollowupIndex(followups);
+    el.innerHTML = followups.length ? followups.map(buildFollowupRowHtml).join('') : '<tr><td colspan="9" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
+    bindCrmRowActions(el);
+    syncInboxChecks('followups-data-table');
+    iconsIn(el);
+    preloadFollowupActionData();
+  }
+
+  function setFollowupTypePanels(mode) {
+    var mainWrap = document.getElementById('followups-main-table-wrap');
+    var historyPanel = document.getElementById('demo-history-panel');
+    var showHistory = mode === 'history';
+    if (mainWrap) mainWrap.classList.toggle('hidden', showHistory);
+    if (historyPanel) historyPanel.classList.toggle('hidden', !showHistory);
+  }
+
+  function applyFollowupTypeFilter(type) {
+    var label = type || 'All';
+    if (type === 'Demo History') {
+      setFollowupTypePanels('history');
+      loadDemoHistory();
+      toast('Showing Demo History', 'info');
+      return;
+    }
+
+    setFollowupTypePanels('list');
+    window._followupCalSelectedDay = null;
+    window._followupDateFilter = '';
+    setFollowupKpiActive('');
+    var filters = {};
+    if (type === 'Demo Completed') {
+      // Show completed demo follow-ups and keep history panel visible below.
+      filters.followup_type = 'Demo Completed';
+      setFollowupTypePanels('both');
+      var historyPanel = document.getElementById('demo-history-panel');
+      var mainWrap = document.getElementById('followups-main-table-wrap');
+      if (mainWrap) mainWrap.classList.remove('hidden');
+      if (historyPanel) historyPanel.classList.remove('hidden');
+      loadDemoHistory();
+    } else if (type) {
+      filters.followup_type = type;
+    }
+
+    if (window.CA_LISTING_SEARCH) {
+      CA_LISTING_SEARCH.setState('follow_ups', { page: 1, filters: filters });
+      reloadListing('follow_ups');
+    } else {
+      renderFollowupsTable();
+      renderFollowupCalendarFromData();
+    }
+    toast('Showing ' + label + ' follow-ups', 'info');
+  }
+
+  function loadDemoHistory() {
+    var tbody = document.getElementById('demo-history-table');
+    var countEl = document.getElementById('demo-history-count');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-slate-500 p-4">Loading demo history…</td></tr>';
+
+    apiFetch('/workflow/demo-history')
+      .then(function (body) {
+        var rows = body.data || [];
+        window._demoHistoryRows = rows;
+        if (countEl) countEl.textContent = rows.length + ' record' + (rows.length === 1 ? '' : 's');
+        renderDemoHistoryTable(rows);
+        // Refresh follow-up list so backfilled Demo Completed rows appear.
+        if (window.CA_LISTING_SEARCH) reloadListing('follow_ups');
+      })
+      .catch(function (err) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-rose-500 p-4">' +
+          escapeHtml(err.message || 'Unable to load demo history') + '</td></tr>';
+        if (countEl) countEl.textContent = '0 records';
+      });
+  }
+
+  function renderDemoHistoryTable(rows) {
+    var tbody = document.getElementById('demo-history-table');
+    if (!tbody) return;
+    if (!rows || !rows.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-slate-500 p-4">No demo history yet. Update a demo result to see it here.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = rows.map(function (row) {
+      return '<tr class="ca-table-row" data-demo-history-id="' + row.id + '">' +
+        '<td class="font-medium">' + escapeHtml(row.firm_name || ('Lead #' + row.ca_id)) + '</td>' +
+        '<td><span class="cam-cell-text cam-cell-mono">' + escapeHtml(row.mobile_no || '—') + '</span></td>' +
+        '<td><span class="badge badge-brand">' + escapeHtml(row.result || '—') + '</span></td>' +
+        '<td>' + escapeHtml(row.remarks || '—') + '</td>' +
+        '<td>' + escapeHtml(row.employee_name || '—') + '</td>' +
+        '<td><span class="cam-cell-text cam-cell-mono">' + escapeHtml(formatDateTime(row.demo_at)) + '</span></td>' +
+        '<td><span class="cam-cell-text cam-cell-mono">' + escapeHtml(formatDateTime(row.completed_at)) + '</span></td>' +
+        '<td>' +
+          (row.followup_id
+            ? iconBtn('external-link', 'Open', 'data-demo-history-followup="' + row.followup_id + '"', 'secondary')
+            : '<span class="cam-cell-empty">—</span>') +
         '</td>' +
       '</tr>';
-    }).join('') : '<tr><td colspan="8" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
-    bindFollowupRowActions(el);
+    }).join('');
+
+    tbody.querySelectorAll('[data-demo-history-followup]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        openFollowupFormForEdit(btn.getAttribute('data-demo-history-followup'));
+      });
+    });
+    icons();
   }
 
   function bindFollowupRowActions(container) {
-    if (!container) return;
-    container.querySelectorAll('[data-followup-edit]').forEach(function (btn) {
-      if (btn._fuEditBound) return;
-      btn._fuEditBound = true;
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        openFollowupFormForEdit(btn.getAttribute('data-followup-edit'));
-      });
-    });
-    container.querySelectorAll('[data-followup-outcome]').forEach(function (btn) {
-      if (btn._fuOutcomeBound) return;
-      btn._fuOutcomeBound = true;
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        openCallOutcomeModal(btn.getAttribute('data-followup-outcome'), btn.getAttribute('data-ca-id'));
-      });
-    });
-    container.querySelectorAll('[data-followup-complete]').forEach(function (btn) {
-      if (btn._fuCompleteBound) return;
-      btn._fuCompleteBound = true;
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        var id = btn.getAttribute('data-followup-complete');
-        apiFetch('/follow-ups/' + encodeURIComponent(id), {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'Completed' }),
-        })
-          .then(function () {
-            toast('Follow-up marked completed', 'success');
-            realFollowUpsLoaded = false;
-            refreshAll();
-          })
-          .catch(function (err) {
-            toast(err.message || 'Unable to complete follow-up', 'error');
-          });
-      });
-    });
-    container.querySelectorAll('[data-followup-delete]').forEach(function (btn) {
-      if (btn._fuDelBound) return;
-      btn._fuDelBound = true;
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        var id = btn.getAttribute('data-followup-delete');
-        if (!window.confirm('Delete this follow-up?')) return;
-        apiFetch('/follow-ups/' + encodeURIComponent(id), { method: 'DELETE' })
-          .then(function () {
-            toast('Follow-up deleted', 'success');
-            realFollowUpsLoaded = false;
-            refreshAll();
-          })
-          .catch(function (err) {
-            toast(err.message || 'Unable to delete follow-up', 'error');
-          });
-      });
-    });
+    bindCrmRowActions(container);
   }
 
   function openCallOutcomeModal(followupId, caId) {
@@ -3034,114 +8937,592 @@ window.CA_CRM = (function () {
     var form = document.getElementById('form-call-outcome');
     if (!modal || !form) return;
     form.reset();
+    clearCallOutcomeErrors(form);
     var idEl = document.getElementById('call-outcome-followup-id');
     var caEl = document.getElementById('call-outcome-ca-id');
     if (idEl) idEl.value = followupId || '';
     if (caEl) caEl.value = caId || '';
+    syncCallOutcomeFields();
     openModal(modal);
-    icons();
+    var statusEl = document.getElementById('call-outcome-select');
+    if (statusEl) statusEl.focus();
+    iconsIn(modal);
+  }
+
+  function clearCallOutcomeErrors(form) {
+    if (!form) return;
+    form.querySelectorAll('.ca-field-error').forEach(function (el) {
+      el.textContent = '';
+      el.classList.add('hidden');
+    });
+    form.querySelectorAll('.input-field.is-invalid').forEach(function (el) {
+      el.classList.remove('is-invalid');
+    });
+  }
+
+  function setCallOutcomeError(field, message) {
+    var form = document.getElementById('form-call-outcome');
+    if (!form) return;
+    var errorEl = form.querySelector('[data-error-for="' + field + '"]');
+    var input = form.querySelector('[name="' + field + '"]') || form.querySelector('#' + (
+      field === 'outcome' ? 'call-outcome-select'
+        : field === 'remarks' ? 'call-outcome-remarks'
+        : field === 'next_followup_date' ? 'call-outcome-followup-date'
+        : field === 'demo_date' ? 'call-outcome-demo-date'
+        : field === 'demo_time' ? 'call-outcome-demo-time'
+        : field === 'meeting_link' ? 'call-outcome-meeting-link'
+        : ''
+    ));
+    if (errorEl) {
+      errorEl.textContent = message || '';
+      errorEl.classList.toggle('hidden', !message);
+    }
+    if (input) input.classList.toggle('is-invalid', !!message);
+  }
+
+  function syncCallOutcomeFields() {
+    var outcome = (document.getElementById('call-outcome-select') || {}).value || '';
+    var scheduleWrap = document.getElementById('call-outcome-schedule-wrap');
+    var demoWrap = document.getElementById('call-outcome-demo-wrap');
+    if (scheduleWrap) {
+      scheduleWrap.classList.toggle('hidden', outcome !== 'Follow-up Required');
+      if (outcome !== 'Follow-up Required') {
+        var followupDate = document.getElementById('call-outcome-followup-date');
+        if (followupDate) followupDate.value = '';
+        setCallOutcomeError('next_followup_date', '');
+      }
+    }
+    if (demoWrap) {
+      demoWrap.classList.toggle('hidden', outcome !== 'Demo Scheduled');
+      if (outcome !== 'Demo Scheduled') {
+        ['call-outcome-demo-date', 'call-outcome-demo-time', 'call-outcome-meeting-link'].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          if (id === 'call-outcome-demo-time') el.value = '10:00';
+          else el.value = '';
+        });
+        setCallOutcomeError('demo_date', '');
+        setCallOutcomeError('demo_time', '');
+        setCallOutcomeError('meeting_link', '');
+      }
+    }
+  }
+
+  function validateCallOutcomeForm(form) {
+    clearCallOutcomeErrors(form);
+    var payload = Object.fromEntries(new FormData(form).entries());
+    var errors = [];
+    var outcome = (payload.outcome || '').trim();
+    var remarks = (payload.remarks || '').trim();
+
+    if (!outcome) errors.push({ field: 'outcome', message: 'Please select a call status.' });
+    if (!remarks) errors.push({ field: 'remarks', message: 'Call note is required.' });
+
+    if (outcome === 'Demo Scheduled') {
+      if (!(payload.demo_date || '').trim()) errors.push({ field: 'demo_date', message: 'Demo date is required.' });
+      if (!(payload.demo_time || '').trim()) errors.push({ field: 'demo_time', message: 'Demo time is required.' });
+    }
+
+    if (outcome === 'Follow-up Required') {
+      if (!(payload.next_followup_date || '').trim()) {
+        errors.push({ field: 'next_followup_date', message: 'Follow-up date is required.' });
+      }
+    }
+
+    if (!payload.ca_id && !payload.followup_id) {
+      errors.push({ field: 'outcome', message: 'Open this form from a lead or follow-up row.' });
+    }
+
+    errors.forEach(function (err) { setCallOutcomeError(err.field, err.message); });
+    if (errors.length) {
+      var first = form.querySelector('[name="' + errors[0].field + '"]')
+        || form.querySelector('.input-field.is-invalid');
+      if (first && typeof first.focus === 'function') first.focus();
+      return null;
+    }
+
+    if (outcome === 'Demo Scheduled') {
+      payload.demo_at = payload.demo_date + ' ' + payload.demo_time;
+    }
+
+    return payload;
+  }
+
+  function populateFollowupEditForm(followup) {
+    var form = document.getElementById('form-followup');
+    if (!form || !followup) return;
+    if (form.elements.followup_type) form.elements.followup_type.value = followup.followup_type || 'Call Status';
+    if (form.elements.remarks) form.elements.remarks.value = followup.remarks || '';
+    if (form.elements.scheduled_date && followup.scheduled_date) {
+      form.elements.scheduled_date.value = String(followup.scheduled_date).slice(0, 16);
+    } else if (form.elements.scheduled_date) {
+      form.elements.scheduled_date.value = '';
+    }
+    if (form.elements.priority) form.elements.priority.value = followup.priority || 'Normal';
+    if (form.elements.team_size) form.elements.team_size.value = followup.team_size != null ? followup.team_size : '';
+    if (form.elements.demo_provider_name) form.elements.demo_provider_name.value = followup.demo_provider_name || '';
+    if (form.elements.meeting_link) form.elements.meeting_link.value = followup.meeting_link || '';
+    resetFollowupDemoFieldState();
+    window._followupOriginalScheduled = followup.scheduled_date ? String(followup.scheduled_date).slice(0, 16) : '';
   }
 
   function openFollowupFormForEdit(followupId) {
-    var followup = (window.realFollowUps || []).find(function (f) {
-      return String(f.followup_id) === String(followupId);
-    });
-    if (!followup) {
-      toast('Follow-up not found', 'error');
+    if (!followupId) {
+      toast('Follow-up record is missing. Refresh and try again.', 'warning');
       return;
     }
-    window._editingFollowUpId = followupId;
     var modal = document.getElementById('modal-followup');
     var form = document.getElementById('form-followup');
     if (!modal || !form) return;
-    ensureFormSelectData(function () {
-      populateSelects();
-      if (form.elements.ca_id) form.elements.ca_id.value = followup.ca_id || '';
-      if (form.elements.followup_type) form.elements.followup_type.value = followup.followup_type || 'Call Status';
-      if (form.elements.remarks) form.elements.remarks.value = followup.remarks || '';
-      if (form.elements.scheduled_date && followup.scheduled_date) {
-        form.elements.scheduled_date.value = String(followup.scheduled_date).slice(0, 16);
-      }
-      if (form.elements.next_followup_date && followup.next_followup_date) {
-        form.elements.next_followup_date.value = String(followup.next_followup_date).slice(0, 10);
-      }
-      if (form.elements.priority) form.elements.priority.value = followup.priority || 'Normal';
-      window._followupOriginalScheduled = followup.scheduled_date ? String(followup.scheduled_date).slice(0, 16) : '';
-      openModal(modal);
+
+    window._editingFollowUpId = followupId;
+    var cached = findFollowupInCache(followupId);
+    setFollowupModalTitle(true);
+    openModal(modal);
+    setFollowupFormBusy(true);
+    if (cached) populateFollowupEditForm(cached);
+
+    Promise.all([
+      cached ? Promise.resolve(cached) : fetchFollowupById(followupId),
+      new Promise(function (resolve) { ensureFormSelectData(resolve); }),
+    ])
+      .then(function (results) {
+        var followup = results[0];
+        if (!followup) {
+          toast('Follow-up not found. Refresh and try again.', 'warning');
+          closeModal(modal);
+          window._editingFollowUpId = null;
+          setFollowupFormBusy(false);
+          return null;
+        }
+        if (!cached) populateFollowupEditForm(followup);
+        upsertFollowupInCache(followup);
+        return initFollowupLeadContext(followup.ca_id ? parseInt(followup.ca_id, 10) : null);
+      })
+      .then(function () {
+        if (!window._editingFollowUpId) return;
+        initFollowUpDateTimeField();
+        initFollowUpDemoFields();
+        setFollowupFormBusy(false);
+        iconsIn(modal);
+      })
+      .catch(function (err) {
+        setFollowupFormBusy(false);
+        if (err.status === 403) return;
+        toast(err.message || 'Unable to load follow-up', 'warning');
+      });
+  }
+
+  function renderCaMasterTableRow(l, tableKey) {
+    var data = JSON.stringify(CAData.leadToRowData(l)).replace(/'/g, '&#39;');
+    var executive = l.executive && l.executive !== 'Unassigned'
+      ? compactTextCell(l.executive)
+      : '<span class="cam-cell-text cam-cell-empty">Unassigned</span>';
+    tableKey = tableKey || getCaMasterTableContext().tbodyId || 'ca-master-data-table';
+    return '<tr class="ca-table-row cam-table-row crm-table-row" data-lead-id="' + l.ca_id + '" data-row=\'' + data + '\'>' +
+      renderInboxCheckCell(tableKey, l.ca_id) +
+      '<td class="sticky-left-2 crm-td-firm font-medium text-slate-900">' + firmNameCell(l.firm_name) + '</td>' +
+      '<td class="crm-td-ca font-medium text-slate-900">' + caNameCell(l.ca_name) + '</td>' +
+      '<td class="cam-td-mobile">' + camPhoneCell(l.mobile_no) + '</td>' +
+      renderLeadCallLogQuickCell(l) +
+      '<td class="cam-td-mobile">' + camPhoneCell(l.alternate_mobile_no) + '</td>' +
+      '<td class="cam-td-geo">' + compactTextCell(l.city) + '</td>' +
+      '<td class="cam-td-geo">' + compactTextCell(l.state) + '</td>' +
+      '<td class="cam-td-source">' + compactTextCell(l.source) + '</td>' +
+      '<td class="cam-td-rating"><span class="cam-cell-rating" title="' + (l.rating || 0) + ' stars">' + stars(l.rating) + '</span></td>' +
+      '<td class="cam-td-status"><span class="cam-cell-badge">' + statusBadge(l.status) + '</span></td>' +
+      '<td class="cam-td-person">' + executive + '</td>' +
+      '<td class="cam-td-person">' + compactTextCell(l.created_by) + '</td>' +
+      '<td class="cam-td-date"><span class="cam-cell-text cam-cell-mono text-slate-500" title="' + escapeHtml(l.updated || formatRelativeDate(l.updated_at)) + '">' + escapeHtml(l.updated || formatRelativeDate(l.updated_at)) + '</span></td>' +
+      renderLeadResearchQuickCell(l) +
+      renderCaMasterActionCell(l) +
+    '</tr>';
+  }
+
+  function renderCaMasterActionCell(lead) {
+    return renderCrmRowActionsCell(lead);
+  }
+
+  function renderCaMasterEmptyState(colspan, message) {
+    return '<tr class="cam-empty-row"><td colspan="' + colspan + '">' +
+      '<div class="cam-empty-state">' +
+        '<i data-lucide="building-2" class="h-10 w-10 text-slate-300"></i>' +
+        '<p class="cam-empty-title">' + escapeHtml(message || 'No firms found') + '</p>' +
+        '<p class="cam-empty-sub">Try adjusting filters or add a new firm.</p>' +
+      '</div></td></tr>';
+  }
+
+  function renderCaMasterLoadingState(colspan) {
+    return '<tr class="cam-loading-row"><td colspan="' + colspan + '">' +
+      '<div class="cam-loading-state"><i data-lucide="loader-2" class="h-5 w-5 animate-spin text-brand"></i><span>Loading firms…</span></div>' +
+    '</td></tr>';
+  }
+
+  function bindCaMasterActionMenus(root) {
+    bindCrmRowActions(root);
+    bindCrmActionsDismiss();
+  }
+
+  function readCaMasterFiltersFromBar() {
+    var filters = {};
+    var stateId = (document.getElementById('cam-filter-state') || {}).value;
+    var cityId = (document.getElementById('cam-filter-city') || {}).value;
+    var sourceId = (document.getElementById('cam-filter-source') || {}).value;
+    var status = (document.getElementById('cam-filter-status') || {}).value;
+    var rating = (document.getElementById('cam-filter-rating') || {}).value;
+    if (stateId) filters.state_id = stateId;
+    if (cityId) filters.city_id = cityId;
+    if (sourceId) filters.source_id = sourceId;
+    if (status) filters.status = status;
+    if (rating) filters.rating_min = rating;
+    return filters;
+  }
+
+  function populateCaMasterFilterDropdowns() {
+    var stateSel = document.getElementById('cam-filter-state');
+    var citySel = document.getElementById('cam-filter-city');
+    var sourceSel = document.getElementById('cam-filter-source');
+    if (stateSel && window.realStates && window.realStates.length) {
+      var stateVal = stateSel.value;
+      stateSel.innerHTML = '<option value="">All States</option>' + window.realStates.map(function (s) {
+        return '<option value="' + s.state_id + '">' + escapeHtml(s.state_name) + '</option>';
+      }).join('');
+      if (stateVal) stateSel.value = stateVal;
+    }
+    if (sourceSel && window.realSourceLeads && window.realSourceLeads.length) {
+      var sourceVal = sourceSel.value;
+      sourceSel.innerHTML = '<option value="">All Sources</option>' + window.realSourceLeads.map(function (s) {
+        return '<option value="' + s.source_id + '">' + escapeHtml(s.source_name) + '</option>';
+      }).join('');
+      if (sourceVal) sourceSel.value = sourceVal;
+    }
+    if (citySel && stateSel && stateSel.value && window.realCitiesCache) {
+      var cities = window.realCitiesCache.filter(function (c) {
+        return String(c.state_id) === String(stateSel.value);
+      });
+      var cityVal = citySel.value;
+      citySel.innerHTML = '<option value="">All Cities</option>' + cities.map(function (c) {
+        return '<option value="' + c.city_id + '">' + escapeHtml(c.city_name) + '</option>';
+      }).join('');
+      if (cityVal) citySel.value = cityVal;
+    }
+  }
+
+  function syncCaMasterFilterBarFromState() {
+    if (!window.CA_LISTING_SEARCH) return;
+    var state = CA_LISTING_SEARCH.getState('ca_masters');
+    var searchEl = document.getElementById('cam-filter-search');
+    if (searchEl) searchEl.value = state.search || '';
+    var filters = state.filters || {};
+    var fieldMap = {
+      state_id: 'cam-filter-state',
+      city_id: 'cam-filter-city',
+      source_id: 'cam-filter-source',
+      status: 'cam-filter-status',
+      rating_min: 'cam-filter-rating',
+    };
+    Object.keys(fieldMap).forEach(function (key) {
+      var el = document.getElementById(fieldMap[key]);
+      if (!el) return;
+      el.value = filters[key] || '';
+    });
+    populateCaMasterFilterDropdowns();
+    if (filters.city_id) {
+      var cityEl = document.getElementById('cam-filter-city');
+      if (cityEl) cityEl.value = filters.city_id;
+    }
+  }
+
+  function setCaMasterSummaryActive(key) {
+    document.querySelectorAll('[data-cam-summary]').forEach(function (card) {
+      card.classList.toggle('is-active', card.getAttribute('data-cam-summary') === key);
     });
   }
 
-  function renderCaMasterTable(pageLeads) {
-    var el = document.getElementById('ca-master-data-table');
+  function applyCaMasterSummaryFilter(key) {
+    if (key === 'duplicates') {
+      if (typeof navigateTo === 'function') navigateTo('duplicate-attempts');
+      else toast('Open Duplicate Attempts to review matches.', 'info');
+      return;
+    }
+
+    var allTab = document.querySelector('.ca-tab[data-tab="all"][data-tab-group="main"]');
+    var newTab = document.querySelector('.ca-tab[data-tab="new"][data-tab-group="main"]');
+
+    if (key === 'new') {
+      if (newTab) newTab.click();
+      else if (window.CA_LISTING_SEARCH) {
+        CA_LISTING_SEARCH.setState('ca_masters', { page: 1, search: '', filters: { segment: 'new' } });
+        renderCaMasterTable();
+      }
+      setCaMasterSummaryActive(key);
+      toast('Showing New Firms', 'info');
+      return;
+    }
+
+    if (allTab && !allTab.classList.contains('active')) {
+      allTab.click();
+    }
+
+    ['cam-filter-search', 'cam-filter-state', 'cam-filter-city', 'cam-filter-source', 'cam-filter-status', 'cam-filter-rating'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+
+    var filters = {};
+    var label = 'All Firms';
+    if (key === 'active') {
+      filters.status = 'Active';
+      var statusEl = document.getElementById('cam-filter-status');
+      if (statusEl) statusEl.value = 'Active';
+      label = 'Active Firms';
+    } else if (key === 'missing-mobile') {
+      filters.segment = 'mobile_missing';
+      label = 'Missing Mobile';
+    } else if (key === 'verified') {
+      filters.is_verified = 'true';
+      label = 'Verified Firms';
+    } else {
+      key = 'total';
+      label = 'Total Firms';
+    }
+
+    if (window.CA_LISTING_SEARCH) {
+      CA_LISTING_SEARCH.setState('ca_masters', { page: 1, search: '', filters: filters });
+    }
+    renderCaMasterTable();
+    setCaMasterSummaryActive(key);
+    toast('Showing ' + label, 'info');
+  }
+
+  function setFollowupKpiActive(filterKey) {
+    document.querySelectorAll('[data-kpi-listing="follow_ups"]').forEach(function (card) {
+      card.classList.toggle('is-active', card.getAttribute('data-kpi-filter') === filterKey);
+    });
+  }
+
+  function applyFollowupKpiFilter(filterKey) {
+    var filters = {};
+    var label = 'All follow-ups';
+    if (filterKey === 'today') {
+      filters.followup_due = 'today';
+      label = 'Due Today';
+    } else if (filterKey === 'overdue') {
+      filters.followup_due = 'overdue';
+      label = 'Overdue';
+    } else if (filterKey === 'pending') {
+      filters.followup_due = 'pending';
+      label = 'Pending';
+    } else if (filterKey === 'completed') {
+      filters.followup_due = 'completed';
+      label = 'Completed';
+    } else {
+      filterKey = '';
+    }
+
+    window._followupCalSelectedDay = null;
+    window._followupDateFilter = '';
+    document.querySelectorAll('[data-fu-type]').forEach(function (chip) {
+      chip.classList.remove('active');
+    });
+
+    if (window.CA_LISTING_SEARCH) {
+      CA_LISTING_SEARCH.setState('follow_ups', { page: 1, filters: filters });
+      reloadListing('follow_ups');
+    } else {
+      renderFollowupsTable();
+      renderFollowupCalendarFromData();
+    }
+    setFollowupKpiActive(filterKey);
+    toast('Showing ' + label, 'info');
+  }
+
+  function loadCaMasterSummaryCards() {
+    var paintFromMetrics = function (m) {
+      setText('cam-stat-total', m.total_leads != null ? m.total_leads : '—');
+      setText('cam-stat-new', m.new_leads != null ? m.new_leads : '—');
+      var active = Math.max(0, (m.total_leads || 0) - (m.lost_leads || 0));
+      setText('cam-stat-active', m.total_leads != null ? active : '—');
+      var dup = 0;
+      var prod = m.productivity || {};
+      (prod.most_duplicate_attempts || []).forEach(function (row) {
+        dup += row.duplicate_attempts || 0;
+      });
+      setText('cam-stat-duplicates', dup || '0');
+    };
+    if (dashboardMetricsLoaded && window.dashboardMetrics) {
+      paintFromMetrics(window.dashboardMetrics);
+    } else {
+      loadDashboardMetricsFromDatabase(function () {
+        paintFromMetrics(window.dashboardMetrics || {});
+      });
+    }
+    if (window._camSegmentCountsLoaded) {
+      return;
+    }
+    window._camSegmentCountsLoaded = true;
+    apiFetch('/ca-masters?per_page=1&segment=mobile_missing')
+      .then(function (body) {
+        var parsed = window.CA_LISTING_SEARCH ? CA_LISTING_SEARCH.unwrapListingBody(body) : { pagination: null };
+        var total = parsed.pagination ? parsed.pagination.total : null;
+        setText('cam-stat-missing-mobile', total != null ? total : '—');
+      })
+      .catch(function () { setText('cam-stat-missing-mobile', '—'); });
+    apiFetch('/ca-masters?per_page=1&is_verified=true')
+      .then(function (body) {
+        var parsed = window.CA_LISTING_SEARCH ? CA_LISTING_SEARCH.unwrapListingBody(body) : { pagination: null };
+        var total = parsed.pagination ? parsed.pagination.total : null;
+        setText('cam-stat-verified', total != null ? total : '—');
+      })
+      .catch(function () { setText('cam-stat-verified', '—'); });
+  }
+
+  function readCaMasterColumnFilters() {
+    var filters = {};
+    var activePanel = document.querySelector('.ca-tab-panel[data-tab-group="cam-view"][data-panel="all"].active')
+      || document.querySelector('.ca-tab-panel[data-tab-group="leads-view"][data-panel="all"].active')
+      || document.querySelector('.ca-tab-panel[data-tab-group="main"].active');
+    var root = activePanel || document;
+    root.querySelectorAll('.crm-col-filter-input[data-col-filter-group="ca_masters"]').forEach(function (input) {
+      var key = input.getAttribute('data-col-filter');
+      var value = (input.value || '').trim();
+      if (key && value) filters[key] = value;
+    });
+    return filters;
+  }
+
+  function applyCaMasterListingFilters(extraFilters) {
+    var search = (document.getElementById('cam-filter-search') || {}).value || '';
+    var filters = Object.assign({}, readCaMasterFiltersFromBar(), readCaMasterColumnFilters(), extraFilters || {});
+    var segment = getLeadFilter();
+    if (segment && segment !== 'all' && !filters.segment) {
+      filters.segment = segment;
+    }
+    if (window.CA_LISTING_SEARCH) {
+      CA_LISTING_SEARCH.setState('ca_masters', {
+        page: 1,
+        search: search.trim(),
+        filters: filters,
+      });
+    }
+    if (isCamPipelineTabActive()) loadKanbanLeads();
+    else renderCaMasterTable();
+  }
+
+  function initCaMasterPage() {
+    var page = document.getElementById('cam-hub');
+    if (!page) return;
+    if (page._camInit) return;
+    page._camInit = true;
+
+    document.getElementById('cam-filter-apply')?.addEventListener('click', function () {
+      applyCaMasterListingFilters();
+    });
+
+    document.getElementById('cam-filter-reset')?.addEventListener('click', function () {
+      ['cam-filter-search', 'cam-filter-state', 'cam-filter-city', 'cam-filter-source', 'cam-filter-status', 'cam-filter-rating'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      document.querySelectorAll('.crm-col-filter-input[data-col-filter-group="ca_masters"]').forEach(function (input) {
+        input.value = '';
+      });
+      if (window.CA_LISTING_SEARCH) {
+        CA_LISTING_SEARCH.setState('ca_masters', { page: 1, search: '', filters: {} });
+      }
+      renderCaMasterTable();
+    });
+
+    document.getElementById('cam-filter-search')?.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') applyCaMasterListingFilters();
+    });
+
+    document.getElementById('cam-filter-state')?.addEventListener('change', function () {
+      populateCaMasterFilterDropdowns();
+    });
+
+    ['cam-filter-status', 'cam-filter-city', 'cam-filter-source', 'cam-filter-rating'].forEach(function (id) {
+      document.getElementById(id)?.addEventListener('change', function () {
+        applyCaMasterListingFilters();
+      });
+    });
+
+    var colFilterTimer = null;
+    page.addEventListener('input', function (e) {
+      var input = e.target.closest('.crm-col-filter-input[data-col-filter-group="ca_masters"]');
+      if (!input || input.tagName === 'SELECT') return;
+      window.clearTimeout(colFilterTimer);
+      colFilterTimer = window.setTimeout(function () {
+        var segment = getLeadFilter();
+        applyCaMasterListingFilters(segment && segment !== 'all' ? { segment: segment } : {});
+      }, 320);
+    });
+
+    page.addEventListener('change', function (e) {
+      var select = e.target.closest('select.crm-col-filter-input[data-col-filter-group="ca_masters"]');
+      if (!select) return;
+      var segment = getLeadFilter();
+      applyCaMasterListingFilters(segment && segment !== 'all' ? { segment: segment } : {});
+    });
+
+    page.addEventListener('click', function (e) {
+      var backBtn = e.target.closest('[data-cam-action="back-to-firms"]');
+      if (backBtn) {
+        setCamView('all');
+        return;
+      }
+    });
+
+    if (page.dataset.camSecondary === 'masters' || page.dataset.camSecondary === 'bulk') {
+      showCamSecondaryView(page.dataset.camSecondary);
+    }
+
+    bindCrmActionsDismiss();
+  }
+
+  function renderCaMasterTable(pageLeads, targetTbodyId) {
+    var ctx = getCaMasterTableContext();
+    var tbodyId = targetTbodyId || ctx.tbodyId;
+    if (typeof tbodyId === 'object' && tbodyId.id) tbodyId = tbodyId.id;
+    var el = document.getElementById(tbodyId);
     if (!el) return;
+    var colCount = 16;
+
     if (pageLeads === undefined && window.CA_LISTING_SEARCH) {
-      var cached = window._listingLeadsPage || window.realLeads || [];
-      if (cached.length) {
-        renderCaMasterTable(cached);
-      } else {
-        el.innerHTML = emptyTableRow(18, 'Loading firms…');
+      if (!el.querySelector('tr')) {
+        el._camRowHtml = null;
+        el.innerHTML = renderCaMasterLoadingState(colCount);
+        icons();
       }
       reloadListing('ca_masters').catch(function () {
-        if (window.realLeads && window.realLeads.length) {
-          renderCaMasterTable(window.realLeads);
+        if (!el.querySelector('.cam-table-row') && !el.querySelector('.cam-empty-row')) {
+          el.innerHTML = renderCaMasterEmptyState(colCount, 'Unable to load firms. Please try again.');
+          icons();
         }
       });
       return;
     }
-    var leads = pageLeads || window._listingLeadsPage || window.realLeads || [];
-    el.innerHTML = leads.length ? leads.map(function (l) {
-      var data = JSON.stringify(CAData.leadToRowData(l)).replace(/'/g, '&#39;');
-      return '<tr class="ca-table-row" data-lead-id="' + l.ca_id + '" data-row=\'' + data + '\'>' +
-        '<td class="font-medium">' + l.firm_name + '</td>' +
-        '<td>' + l.ca_name + '</td>' +
-        '<td>' + renderPhoneCell(l.mobile_no) + '</td>' +
-        '<td>' + renderPhoneCell(l.alternate_mobile_no) + '</td>' +
-        '<td>' + l.email_id + '</td>' +
-        '<td>' + l.gst_no + '</td>' +
-        '<td>' + l.state + '</td>' +
-        '<td>' + l.city + '</td>' +
-        '<td>' + l.team_size + '</td>' +
-        '<td>' + l.existing_software + '</td>' +
-        '<td>' + l.website + '</td>' +
-        '<td>' + stars(l.rating) + '</td>' +
-        '<td>' + (l.is_newly_established ? '<span class="badge bg-amber-50 text-amber-700">Yes</span>' : '<span class="badge-brand">No</span>') + '</td>' +
-        '<td>' + statusBadge(l.status) + '</td>' +
-        '<td>' + l.source + '</td>' +
-        '<td>' + formatRelativeDate(l.created_at) + '</td>' +
-        '<td>' + l.updated + '</td>' +
-      '</tr>';
-    }).join('') : emptyTableRow(17, 'No firms yet. Click Add Firm to create one.');
 
-    var newEl = document.getElementById('ca-master-new-data-table');
-    if (newEl) {
-      var newLeads = leads.filter(function (l) { return l.is_newly_established; });
-      newEl.innerHTML = newLeads.length ? newLeads.map(function (l) {
-        var data = JSON.stringify(CAData.leadToRowData(l)).replace(/'/g, '&#39;');
-        return '<tr class="ca-table-row" data-lead-id="' + l.ca_id + '" data-row=\'' + data + '\'>' +
-          '<td>' +  CAData.shortId(l.ca_id) + '</td>' +
-          '<td class="font-medium">' + l.firm_name + '</td>' +
-          '<td>' + l.ca_name + '</td>' +
-          '<td>' + renderPhoneCell(l.mobile_no) + '</td>' +
-          '<td>' + renderPhoneCell(l.alternate_mobile_no) + '</td>' +
-          '<td>' + l.email_id + '</td>' +
-          '<td>' + l.gst_no + '</td>' +
-          '<td>' + l.state + '</td>' +
-          '<td>' + l.city + '</td>' +
-          '<td>' + l.team_size + '</td>' +
-          '<td>' + l.existing_software + '</td>' +
-          '<td>' + l.website + '</td>' +
-          '<td>' + stars(l.rating) + '</td>' +
-          '<td><span class="badge bg-amber-50 text-amber-700">Yes</span></td>' +
-          '<td>' + statusBadge(l.status) + '</td>' +
-          '<td>' + l.source + '</td>' +
-          '<td>' + formatRelativeDate(l.created_at) + '</td>' +
-          '<td>' + l.updated + '</td>' +
-        '</tr>';
-      }).join('') : emptyTableRow(18, 'No newly established firms yet.');
-      bindLeadRows(newEl);
+    var leads = pageLeads || window._listingLeadsPage || [];
+    var rowHtml = leads.length
+      ? leads.map(function (lead) { return renderCaMasterTableRow(lead, tbodyId); }).join('')
+      : renderCaMasterEmptyState(colCount, tbodyId === 'ca-master-new-data-table' ? 'No new firms yet.' : 'No firms yet. Click Add Firm to create one.');
+
+    if (el._camRowHtml === rowHtml && el.querySelector('.cam-table-row, .cam-empty-row')) {
+      bindLeadRows(el);
+      bindCaMasterActionMenus(el.closest('.cam-page') || document);
+      syncInboxChecks(tbodyId);
+      icons();
+      return;
     }
+    el._camRowHtml = rowHtml;
+
+    el.innerHTML = rowHtml;
 
     bindLeadRows(el);
+    bindCaMasterActionMenus(el.closest('.cam-page') || document);
+    syncInboxChecks(tbodyId);
+    icons();
   }
 
   function renderLeaderboard() {
@@ -3152,7 +9533,7 @@ window.CA_CRM = (function () {
     });
     if (!execs.length) {
       el.innerHTML = '<h3 class="text-card-heading mb-4 flex items-center gap-2"><i data-lucide="trophy" class="h-5 w-5 text-amber-500"></i> Team Leaderboard</h3>' +
-        '<p class="text-caption text-slate-400">No active executives yet.</p>';
+        '<p class="text-caption text-slate-400">No active employees yet.</p>';
       icons();
       return;
     }
@@ -3167,24 +9548,62 @@ window.CA_CRM = (function () {
     icons();
   }
 
+  function renderEmployeesPerformanceTable() {
+    var el = document.getElementById('employees-performance-table');
+    if (!el) return;
+    var execs = getDashboardExecutives();
+    if (!execs.length) {
+      el.innerHTML = '<tr><td colspan="6" class="text-center text-slate-500 p-4">No performance data yet.</td></tr>';
+      return;
+    }
+    el.innerHTML = execs.map(function (e) {
+      var targetPct = e.target_leads ? Math.round(((e.achieved_leads || 0) / e.target_leads) * 100) : 0;
+      return '<tr class="ca-table-row">' +
+        '<td class="font-medium">' + escapeHtml(e.name) + '</td>' +
+        '<td>' + escapeHtml(String(e.daily_calls || 0)) + '</td>' +
+        '<td>' + escapeHtml(String(e.demos || e.demo_count || 0)) + '</td>' +
+        '<td>' + escapeHtml(e.conversion || '—') + '</td>' +
+        '<td>' + escapeHtml(e.revenue || '—') + '</td>' +
+        '<td>' + escapeHtml(String(targetPct) + '%') + '</td>' +
+      '</tr>';
+    }).join('');
+  }
+
   function renderKanbanFromData() {
     var container = document.getElementById('kanban-board');
     if (!container) return;
-    var stages = [
-      { name: 'New Lead', key: 'New Lead', color: 'bg-slate-400' },
-      { name: 'Details Shared', key: 'Details Shared', color: 'bg-blue-400' },
-      { name: 'Demo Scheduled', key: 'Demo Scheduled', color: 'bg-brand' },
-      { name: 'Demo Completed', key: 'Demo Completed', color: 'bg-indigo-400' },
-      { name: 'Negotiation', key: 'Negotiation', color: 'bg-amber-400' },
-      { name: 'Won', key: 'Won', color: 'bg-emerald-500' },
-      { name: 'Lost', key: 'Lost', color: 'bg-red-400' },
-    ];
+    if (leadsHubLoading && !container.querySelector('.kanban-column')) {
+      setLeadsHubLoadingState(true);
+      return;
+    }
+    var masterHub = isMasterDataHub();
+    var stages = masterHub
+      ? [
+        { name: 'New Firm', key: 'New Lead', color: 'bg-slate-400' },
+        { name: 'Contacted', key: 'Details Shared', color: 'bg-blue-400' },
+        { name: 'Documents Pending', key: 'Demo Scheduled', color: 'bg-brand' },
+        { name: 'GST Received', key: 'Demo Completed', color: 'bg-indigo-400' },
+        { name: 'Negotiation', key: 'Negotiation', color: 'bg-amber-400' },
+        { name: 'Active Client', key: 'Won', color: 'bg-emerald-500' },
+        { name: 'Inactive', key: 'Lost', color: 'bg-red-400' },
+      ]
+      : [
+        { name: 'New Lead', key: 'New Lead', color: 'bg-slate-400' },
+        { name: 'Details Shared', key: 'Details Shared', color: 'bg-blue-400' },
+        { name: 'Demo Scheduled', key: 'Demo Scheduled', color: 'bg-brand' },
+        { name: 'Demo Completed', key: 'Demo Completed', color: 'bg-indigo-400' },
+        { name: 'Negotiation', key: 'Negotiation', color: 'bg-amber-400' },
+        { name: 'Won', key: 'Won', color: 'bg-emerald-500' },
+        { name: 'Lost', key: 'Lost', color: 'bg-red-400' },
+      ];
     var filtered = getRealLeadsFiltered();
+    var stageCounts = window.kanbanStageCounts || {};
     container.innerHTML = stages.map(function (col) {
       var items = filtered.filter(function (l) { return l.stage === col.key; });
+      var totalInStage = stageCounts[col.key] != null ? stageCounts[col.key] : items.length;
       return '<div class="kanban-column" data-stage="' + col.key + '"><div class="flex items-center justify-between mb-3">' +
         '<div class="flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full ' + col.color + '"></span>' +
-        '<h4 class="text-card-heading">' + col.name + '</h4></div><span class="badge bg-white text-slate-600">' + items.length + '</span></div>' +
+        '<h4 class="text-card-heading">' + col.name + '</h4></div><span class="badge bg-white text-slate-600">' + totalInStage + '</span></div>' +
         '<div class="kanban-column-cards min-h-[80px]">' +
         items.map(function (l) {
           var hot = l.status === 'Hot' ? ' kanban-card-hot' : '';
@@ -3222,9 +9641,20 @@ window.CA_CRM = (function () {
         if (!leadId || !stage) return;
         var status = mapStageToStatus(stage);
         updateLeadStatus(leadId, status)
-          .then(function () {
-            toast('Lead moved to ' + stage, 'success');
-            refreshAll();
+          .then(function (body) {
+            var mapped = mergeLeadFromApiResponse(body);
+            if (mapped) upsertLeadInCache(mapped);
+            invalidateDataCaches(['metrics', 'segment_counts', 'assignments']);
+            loadAssignmentsFromDatabase(function () {
+              enrichLeadsWithAssignments();
+              refreshLeadsUi({ invalidateMetrics: true });
+              if (isMasterDataHub()) {
+                renderCaMasterTable();
+                toast('Firm moved to ' + stage, 'success');
+              } else {
+                toast('Lead moved to ' + stage, 'success');
+              }
+            });
           })
           .catch(function (err) {
             toast(err.message || 'Unable to update lead stage', 'error');
@@ -3236,33 +9666,59 @@ window.CA_CRM = (function () {
   }
 
   function populateSelects() {
-    var leadSel = document.getElementById('form-lead-select');
-    var execSel = document.getElementById('form-executive-select');
-    var assignLead = document.getElementById('form-assign-lead-select');
-    var assignExec = document.getElementById('form-assign-executive');
-    var fuLead = document.getElementById('form-fu-lead');
-    var consentLead = document.getElementById('form-consent-lead');
-    var dndLead = document.getElementById('form-dnd-lead');
-    var leads = window._selectLeadsLoaded ? (window._selectLeads || []) : (realLeadsLoaded ? (window.realLeads || []) : []);
-    var executives = window._selectEmployeesLoaded ? (window._selectEmployees || []) : (realEmployeesLoaded ? (window.realEmployees || []) : []);
-    var leadOpts = buildLeadOptionsHtml(leads);
-    var execOpts = buildExecOptionsHtml(executives);
-    [leadSel, assignLead, fuLead, consentLead, dndLead].forEach(function (s) {
-      if (s) s.innerHTML = leadOpts;
-    });
-    [execSel, assignExec].forEach(function (s) {
-      if (s) s.innerHTML = execOpts;
-    });
+    enhanceEntityLookups();
   }
 
   function bindLeadRows(container) {
     if (!container) return;
     container.querySelectorAll('.ca-table-row[data-lead-id]').forEach(function (row) {
+      if (row._leadRowClickBound) return;
+      row._leadRowClickBound = true;
       row.addEventListener('click', function (e) {
-        if (e.target.closest('.lead-quick-actions-cell')) return;
+        if (e.target.closest('.crm-actions-cell, .crm-actions-menu, .lead-quick-cell, .lead-quick-actions-cell, [data-lead-quick], .crm-td-check, .crm-inbox-row-check')) return;
         selectLead(row.dataset.leadId, true);
       });
     });
+  }
+
+  function renderLeadGoogleFieldValue(label, value, isLink) {
+    var display = value == null || value === '' ? '—' : String(value);
+    var valueHtml = isLink && display !== '—'
+      ? '<a class="text-brand hover:underline break-all" href="' + escapeHtml(display) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(display) + '</a>'
+      : escapeHtml(display);
+    return '<div class="detail-field"><span class="detail-field-label">' + escapeHtml(label) + '</span><span class="detail-field-value">' + valueHtml + '</span></div>';
+  }
+
+  function renderLeadGoogleFieldsSection(lead) {
+    var section = document.getElementById('form-lead-google-section');
+    var fields = document.getElementById('form-lead-google-fields');
+    if (!section || !fields) return;
+
+    if (!leadHasSavedGoogleData(lead)) {
+      section.classList.add('hidden');
+      fields.innerHTML = '';
+      return;
+    }
+
+    var rating = lead.google_rating != null
+      ? String(lead.google_rating) + (lead.google_review_count != null ? ' (' + lead.google_review_count + ' reviews)' : '')
+      : null;
+    var coordinates = lead.latitude != null && lead.longitude != null
+      ? String(lead.latitude) + ', ' + String(lead.longitude)
+      : null;
+
+    fields.innerHTML =
+      renderLeadGoogleFieldValue('Business Name', lead.firm_name && lead.firm_name !== '—' ? lead.firm_name : null) +
+      renderLeadGoogleFieldValue('Address', lead.verified_address || lead.address) +
+      renderLeadGoogleFieldValue('Google Maps URL', lead.google_maps_url, true) +
+      renderLeadGoogleFieldValue('Place ID', lead.google_place_id) +
+      renderLeadGoogleFieldValue('Latitude', lead.latitude) +
+      renderLeadGoogleFieldValue('Longitude', lead.longitude) +
+      renderLeadGoogleFieldValue('Rating', rating) +
+      renderLeadGoogleFieldValue('Open/Closed', formatGoogleBusinessStatus(lead.google_business_status)) +
+      renderLeadGoogleFieldValue('Last Saved', lead.researched_at ? formatDateTime(lead.researched_at) : null);
+
+    section.classList.remove('hidden');
   }
 
   function setLeadFormMode(mode) {
@@ -3275,17 +9731,29 @@ window.CA_CRM = (function () {
     if (titleIcon) titleIcon.setAttribute('data-lucide', isEdit ? 'edit-3' : 'user-plus');
     if (submitBtn) submitBtn.innerHTML = '<i data-lucide="save" class="h-4 w-4"></i> ' + (isEdit ? 'Update Lead' : 'Save Lead');
     if (!isEdit) window._editingLeadId = '';
+    var googleSection = document.getElementById('form-lead-google-section');
+    if (!isEdit && googleSection) {
+      googleSection.classList.add('hidden');
+      var googleFields = document.getElementById('form-lead-google-fields');
+      if (googleFields) googleFields.innerHTML = '';
+    }
   }
 
   function resetLeadForm() {
     var form = document.getElementById('form-add-lead');
     if (!form) return;
+    releaseLeadLock();
     form.reset();
     var caIdField = document.getElementById('form-lead-ca-id');
     if (caIdField) caIdField.value = '';
     if (form.elements.team_size) form.elements.team_size.value = '8';
     if (form.elements.rating) form.elements.rating.value = '3';
     setLeadFormMode('add');
+    applyLeadFormAccessRules(null);
+    var googleSection = document.getElementById('form-lead-google-section');
+    if (googleSection) googleSection.classList.add('hidden');
+    var googleFields = document.getElementById('form-lead-google-fields');
+    if (googleFields) googleFields.innerHTML = '';
     if (window.CA_STATE_CITY) {
       window.CA_STATE_CITY.resetFormLocations(form);
     }
@@ -3315,38 +9783,168 @@ window.CA_CRM = (function () {
     form.elements.website.value = lead.website && lead.website !== '—' ? lead.website : '';
     form.elements.rating.value = String(lead.rating || 3);
     form.elements.is_newly_established.value = lead.is_newly_established ? 'yes' : 'no';
-    if (form.elements.source_id) setSelectValueIfValid(form.elements.source_id, lead.source_id || lead.source);
+    if (form.elements.source_id) {
+      setSelectValueIfValid(
+        form.elements.source_id,
+        lead.source_id || lead.source_name || (lead.source && lead.source !== '—' ? lead.source : ''),
+      );
+    }
     form.elements.status.value = lead.status || 'New';
     if (form.elements.executive_id) form.elements.executive_id.value = lead.executive_id || '';
 
     var caIdField = document.getElementById('form-lead-ca-id');
     if (caIdField) caIdField.value = lead.ca_id;
-    window._editingLeadId = lead.ca_id;
+    var lock = lead.lock || {};
+    window._editingLeadId = lock.is_locked_by_other ? '' : lead.ca_id;
     setLeadFormMode('edit');
+    applyLeadFormAccessRules(lead);
+    renderLeadGoogleFieldsSection(lead);
   }
 
   function openLeadFormForAdd() {
     resetLeadForm();
-    populateSelects();
-    if (window.CA_STATE_CITY) {
-      window.CA_STATE_CITY.prepareForm('form-add-lead');
-    }
+    ensureFormSelectData(function () {
+      if (window.CA_STATE_CITY) {
+        window.CA_STATE_CITY.prepareForm('form-add-lead');
+      }
+      applyLeadFormAccessRules(null);
+    });
   }
 
   function openLeadFormForEdit(leadId) {
-    var lead = getLeadRecord(leadId);
-    if (!lead) {
+    var localLead = getLeadRecord(leadId);
+    if (!localLead) {
       toast('Select a lead to edit', 'warning');
-      return false;
+      return Promise.resolve(false);
     }
-    populateSelects();
-    fillLeadForm(lead);
-    return true;
+
+    return new Promise(function (resolve) {
+      ensureFormSelectData(function () {
+        apiFetch('/ca-masters/' + encodeURIComponent(leadId))
+          .then(function (body) {
+            var lead = body.data || localLead;
+            return apiFetch('/ca-masters/' + encodeURIComponent(leadId) + '/lock', { method: 'POST' })
+              .then(function (lockBody) {
+                populateSelects();
+                populateMasterDropdowns();
+                fillLeadForm(lockBody.data || lead);
+                resolve(true);
+              })
+              .catch(function (error) {
+                if (error.status === 423) {
+                  populateSelects();
+                  populateMasterDropdowns();
+                  var lockedLead = Object.assign({}, lead, {
+                    lock: error.lock || { is_locked_by_other: true, locked_by_name: 'another employee' },
+                  });
+                  fillLeadForm(lockedLead);
+                  toast(error.message || 'This lead is currently being edited by another employee.', 'warning');
+                  resolve(true);
+                  return;
+                }
+                throw error;
+              });
+          })
+          .catch(function (error) {
+            toast(error.message || 'Unable to open lead for editing', error.status === 423 ? 'warning' : 'error');
+            resolve(false);
+          });
+      });
+    });
+  }
+
+  function applyContactFormAccessRules(lead) {
+    var form = document.getElementById('form-lead-contact');
+    if (!form || !lead) return;
+    var submitBtn = document.getElementById('lead-contact-submit-btn');
+    var lockedByOther = !!(lead.lock && lead.lock.is_locked_by_other);
+    var lockedFields = (isEmployeeUser() && lead.employee_locked_fields) ? lead.employee_locked_fields.slice() : [];
+    var contactFields = ['mobile_no', 'alternate_mobile_no', 'email_id', 'website'];
+
+    contactFields.forEach(function (name) {
+      var el = form.elements[name];
+      if (!el) return;
+      var isLocked = lockedByOther || (name !== 'alternate_mobile_no' && lockedFields.indexOf(name) >= 0);
+      if (name === 'mobile_no' && isEmployeeUser() && !lockedByOther) {
+        isLocked = isLocked || !!lead.employee_cannot_edit_mobile || !!(lead.mobile_no && String(lead.mobile_no).trim() && lead.mobile_no !== '—');
+      }
+      setLeadFieldLockState(el, isLocked, leadFieldLockTooltip(name));
+    });
+
+    if (submitBtn) {
+      submitBtn.disabled = lockedByOther;
+      submitBtn.classList.toggle('opacity-50', lockedByOther);
+      submitBtn.classList.toggle('pointer-events-none', lockedByOther);
+    }
+    icons();
   }
 
   function setCampaignSectionVisible(el, visible) {
     if (!el) return;
     el.classList.toggle('hidden', !visible);
+  }
+
+  function applyCampaignAudienceEmployeeScope() {
+    var modeSelect = document.getElementById('form-campaign-audience-mode');
+    if (!modeSelect) return;
+    var allLeadsOption = modeSelect.querySelector('option[value="all_leads"]');
+    if (!allLeadsOption) return;
+    if (isEmployeeUser()) {
+      allLeadsOption.disabled = true;
+      allLeadsOption.hidden = true;
+      if (modeSelect.value === 'all_leads') modeSelect.value = 'selected_leads';
+    } else {
+      allLeadsOption.disabled = false;
+      allLeadsOption.hidden = false;
+    }
+  }
+
+  function populateCampaignEmailSenders() {
+    var select = document.getElementById('form-campaign-email-config-id');
+    if (!select) return;
+    apiFetch('/email-accounts').then(function (body) {
+      var items = (body.data && body.data.items) ? body.data.items : [];
+      var active = items.filter(function (a) { return a.is_active !== false; });
+      var options = '<option value="">Default email account</option>' + active.map(function (a) {
+        var label = (a.account_name || a.from_email || 'Account') + ' · ' + (a.from_email || '');
+        if (a.is_default) label += ' (default)';
+        return '<option value="' + a.id + '"' + (a.is_default ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
+      }).join('');
+      select.innerHTML = options;
+    }).catch(function () {
+      select.innerHTML = '<option value="">Default email account</option>';
+    });
+  }
+
+  function populateCampaignSmsSender() {
+    var select = document.getElementById('form-campaign-sms-sender-id');
+    if (!select) return;
+    apiFetch('/sms-settings').then(function (body) {
+      var sms = body.data || {};
+      var sender = sms.sender_id || 'Not configured';
+      var disabled = !sms.is_active || !sms.sender_id;
+      select.innerHTML = '<option value="' + (sms.id || '') + '"' + (disabled ? ' disabled' : ' selected') + '>' +
+        escapeHtml(sender + (sms.is_active === false ? ' (inactive)' : '')) + '</option>';
+      select.disabled = true;
+    }).catch(function () {
+      select.innerHTML = '<option value="">SMS sender unavailable</option>';
+    });
+  }
+
+  function populateCampaignWhatsAppSender() {
+    var select = document.getElementById('form-campaign-whatsapp-sender-id');
+    if (!select) return;
+    apiFetch('/whatsapp-settings').then(function (body) {
+      var wa = body.data || {};
+      var label = wa.display_phone_number || wa.phone_number_id || 'WhatsApp number';
+      var pending = wa.integration_status && wa.integration_status !== 'integrated' && wa.integration_status !== 'connected';
+      var disabled = pending || !wa.phone_number_id;
+      select.innerHTML = '<option value="' + (wa.id || '') + '"' + (disabled ? ' disabled' : ' selected') + '>' +
+        escapeHtml(label + (pending ? ' (pending approval)' : '')) + '</option>';
+      select.disabled = disabled;
+    }).catch(function () {
+      select.innerHTML = '<option value="">WhatsApp sender unavailable</option>';
+    });
   }
 
   function configureCampaignModal(channel) {
@@ -3363,7 +9961,9 @@ window.CA_CRM = (function () {
     var smsMessageTemplate = document.getElementById('form-campaign-sms-message-template');
     var bodyTemplate = document.getElementById('form-campaign-body-template');
     var emailSubject = document.getElementById('form-campaign-email-subject');
-    var senderId = document.getElementById('form-campaign-sender-id');
+    var emailSenderField = document.getElementById('form-campaign-email-sender-field');
+    var smsSenderField = document.getElementById('form-campaign-sms-sender-field');
+    var whatsappSenderField = document.getElementById('form-campaign-whatsapp-sender-field');
     if (channelInput) channelInput.value = channel;
     var titleLabel = document.getElementById('add-campaign-title-label');
     if (titleLabel) titleLabel.textContent = titleMap[channel] || 'New Campaign';
@@ -3378,27 +9978,76 @@ window.CA_CRM = (function () {
     setCampaignSectionVisible(smsFields, channel === 'sms');
     setCampaignSectionVisible(audienceFields, channel === 'whatsapp' || channel === 'email' || channel === 'sms');
     setCampaignSectionVisible(legacyFields, false);
+    if (emailSenderField) emailSenderField.classList.toggle('hidden', channel !== 'email');
+    if (smsSenderField) smsSenderField.classList.toggle('hidden', channel !== 'sms');
+    if (whatsappSenderField) whatsappSenderField.classList.toggle('hidden', channel !== 'whatsapp');
     if (messageTemplate) messageTemplate.required = channel === 'whatsapp';
-    if (smsMessageTemplate) smsMessageTemplate.required = channel === 'sms';
+    var smsTemplateSelect = document.getElementById('form-campaign-sms-template-id');
+    if (smsTemplateSelect) smsTemplateSelect.required = channel === 'sms';
+    if (smsMessageTemplate) smsMessageTemplate.required = false;
     if (bodyTemplate) bodyTemplate.required = channel === 'email';
     if (emailSubject) emailSubject.required = channel === 'email';
-    var scheduledAt = document.getElementById('form-campaign-scheduled-at');
-    if (scheduledAt) scheduledAt.disabled = channel === 'sms';
+    initCampaignScheduledDateField();
     var createBtn = document.getElementById('btn-create-campaign');
     var smsPreviewMsg = document.getElementById('btn-sms-preview-message');
     var smsSaveDraft = document.getElementById('btn-sms-save-draft');
     var smsPreviewPayload = document.getElementById('btn-sms-preview-payload');
-    var smsSendDisabled = document.getElementById('btn-sms-send-disabled');
     var isSms = channel === 'sms';
     if (createBtn) createBtn.classList.toggle('hidden', isSms);
     if (smsPreviewMsg) smsPreviewMsg.classList.toggle('hidden', !isSms);
     if (smsSaveDraft) smsSaveDraft.classList.toggle('hidden', !isSms);
-    if (smsPreviewPayload) smsPreviewPayload.classList.toggle('hidden', !isSms);
-    if (smsSendDisabled) smsSendDisabled.classList.toggle('hidden', !isSms);
+    if (smsPreviewPayload) {
+      smsPreviewPayload.classList.toggle('hidden', !isSms);
+      smsPreviewPayload.disabled = false;
+    }
+    var smsSendBtn = document.getElementById('btn-sms-send');
+    if (smsSendBtn) smsSendBtn.classList.toggle('hidden', !isSms);
+    if (createBtn && !isSms) {
+      if (channel === 'whatsapp') {
+        createBtn.innerHTML = '<i data-lucide="send" class="h-4 w-4"></i> Send Campaign';
+      } else {
+        createBtn.innerHTML = '<i data-lucide="save" class="h-4 w-4"></i> Create Campaign';
+      }
+      icons();
+    }
     if (channel === 'whatsapp' || channel === 'email' || channel === 'sms') {
+      applyCampaignAudienceEmployeeScope();
       toggleCampaignAudienceFields();
       populateCampaignAudienceSelects(channel);
-      if (channel === 'sms') updateSmsCampaignEstimates();
+      if (channel === 'email') populateCampaignEmailSenders();
+      if (channel === 'sms') populateCampaignSmsSender();
+      if (channel === 'whatsapp') populateCampaignWhatsAppSender();
+      if (channel === 'sms') {
+        loadSmsTemplatesFromDatabase(function () {
+          populateSmsTemplateSelect();
+          syncSmsCampaignTemplateBody();
+        }, true);
+        apiFetch('/sms-settings').then(function (body) {
+          window.smsSettingsState = body.data || {};
+          updateSmsSendButtonState();
+        }).catch(function () {});
+        requestAnimationFrame(function () {
+          var footer = document.getElementById('add-campaign-footer');
+          if (footer) footer.scrollLeft = 0;
+        });
+      }
+      if (channel === 'whatsapp') {
+        loadWhatsAppTemplatesFromDatabase(function () {
+          populateWhatsAppTemplateSelect();
+          syncWhatsAppCampaignTemplateBody();
+          scheduleWhatsAppCampaignPreview(true);
+        }, true, true);
+        apiFetch('/whatsapp-settings').then(function (body) {
+          window.whatsappSettingsState = body.data || {};
+        }).catch(function () {});
+      }
+      if (channel === 'email') {
+        loadEmailTemplatesFromDatabase(function () {
+          populateEmailTemplateSelect();
+          syncEmailCampaignTemplateFields();
+          scheduleEmailCampaignPreview(true);
+        }, true);
+      }
     }
   }
 
@@ -3419,35 +10068,493 @@ window.CA_CRM = (function () {
     });
   }
 
-  function populateCampaignAudienceSelects(channel) {
-    channel = channel || document.getElementById('form-campaign-channel')?.value || 'whatsapp';
-    ensureFormSelectData(function () {
-      var leads = window.realLeads || [];
-      var sources = window.realSourceLeads || [];
-      var leadSel = document.getElementById('form-campaign-ca-ids');
-      if (leadSel) {
-        leadSel.innerHTML = leads.map(function (l) {
-          var contact = channel === 'email' ? (l.email_id || '—') : (l.mobile_no || '—');
-          return '<option value="' + l.ca_id + '">' + l.firm_name + ' · ' + contact + '</option>';
-        }).join('');
-      }
-      var sourceSel = document.getElementById('form-campaign-source-id');
-      if (sourceSel) sourceSel.innerHTML = buildMasterSelectOptions(sources, 'source_id', 'source_name');
-      if (window.CA_STATE_CITY) {
-        window.CA_STATE_CITY.prepareForm('form-add-campaign');
-      }
+  function initLeadPickerDeps() {
+    if (!window.CrmLeadPicker) return;
+    window.CrmLeadPicker.setDeps({
+      apiFetch: apiFetch,
+      mapLeadRecord: mapLeadRecord,
+      unwrapList: unwrapList,
+      escapeHtml: escapeHtml,
+      toast: toast,
+      icons: icons,
+      getLeadRecord: getLeadRecord,
     });
   }
 
+  var CAMPAIGN_LEAD_PICKER_PAGE_SIZE = 50;
+
+  function getCampaignLeadPickerState() {
+    return window.CrmLeadPicker ? window.CrmLeadPicker.state('campaign') : { selected: {}, items: [] };
+  }
+
+  function resetCampaignLeadPicker() {
+    if (window.CrmLeadPicker) window.CrmLeadPicker.reset('campaign');
+  }
+
+  function getCampaignSelectedLeadIds() {
+    return window.CrmLeadPicker ? window.CrmLeadPicker.selectedIds('campaign') : [];
+  }
+
+  function getFirstCampaignSelectedLeadId() {
+    return window.CrmLeadPicker ? window.CrmLeadPicker.firstSelectedId('campaign') : null;
+  }
+
+  function getCampaignSelectedLeads() {
+    return window.CrmLeadPicker ? window.CrmLeadPicker.selectedLeads('campaign') : [];
+  }
+
+  function campaignLeadAssignmentMeta(lead) {
+    var executive = lead.executive || lead.employee_name || '';
+    if (executive && executive !== 'Unassigned' && executive !== '—') {
+      return { label: 'Assigned · ' + executive, assigned: true };
+    }
+    return { label: 'Unassigned', assigned: false };
+  }
+
+  function renderCampaignLeadPicker() {
+    if (window.CrmLeadPicker) window.CrmLeadPicker.render('campaign');
+  }
+
+  function initCampaignLeadPicker(options) {
+    options = options || {};
+    if (!window.CrmLeadPicker) return Promise.resolve();
+    initLeadPickerDeps();
+    bindCampaignLeadPickerEvents();
+    if (options.preserveSelection) {
+      return window.CrmLeadPicker.refresh('campaign');
+    }
+    return window.CrmLeadPicker.init('campaign');
+  }
+
+  function bindCampaignLeadPickerEvents() {
+    if (!window.CrmLeadPicker) return;
+    window.CrmLeadPicker.bind('campaign', {
+      onSelectionChange: function () {
+        updateSmsCampaignEstimates();
+        scheduleWhatsAppCampaignPreview(true);
+        scheduleEmailCampaignPreview(true);
+      },
+    });
+  }
+
+  function normalizeFollowupLeadId(leadId) {
+    var id = parseInt(leadId, 10);
+    return id > 0 ? id : null;
+  }
+
+  function resolveFollowupContextLeadId(presetIds) {
+    if (presetIds && presetIds.length) {
+      return normalizeFollowupLeadId(presetIds[0]);
+    }
+    var selected = normalizeFollowupLeadId(CAData.getSelectedLeadId());
+    if (selected) return selected;
+    var bulk = (window._inboxBulkLeadIds || []).map(function (id) { return parseInt(id, 10); }).filter(Boolean);
+    if (bulk.length === 1) return bulk[0];
+    return null;
+  }
+
+  function setFollowupModalTitle(editing) {
+    var titleEl = document.querySelector('#followup-title [data-followup-title-text]')
+      || document.getElementById('followup-title');
+    if (!titleEl) return;
+    var text = editing ? 'Edit Follow-up' : 'Schedule Follow-up';
+    if (titleEl.id === 'followup-title') {
+      var icon = titleEl.querySelector('.ca-modal-icon');
+      titleEl.textContent = '';
+      if (icon) titleEl.appendChild(icon);
+      var span = document.createElement('span');
+      span.setAttribute('data-followup-title-text', '1');
+      span.textContent = text;
+      titleEl.appendChild(span);
+    } else {
+      titleEl.textContent = text;
+    }
+  }
+
+  function clearFollowupLeadContext() {
+    window._followupContextLead = null;
+    var hidden = document.getElementById('form-followup-ca-id');
+    var wrap = document.getElementById('followup-lead-context');
+    if (hidden) hidden.value = '';
+    if (wrap) wrap.classList.add('hidden');
+  }
+
+  function renderFollowupLeadContext(lead) {
+    window._followupContextLead = lead || null;
+    var wrap = document.getElementById('followup-lead-context');
+    var hidden = document.getElementById('form-followup-ca-id');
+    if (!wrap || !hidden) return;
+    if (!lead) {
+      clearFollowupLeadContext();
+      return;
+    }
+    hidden.value = String(lead.ca_id);
+    var firmEl = document.getElementById('followup-ctx-firm');
+    var caEl = document.getElementById('followup-ctx-ca');
+    var mobileEl = document.getElementById('followup-ctx-mobile');
+    var cityEl = document.getElementById('followup-ctx-city');
+    var employeeEl = document.getElementById('followup-ctx-employee');
+    if (firmEl) firmEl.textContent = lead.firm_name || '—';
+    if (caEl) caEl.textContent = lead.ca_name || '—';
+    if (mobileEl) mobileEl.textContent = lead.mobile_no || '—';
+    if (cityEl) cityEl.textContent = lead.city || '—';
+    if (employeeEl) employeeEl.textContent = lead.executive || 'Unassigned';
+    wrap.classList.remove('hidden');
+  }
+
+  function fetchLeadForFollowup(leadId) {
+    var cached = getLeadRecord(leadId);
+    if (cached) return Promise.resolve(cached);
+    return apiFetch('/ca-masters/' + encodeURIComponent(leadId))
+      .then(function (body) {
+        return mapLeadRecord(body.data || {});
+      });
+  }
+
+  function initFollowupLeadContext(leadId) {
+    if (!leadId) {
+      clearFollowupLeadContext();
+      return Promise.resolve(null);
+    }
+    return fetchLeadForFollowup(leadId)
+      .then(function (lead) {
+        renderFollowupLeadContext(lead);
+        return lead;
+      })
+      .catch(function (err) {
+        clearFollowupLeadContext();
+        return Promise.reject(err);
+      });
+  }
+
+  function getFollowupContextLead() {
+    if (window._followupContextLead) return window._followupContextLead;
+    var leadId = normalizeFollowupLeadId(document.getElementById('form-followup-ca-id')?.value);
+    return leadId ? getLeadRecord(leadId) : null;
+  }
+
+  function getFollowupSelectedLeadIds() {
+    var leadId = normalizeFollowupLeadId(document.getElementById('form-followup-ca-id')?.value);
+    return leadId ? [leadId] : [];
+  }
+
+  function getFirstFollowupSelectedLeadId() {
+    return normalizeFollowupLeadId(document.getElementById('form-followup-ca-id')?.value);
+  }
+
+  function getFollowupSelectedLeads() {
+    var lead = getFollowupContextLead();
+    return lead ? [lead] : [];
+  }
+
+  function resetFollowupLeadPicker() {
+    clearFollowupLeadContext();
+  }
+
+  function openFollowupModalWithLeads(presetIds) {
+    var leadId = resolveFollowupContextLeadId(presetIds);
+    if (!leadId) {
+      toast('Open follow-up from a lead row or select one lead first.', 'warning');
+      return;
+    }
+
+    var modal = document.getElementById('modal-followup');
+    var form = document.getElementById('form-followup');
+    if (!modal || !form) return;
+    window._editingFollowUpId = null;
+    window._followupOriginalScheduled = '';
+    window._inboxBulkLeadIds = null;
+    form.reset();
+    clearFollowupLeadContext();
+    resetFormDateTimePickers(form);
+    resetFollowupDemoFieldState();
+    var demoWrap = document.getElementById('followup-demo-fields-wrap');
+    if (demoWrap) demoWrap.classList.add('hidden');
+    var rescheduleWrap = document.getElementById('followup-reschedule-reason-wrap');
+    if (rescheduleWrap) rescheduleWrap.classList.add('hidden');
+    setFollowupModalTitle(false);
+
+    openExclusiveCrmModal(modal);
+    setFollowupFormBusy(true);
+    iconsIn(modal);
+
+    Promise.all([
+      new Promise(function (resolve) { ensureFormSelectData(resolve); }),
+      initFollowupLeadContext(leadId),
+    ])
+      .then(function () {
+        initFollowUpDateTimeField();
+        initFollowUpDemoFields();
+        setFollowupFormBusy(false);
+        iconsIn(modal);
+      })
+      .catch(function (err) {
+        setFollowupFormBusy(false);
+        closeModal(modal);
+        toast(err.message || 'Unable to load follow-up form', 'error');
+      });
+  }
+
+  function populateCampaignAudienceSelects(channel, options) {
+    options = options || {};
+    channel = channel || document.getElementById('form-campaign-channel')?.value || 'whatsapp';
+    initLeadPickerDeps();
+    bindCampaignLeadPickerEvents();
+    return new Promise(function (resolve) {
+      ensureFormSelectData(function () {
+        var sources = window.realSourceLeads || [];
+        var pickerPromise = initCampaignLeadPicker(options);
+        var sourceSel = document.getElementById('form-campaign-source-id');
+        if (sourceSel) sourceSel.innerHTML = buildMasterSelectOptions(sources, 'source_id', 'source_name');
+        if (window.CA_STATE_CITY) {
+          window.CA_STATE_CITY.prepareForm('form-add-campaign');
+        }
+        if (pickerPromise && typeof pickerPromise.then === 'function') {
+          pickerPromise.then(resolve).catch(resolve);
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  function localDatetimeForServer(value) {
+    if (!value || !String(value).trim()) return null;
+    var raw = String(value).trim();
+    if (/[zZ]$/.test(raw) || /[+-]\d{2}:\d{2}$/.test(raw)) return raw;
+    var d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return raw;
+    var pad = function (n) { return String(n).padStart(2, '0'); };
+    var offsetMin = -d.getTimezoneOffset();
+    var sign = offsetMin >= 0 ? '+' : '-';
+    var abs = Math.abs(offsetMin);
+    var base = raw.length === 16 ? raw + ':00' : raw;
+    return base + sign + pad(Math.floor(abs / 60)) + ':' + pad(abs % 60);
+  }
+
+  function initCampaignScheduledDateField() {
+    if (!window.CrmDateTimePicker) return;
+    var form = document.getElementById('form-add-campaign');
+    if (!form) return;
+    window.CrmDateTimePicker.initAll(form, { force: true });
+    window.CrmDateTimePicker.syncAll(form);
+  }
+
+  function canEditFollowupTeamSizeField() {
+    var role = (window.__CRM_USER__ || {}).role;
+    return role === 'super_admin' || role === 'manager';
+  }
+
+  function canEditFollowupDemoProviderField() {
+    return canEditFollowupTeamSizeField();
+  }
+
+  function isFollowupDemoScheduledType(type) {
+    return String(type || '').trim() === 'Demo Scheduled';
+  }
+
+  function resolveDemoProviderFromTeamSize(teamSize) {
+    var n = parseInt(teamSize, 10);
+    if (!n || n < 1) return null;
+    if (n === 1) {
+      return { provider: 'Ankit Bhardwaj', link: 'https://meet.google.com/mcq-jrnh-uea' };
+    }
+    if (n <= 10) {
+      return { provider: 'Dev Aggarwal', link: 'https://meet.google.com/awm-gsft-xov' };
+    }
+    return { provider: 'Kamal Sharma', link: 'https://meet.google.com/ouq-sxne-jwn' };
+  }
+
+  function getFollowupSelectedLeadTeamSize() {
+    var lead = getFollowupContextLead();
+    if (!lead || lead.team_size == null || lead.team_size === '') return null;
+    var n = parseInt(lead.team_size, 10);
+    return n > 0 ? n : null;
+  }
+
+  function syncFollowupDemoProviderFromTeamSize(force) {
+    var teamInput = document.getElementById('form-followup-team-size');
+    var providerInput = document.getElementById('form-followup-demo-provider');
+    var linkInput = document.getElementById('form-followup-meeting-link');
+    if (!teamInput || !providerInput || !linkInput) return;
+    var n = parseInt(teamInput.value, 10);
+    if (!n || n < 1) return;
+    var resolved = resolveDemoProviderFromTeamSize(n);
+    if (!resolved) return;
+    if (force || providerInput.dataset.autoFilled === '1') {
+      providerInput.value = resolved.provider;
+      providerInput.dataset.autoFilled = '1';
+    }
+    if (force || linkInput.dataset.autoFilled === '1') {
+      linkInput.value = resolved.link;
+      linkInput.dataset.autoFilled = '1';
+    }
+  }
+
+  function applyFollowupDemoFieldsAccess(teamSizeUnavailable) {
+    var teamInput = document.getElementById('form-followup-team-size');
+    var providerInput = document.getElementById('form-followup-demo-provider');
+    var linkInput = document.getElementById('form-followup-meeting-link');
+    if (!teamInput || !providerInput || !linkInput) return;
+
+    var allowTeam = teamSizeUnavailable || canEditFollowupTeamSizeField();
+    var allowProvider = teamSizeUnavailable || canEditFollowupDemoProviderField();
+
+    teamInput.readOnly = !allowTeam;
+    teamInput.classList.toggle('bg-slate-50', !allowTeam);
+    providerInput.readOnly = !allowProvider;
+    providerInput.classList.toggle('bg-slate-50', !allowProvider);
+    linkInput.readOnly = false;
+    linkInput.classList.remove('bg-slate-50');
+  }
+
+  function resetFollowupDemoFieldState() {
+    var providerInput = document.getElementById('form-followup-demo-provider');
+    var linkInput = document.getElementById('form-followup-meeting-link');
+    if (providerInput) {
+      providerInput.dataset.autoFilled = '1';
+      providerInput.dataset.userEdited = '';
+    }
+    if (linkInput) {
+      linkInput.dataset.autoFilled = '1';
+      linkInput.dataset.userEdited = '';
+    }
+  }
+
+  function populateFollowupDemoFieldsFromLead() {
+    var teamInput = document.getElementById('form-followup-team-size');
+    var providerInput = document.getElementById('form-followup-demo-provider');
+    var linkInput = document.getElementById('form-followup-meeting-link');
+    if (!teamInput) return;
+
+    if (window._editingFollowUpId && teamInput.value) {
+      applyFollowupDemoFieldsAccess(false);
+      return;
+    }
+
+    var teamSize = getFollowupSelectedLeadTeamSize();
+    if (teamSize) {
+      teamInput.value = String(teamSize);
+      resetFollowupDemoFieldState();
+      syncFollowupDemoProviderFromTeamSize(true);
+      applyFollowupDemoFieldsAccess(false);
+      return;
+    }
+
+    if (!window._editingFollowUpId) {
+      teamInput.value = '';
+      if (providerInput) providerInput.value = '';
+      if (linkInput) linkInput.value = '';
+      resetFollowupDemoFieldState();
+    }
+    applyFollowupDemoFieldsAccess(true);
+  }
+
+  function toggleFollowupDemoFields() {
+    var form = document.getElementById('form-followup');
+    var typeSel = form && form.elements.followup_type;
+    var wrap = document.getElementById('followup-demo-fields-wrap');
+    if (!typeSel || !wrap) return;
+    var isDemo = isFollowupDemoScheduledType(typeSel.value);
+    wrap.classList.toggle('hidden', !isDemo);
+    if (isDemo) {
+      populateFollowupDemoFieldsFromLead();
+    }
+  }
+
+  function bindFollowupDemoFieldEvents() {
+    var form = document.getElementById('form-followup');
+    if (!form || form._demoFieldsBound) return;
+    form._demoFieldsBound = true;
+
+    var typeSel = form.elements.followup_type;
+    var teamInput = document.getElementById('form-followup-team-size');
+    var providerInput = document.getElementById('form-followup-demo-provider');
+    var linkInput = document.getElementById('form-followup-meeting-link');
+
+    if (typeSel) typeSel.addEventListener('change', toggleFollowupDemoFields);
+    if (teamInput) {
+      teamInput.addEventListener('input', function () {
+        resetFollowupDemoFieldState();
+        syncFollowupDemoProviderFromTeamSize(true);
+      });
+    }
+    if (providerInput) {
+      providerInput.addEventListener('input', function () {
+        providerInput.dataset.userEdited = '1';
+        providerInput.dataset.autoFilled = '0';
+      });
+    }
+    if (linkInput) {
+      linkInput.addEventListener('input', function () {
+        linkInput.dataset.userEdited = '1';
+        linkInput.dataset.autoFilled = '0';
+      });
+    }
+  }
+
+  function initFollowUpDemoFields() {
+    bindFollowupDemoFieldEvents();
+    toggleFollowupDemoFields();
+  }
+
+  function initFollowUpDateTimeField() {
+    if (!window.CrmDateTimePicker) return;
+    var form = document.getElementById('form-followup');
+    if (!form) return;
+    window.CrmDateTimePicker.initAll(form, { force: true });
+    window.CrmDateTimePicker.syncAll(form);
+  }
+
+  function resetFormDateTimePickers(form) {
+    if (!form || !window.CrmDateTimePicker) return;
+    window.CrmDateTimePicker.syncAll(form);
+  }
+
+  function formatSchedulePreview(value) {
+    if (!value) return '';
+    if (window.CrmDateTimePicker && window.CrmDateTimePicker.formatPreview) {
+      var parsed = window.CrmDateTimePicker.parseValue(value);
+      if (parsed) return window.CrmDateTimePicker.formatPreview(parsed);
+    }
+    return formatDateTime(value);
+  }
+
+  function validateCampaignScheduledAt(value) {
+    if (!value || !String(value).trim()) {
+      return { valid: true, value: null, isFuture: false };
+    }
+    var parsed = window.CrmDateTimePicker
+      ? window.CrmDateTimePicker.parseValue(value)
+      : new Date(value);
+    if (!parsed || Number.isNaN(parsed.getTime())) {
+      return { valid: false, message: 'Please select a future date and time.' };
+    }
+    if (parsed.getTime() <= Date.now()) {
+      return { valid: false, message: 'Please select a future date and time.' };
+    }
+    return {
+      valid: true,
+      value: localDatetimeForServer(value),
+      isFuture: true,
+    };
+  }
+
+  function validateFollowUpScheduledAt(value) {
+    if (!value || !String(value).trim()) {
+      return { valid: false, message: 'Please select a future date and time.' };
+    }
+    return validateCampaignScheduledAt(value);
+  }
+
   function buildCampaignAudiencePayload(data) {
-    var selectedIds = Array.from(document.getElementById('form-campaign-ca-ids')?.selectedOptions || [])
-      .map(function (opt) { return parseInt(opt.value, 10); })
-      .filter(Boolean);
+    var selectedIds = getCampaignSelectedLeadIds();
+    var schedule = validateCampaignScheduledAt(data.scheduled_at);
     var payload = {
-      campaign_name: data.name,
+      campaign_name: campaignNameFromForm(data),
       campaign_type: data.campaign_type,
       audience_mode: data.audience_mode || 'all_leads',
-      scheduled_at: data.scheduled_at || null,
+      scheduled_at: schedule.valid ? schedule.value : null,
     };
     if (payload.audience_mode === 'selected_leads') payload.ca_ids = selectedIds;
     if (payload.audience_mode === 'city') payload.city_id = parseInt(data.city_id, 10);
@@ -3496,36 +10603,45 @@ window.CA_CRM = (function () {
   function waStatusBadge(status) {
     var map = {
       Delivered: 'badge-success',
+      Sent: 'badge-success',
+      'Reply Received': 'badge-info',
       Failed: 'badge-danger',
+      'API Error': 'badge-danger',
       Queued: 'badge-warning',
+      Pending: 'badge-warning',
+      Mapped: 'badge-brand',
       Processing: 'badge-brand',
       Scheduled: 'bg-blue-50 text-blue-700',
       Completed: 'badge-success',
+      Partial: 'badge-warning',
       Draft: 'bg-slate-100 text-slate-600',
     };
-    return '<span class="badge ' + (map[status] || 'badge-brand') + '">' + escapeHtml(status || '—');
+    return '<span class="badge ' + (map[status] || 'badge-brand') + '">' + escapeHtml(status || '—') + '</span>';
   }
 
   function campaignDeleteButton(channel, id, status) {
     if (status === 'Processing') return '';
-    return '<button type="button" class="btn-secondary btn-sm" data-delete-' + channel + '-campaign="' + id + '">Delete</button>';
+    return iconBtn('trash-2', 'Delete', 'data-delete-' + channel + '-campaign="' + id + '"', 'danger');
   }
 
   function whatsappCampaignCardHtml(c) {
     var sent = c.total_messages || 0;
+    var sentCount = c.sent_count || 0;
     var delivered = c.delivered_count || 0;
-    var pct = sent ? Math.round((delivered / sent) * 100) : 0;
+    var failed = c.failed_count || 0;
+    var skipped = c.skipped_count || 0;
+    var pct = sentCount ? Math.round((delivered / sentCount) * 100) : (sentCount > 0 ? 100 : 0);
     var launchBtn = c.status === 'Scheduled'
-      ? '<button type="button" class="btn-primary btn-sm inline-flex items-center justify-center gap-2" data-launch-whatsapp-campaign="' + c.id + '"><i data-lucide="rocket" class="h-4 w-4"></i> Process</button>'
+      ? iconBtn('rocket', 'Process', 'data-launch-whatsapp-campaign="' + c.id + '"', 'primary')
       : '';
     var actions = '<div class="flex flex-wrap gap-2 mt-3">' + launchBtn + campaignDeleteButton('whatsapp', c.id, c.status) + '</div>';
     return '<div class="card-interactive p-4 campaign-card" data-whatsapp-campaign-id="' + c.id + '">' +
       '<div class="flex justify-between mb-2"><p class="text-card-heading">' + escapeHtml(c.campaign_name) + '</p>' + waStatusBadge(c.status) + '</div>' +
       '<p class="text-caption text-slate-500">Type: ' + escapeHtml(c.campaign_type) + '</p>' +
       '<p class="text-caption text-slate-500 mt-1">Audience: ' + escapeHtml(c.audience_label || c.audience_mode) + ' · By: ' + escapeHtml(c.performed_by || 'System') + '</p>' +
-      '<p class="text-caption text-slate-500 mt-1">Messages: ' + sent + ' · Delivered ' + delivered + ' · Failed ' + (c.failed_count || 0) + '</p>' +
-      (sent ? '<div class="mt-3 h-2 rounded-full bg-slate-100"><div class="h-full rounded-full bg-green-500" style="width:' + pct + '%"></div></div>' +
-        '<p class="text-caption text-slate-400 mt-1">' + pct + '% delivery rate</p>' + actions : actions) +
+      '<p class="text-caption text-slate-500 mt-1">Messages: ' + sent + ' · Sent ' + sentCount + ' · Delivered ' + delivered + ' · Failed ' + failed + (skipped ? ' · Skipped ' + skipped : '') + '</p>' +
+      (sentCount ? '<div class="mt-3 h-2 rounded-full bg-slate-100"><div class="h-full rounded-full bg-green-500" style="width:' + pct + '%"></div></div>' +
+        '<p class="text-caption text-slate-400 mt-1">' + (delivered > 0 ? pct + '% delivered to phone' : 'Accepted by Meta — phone delivery pending') + '</p>' + actions : actions) +
       '</div>';
   }
 
@@ -3543,7 +10659,7 @@ window.CA_CRM = (function () {
     metrics = metrics || window.dashboardMetrics || {};
     setText('wa-kpi-campaigns', formatCampaignNumber(metrics.whatsapp_campaigns_total || 0));
     setText('wa-kpi-messages', formatCampaignNumber(metrics.whatsapp_messages_total || 0));
-    setText('wa-kpi-delivered', formatCampaignNumber(metrics.whatsapp_delivered || 0));
+    setText('wa-kpi-delivered', formatCampaignNumber(metrics.whatsapp_sent || metrics.whatsapp_delivered || 0));
     setText('wa-kpi-failed', formatCampaignNumber(metrics.whatsapp_failed || 0));
     setText('wa-kpi-queued', formatCampaignNumber(metrics.whatsapp_queued || 0));
   }
@@ -3553,18 +10669,21 @@ window.CA_CRM = (function () {
     if (!tbody) return;
     logs = logs || window.realWaMessageLogs || [];
     if (!logs.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-slate-400 py-8">No message logs yet.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="text-center text-slate-400 py-8">No message logs yet.</td></tr>';
       return;
     }
     tbody.innerHTML = logs.map(function (log) {
+      var errorText = log.error_message || log.failed_reason || '';
       return '<tr>' +
         '<td>' + escapeHtml(log.campaign_name || log.campaign_id || '—') + '</td>' +
         '<td>' + escapeHtml(log.firm_name || log.lead_name || '—') + '</td>' +
         '<td>' + escapeHtml(log.mobile_no || '—') + '</td>' +
-        '<td>' + waStatusBadge(log.message_status) + '</td>' +
+        '<td>' + escapeHtml(log.template_name || '—') + '</td>' +
+        '<td>' + waStatusBadge(log.message_status || log.status) + '</td>' +
+        '<td class="max-w-[10rem] truncate font-mono text-xs" title="' + escapeHtml(log.meta_message_id || '') + '">' + escapeHtml(log.meta_message_id || '—') + '</td>' +
         '<td class="max-w-xs truncate" title="' + escapeHtml(log.message) + '">' + escapeHtml(log.message || '—') + '</td>' +
+        '<td class="max-w-xs truncate text-red-700" title="' + escapeHtml(errorText) + '">' + escapeHtml(errorText || '—') + '</td>' +
         '<td class="whitespace-nowrap">' + escapeHtml(formatActivityTimestamp(log.queued_at)) + '</td>' +
-        '<td class="whitespace-nowrap">' + escapeHtml(formatActivityTimestamp(log.delivered_at)) + '</td>' +
       '</tr>';
     }).join('');
   }
@@ -3612,21 +10731,31 @@ window.CA_CRM = (function () {
   }
 
   function emailCampaignCardHtml(c) {
-    var sent = c.total_emails || 0;
-    var delivered = c.delivered_count || 0;
-    var pct = sent ? Math.round((delivered / sent) * 100) : 0;
+    var stats = c.statistics || {};
+    var total = stats.total_leads || c.total_emails || 0;
+    var sent = stats.emails_sent || c.sent_count || c.delivered_count || 0;
+    var valid = stats.valid_emails || c.valid_emails_count || 0;
+    var invalid = stats.invalid_emails || c.invalid_emails_count || 0;
+    var duplicate = stats.duplicate_emails || c.duplicate_emails_count || 0;
+    var skipped = stats.skipped || c.skipped_count || 0;
+    var failed = stats.failed || c.failed_count || 0;
+    var pct = total ? Math.round((sent / total) * 100) : 0;
     var launchBtn = c.status === 'Scheduled'
-      ? '<button type="button" class="btn-primary btn-sm inline-flex items-center justify-center gap-2" data-launch-email-campaign="' + c.id + '"><i data-lucide="rocket" class="h-4 w-4"></i> Process</button>'
+      ? iconBtn('rocket', 'Process', 'data-launch-email-campaign="' + c.id + '"', 'primary')
       : '';
-    var actions = '<div class="flex flex-wrap gap-2 mt-3">' + launchBtn + campaignDeleteButton('email', c.id, c.status) + '</div>';
+    var retryBtn = failed > 0 && c.status !== 'Scheduled' && c.status !== 'Draft'
+      ? iconBtn('rotate-ccw', 'Retry Failed', 'data-retry-email-campaign="' + c.id + '"', 'secondary')
+      : '';
+    var actions = '<div class="flex flex-wrap gap-2 mt-3">' + launchBtn + retryBtn + campaignDeleteButton('email', c.id, c.status) + '</div>';
     return '<div class="card-interactive p-5 campaign-card" data-email-campaign-id="' + c.id + '">' +
       '<i data-lucide="send" class="h-8 w-8 text-brand mb-3"></i>' +
       '<div class="flex justify-between gap-2 mb-1"><p class="text-card-heading">' + escapeHtml(c.campaign_name) + '</p>' + waStatusBadge(c.status) + '</div>' +
       '<p class="text-caption text-slate-500 mt-1">Subject: ' + escapeHtml(c.subject || '—') + '</p>' +
       '<p class="text-caption text-slate-500 mt-1">Type: ' + escapeHtml(c.campaign_type) + ' · Audience: ' + escapeHtml(c.audience_label || c.audience_mode) + '</p>' +
-      '<p class="text-caption text-slate-500 mt-1">Emails: ' + sent + ' · Delivered ' + delivered + ' · Failed ' + (c.failed_count || 0) + '</p>' +
-      (sent ? '<div class="mt-3 h-2 rounded-full bg-slate-100"><div class="h-full rounded-full bg-green-500" style="width:' + pct + '%"></div></div>' +
-        '<p class="text-caption text-slate-400 mt-1">' + pct + '% delivery rate</p>' + actions : actions) +
+      '<p class="text-caption text-slate-500 mt-1">Leads: ' + total + ' · Valid ' + valid + ' · Sent ' + sent + ' · Failed ' + failed + '</p>' +
+      '<p class="text-caption text-slate-500 mt-1">Invalid ' + invalid + ' · Duplicate ' + duplicate + ' · Skipped ' + skipped + '</p>' +
+      (total ? '<div class="mt-3 h-2 rounded-full bg-slate-100"><div class="h-full rounded-full bg-green-500" style="width:' + pct + '%"></div></div>' +
+        '<p class="text-caption text-slate-400 mt-1">' + pct + '% sent rate</p>' + actions : actions) +
       '</div>';
   }
 
@@ -3646,7 +10775,288 @@ window.CA_CRM = (function () {
     setText('email-kpi-messages', formatCampaignNumber(metrics.email_messages_total || 0));
     setText('email-kpi-delivered', formatCampaignNumber(metrics.email_delivered || 0));
     setText('email-kpi-failed', formatCampaignNumber(metrics.email_failed || 0));
-    setText('email-kpi-queued', formatCampaignNumber(metrics.email_queued || 0));
+    setText('email-kpi-replies', formatCampaignNumber(metrics.email_replies_received || metrics.reply_received_logs || metrics.email_today_replies || 0));
+    setText('email-kpi-unread-replies', formatCampaignNumber(metrics.email_unread_replies || metrics.unread_replies || 0));
+    var unreadBadge = document.getElementById('email-inbox-unread-badge');
+    if (unreadBadge) {
+      var unread = metrics.email_unread_replies || metrics.unread_replies || 0;
+      unreadBadge.textContent = unread + ' unread';
+      unreadBadge.classList.toggle('hidden', unread <= 0);
+    }
+    var lastSyncEl = document.getElementById('email-inbox-last-sync');
+    if (lastSyncEl) {
+      if (metrics.sync_in_progress) {
+        lastSyncEl.textContent = 'Updating…';
+      } else {
+        var lastSync = metrics.last_sync_at || (metrics.last_sync_log && metrics.last_sync_log.finished_at) || null;
+        var syncLabel = metrics.sync_status === 'Failed' ? 'Update failed' : 'Last updated';
+        lastSyncEl.textContent = syncLabel + ': ' + (lastSync ? formatActivityTimestamp(lastSync) : '—');
+      }
+    }
+  }
+
+  function loadEmailInboxMetrics(callback) {
+    return apiFetch('/email-inbox/metrics')
+      .then(function (body) {
+        var metrics = body.data || {};
+        applyEmailInboxMetrics(metrics);
+        if (callback) callback(metrics);
+        return metrics;
+      })
+      .catch(function () {
+        if (callback) callback({});
+        return {};
+      });
+  }
+
+  var EMAIL_INBOX_SYNC_TIMEOUT_MS = 10000;
+  var EMAIL_INBOX_AUTO_SYNC_MS = 5 * 60 * 1000;
+  var EMAIL_INBOX_SYNC_POLL_MS = 2000;
+  var EMAIL_INBOX_SYNC_POLL_MAX = 90;
+  var CAMPAIGN_POLL_MS = 3000;
+  var CAMPAIGN_POLL_MAX = 120;
+  var CAMPAIGN_TERMINAL_STATUSES = {
+    Completed: true,
+    Partial: true,
+    Failed: true,
+    Cancelled: true,
+    Paused: true,
+  };
+
+  function isCampaignTerminal(status) {
+    return !!CAMPAIGN_TERMINAL_STATUSES[status];
+  }
+
+  function pollCampaignUntilDone(channel, campaignId, onTick) {
+    var attempts = 0;
+    function tick() {
+      attempts += 1;
+      return apiFetch('/' + channel + '-campaigns/' + encodeURIComponent(campaignId))
+        .then(function (body) {
+          var campaign = body.data || {};
+          if (onTick) onTick(campaign);
+          if (isCampaignTerminal(campaign.status) || attempts >= CAMPAIGN_POLL_MAX) {
+            return campaign;
+          }
+          return new Promise(function (resolve) {
+            setTimeout(function () { resolve(tick()); }, CAMPAIGN_POLL_MS);
+          });
+        });
+    }
+    return tick();
+  }
+
+  function afterCampaignQueued(channel, campaignId, refreshFn, initialMessage) {
+    toast(initialMessage || 'Campaign queued successfully.', 'success');
+    if (refreshFn) refreshFn();
+    return pollCampaignUntilDone(channel, campaignId, function () {
+      if (refreshFn) refreshFn();
+    }).then(function (campaign) {
+      if (refreshFn) refreshFn();
+      if (!isCampaignTerminal(campaign.status)) {
+        return campaign;
+      }
+      var delivered = campaign.delivered_count || 0;
+      var failed = campaign.failed_count || 0;
+      toast(
+        'Campaign ' + String(campaign.status || 'done').toLowerCase() + ' · ' +
+        delivered + ' delivered · ' + failed + ' failed',
+        failed > 0 ? 'warning' : 'success'
+      );
+      return campaign;
+    }).catch(function () {});
+  }
+
+  function applyEmailInboxMetrics(metrics) {
+    metrics = metrics || {};
+    window.emailInboxMetrics = metrics;
+    renderEmailKpis(Object.assign({}, window.dashboardMetrics || {}, {
+      email_replies_received: metrics.reply_received_logs,
+      email_unread_replies: metrics.unread_replies,
+      email_today_replies: metrics.today_replies,
+      last_sync_at: metrics.last_sync_at,
+      last_sync_log: metrics.last_sync_log,
+    }));
+  }
+
+  function refreshEmailInboxAfterSync(data) {
+    if (data && data.metrics) {
+      applyEmailInboxMetrics(data.metrics);
+    } else {
+      loadEmailInboxMetrics();
+    }
+    return loadEmailInboxFromDatabase(function () {
+      renderEmailInboxTable();
+    });
+  }
+
+  function pollInboxSyncUntilDone() {
+    var attempts = 0;
+    function tick() {
+      attempts += 1;
+      return loadEmailInboxMetrics().then(function (metrics) {
+        if (!metrics.sync_in_progress) {
+          var log = metrics.last_sync_log || {};
+          if (metrics.sync_status === 'Failed' && log.error_message) {
+            toast(log.error_message, 'error');
+          }
+          return refreshEmailInboxAfterSync({ metrics: metrics });
+        }
+        if (attempts >= EMAIL_INBOX_SYNC_POLL_MAX) {
+          toast('Sync is taking longer than expected. Results will appear when complete.', 'info');
+          return metrics;
+        }
+        return new Promise(function (resolve) {
+          setTimeout(function () { resolve(tick()); }, EMAIL_INBOX_SYNC_POLL_MS);
+        });
+      });
+    }
+    return tick();
+  }
+
+  function syncLatestEmailsFromInbox(options) {
+    options = options || {};
+    var silent = !!options.silent;
+    var btn = document.getElementById('email-inbox-sync-btn');
+    if (btn && btn.disabled) {
+      return Promise.resolve();
+    }
+    var originalHtml = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i data-lucide="loader-2" class="h-4 w-4 animate-spin"></i> Updating…';
+      icons();
+    }
+    return apiFetch('/email-inbox/sync', { method: 'POST', timeoutMs: EMAIL_INBOX_SYNC_TIMEOUT_MS })
+      .then(function (body) {
+        if (!silent) {
+          var queuedMsg = body.message || 'Inbox update started.';
+          if (/sync/i.test(queuedMsg)) queuedMsg = 'Inbox update started.';
+          toast(queuedMsg, body.data && body.data.already_running ? 'info' : 'success');
+        }
+        return pollInboxSyncUntilDone();
+      })
+      .catch(function (err) {
+        var msg = err.message || 'Unable to refresh inbox';
+        if (err.name === 'AbortError' || /timed out/i.test(msg)) {
+          msg = 'Could not reach the server. Please try again.';
+        }
+        if (!silent) {
+          toast(msg, 'error');
+        }
+        throw err;
+      })
+      .finally(function () {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = originalHtml;
+          icons();
+        }
+      });
+  }
+
+  function maybeTriggerInboxAutoSync() {
+    if (!document.getElementById('email-inbox-table')) return;
+    var metrics = window.emailInboxMetrics || {};
+    var last = metrics.last_sync_at;
+    var stale = !last || (Date.now() - new Date(last).getTime() > 2 * 60 * 1000);
+    if (stale && !window._emailInboxAutoSyncRunning) {
+      window._emailInboxAutoSyncRunning = true;
+      syncLatestEmailsFromInbox({ silent: true })
+        .catch(function () {})
+        .finally(function () {
+          window._emailInboxAutoSyncRunning = false;
+        });
+    }
+  }
+
+  function startEmailInboxAutoSync() {
+    if (window._emailInboxAutoSyncTimer) return;
+    window._emailInboxAutoSyncTimer = setInterval(function () {
+      if (!document.getElementById('email-inbox-table')) return;
+      maybeTriggerInboxAutoSync();
+    }, EMAIL_INBOX_AUTO_SYNC_MS);
+  }
+
+  function renderEmailInboxTable(items) {
+    var tbody = document.getElementById('email-inbox-table');
+    if (!tbody) return;
+    items = items || window.realEmailInbox || [];
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-slate-400 py-8">No inbox messages yet. Enable IMAP and run sync.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items.map(function (item) {
+      var unreadClass = item.is_read ? '' : ' font-semibold';
+      var statusBadge = item.match_status === 'matched'
+        ? '<span class="badge-success">Matched</span>'
+        : '<span class="badge-warning">Unmatched</span>';
+      return '<tr class="cursor-pointer hover:bg-slate-50" data-email-inbox-id="' + item.id + '">' +
+        '<td class="' + unreadClass + '">' + escapeHtml(item.from_email || '—') + '</td>' +
+        '<td>' + escapeHtml(item.lead_name || '—') + '</td>' +
+        '<td>' + escapeHtml(item.from_email || '—') + '</td>' +
+        '<td class="max-w-xs truncate' + unreadClass + '" title="' + escapeHtml(item.subject) + '">' + escapeHtml(item.subject || '—') + '</td>' +
+        '<td class="whitespace-nowrap">' + escapeHtml(formatActivityTimestamp(item.received_at)) + '</td>' +
+        '<td>' + statusBadge + (item.attachment_count ? ' <i data-lucide="paperclip" class="inline h-3 w-3"></i>' : '') + '</td>' +
+        '<td>' + iconBtn('eye', 'View', 'data-view-inbox-message="' + item.id + '"', 'secondary') + '</td>' +
+      '</tr>';
+    }).join('');
+    icons();
+  }
+
+  function loadEmailInboxFromDatabase(callback) {
+    apiFetch('/email-inbox?per_page=50&sort_by=received_at&sort_dir=desc')
+      .then(function (body) {
+        window.realEmailInbox = unwrapList(body);
+        if (callback) callback(window.realEmailInbox);
+      })
+      .catch(function () {
+        window.realEmailInbox = [];
+        if (callback) callback([]);
+      });
+  }
+
+  function renderLeadEmailTimelineSection(payload) {
+    var items = (payload && payload.items) || [];
+    var threads = (payload && payload.threads) || [];
+    if (!items.length && !threads.length) return '';
+    var html = '<div class="mt-4 border-t border-slate-100 pt-4">' +
+      '<h3 class="text-sm font-semibold text-slate-700 mb-3">Communication Timeline</h3>';
+    if (threads.length) {
+      html += threads.map(function (thread) {
+        return '<div class="mb-4 rounded-lg border border-slate-100 p-3">' +
+          '<p class="font-medium text-slate-800 mb-2">' + escapeHtml(thread.subject || 'Conversation') + '</p>' +
+          '<div class="space-y-3 border-l-2 border-slate-200 pl-3 ml-1">' +
+          (thread.timeline || []).map(function (item) {
+            var isCustomer = item.actor_role === 'customer' || item.direction === 'inbound';
+            return '<div class="text-sm">' +
+              '<div class="flex items-center justify-between gap-2">' +
+                '<span class="' + (isCustomer ? 'badge-info' : 'badge-neutral') + '">' + escapeHtml(isCustomer ? 'Customer' : 'Employee') + '</span>' +
+                '<span class="text-caption text-slate-400">' + escapeHtml(item.occurred_at ? formatDateTime(item.occurred_at) : '') + '</span>' +
+              '</div>' +
+              '<p class="font-medium mt-1">' + escapeHtml(item.subject || '(No subject)') + '</p>' +
+              (item.body_preview ? '<p class="text-caption text-slate-600 mt-1 whitespace-pre-wrap">' + escapeHtml(item.body_preview) + '</p>' : '') +
+              (item.reply_preview ? '<p class="text-caption text-emerald-700 mt-1">Reply: ' + escapeHtml(item.reply_preview) + '</p>' : '') +
+            '</div>';
+          }).join('') +
+          '</div></div>';
+      }).join('');
+    } else {
+      html += '<div class="space-y-2 max-h-72 overflow-y-auto">' +
+        items.slice().reverse().map(function (item) {
+          var isCustomer = item.actor_role === 'customer' || item.direction === 'inbound';
+          return '<div class="rounded-lg border border-slate-100 p-3 text-sm">' +
+            '<div class="flex items-center justify-between gap-2">' +
+              '<span class="' + (isCustomer ? 'badge-info' : 'badge-neutral') + '">' + escapeHtml(item.actor || (isCustomer ? 'Customer' : 'Employee')) + '</span>' +
+              '<span class="text-caption text-slate-400">' + escapeHtml(item.occurred_at ? formatDateTime(item.occurred_at) : '') + '</span>' +
+            '</div>' +
+            '<p class="font-medium mt-1">' + escapeHtml(item.subject || '(No subject)') + '</p>' +
+            (item.body_preview ? '<p class="text-caption text-slate-600 mt-1 whitespace-pre-wrap">' + escapeHtml(item.body_preview) + '</p>' : '') +
+          '</div>';
+        }).join('') + '</div>';
+    }
+    html += '</div>';
+    return html;
   }
 
   function renderEmailLogsTable(logs) {
@@ -3664,7 +11074,8 @@ window.CA_CRM = (function () {
         '<td>' + escapeHtml(log.recipient_email || '—') + '</td>' +
         '<td class="max-w-xs truncate" title="' + escapeHtml(log.subject) + '">' + escapeHtml(log.subject || '—') + '</td>' +
         '<td>' + waStatusBadge(log.email_status) + '</td>' +
-        '<td class="max-w-xs truncate" title="' + escapeHtml(log.failed_reason) + '">' + escapeHtml(log.failed_reason || '—') + '</td>' +
+        '<td class="max-w-xs truncate" title="' + escapeHtml(log.failed_reason || log.reply_preview || '') + '">' +
+          escapeHtml(log.failed_reason || log.reply_preview || (log.reply_from ? 'Reply from ' + log.reply_from : '—')) + '</td>' +
       '</tr>';
     }).join('');
   }
@@ -3694,7 +11105,14 @@ window.CA_CRM = (function () {
   function refreshEmailPage() {
     loadDashboardMetricsFromDatabase(function (metrics) {
       renderEmailKpis(metrics);
+      loadEmailInboxMetrics(function () {
+        maybeTriggerInboxAutoSync();
+      });
     });
+    loadEmailInboxFromDatabase(function () {
+      renderEmailInboxTable();
+    });
+    startEmailInboxAutoSync();
     loadEmailCampaignsFromDatabase(function () {
       renderEmailCampaignGrid();
     });
@@ -3733,16 +11151,237 @@ window.CA_CRM = (function () {
       });
   }
 
+  function loadSmsTemplatesFromDatabase(callback, approvedOnly) {
+    var url = '/sms-templates' + (approvedOnly ? '?approved_only=1' : '');
+    apiFetch(url)
+      .then(function (body) {
+        window.realSmsTemplates = Array.isArray(body.data) ? body.data : [];
+        if (callback) callback(window.realSmsTemplates);
+      })
+      .catch(function () {
+        window.realSmsTemplates = [];
+        if (callback) callback([]);
+      });
+  }
+
+  function populateSmsTemplateSelect() {
+    var select = document.getElementById('form-campaign-sms-template-id');
+    if (!select) return;
+    var templates = (window.realSmsTemplates || []).filter(function (t) {
+      return t.status === 'approved' && t.is_active !== false;
+    });
+    select.innerHTML = '<option value="">Select approved DLT template</option>' +
+      templates.map(function (t) {
+        return '<option value="' + t.id + '">' + escapeHtml(t.template_name) + ' · ' + escapeHtml(t.sender_id) + '</option>';
+      }).join('');
+  }
+
+  function syncSmsCampaignTemplateBody() {
+    var select = document.getElementById('form-campaign-sms-template-id');
+    var body = document.getElementById('form-campaign-sms-message-template');
+    if (!select || !body) return;
+    var templateId = parseInt(select.value, 10);
+    var template = (window.realSmsTemplates || []).find(function (t) {
+      return parseInt(t.id, 10) === templateId;
+    });
+    body.value = template ? (template.body_template || '') : '';
+    updateSmsCampaignEstimates();
+  }
+
+  function getSmsSendBlockers(sms) {
+    sms = sms || window.smsSettingsState || {};
+    if (Array.isArray(sms.send_blockers) && sms.send_blockers.length) {
+      return sms.send_blockers;
+    }
+    var blockers = [];
+    if (sms.is_active === false) blockers.push('SMS provider is inactive. Enable it in SMS Settings.');
+    if (sms.mode !== 'live') blockers.push('Set SMS mode to Live in SMS Settings to send messages.');
+    if (!sms.has_api_key) blockers.push('Add your SMS Alert API Key in Settings.');
+    if (!sms.sender_id) blockers.push('Add your Sender ID in Settings.');
+    if (!sms.dlt_template_id) blockers.push('Add DLT Template ID in Settings (required for Live mode).');
+    return blockers;
+  }
+
+  function updateSmsSendButtonState() {
+    var sendBtn = document.getElementById('btn-sms-send');
+    if (!sendBtn) return;
+    var blockers = getSmsSendBlockers();
+    var canSend = blockers.length === 0;
+    sendBtn.disabled = false;
+    sendBtn.removeAttribute('aria-disabled');
+    sendBtn.classList.toggle('btn-primary--blocked', !canSend);
+    if (!canSend) {
+      sendBtn.title = blockers[0];
+    } else if (window.smsSettingsState && window.smsSettingsState.integration_status === 'failed') {
+      sendBtn.title = 'Last connection test failed — campaign send will still be attempted using your DLT template.';
+    } else if (window.smsSettingsState && window.smsSettingsState.integration_status !== 'integrated') {
+      sendBtn.title = 'Send SMS using your configured SMS Alert credentials.';
+    } else {
+      sendBtn.removeAttribute('title');
+    }
+    updateSmsCampaignSendNotice(blockers);
+  }
+
+  function updateSmsCampaignSendNotice(blockers) {
+    var notice = document.getElementById('form-campaign-sms-send-notice');
+    if (!notice) return;
+    blockers = blockers || getSmsSendBlockers();
+    if (!blockers.length) {
+      notice.classList.add('hidden');
+      notice.textContent = '';
+      return;
+    }
+    notice.classList.remove('hidden');
+    notice.innerHTML = '<strong>Send SMS is blocked:</strong> ' + escapeHtml(blockers[0]) +
+      ' Open <strong>Settings → SMS Configuration</strong> and set Mode to <strong>Live</strong>.';
+  }
+
+  function ensureSmsSendAllowed() {
+    var blockers = getSmsSendBlockers();
+    if (blockers.length) {
+      toast(blockers[0], 'error');
+      return false;
+    }
+    return true;
+  }
+
+  function renderSmsTemplatesTable(templates) {
+    var tbody = document.getElementById('sms-templates-table');
+    if (!tbody) return;
+    templates = templates || window.realSmsTemplates || [];
+    if (!templates.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-slate-400 py-6">No DLT templates yet. Add an approved template to start sending SMS.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = templates.map(function (t) {
+      var body = t.body_template || '';
+      if (body.length > 80) body = body.slice(0, 80) + '…';
+      var statusBadge = t.status === 'approved' ? 'badge-success' : (t.status === 'pending' ? 'badge-warning' : 'badge-danger');
+      var actionsCell = !window.smsTemplateCanManage
+        ? '<td class="crm-actions-cell text-right"><span class="cam-cell-empty">—</span></td>'
+        : (window.CAActionDropdown
+          ? CAActionDropdown.renderCell([
+            { action: 'edit', label: 'Edit', icon: 'pencil' },
+            { action: 'delete', label: 'Delete', icon: 'trash-2', danger: true },
+          ], {
+            scope: 'sms-template',
+            rowId: t.id,
+            cellClass: 'crm-actions-cell text-right',
+            ariaLabel: 'Template actions',
+          })
+          : '<td class="crm-actions-cell text-right"><span class="cam-cell-empty">—</span></td>');
+      return '<tr>' +
+        '<td>' + escapeHtml(t.template_name) + '</td>' +
+        '<td>' + escapeHtml(t.sender_id || '—') + '</td>' +
+        '<td class="font-mono text-xs">' + escapeHtml(t.dlt_template_id || '—') + '</td>' +
+        '<td class="max-w-md truncate" title="' + escapeHtml(t.body_template || '') + '">' + escapeHtml(body) + '</td>' +
+        '<td><span class="badge ' + statusBadge + '">' + escapeHtml(t.status || '—') + '</span></td>' +
+        actionsCell +
+      '</tr>';
+    }).join('');
+    icons();
+  }
+
+  function bindSmsTemplateHandlers() {
+    if (window._smsTemplateHandlersBound) return;
+    window._smsTemplateHandlersBound = true;
+
+    document.addEventListener('click', function (e) {
+      if (e.target.closest('#sms-template-add-btn')) {
+        e.preventDefault();
+        var wrap = document.getElementById('sms-template-form-wrap');
+        if (wrap) wrap.classList.remove('hidden');
+        var idEl = document.getElementById('sms-template-form-id');
+        if (idEl) idEl.value = '';
+        ['sms-template-form-name', 'sms-template-form-sender', 'sms-template-form-dlt-id', 'sms-template-form-body'].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) el.value = '';
+        });
+        var statusEl = document.getElementById('sms-template-form-status');
+        if (statusEl) statusEl.value = 'approved';
+        return;
+      }
+      if (e.target.closest('#sms-template-form-cancel')) {
+        e.preventDefault();
+        document.getElementById('sms-template-form-wrap')?.classList.add('hidden');
+        return;
+      }
+      if (e.target.closest('#sms-template-form-save')) {
+        e.preventDefault();
+        saveSmsTemplateForm();
+      }
+    });
+  }
+
+  function openSmsTemplateForm(templateId) {
+    var template = (window.realSmsTemplates || []).find(function (t) {
+      return parseInt(t.id, 10) === templateId;
+    });
+    if (!template) return;
+    var wrap = document.getElementById('sms-template-form-wrap');
+    if (wrap) wrap.classList.remove('hidden');
+    var idEl = document.getElementById('sms-template-form-id');
+    if (idEl) idEl.value = String(template.id);
+    var setVal = function (id, val) {
+      var el = document.getElementById(id);
+      if (el) el.value = val || '';
+    };
+    setVal('sms-template-form-name', template.template_name);
+    setVal('sms-template-form-sender', template.sender_id);
+    setVal('sms-template-form-dlt-id', template.dlt_template_id);
+    setVal('sms-template-form-body', template.body_template);
+    setVal('sms-template-form-status', template.status || 'pending');
+  }
+
+  function saveSmsTemplateForm() {
+    var id = document.getElementById('sms-template-form-id')?.value || '';
+    var payload = {
+      template_name: document.getElementById('sms-template-form-name')?.value?.trim() || '',
+      sender_id: document.getElementById('sms-template-form-sender')?.value?.trim() || '',
+      dlt_template_id: document.getElementById('sms-template-form-dlt-id')?.value?.trim() || '',
+      body_template: document.getElementById('sms-template-form-body')?.value?.trim() || '',
+      status: document.getElementById('sms-template-form-status')?.value || 'pending',
+      is_active: true,
+    };
+    if (!payload.template_name || !payload.sender_id || !payload.body_template) {
+      toast('Template name, sender ID, and body are required', 'error');
+      return;
+    }
+    var req = id
+      ? apiFetch('/sms-templates/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      : apiFetch('/sms-templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    req.then(function () {
+      toast('SMS template saved', 'success');
+      document.getElementById('sms-template-form-wrap')?.classList.add('hidden');
+      refreshSmsTemplatesPanel();
+    }).catch(function (err) {
+      toast(err.message || 'Unable to save template', 'error');
+    });
+  }
+
+  function refreshSmsTemplatesPanel() {
+    loadSmsTemplatesFromDatabase(function (templates) {
+      renderSmsTemplatesTable(templates);
+      populateSmsTemplateSelect();
+    }, false);
+  }
+
   function smsCampaignCardHtml(c) {
-    var mapped = c.queued_count || 0;
+    var sent = c.delivered_count || 0;
+    var failed = c.failed_count || 0;
     var total = c.total_sms || 0;
-    var previewBtn = '<button type="button" class="btn-secondary btn-sm inline-flex items-center justify-center gap-2" data-preview-sms-payload="' + c.id + '"><i data-lucide="code-2" class="h-4 w-4"></i> Preview Payload</button>';
-    var actions = '<div class="flex flex-wrap gap-2 mt-3">' + previewBtn + campaignDeleteButton('sms', c.id, c.status) + '</div>';
+    var previewBtn = iconBtn('code-2', 'Preview Payload', 'data-preview-sms-payload="' + c.id + '"', 'secondary');
+    var sendBtn = (c.status === 'Draft' || c.status === 'Scheduled')
+      ? iconBtn('send', 'Send', 'data-send-sms-campaign="' + c.id + '"', 'primary')
+      : '';
+    var actions = '<div class="flex flex-wrap gap-2 mt-3">' + sendBtn + previewBtn + campaignDeleteButton('sms', c.id, c.status) + '</div>';
+    var subtitle = c.status === 'Completed' || c.status === 'Partial'
+      ? 'Sent: ' + sent + ' · Failed: ' + failed
+      : 'Recipients: ' + total + ' · Draft' + (window.smsSettingsState && window.smsSettingsState.mode !== 'live' ? ' · SMS in Simulation mode' : '');
     return '<div class="card-interactive p-4 campaign-card" data-sms-campaign-id="' + c.id + '">' +
       '<div class="flex justify-between mb-2"><p class="text-card-heading">' + escapeHtml(c.campaign_name) + '</p>' + waStatusBadge(c.status) + '</div>' +
       '<p class="text-caption text-slate-500">Type: ' + escapeHtml(c.campaign_type) + ' · Audience: ' + escapeHtml(c.audience_label || c.audience_mode) + '</p>' +
-      '<p class="text-caption text-slate-500 mt-1">Recipients: ' + total + ' · Mapped: ' + mapped + '</p>' +
-      '<p class="text-caption text-slate-400 mt-1">Mapping phase — no SMS sent</p>' + actions +
+      '<p class="text-caption text-slate-500 mt-1">' + escapeHtml(subtitle) + '</p>' + actions +
       '</div>';
   }
 
@@ -3759,12 +11398,9 @@ window.CA_CRM = (function () {
   function renderSmsKpis(metrics) {
     metrics = metrics || window.dashboardMetrics || {};
     setText('sms-kpi-campaigns', formatCampaignNumber(metrics.sms_campaigns_total || 0));
-    setText('sms-kpi-mapped', formatCampaignNumber(metrics.sms_mapped || 0));
-    setText('sms-kpi-pending', formatCampaignNumber(metrics.sms_pending_campaigns || 0));
-    var modeEl = document.getElementById('sms-kpi-mode');
-    if (modeEl) {
-      modeEl.textContent = metrics.sms_mode_live ? 'Live' : 'Simulation';
-    }
+    setText('sms-kpi-sent', formatCampaignNumber(metrics.sms_sent || metrics.sms_delivered || 0));
+    setText('sms-kpi-pending-logs', formatCampaignNumber(metrics.sms_pending || metrics.sms_queued || 0));
+    setText('sms-kpi-failed-logs', formatCampaignNumber((metrics.sms_failed || 0) + (metrics.sms_api_error || 0)));
   }
 
   function renderSmsDashboardWidgets(metrics) {
@@ -3796,7 +11432,7 @@ window.CA_CRM = (function () {
     if (!tbody) return;
     logs = logs || window.realSmsLogs || [];
     if (!logs.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-slate-400 py-8">No SMS logs yet. Preview a campaign payload to create mapped audit logs.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="text-center text-slate-400 py-8">No SMS logs yet. Send a campaign to create delivery logs.</td></tr>';
       return;
     }
     tbody.innerHTML = logs.map(function (log) {
@@ -3804,6 +11440,8 @@ window.CA_CRM = (function () {
       if (provider.length > 80) provider = provider.slice(0, 80) + '…';
       return '<tr>' +
         '<td>' + escapeHtml(log.campaign_name || log.campaign_id || '—') + '</td>' +
+        '<td>' + escapeHtml(log.template_name || '—') + '</td>' +
+        '<td class="font-mono text-xs">' + escapeHtml(log.dlt_template_id || '—') + '</td>' +
         '<td>' + escapeHtml(log.firm_name || log.lead_name || '—') + '</td>' +
         '<td>' + escapeHtml(log.mobile_no || '—') + '</td>' +
         '<td class="max-w-xs truncate" title="' + escapeHtml(log.message) + '">' + escapeHtml(log.message || '—') + '</td>' +
@@ -3815,9 +11453,20 @@ window.CA_CRM = (function () {
   }
 
   function refreshSmsPage() {
+    var u = window.__CRM_USER__ || {};
+    window.smsTemplateCanManage = u.role === 'admin' || u.role === 'super_admin';
+    loadLeadsForSelects();
     loadDashboardMetricsFromDatabase(function (metrics) {
       renderSmsKpis(metrics);
     });
+    apiFetch('/sms-settings').then(function (body) {
+      window.smsSettingsState = body.data || {};
+      updateSmsSendButtonState();
+    }).catch(function () {});
+    refreshSmsTemplatesPanel();
+    bindSmsTemplateHandlers();
+    var addBtn = document.getElementById('sms-template-add-btn');
+    if (addBtn) addBtn.classList.toggle('hidden', !window.smsTemplateCanManage);
     loadSmsCampaignsFromDatabase(function () {
       renderSmsCampaignGrid();
     });
@@ -3827,9 +11476,8 @@ window.CA_CRM = (function () {
   }
 
   function updateSmsCampaignEstimates() {
-    var selected = Array.from(document.getElementById('form-campaign-ca-ids')?.selectedOptions || []);
     var mode = document.getElementById('form-campaign-audience-mode')?.value || 'all_leads';
-    var count = mode === 'selected_leads' ? selected.length : (window.realLeads || []).length;
+    var count = mode === 'selected_leads' ? getCampaignSelectedLeadIds().length : getLeadsForSelects().length;
     var est = document.getElementById('form-campaign-sms-estimated-recipients');
     if (est) est.value = String(count);
     var template = document.getElementById('form-campaign-sms-message-template')?.value || '';
@@ -3854,7 +11502,9 @@ window.CA_CRM = (function () {
   }
 
   function findLeadById(leadId) {
-    return (window.realLeads || []).find(function (l) {
+    var fromPicker = getCampaignLeadPickerState().selected[String(leadId)];
+    if (fromPicker) return fromPicker;
+    return getLeadsForSelects().find(function (l) {
       return parseInt(l.ca_id, 10) === parseInt(leadId, 10);
     }) || null;
   }
@@ -3883,10 +11533,10 @@ window.CA_CRM = (function () {
 
   function submitSmsCampaignDraft(callback) {
     var form = document.getElementById('form-add-campaign');
-    if (!form) return;
+    if (!form || !isCampaignModalOpen()) return;
     var fd = new FormData(form);
     var data = Object.fromEntries(fd.entries());
-    if (!(data.name && data.name.trim())) {
+    if (!campaignNameFromForm(data)) {
       toast('Campaign name is required', 'error');
       return;
     }
@@ -3894,12 +11544,23 @@ window.CA_CRM = (function () {
       toast('Campaign type is required', 'error');
       return;
     }
-    if (!(document.getElementById('form-campaign-sms-message-template')?.value.trim())) {
-      toast('SMS message template is required', 'error');
+    if (!(document.getElementById('form-campaign-sms-template-id')?.value)) {
+      toast('Select a DLT SMS template', 'error');
       return;
     }
     var smsPayload = buildCampaignAudiencePayload(data);
-    smsPayload.message_template = document.getElementById('form-campaign-sms-message-template').value.trim();
+    if (smsPayload.audience_mode === 'selected_leads' && (!smsPayload.ca_ids || !smsPayload.ca_ids.length)) {
+      toast('Select at least one lead', 'error');
+      return;
+    }
+    var schedule = validateCampaignScheduledAt(data.scheduled_at);
+    if (!schedule.valid) {
+      toast(schedule.message || 'Scheduled date is invalid', 'error');
+      return;
+    }
+    smsPayload.scheduled_at = schedule.value;
+    smsPayload.sms_template_id = parseInt(document.getElementById('form-campaign-sms-template-id').value, 10);
+    smsPayload.message_template = document.getElementById('form-campaign-sms-message-template')?.value?.trim() || '';
     validateSmsCampaignPrerequisites(smsPayload, function () {
       smsPayload.save_as_draft = true;
       apiFetch('/sms-campaigns', {
@@ -3912,6 +11573,7 @@ window.CA_CRM = (function () {
         else {
           closeModal(document.getElementById('modal-add-campaign'));
           form.reset();
+          resetFormDateTimePickers(form);
           configureCampaignModal('sms');
           refreshSmsPage();
           toast('SMS campaign draft saved', 'success');
@@ -4020,25 +11682,18 @@ window.CA_CRM = (function () {
         '<td>' + escapeHtml(row.dnd_type) + '</td>' +
         '<td class="max-w-xs truncate" title="' + escapeHtml(row.reason || '') + '">' + escapeHtml(row.reason || '—') + '</td>' +
         '<td class="whitespace-nowrap">' + escapeHtml(formatActivityTimestamp(row.added_at)) + '</td>' +
-        '<td><button type="button" class="btn-secondary btn-sm" data-remove-dnd="' + row.id + '"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i></button></td>' +
+        (window.CAActionDropdown
+          ? CAActionDropdown.renderCell([
+            { action: 'remove', label: 'Delete', icon: 'trash-2', danger: true },
+          ], {
+            scope: 'dnd',
+            rowId: row.id,
+            cellClass: 'crm-actions-cell',
+            ariaLabel: 'DND actions',
+          })
+          : '<td class="crm-actions-cell"><span class="cam-cell-empty">—</span></td>') +
       '</tr>';
     }).join('');
-    tbody.querySelectorAll('[data-remove-dnd]').forEach(function (btn) {
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        var id = btn.getAttribute('data-remove-dnd');
-        if (!id || !confirm('Remove this DND entry?')) return;
-        apiFetch('/dnd-management/' + id, { method: 'DELETE' })
-          .then(function () {
-            toast('DND entry removed', 'success');
-            refreshConsentDndPage();
-            if (document.getElementById('recent-activity-list')) renderRecentActivity();
-          })
-          .catch(function (error) {
-            toast(error.message || 'Failed to remove DND entry', 'error');
-          });
-      });
-    });
     icons();
   }
 
@@ -4103,19 +11758,70 @@ window.CA_CRM = (function () {
     window._campaignActionsBound = true;
 
     document.addEventListener('click', function (e) {
+      var inboxSyncBtn = e.target.closest('#email-inbox-sync-btn');
+      if (inboxSyncBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        syncLatestEmailsFromInbox();
+        return;
+      }
+
       var launchEmailBtn = e.target.closest('[data-launch-email-campaign]');
       if (launchEmailBtn) {
         e.preventDefault();
         e.stopPropagation();
+        if (launchEmailBtn.disabled) return;
+        launchEmailBtn.disabled = true;
         var emailCampaignId = launchEmailBtn.dataset.launchEmailCampaign;
         apiFetch('/email-campaigns/' + emailCampaignId + '/process', { method: 'POST' })
-          .then(function () {
-            toast('Email campaign processed successfully', 'success');
-            refreshEmailPage();
-            if (document.getElementById('recent-activity-list')) renderRecentActivity();
+          .then(function (body) {
+            var campaign = body.data || {};
+            afterCampaignQueued('email', campaign.id || emailCampaignId, function () {
+              refreshEmailPage();
+              if (document.getElementById('recent-activity-list')) renderRecentActivity();
+            }, body.message || 'Email campaign queued successfully.');
           })
           .catch(function (error) {
             toast(error.message || 'Failed to process email campaign', 'error');
+          })
+          .finally(function () {
+            launchEmailBtn.disabled = false;
+          });
+        return;
+      }
+
+      var viewInboxBtn = e.target.closest('[data-view-inbox-message]');
+      if (viewInboxBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        var inboxId = viewInboxBtn.getAttribute('data-view-inbox-message');
+        apiFetch('/email-inbox/' + encodeURIComponent(inboxId))
+          .then(function (body) {
+            var data = body.data || {};
+            var msg = data.message || {};
+            var preview = (msg.body || msg.body_preview || '').substring(0, 200);
+            toast((msg.subject || 'Inbox message') + (preview ? ' — ' + preview : ''), 'info');
+            if (data.suggest_followup) {
+              toast('Customer replied — consider creating a follow-up', 'info');
+            }
+            refreshEmailPage();
+          })
+          .catch(function (error) { toast(error.message || 'Unable to load inbox message', 'error'); });
+        return;
+      }
+
+      var retryEmailBtn = e.target.closest('[data-retry-email-campaign]');
+      if (retryEmailBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        var retryCampaignId = retryEmailBtn.dataset.retryEmailCampaign;
+        apiFetch('/email-campaigns/' + retryCampaignId + '/retry-failed', { method: 'POST' })
+          .then(function () {
+            toast('Failed messages queued for retry', 'success');
+            refreshEmailPage();
+          })
+          .catch(function (error) {
+            toast(error.message || 'Failed to retry email campaign messages', 'error');
           });
         return;
       }
@@ -4129,12 +11835,34 @@ window.CA_CRM = (function () {
           .then(function (body) {
             var preview = body.data || {};
             showSmsPayloadPreviewPanel(preview);
-            toast('SMS payload mapped and saved to audit logs', 'success');
+            toast('Payload preview saved — this does not send SMS. Click Send on the campaign card to deliver.', 'success');
             refreshSmsPage();
             if (document.getElementById('recent-activity-list')) renderRecentActivity();
           })
           .catch(function (error) {
-            toast(error.message || 'Failed to generate SMS payload preview', 'error');
+            toast(error.message || 'Unable to create SMS payload preview', 'error');
+          });
+        return;
+      }
+
+      var sendSmsBtn = e.target.closest('[data-send-sms-campaign]');
+      if (sendSmsBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!ensureSmsSendAllowed()) return;
+        if (!window.confirm('Send this SMS campaign now using the DLT template?')) return;
+        if (sendSmsBtn.disabled) return;
+        sendSmsBtn.disabled = true;
+        var smsCampaignId = sendSmsBtn.getAttribute('data-send-sms-campaign');
+        apiFetch('/sms-campaigns/' + smsCampaignId + '/process', { method: 'POST' })
+          .then(function (body) {
+            afterCampaignQueued('sms', smsCampaignId, refreshSmsPage, body.message || 'SMS campaign queued successfully.');
+          })
+          .catch(function (error) {
+            toast(error.message || 'Failed to send SMS campaign', 'error');
+          })
+          .finally(function () {
+            sendSmsBtn.disabled = false;
           });
         return;
       }
@@ -4191,15 +11919,21 @@ window.CA_CRM = (function () {
       if (launchWaBtn) {
         e.preventDefault();
         e.stopPropagation();
+        if (launchWaBtn.disabled) return;
+        launchWaBtn.disabled = true;
         var campaignId = launchWaBtn.dataset.launchWhatsappCampaign;
         apiFetch('/whatsapp-campaigns/' + campaignId + '/process', { method: 'POST' })
-          .then(function () {
-            toast('Campaign processed successfully', 'success');
-            refreshWhatsAppPage();
-            if (document.getElementById('recent-activity-list')) renderRecentActivity();
+          .then(function (body) {
+            afterCampaignQueued('whatsapp', campaignId, function () {
+              refreshWhatsAppPage();
+              if (document.getElementById('recent-activity-list')) renderRecentActivity();
+            }, body.message || 'WhatsApp campaign queued successfully.');
           })
           .catch(function (error) {
             toast(error.message || 'Failed to process campaign', 'error');
+          })
+          .finally(function () {
+            launchWaBtn.disabled = false;
           });
         return;
       }
@@ -4265,17 +11999,15 @@ window.CA_CRM = (function () {
   function renderCampaignPage(channel) {
     if (channel === 'whatsapp') {
       refreshWhatsAppPage();
-      return;
-    }
-    if (channel === 'email') {
+    } else if (channel === 'email') {
       refreshEmailPage();
-      return;
-    }
-    if (channel === 'sms') {
+    } else if (channel === 'sms') {
       refreshSmsPage();
+    } else {
+      renderCampaignGrids();
       return;
     }
-    renderCampaignGrids();
+    setTimeout(function () { applyPendingCampaignLeadSelection(channel); }, 200);
   }
 
   function bindModalTriggers(root) {
@@ -4286,15 +12018,20 @@ window.CA_CRM = (function () {
         var modalKey = btn.dataset.openModal;
         var id = 'modal-' + modalKey;
         var modal = document.getElementById(id);
+        if (!modal) return;
 
-        function openPreparedModal() {
+        function prepareModalContents() {
           populateSelects();
-          if (modalKey === 'assign-lead' || modalKey === 'followup') {
-            if (modalKey === 'assign-lead') window._editingAssignmentId = null;
-            if (modalKey === 'followup') window._editingFollowUpId = null;
-            var selId = CAData.getSelectedLeadId();
-            var sel = document.getElementById(modalKey === 'assign-lead' ? 'form-assign-lead-select' : 'form-fu-lead');
-            setSelectValueIfValid(sel, selId);
+          if (modalKey === 'assign-lead') {
+            window._editingAssignmentId = null;
+            if (!window._inboxBulkLeadIds || window._inboxBulkLeadIds.length <= 1) {
+              var singleLeadId = CAData.getSelectedLeadId();
+              window._inboxBulkLeadIds = singleLeadId ? [parseInt(singleLeadId, 10)] : null;
+              resetAssignLeadModalUi();
+            }
+            var assignSelId = CAData.getSelectedLeadId();
+            var assignSel = document.getElementById('form-assign-lead-select');
+            setSelectValueIfValid(assignSel, assignSelId);
           }
           if (modalKey === 'add-campaign') {
             configureCampaignModal(btn.dataset.campaignChannel || 'whatsapp');
@@ -4313,68 +12050,239 @@ window.CA_CRM = (function () {
               }
             }
           }
-          openModal(modal);
           icons();
         }
 
+        function loadFollowupModalContents() {
+          window._editingFollowUpId = null;
+          window._followupOriginalScheduled = '';
+          var bulkIds = (window._inboxBulkLeadIds || []).map(function (id) { return parseInt(id, 10); }).filter(Boolean);
+          var followSelId = CAData.getSelectedLeadId();
+          var presetIds = bulkIds.length === 1 ? bulkIds : (followSelId ? [parseInt(followSelId, 10)] : []);
+          if (!presetIds.length) {
+            toast('Select a lead from the table first.', 'warning');
+            return;
+          }
+          openFollowupModalWithLeads(presetIds);
+        }
+
+        if (modalKey === 'followup') {
+          loadFollowupModalContents();
+          return;
+        }
+
+        openExclusiveCrmModal(modal);
+        icons();
+
         if (modalKey === 'add-campaign' && ['whatsapp', 'email', 'sms'].indexOf(btn.dataset.campaignChannel || 'whatsapp') >= 0) {
+          var campaignChannel = btn.dataset.campaignChannel || 'whatsapp';
+          var campaignForm = document.getElementById('form-add-campaign');
+          if (campaignForm) campaignForm.reset();
+          configureCampaignModal(campaignChannel);
           ensureFormSelectData(function () {
             populateSelects();
-            var campaignChannel = btn.dataset.campaignChannel || 'whatsapp';
-            var campaignForm = document.getElementById('form-add-campaign');
-            if (campaignForm) campaignForm.reset();
-            configureCampaignModal(campaignChannel);
             populateCampaignAudienceSelects(campaignChannel);
-            openModal(modal);
             if (window.CA_STATE_CITY) {
               window.CA_STATE_CITY.prepareForm('form-add-campaign');
             }
             icons();
           });
-        } else if (modalKey === 'assign-lead' || modalKey === 'followup' || modalKey === 'add-lead') {
-          ensureFormSelectData(openPreparedModal);
+        } else if (modalKey === 'assign-lead' || modalKey === 'add-lead') {
+          if (modalKey === 'assign-lead') {
+            window._editingAssignmentId = null;
+            if (!window._inboxBulkLeadIds || window._inboxBulkLeadIds.length <= 1) {
+              var leadId = CAData.getSelectedLeadId();
+              window._inboxBulkLeadIds = leadId ? [parseInt(leadId, 10)] : null;
+              resetAssignLeadModalUi();
+            }
+          }
+          if (modalKey === 'add-lead') {
+            openLeadFormForAdd();
+          }
+          ensureFormSelectData(prepareModalContents);
         } else {
-          openPreparedModal();
+          prepareModalContents();
         }
       });
     });
   }
 
-  function initForms() {
-    document.getElementById('form-add-lead')?.addEventListener('submit', function (e) {
-      e.preventDefault();
-      var fd = new FormData(e.target);
-      var editingId = fd.get('ca_id') || window._editingLeadId;
-      var url = editingId ? '/ca-masters/' + editingId : '/ca-masters';
+  function submitLeadForm() {
+    var form = document.getElementById('form-add-lead');
+    if (!form || form.dataset.formPurpose !== 'lead' || !isLeadModalOpen()) return;
+    if (window._leadDuplicateBlocked) {
+      toast('This phone number already exists. Resolve the duplicate before saving.', 'warning');
+      return;
+    }
 
-      if (editingId) {
-        fd.append('_method', 'PUT');
+    var fd = new FormData(form);
+    var editingId = fd.get('ca_id') || window._editingLeadId;
+    var url = editingId ? '/ca-masters/' + editingId : '/ca-masters';
+    var submitBtn = document.getElementById('add-lead-submit-btn');
+
+    if (editingId) {
+      fd.append('_method', 'PUT');
+    }
+
+    if (editingId && isEmployeeUser()) {
+      (window._leadLockedFields || []).forEach(function (fieldName) {
+        fd.delete(fieldName);
+      });
+    }
+
+    if (!isEmployeeUser() && form.elements.executive_id && !form.elements.executive_id.disabled) {
+      var executiveValue = form.elements.executive_id.value;
+      if (executiveValue) {
+        fd.set('executive_id', executiveValue);
+      } else {
+        fd.delete('executive_id');
       }
+    }
 
-      apiFetch(url, { method: 'POST', body: fd })
-        .then(function () {
-          closeModal(document.getElementById('modal-add-lead'));
-          resetLeadForm();
-          realLeadsLoaded = false;
-          window._leadSegmentFilter = 'all';
-          window._selectLeadsLoaded = false;
-          invalidateDataCaches(['metrics', 'leads']);
-          if (window.CA_LISTING_SEARCH) {
-            CA_LISTING_SEARCH.setState('ca_masters', { page: 1, filters: {}, search: '' });
-          }
-          loadLeadsFromDatabase(function () {
-            reloadListing('ca_masters');
-            renderMasterTables();
-            if (document.getElementById('mgr-kpi-grid')) {
-              dashboardMetricsLoaded = false;
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.dataset.prevText = submitBtn.textContent;
+      submitBtn.textContent = 'Saving…';
+    }
+
+    apiFetch(url, { method: 'POST', body: fd })
+      .then(function (body) {
+        window._editingLeadId = '';
+        closeModal(document.getElementById('modal-add-lead'));
+        resetLeadForm();
+        window._leadSegmentFilter = 'all';
+        if (window.CA_LISTING_SEARCH) {
+          CA_LISTING_SEARCH.setState('ca_masters', { page: 1, filters: {}, search: '' });
+        }
+        return applyLeadMutationSuccess(body, {
+          toast: editingId ? 'Lead updated successfully' : 'Lead saved successfully',
+          cacheKeys: ['metrics', 'leads', 'assignments'],
+          callback: function () {
+            if (document.getElementById('mgr-kpi-sections')) {
               renderManagerDashboard();
             }
-          });
-          toast(editingId ? 'Lead updated successfully' : 'Lead saved successfully', 'success');
+            renderMasterTables();
+          },
+        });
+      })
+      .catch(function (error) {
+        if (error.duplicate) {
+          renderLeadDuplicateWarning(error.duplicate);
+        }
+        toast(error.message || 'Error while saving lead', error.duplicate ? 'warning' : 'error');
+      })
+      .finally(function () {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = submitBtn.dataset.prevText || 'Save Lead';
+        }
+      });
+  }
+
+  function handleCampaignFormSubmit() {
+    if (!isCampaignModalOpen()) return;
+
+    var form = document.getElementById('form-add-campaign');
+    if (!form || form.dataset.formPurpose !== 'campaign') return;
+
+    var fd = new FormData(form);
+    var data = Object.fromEntries(fd.entries());
+    var channel = data.channel || document.getElementById('form-campaign-channel')?.value || 'whatsapp';
+
+    if (!campaignNameFromForm(data)) {
+      toast('Campaign name is required', 'error');
+      return;
+    }
+    if (!(data.campaign_type && data.campaign_type.trim())) {
+      toast('Campaign type is required', 'error');
+      return;
+    }
+
+    var scheduleCheck = validateCampaignScheduledAt(data.scheduled_at);
+    if (!scheduleCheck.valid) {
+      toast(scheduleCheck.message || 'Scheduled date is invalid', 'error');
+      return;
+    }
+
+    if (channel === 'whatsapp') {
+      submitWhatsAppCampaign(form);
+      return;
+    }
+    if (channel === 'email') {
+      if (!(data.subject && data.subject.trim())) {
+        toast('Email subject is required', 'error');
+        return;
+      }
+      if (!(data.body_template && data.body_template.trim())) {
+        toast('Email body is required', 'error');
+        return;
+      }
+      var emailPayload = buildCampaignAudiencePayload(data);
+      if (emailPayload.audience_mode === 'selected_leads' && (!emailPayload.ca_ids || !emailPayload.ca_ids.length)) {
+        toast('Select at least one lead', 'error');
+        return;
+      }
+      emailPayload.subject = data.subject.trim();
+      emailPayload.body_template = data.body_template.trim();
+      var emailTemplateId = parseInt(document.getElementById('form-campaign-email-template-id')?.value || '', 10);
+      if (emailTemplateId) emailPayload.email_template_id = emailTemplateId;
+      var emailConfigId = parseInt(document.getElementById('form-campaign-email-config-id')?.value || '', 10);
+      if (emailConfigId) emailPayload.email_config_id = emailConfigId;
+
+      apiFetch('/email-campaigns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(emailPayload),
+      })
+        .then(function (body) {
+          var campaign = body.data || {};
+          closeModal(document.getElementById('modal-add-campaign'));
+          form.reset();
+          resetFormDateTimePickers(form);
+          configureCampaignModal('email');
+          refreshEmailPage();
+          if (document.getElementById('recent-activity-list')) renderRecentActivity();
+          if (campaign.status === 'Scheduled' && campaign.scheduled_at) {
+            toast('Scheduled for ' + formatSchedulePreview(campaign.scheduled_at), 'success');
+          } else if (campaign.status === 'Processing') {
+            closeModal(document.getElementById('modal-add-campaign'));
+            form.reset();
+            resetFormDateTimePickers(form);
+            configureCampaignModal('email');
+            afterCampaignQueued('email', campaign.id, refreshEmailPage, body.message || 'Email campaign queued successfully.');
+          } else {
+            toast(
+              'Campaign "' + (campaign.campaign_name || campaignNameFromForm(data)) + '" created · ' +
+              (campaign.total_emails || 0) + ' emails · ' + (campaign.status || 'Completed'),
+              'success',
+            );
+          }
         })
         .catch(function (error) {
-          toast(error.message || 'Error while saving lead', 'error');
+          toast(error.message || 'Failed to create email campaign', 'error');
         });
+      return;
+    }
+    if (channel === 'sms') {
+      submitSmsCampaignDraft();
+      return;
+    }
+    toast('Unsupported campaign channel. Choose WhatsApp, Email, or SMS.', 'error');
+  }
+
+  function initForms() {
+    initLeadDuplicateChecks();
+
+    document.getElementById('form-add-lead')?.addEventListener('submit', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      submitLeadForm();
+    });
+
+    document.getElementById('add-lead-submit-btn')?.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      submitLeadForm();
     });
 
     document.getElementById('form-lead-contact')?.addEventListener('submit', function (e) {
@@ -4386,7 +12294,7 @@ window.CA_CRM = (function () {
         return;
       }
       var payload = {
-        mobile_no: (fd.get('mobile_no') || '').trim(),
+        mobile_no: (fd.get('mobile_no') || '').trim() || null,
         alternate_mobile_no: (fd.get('alternate_mobile_no') || '').trim() || null,
         email_id: (fd.get('email_id') || '').trim() || null,
         website: (fd.get('website') || '').trim() || null,
@@ -4399,7 +12307,7 @@ window.CA_CRM = (function () {
         .then(function () {
           closeModal(document.getElementById('modal-lead-contact'));
           realLeadsLoaded = false;
-          invalidateDataCaches(['metrics', 'leads']);
+          invalidateDataCaches(['metrics', 'segment_counts', 'leads']);
           reloadListing('ca_masters');
           toast('Contact details updated successfully', 'success');
         })
@@ -4418,7 +12326,7 @@ window.CA_CRM = (function () {
           return;
         }
         if (!fd.get('crm_role')) fd.set('crm_role', 'employee');
-        if (!fd.get('role')) fd.set('role', 'Sales Executive');
+        if (!fd.get('role')) fd.set('role', 'Employee');
       } else {
         fd.delete('password');
         fd.delete('password_confirmation');
@@ -4501,6 +12409,83 @@ window.CA_CRM = (function () {
         });
     });
 
+    document.getElementById('form-change-login-email')?.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var fd = new FormData(e.target);
+      if ((fd.get('new_email') || '').trim() !== (fd.get('new_email_confirmation') || '').trim()) {
+        toast('New email and confirmation must match', 'error');
+        return;
+      }
+      var submitBtn = document.getElementById('change-login-email-submit-btn');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Sending…';
+      }
+      apiFetch('/auth/login-email-change', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          new_email: (fd.get('new_email') || '').trim(),
+          new_email_confirmation: (fd.get('new_email_confirmation') || '').trim(),
+          current_password: fd.get('current_password') || '',
+        }),
+      })
+        .then(function (body) {
+          renderLoginEmailChangeStatus(body.data || body);
+          var newEmailInput = e.target.querySelector('[name="new_email"]');
+          var confirmInput = e.target.querySelector('[name="new_email_confirmation"]');
+          var passwordInput = e.target.querySelector('[name="current_password"]');
+          if (newEmailInput) newEmailInput.value = '';
+          if (confirmInput) confirmInput.value = '';
+          if (passwordInput) passwordInput.value = '';
+          toast(body.message || 'Verification email sent', 'success');
+          icons();
+        })
+        .catch(function (error) {
+          toast(error.message || 'Unable to request login email change', 'error');
+        })
+        .finally(function () {
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Send Verification Email';
+          }
+        });
+    });
+
+    document.getElementById('login-email-resend-btn')?.addEventListener('click', function () {
+      var btn = this;
+      btn.disabled = true;
+      apiFetch('/auth/login-email-change/resend', { method: 'POST' })
+        .then(function (body) {
+          renderLoginEmailChangeStatus(body.data || body);
+          toast(body.message || 'Verification email resent', 'success');
+          icons();
+        })
+        .catch(function (error) {
+          toast(error.message || 'Unable to resend verification email', 'error');
+        })
+        .finally(function () {
+          btn.disabled = false;
+        });
+    });
+
+    document.getElementById('login-email-cancel-btn')?.addEventListener('click', function () {
+      var btn = this;
+      btn.disabled = true;
+      apiFetch('/auth/login-email-change/cancel', { method: 'POST' })
+        .then(function (body) {
+          renderLoginEmailChangeStatus(body.data || body);
+          toast(body.message || 'Pending login email change cancelled', 'success');
+          icons();
+        })
+        .catch(function (error) {
+          toast(error.message || 'Unable to cancel pending request', 'error');
+        })
+        .finally(function () {
+          btn.disabled = false;
+        });
+    });
+
     document.getElementById('form-reset-employee-password')?.addEventListener('submit', function (e) {
       e.preventDefault();
       var fd = new FormData(e.target);
@@ -4532,9 +12517,56 @@ window.CA_CRM = (function () {
       var fd = new FormData(e.target);
       var caId = fd.get('ca_id');
       var executiveId = fd.get('executive_id');
+      var bulkLeadIds = (window._inboxBulkLeadIds || []).map(function (id) {
+        return parseInt(id, 10);
+      }).filter(function (id) { return id > 0; });
 
-      if (!caId || !executiveId) {
-        toast('Please select a lead and executive', 'warning');
+      if (!executiveId) {
+        toast('Please select an employee', 'warning');
+        return;
+      }
+
+      // Bulk assign uses only the selected lead IDs captured when the modal opened.
+      if (!window._editingAssignmentId && bulkLeadIds.length > 1) {
+        apiFetch('/lead-assignments/bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ca_ids: bulkLeadIds,
+            employee_ids: [parseInt(executiveId, 10)],
+            assignment_mode: 'manual',
+            reason: fd.get('reason') || 'MANUAL_ASSIGN',
+          }),
+        })
+          .then(function (body) {
+            var data = body.data || {};
+            var affected = (data.assigned_rows || 0) + (data.reassigned_rows || 0);
+            closeModal(document.getElementById('modal-assign-lead'));
+            window._editingAssignmentId = null;
+            window._inboxBulkLeadIds = null;
+            e.target.reset();
+            resetAssignLeadModalUi();
+            clearInboxSelection('leads-data-table');
+            clearInboxSelection('ca-master-data-table');
+            invalidateDataCaches(['metrics', 'segment_counts', 'leads', 'assignments']);
+            reloadLeadDataAfterMutation({
+              cacheKeys: ['metrics', 'leads', 'assignments'],
+            }).then(function () {
+              if (affected !== bulkLeadIds.length) {
+                toast('Assigned ' + affected + ' of ' + bulkLeadIds.length + ' selected leads', 'warning');
+              } else {
+                toast(affected + ' selected lead(s) assigned successfully', 'success');
+              }
+            });
+          })
+          .catch(function (error) {
+            toast(error.message || 'Error while assigning selected leads', 'error');
+          });
+        return;
+      }
+
+      if (!caId) {
+        toast('Please select a lead and employee', 'warning');
         return;
       }
 
@@ -4550,14 +12582,25 @@ window.CA_CRM = (function () {
         .then(function () {
           closeModal(document.getElementById('modal-assign-lead'));
           window._editingAssignmentId = null;
+          window._inboxBulkLeadIds = null;
           e.target.reset();
-          realAssignmentsLoaded = false;
-          refreshAll();
-          toast(editingAssignmentId ? 'Assignment updated successfully' : 'Lead assigned successfully', 'success');
+          resetAssignLeadModalUi();
+          clearInboxSelection('leads-data-table');
+          clearInboxSelection('ca-master-data-table');
+          invalidateDataCaches(['metrics', 'segment_counts', 'leads', 'assignments']);
+          reloadLeadDataAfterMutation({
+            cacheKeys: ['metrics', 'leads', 'assignments'],
+          }).then(function () {
+            toast(editingAssignmentId ? 'Assignment updated successfully' : 'Lead assigned successfully', 'success');
+          });
         })
         .catch(function (error) {
           toast(error.message || 'Error while assigning lead', 'error');
         });
+    });
+
+    document.getElementById('bulk-delete-leads-confirm')?.addEventListener('click', function () {
+      confirmBulkDeleteLeads();
     });
 
     document.getElementById('form-followup')?.addEventListener('submit', function (e) {
@@ -4567,6 +12610,19 @@ window.CA_CRM = (function () {
       var url = editingId ? '/follow-ups/' + encodeURIComponent(editingId) : '/follow-ups';
       var method = editingId ? 'PUT' : 'POST';
       var payload = Object.fromEntries(fd.entries());
+      var scheduleCheck = validateFollowUpScheduledAt(payload.scheduled_date);
+      if (!scheduleCheck.valid && !editingId) {
+        toast(scheduleCheck.message || 'Please select a future date and time.', 'error');
+        return;
+      }
+      if (!scheduleCheck.valid && editingId && payload.scheduled_date) {
+        var original = window._followupOriginalScheduled || '';
+        var newSlice = String(payload.scheduled_date).slice(0, 16);
+        if (newSlice !== original) {
+          toast(scheduleCheck.message || 'Please select a future date and time.', 'error');
+          return;
+        }
+      }
       if (editingId && window._followupOriginalScheduled && payload.scheduled_date) {
         var newSlice = String(payload.scheduled_date).slice(0, 16);
         if (newSlice !== window._followupOriginalScheduled && !payload.reschedule_reason) {
@@ -4577,29 +12633,70 @@ window.CA_CRM = (function () {
         }
       }
 
+      if (isFollowupDemoScheduledType(payload.followup_type)) {
+        if (!payload.meeting_link || !String(payload.meeting_link).trim()) {
+          toast('Meeting link is required for Demo Scheduled follow-ups.', 'error');
+          var linkInput = document.getElementById('form-followup-meeting-link');
+          if (linkInput) linkInput.focus();
+          return;
+        }
+        if (payload.team_size) payload.team_size = parseInt(payload.team_size, 10);
+      } else {
+        delete payload.team_size;
+        delete payload.demo_provider_name;
+        delete payload.meeting_link;
+      }
+
+      delete payload.ca_id;
+      var leadId = normalizeFollowupLeadId(document.getElementById('form-followup-ca-id')?.value);
+      if (!leadId) {
+        toast('Lead is required to save a follow-up.', 'warning');
+        return;
+      }
+
+      function afterFollowupSaved(updatedFollowup) {
+        closeModal(document.getElementById('modal-followup'));
+        e.target.reset();
+        resetFormDateTimePickers(e.target);
+        var savedId = window._editingFollowUpId;
+        window._editingFollowUpId = null;
+        window._followupOriginalScheduled = '';
+        window._inboxBulkLeadIds = null;
+        resetFollowupLeadPicker();
+        var demoWrap = document.getElementById('followup-demo-fields-wrap');
+        if (demoWrap) demoWrap.classList.add('hidden');
+        resetFollowupDemoFieldState();
+        invalidateDataCaches(['metrics', 'followups']);
+        if (updatedFollowup && savedId) {
+          upsertFollowupInCache(updatedFollowup);
+          updateFollowupTableRow(savedId, updatedFollowup);
+          refreshFollowupsPage({ reload: false, calendar: true });
+        } else {
+          if (window.CA_LISTING_SEARCH) {
+            CA_LISTING_SEARCH.setState('follow_ups', { page: 1 });
+          }
+          refreshFollowupsPage({ reload: true, calendar: true });
+        }
+        toast(savedId ? 'Follow-up updated successfully' : 'Follow-up saved successfully', 'success');
+      }
+
+      payload.ca_id = leadId;
       apiFetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-        .then(function () {
-          closeModal(document.getElementById('modal-followup'));
-          e.target.reset();
-          window._editingFollowUpId = null;
-          window._followupOriginalScheduled = '';
-          realFollowUpsLoaded = false;
-          refreshAll();
-          toast(editingId ? 'Follow-up updated successfully' : 'Follow-up saved successfully', 'success');
-        })
+        .then(function (body) { afterFollowupSaved(body && body.data ? body.data : null); })
         .catch(function (error) {
-          toast(error.message || 'Error while saving follow-up', 'error');
+          toast(formatApiErrorMessage(error, 'Error while saving follow-up'), 'error');
         });
     });
 
     document.getElementById('form-call-outcome')?.addEventListener('submit', function (e) {
       e.preventDefault();
-      var fd = new FormData(e.target);
-      var payload = Object.fromEntries(fd.entries());
-      if (!payload.outcome) {
-        toast('Please select a call outcome.', 'warning');
-        return;
-      }
+      var form = e.target;
+      var payload = validateCallOutcomeForm(form);
+      if (!payload) return;
+
+      var submitBtn = document.querySelector('button[form="form-call-outcome"]');
+      if (submitBtn) submitBtn.disabled = true;
+
       apiFetch('/follow-ups/call-outcome', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4607,28 +12704,237 @@ window.CA_CRM = (function () {
       })
         .then(function () {
           closeModal(document.getElementById('modal-call-outcome'));
-          e.target.reset();
-          realFollowUpsLoaded = false;
-          refreshAll();
-          toast('Call outcome saved. Next follow-up scheduled if applicable.', 'success');
+          form.reset();
+          clearCallOutcomeErrors(form);
+          syncCallOutcomeFields();
+          invalidateDataCaches(['metrics', 'followups']);
+          refreshFollowupsPage({ reload: true, calendar: true });
+          if (typeof loadEmployeeWorkflowLists === 'function') loadEmployeeWorkflowLists();
+          if (typeof loadManagerWorkflowLists === 'function') loadManagerWorkflowLists();
+          toast('Call outcome saved.', 'success');
         })
         .catch(function (error) {
-          toast(error.message || 'Failed to save call outcome', 'error');
+          var message = error.message || 'Failed to save call outcome';
+          if (/employee is required/i.test(message)) {
+            message = 'Unable to save call outcome. Please try again.';
+          }
+
+          var fieldErrors = error.errors || null;
+          var fieldMap = {
+            outcome: 'outcome',
+            remarks: 'remarks',
+            next_followup_date: 'next_followup_date',
+            demo_date: 'demo_date',
+            demo_time: 'demo_time',
+            demo_at: 'demo_date',
+            meeting_link: 'meeting_link',
+          };
+          var focused = false;
+          if (fieldErrors) {
+            Object.keys(fieldMap).forEach(function (key) {
+              if (fieldErrors[key] && fieldErrors[key][0]) {
+                setCallOutcomeError(fieldMap[key], fieldErrors[key][0]);
+                if (!focused) {
+                  var input = form.querySelector('[name="' + fieldMap[key] + '"]');
+                  if (input) {
+                    input.focus();
+                    focused = true;
+                  }
+                }
+              }
+            });
+          }
+
+          if (!focused) {
+            var textMap = {
+              'call note': 'remarks',
+              'call status': 'outcome',
+              'follow-up date': 'next_followup_date',
+              'demo date': 'demo_date',
+              'demo time': 'demo_time',
+              'demo date/time': 'demo_date',
+              'demo date and time': 'demo_date',
+            };
+            var mapped = null;
+            Object.keys(textMap).forEach(function (key) {
+              if (!mapped && message.toLowerCase().indexOf(key) >= 0) mapped = textMap[key];
+            });
+            if (mapped) {
+              setCallOutcomeError(mapped, message);
+              var fieldInput = form.querySelector('[name="' + mapped + '"]');
+              if (fieldInput) fieldInput.focus();
+            } else {
+              toast(message, 'error');
+            }
+          }
+        })
+        .finally(function () {
+          if (submitBtn) submitBtn.disabled = false;
         });
     });
+
+    document.getElementById('form-lead-call-log')?.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var form = e.target;
+      var payload = validateLeadCallLogForm(form);
+      if (!payload) return;
+
+      var submitBtn = document.querySelector('button[form="form-lead-call-log"]');
+      if (submitBtn) submitBtn.disabled = true;
+
+      submitLeadCallLog(payload)
+        .then(function () {
+          closeModal(document.getElementById('modal-lead-call-log'));
+          form.reset();
+          clearLeadCallLogErrors(form);
+          syncLeadCallLogFields();
+          invalidateDataCaches(['metrics', 'followups', 'segment_counts', 'leads']);
+          refreshCaMasterOrLeadsTable();
+          refreshFollowupsPage({ reload: true, calendar: true });
+          if (typeof loadEmployeeWorkflowLists === 'function') loadEmployeeWorkflowLists();
+          if (typeof loadManagerWorkflowLists === 'function') loadManagerWorkflowLists();
+          toast('Call log saved.', 'success');
+        })
+        .catch(function (error) {
+          var message = error.message || 'Failed to save call log';
+          if (/employee is required/i.test(message)) {
+            message = 'Unable to save call log. Please try again.';
+          }
+          if (error.status === 403) {
+            toast('You do not have permission to log calls for this lead.', 'error');
+            return;
+          }
+          toast(message, 'error');
+        })
+        .finally(function () {
+          if (submitBtn) submitBtn.disabled = false;
+        });
+    });
+
+    var leadCallLogStatus = document.getElementById('lead-call-log-status');
+    if (leadCallLogStatus) {
+      leadCallLogStatus.addEventListener('change', function () {
+        clearLeadCallLogErrors(document.getElementById('form-lead-call-log'));
+        syncLeadCallLogFields();
+      });
+    }
 
     var outcomeSelect = document.getElementById('call-outcome-select');
     if (outcomeSelect) {
       outcomeSelect.addEventListener('change', function () {
-        var wrap = document.getElementById('call-outcome-schedule-wrap');
-        if (!wrap) return;
-        var manual = ['Call Later', 'Interested', 'Demo Scheduled'].indexOf(outcomeSelect.value) >= 0;
-        wrap.classList.toggle('hidden', !manual);
+        clearCallOutcomeErrors(document.getElementById('form-call-outcome'));
+        syncCallOutcomeFields();
+      });
+    }
+
+    document.getElementById('form-schedule-demo')?.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var fd = new FormData(e.target);
+      var payload = Object.fromEntries(fd.entries());
+      if (!payload.ca_id || !payload.demo_at || !payload.meeting_link) {
+        toast('Lead, demo date/time, and meeting link are required.', 'warning');
+        return;
+      }
+      apiFetch('/workflow/demos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+        .then(function () {
+          closeModal(document.getElementById('modal-schedule-demo'));
+          e.target.reset();
+          realFollowUpsLoaded = false;
+          refreshAll();
+          loadEmployeeWorkflowLists();
+          loadManagerWorkflowLists();
+          toast('Demo scheduled. Reminders queued.', 'success');
+        })
+        .catch(function (error) {
+          toast(error.message || 'Failed to schedule demo', 'error');
+        });
+    });
+
+    document.getElementById('form-demo-result')?.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var fd = new FormData(e.target);
+      var payload = Object.fromEntries(fd.entries());
+      var scheduleId = payload.demo_schedule_id;
+      if (!scheduleId || !payload.result) {
+        toast('Demo and result are required.', 'warning');
+        return;
+      }
+      delete payload.demo_schedule_id;
+      delete payload.sale_month_preview;
+      if (payload.plan_purchased) payload.software_name = payload.plan_purchased;
+      if (payload.points) payload.points = parseInt(payload.points, 10);
+      if (payload.cooling_period_days) payload.cooling_period_days = parseInt(payload.cooling_period_days, 10);
+      if (payload.total_amount !== undefined && payload.total_amount !== '') payload.total_amount = parseFloat(payload.total_amount);
+      if (payload.amount_received !== undefined && payload.amount_received !== '') payload.amount_received = parseFloat(payload.amount_received);
+      if (!payload.employee_id) delete payload.employee_id;
+      if (!payload.manager_id) delete payload.manager_id;
+      if (!payload.invoice_number) delete payload.invoice_number;
+      apiFetch('/workflow/demos/' + scheduleId + '/result', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+        .then(function () {
+          closeModal(document.getElementById('modal-demo-result'));
+          e.target.reset();
+          realFollowUpsLoaded = false;
+          refreshAll();
+          loadEmployeeWorkflowLists();
+          loadManagerWorkflowLists();
+          if (document.getElementById('demo-history-table')) loadDemoHistory();
+          toast('Demo result saved.', 'success');
+        })
+        .catch(function (error) {
+          toast(error.message || 'Failed to save demo result', 'error');
+        });
+    });
+
+    var demoResultSelect = document.getElementById('demo-result-select');
+    if (demoResultSelect) {
+      demoResultSelect.addEventListener('change', function () {
+        var wrap = document.getElementById('demo-result-purchase-wrap');
+        var purchaseResults = ['Purchased', 'Purchasing'];
+        var showPurchase = purchaseResults.indexOf(demoResultSelect.value) >= 0;
+        if (wrap) wrap.classList.toggle('hidden', !showPurchase);
+        if (showPurchase) {
+          ensureDemoPurchaseOptions().then(function () {
+            populateDemoResultPlanSelect();
+            syncDemoPurchasePreview(true);
+            enhanceEntityLookups(document.getElementById('modal-demo-result') || document);
+          });
+        }
+      });
+    }
+
+    var demoResultForm = document.getElementById('form-demo-result');
+    if (demoResultForm && !demoResultForm._demoPurchasePreviewBound) {
+      demoResultForm._demoPurchasePreviewBound = true;
+      demoResultForm.addEventListener('input', function (e) {
+        if (!e.target || !e.target.id) return;
+        if (e.target.id === 'demo-result-plan') {
+          syncDemoPurchasePreview(true);
+          return;
+        }
+        if (['demo-result-purchase-date', 'demo-result-total', 'demo-result-received', 'demo-result-cooling', 'demo-result-points'].indexOf(e.target.id) !== -1) {
+          syncDemoPurchasePreview(false);
+        }
+      });
+      demoResultForm.addEventListener('change', function (e) {
+        if (!e.target || !e.target.id) return;
+        if (e.target.id === 'demo-result-plan' || e.target.id === 'demo-result-purchase-date') {
+          syncDemoPurchasePreview(e.target.id === 'demo-result-plan');
+        }
       });
     }
 
     var fuScheduled = document.querySelector('#form-followup [name="scheduled_date"]');
     if (fuScheduled) {
+      initFollowUpDateTimeField();
+      initFollowUpDemoFields();
       fuScheduled.addEventListener('change', function () {
         var wrap = document.getElementById('followup-reschedule-reason-wrap');
         if (!wrap || !window._editingFollowUpId) return;
@@ -4681,120 +12987,73 @@ window.CA_CRM = (function () {
 
     document.getElementById('form-add-campaign')?.addEventListener('submit', function (e) {
       e.preventDefault();
-      var fd = new FormData(e.target);
-      var data = Object.fromEntries(fd.entries());
-      var channel = data.channel || document.getElementById('form-campaign-channel')?.value || 'whatsapp';
-
-      if (!(data.name && data.name.trim())) {
-        toast('Campaign name is required', 'error');
-        return;
-      }
-      if (!(data.campaign_type && data.campaign_type.trim())) {
-        toast('Campaign type is required', 'error');
-        return;
-      }
-
-      if (channel === 'whatsapp') {
-        if (!(data.message_template && data.message_template.trim())) {
-          toast('WhatsApp message template is required', 'error');
-          return;
-        }
-        var payload = buildCampaignAudiencePayload(data);
-        payload.message_template = data.message_template.trim();
-
-        apiFetch('/whatsapp-campaigns', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        })
-          .then(function (body) {
-            var campaign = body.data || {};
-            closeModal(document.getElementById('modal-add-campaign'));
-            e.target.reset();
-            configureCampaignModal('whatsapp');
-            refreshWhatsAppPage();
-            if (document.getElementById('recent-activity-list')) renderRecentActivity();
-            toast(
-              'Campaign "' + (campaign.campaign_name || data.name) + '" created · ' +
-              (campaign.total_messages || 0) + ' messages · ' + (campaign.status || 'Completed'),
-              'success',
-            );
-          })
-          .catch(function (error) {
-            toast(error.message || 'Failed to create WhatsApp campaign', 'error');
-          });
-        return;
-      }
-      if (channel === 'email') {
-        if (!(data.subject && data.subject.trim())) {
-          toast('Email subject is required', 'error');
-          return;
-        }
-        if (!(data.body_template && data.body_template.trim())) {
-          toast('Email body is required', 'error');
-          return;
-        }
-        var emailPayload = buildCampaignAudiencePayload(data);
-        emailPayload.subject = data.subject.trim();
-        emailPayload.body_template = data.body_template.trim();
-
-        apiFetch('/email-campaigns', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(emailPayload),
-        })
-          .then(function (body) {
-            var campaign = body.data || {};
-            closeModal(document.getElementById('modal-add-campaign'));
-            e.target.reset();
-            configureCampaignModal('email');
-            refreshEmailPage();
-            if (document.getElementById('recent-activity-list')) renderRecentActivity();
-            toast(
-              'Campaign "' + (campaign.campaign_name || data.name) + '" created · ' +
-              (campaign.total_emails || 0) + ' emails · ' + (campaign.status || 'Completed'),
-              'success',
-            );
-          })
-          .catch(function (error) {
-            toast(error.message || 'Failed to create email campaign', 'error');
-          });
-        return;
-      }
-      if (channel === 'sms') {
-        submitSmsCampaignDraft();
-        return;
-      }
-      toast('Unsupported campaign channel. Choose WhatsApp, Email, or SMS.', 'error');
+      e.stopPropagation();
+      handleCampaignFormSubmit();
     });
 
     document.getElementById('btn-create-campaign')?.addEventListener('click', function (e) {
-      var form = document.getElementById('form-add-campaign');
-      if (!form) return;
-      if (typeof form.requestSubmit === 'function') {
-        form.requestSubmit();
-      } else {
-        form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
-      }
+      e.preventDefault();
+      e.stopPropagation();
+      handleCampaignFormSubmit();
     });
 
     document.getElementById('form-campaign-audience-mode')?.addEventListener('change', function () {
       toggleCampaignAudienceFields();
+      if (this.value === 'selected_leads') {
+        populateCampaignAudienceSelects(null, { preserveSelection: true });
+      }
       updateSmsCampaignEstimates();
     });
-    document.getElementById('form-campaign-ca-ids')?.addEventListener('change', updateSmsCampaignEstimates);
+    document.getElementById('form-campaign-sms-template-id')?.addEventListener('change', syncSmsCampaignTemplateBody);
+    document.getElementById('form-campaign-whatsapp-template-id')?.addEventListener('change', syncWhatsAppCampaignTemplateBody);
+    document.getElementById('form-campaign-email-template-id')?.addEventListener('change', syncEmailCampaignTemplateFields);
+    document.getElementById('btn-wa-preview-message')?.addEventListener('click', previewWhatsAppCampaignMessage);
+    document.getElementById('btn-email-preview-message')?.addEventListener('click', previewEmailCampaignMessage);
     document.getElementById('form-campaign-sms-message-template')?.addEventListener('input', updateSmsCampaignEstimates);
 
     document.getElementById('btn-sms-save-draft')?.addEventListener('click', function () {
       submitSmsCampaignDraft();
     });
 
+    function sendSmsCampaignById(campaignId) {
+      apiFetch('/sms-campaigns/' + campaignId + '/process', { method: 'POST' })
+        .then(function (body) {
+          closeModal(document.getElementById('modal-add-campaign'));
+          afterCampaignQueued('sms', campaignId, refreshSmsPage, body.message || 'SMS campaign queued successfully.');
+        })
+        .catch(function (error) {
+          toast(error.message || 'Failed to send SMS campaign', 'error');
+        });
+    }
+
+    function finalizeSmsCampaignAfterSave(campaign, form) {
+      if (!campaign) return;
+      if (campaign.status === 'Scheduled' && campaign.scheduled_at) {
+        closeModal(document.getElementById('modal-add-campaign'));
+        if (form) {
+          form.reset();
+          resetFormDateTimePickers(form);
+        }
+        configureCampaignModal('sms');
+        refreshSmsPage();
+        toast('Scheduled for ' + formatSchedulePreview(campaign.scheduled_at), 'success');
+        return;
+      }
+      sendSmsCampaignById(campaign.id);
+    }
+
+    document.getElementById('btn-sms-send')?.addEventListener('click', function () {
+      if (!ensureSmsSendAllowed()) return;
+      submitSmsCampaignDraft(function (campaign) {
+        finalizeSmsCampaignAfterSave(campaign, document.getElementById('form-add-campaign'));
+      });
+    });
+
     document.getElementById('btn-sms-preview-message')?.addEventListener('click', function () {
-      var template = document.getElementById('form-campaign-sms-message-template')?.value || '';
-      var leadOpt = document.getElementById('form-campaign-ca-ids')?.selectedOptions?.[0];
-      var leadId = leadOpt ? parseInt(leadOpt.value, 10) : ((window.realLeads || [])[0] || {}).ca_id;
-      if (!template.trim()) {
-        toast('Enter a message template first', 'error');
+      var templateId = parseInt(document.getElementById('form-campaign-sms-template-id')?.value || '', 10);
+      var leadId = getFirstCampaignSelectedLeadId() || (getLeadsForSelects()[0] || {}).ca_id;
+      if (!templateId) {
+        toast('Select a DLT template first', 'error');
         return;
       }
       if (!leadId) {
@@ -4806,10 +13065,10 @@ window.CA_CRM = (function () {
         toast(SMS_MOBILE_REQUIRED_MESSAGE, 'error');
         return;
       }
-      apiFetch('/sms-campaigns/preview-message', {
+      apiFetch('/sms-templates/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message_template: template, lead_id: leadId }),
+        body: JSON.stringify({ sms_template_id: templateId, lead_id: leadId }),
       }).then(function (body) {
         var data = body.data || {};
         var previewEl = document.getElementById('form-campaign-sms-preview-message');
@@ -4836,7 +13095,7 @@ window.CA_CRM = (function () {
             toast('Payload mapped and saved to sms_logs for audit', 'success');
           })
           .catch(function (error) {
-            toast(error.message || 'Failed to generate payload preview', 'error');
+            toast(error.message || 'Unable to create payload preview', 'error');
           });
       });
     });
@@ -4844,18 +13103,28 @@ window.CA_CRM = (function () {
     document.querySelectorAll('[data-close-crm-modal]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         var modal = btn.closest('.ca-modal');
+        if (modal && modal.id === 'modal-add-lead') {
+          releaseLeadLock().finally(function () {
+            closeModal(modal);
+            resetLeadForm();
+          });
+          return;
+        }
         closeModal(modal);
-        if (modal && modal.id === 'modal-add-lead') resetLeadForm();
       });
     });
 
+    if (!window._leadLockUnloadBound) {
+      window._leadLockUnloadBound = true;
+      window.addEventListener('beforeunload', releaseLeadLockBeacon);
+    }
+
     document.getElementById('detail-followup-btn')?.addEventListener('click', function () {
       if (typeof closeDetailDrawer === 'function') closeDetailDrawer();
-      ensureFormSelectData(function () {
-        populateSelects();
-        setSelectValueIfValid(document.getElementById('form-fu-lead'), CAData.getSelectedLeadId());
-        openModal(document.getElementById('modal-followup'));
-      });
+      window._editingFollowUpId = null;
+      window._followupOriginalScheduled = '';
+      var leadId = CAData.getSelectedLeadId();
+      openFollowupModalWithLeads(leadId ? [parseInt(leadId, 10)] : []);
     });
     document.getElementById('detail-edit-btn')?.addEventListener('click', function () {
       var drawer = document.getElementById('detail-drawer');
@@ -4869,10 +13138,12 @@ window.CA_CRM = (function () {
         return;
       }
       if (typeof closeDetailDrawer === 'function') closeDetailDrawer();
-      if (openLeadFormForEdit(leadId)) {
-        openModal(document.getElementById('modal-add-lead'));
-        icons();
-      }
+      openLeadFormForEdit(leadId).then(function (ok) {
+        if (ok) {
+          openExclusiveCrmModal(document.getElementById('modal-add-lead'));
+          icons();
+        }
+      });
     });
   }
 
@@ -4907,6 +13178,10 @@ window.CA_CRM = (function () {
         });
       });
     });
+
+    initCampaignScheduledDateField();
+    initFollowUpDateTimeField();
+    initFollowUpDemoFields();
   }
 
   function initQuickActions() {
@@ -4944,20 +13219,34 @@ window.CA_CRM = (function () {
     bindModalTriggers(document.getElementById('quick-actions-menu'));
   }
   function refreshCurrentPage() {
-    dashboardMetricsLoaded = false;
-    onPage(window._currentPageId || 'dashboard');
+    var pageId = window._currentPageId || 'dashboard';
+    if (pageId === 'dashboard') {
+      if (isEmployeeUser()) renderEmployeeDashboard();
+      else renderManagerDashboard();
+      return;
+    }
+    onPage(pageId);
   }
 
   function refreshAll() {
+    var pageId = window._currentPageId || 'dashboard';
+    if (pageId === 'dashboard') {
+      dashboardMetricsLoaded = false;
+      dashboardMetricsPromise = null;
+      employeeDashboardLoaded = false;
+      employeeDashboardPromise = null;
+      if (isEmployeeUser()) renderEmployeeDashboard();
+      else renderManagerDashboard();
+      return;
+    }
     invalidateDataCaches(['metrics']);
-    employeeDashboardLoaded = false;
-    employeeDashboardData = null;
     refreshCurrentPage();
   }
 
   function onPage(pageId) {
     window._currentPageId = pageId;
     bindModalTriggers(document);
+    enhanceEntityLookups(document.getElementById('page-container') || document);
 
     if (pageId === 'dashboard') {
       if (isEmployeeUser()) renderEmployeeDashboard();
@@ -4968,17 +13257,37 @@ window.CA_CRM = (function () {
       icons();
       return;
     }
+    if (pageId === 'recycle-bin') {
+      loadRecycleBin();
+      bindRecycleBinActions();
+      icons();
+      return;
+    }
     if (pageId === 'leads' || pageId === 'leads-segments') {
       renderLeadsHub();
       icons();
       return;
     }
     if (pageId === 'employees' || pageId === 'assignment') {
-      loadDashboardMetricsFromDatabase(function () {
-        renderEmployeesTable();
+      function paintEmployeesAssignmentPage() {
+        if (window.CA_LISTING_SEARCH) {
+          reloadListing('employees');
+        } else {
+          renderEmployeesTable();
+        }
         renderLeaderboard();
+        renderEmployeesPerformanceTable();
         renderAssignmentTable();
         renderAssignmentHistoryTable();
+        renderAssignmentKpis();
+        populateAssignmentExecutiveFilter();
+        if (pageId === 'assignment') initAssignmentPage();
+        icons();
+      }
+      paintEmployeesAssignmentPage();
+      loadDashboardMetricsFromDatabase(function () {
+        renderLeaderboard();
+        renderEmployeesPerformanceTable();
         renderAssignmentKpis();
         icons();
       });
@@ -4990,43 +13299,63 @@ window.CA_CRM = (function () {
         CA_LISTING_SEARCH.setState('follow_ups', { page: 1, filters: { followup_due: dueFilter } });
         window._followupDateFilter = '';
       }
+      setFollowupTypePanels('list');
+      if (window.CA_LISTING_SEARCH) {
+        reloadListing('follow_ups');
+      } else {
+        renderFollowupsTable();
+        renderFollowupKpis();
+        renderFollowupCalendarFromData();
+      }
       loadDashboardMetricsFromDatabase(function () {
-        if (window.CA_LISTING_SEARCH) {
-          reloadListing('follow_ups');
-        } else {
-          renderFollowupsTable();
-          renderFollowupKpis();
-          renderFollowupCalendarFromData();
-        }
+        renderFollowupKpis();
         icons();
       });
+      loadDemoHistory();
+      icons();
       return;
     }
     if (pageId === 'ca-master' || pageId === 'bulk') {
-      window._leadSegmentFilter = 'all';
-      if (pageId === 'ca-master' && window.CA_LISTING_SEARCH) {
-        CA_LISTING_SEARCH.setState('ca_masters', { page: 1, filters: {}, search: '' });
-      }
+      if (pageId === 'bulk') window._leadSegmentFilter = 'all';
+      var camHubEarly = document.getElementById('cam-hub');
+      var camSecondaryEarly = camHubEarly ? camHubEarly.getAttribute('data-cam-secondary') : '';
       ensureMasterData(function () {
-        renderCaMasterTable();
-        renderMasterTables();
-        applyMasterDataRbac();
-        if (window.CA_LISTING_SEARCH) {
-          reloadListing('states');
-          reloadListing('cities');
-        }
-        if (pageId === 'bulk') {
-          var bulkWizard = document.getElementById('bulk-import-wizard');
-          if (bulkWizard && bulkWizard.classList.contains('hidden') && typeof window.resetBulkImportWizard === 'function') {
-            window.resetBulkImportWizard();
+        function finishCaMasterPage() {
+          initCaMasterPage();
+          populateCaMasterFilterDropdowns();
+          syncCaMasterFilterBarFromState();
+          renderCamKpis();
+          renderMasterTables();
+          applyMasterDataRbac();
+          var camHub = document.getElementById('cam-hub');
+          var camSecondary = camHub ? camHub.getAttribute('data-cam-secondary') : '';
+          if (pageId === 'bulk' || camSecondary === 'bulk') {
+            showCamSecondaryView('bulk');
+            var bulkWizard = document.getElementById('bulk-import-wizard');
+            if (bulkWizard && bulkWizard.classList.contains('hidden') && typeof window.resetBulkImportWizard === 'function') {
+              window.resetBulkImportWizard();
+            }
+          } else if (camSecondary === 'masters') {
+            showCamSecondaryView('masters');
+          } else if (isCamPipelineTabActive()) {
+            loadKanbanLeads();
+          } else {
+            var segment = getLeadFilter();
+            if (segment && segment !== 'all') {
+              applyCamSegment(segment);
+            } else {
+              renderCaMasterTable();
+            }
           }
-          initBulkAssignmentPanel();
-          initBulkImportWizard();
-          initBulkExportPanel();
-          initBulkStatusUpdatePanel();
-          loadBulkOperationsHistory();
+          icons();
         }
-        icons();
+        if (window.CA_LISTING_SEARCH && camSecondaryEarly === 'masters' && !(window.realCitiesCache && window.realCitiesCache.length)) {
+          reloadListing('cities').then(function () {
+            finishCaMasterPage();
+          });
+          return;
+        }
+        finishCaMasterPage();
       });
       return;
     }
@@ -5042,6 +13371,13 @@ window.CA_CRM = (function () {
     }
     if (pageId === 'email') {
       renderCampaignPage('email');
+      icons();
+      return;
+    }
+    if (pageId === 'campaigns') {
+      if (window.CA_CAMPAIGNS_HUB && typeof CA_CAMPAIGNS_HUB.refresh === 'function') {
+        CA_CAMPAIGNS_HUB.refresh();
+      }
       icons();
       return;
     }
@@ -5065,8 +13401,43 @@ window.CA_CRM = (function () {
       icons();
       return;
     }
+    if (pageId === 'email-configuration') {
+      initEmailConfigurationPage();
+      icons();
+      return;
+    }
+    if (pageId === 'roles-permissions') {
+      initRolesPermissionsPage();
+      icons();
+      return;
+    }
+    if (pageId === 'settings-email-templates') {
+      initSettingsEmailTemplatesPage();
+      icons();
+      return;
+    }
+    if (pageId === 'settings-whatsapp-templates') {
+      initSettingsWhatsAppTemplatesPage();
+      icons();
+      return;
+    }
+    if (pageId === 'settings-google-api') {
+      initSettingsGoogleApiPage();
+      icons();
+      return;
+    }
     if (pageId === 'security') {
       initSecurityPage();
+      icons();
+      return;
+    }
+    if (pageId === 'duplicate-attempts' || document.getElementById('dup-attempts-table')) {
+      initDuplicateAttemptsPage();
+      icons();
+      return;
+    }
+    if (pageId === 'sales-list' || document.getElementById('sales-list-data-table')) {
+      initSalesListPage();
       icons();
       return;
     }
@@ -5252,17 +13623,26 @@ window.CA_CRM = (function () {
   }
 
   function bulkAssignRenderPagination(containerId, pagination, type) {
-    var el = document.getElementById(containerId);
-    if (!el || !pagination) return;
-    var page = pagination.page || 1;
+    if (!window.CATablePagination || !pagination) return;
+    var current = pagination.page || pagination.current_page || 1;
+    var perPage = pagination.per_page || 10;
+    var total = pagination.total || 0;
     var last = pagination.last_page || 1;
-    if (last <= 1) {
-      el.innerHTML = '<span class="text-caption text-slate-500">Page 1 of 1</span>';
-      return;
-    }
-    el.innerHTML = '<button type="button" class="btn-secondary btn-sm bulk-assign-page-btn" data-type="' + type + '" data-page="' + (page - 1) + '" ' + (page <= 1 ? 'disabled' : '') + '>Prev</button>' +
-      '<span class="text-caption text-slate-600">Page ' + page + ' of ' + last +
-      '<button type="button" class="btn-secondary btn-sm bulk-assign-page-btn" data-type="' + type + '" data-page="' + (page + 1) + '" ' + (page >= last ? 'disabled' : '') + '>Next</button>';
+    var from = pagination.from != null ? pagination.from : (total ? ((current - 1) * perPage) + 1 : 0);
+    var to = pagination.to != null ? pagination.to : (total ? Math.min(current * perPage, total) : 0);
+    CATablePagination.renderInto(containerId, {
+      scope: 'bulk-assign-' + type,
+      pagination: {
+        current_page: current,
+        last_page: last,
+        total: total,
+        from: from,
+        to: to,
+        per_page: perPage,
+      },
+      perPage: perPage,
+      showPerPage: false,
+    });
   }
 
   function bulkAssignSelectBatch(batch) {
@@ -5541,15 +13921,6 @@ window.CA_CRM = (function () {
       });
     }
 
-    panel.addEventListener('click', function (e) {
-      var pageBtn = e.target.closest('.bulk-assign-page-btn');
-      if (!pageBtn || pageBtn.disabled) return;
-      var type = pageBtn.dataset.type;
-      var page = parseInt(pageBtn.dataset.page, 10);
-      if (type === 'batches') loadBulkAssignBatches(page);
-      if (type === 'employees') loadBulkAssignEmployees(page);
-    });
-
     icons();
   }
 
@@ -5700,10 +14071,10 @@ window.CA_CRM = (function () {
           bulkAssignUpdateCounts();
           realAssignmentsLoaded = false;
           realLeadsLoaded = false;
-          invalidateDataCaches(['metrics', 'leads', 'assignments', 'employee_dashboard']);
+          invalidateDataCaches(['metrics', 'segment_counts', 'leads', 'assignments', 'employee_dashboard']);
           loadBulkAssignBatches(1);
           loadBulkAssignEmployees(1);
-          refreshAll();
+          reloadLeadDataAfterMutation({ cacheKeys: ['metrics', 'leads', 'assignments', 'employee_dashboard'] });
         }
       })
       .catch(function (error) {
@@ -5725,7 +14096,10 @@ window.CA_CRM = (function () {
     crmFields: [],
     mapping: {},
     validation: null,
+    rowActions: {},
+    canForceActions: false,
     lastBulkActionId: null,
+    pollTimer: null,
   };
 
   function initBulkImportWizard() {
@@ -5750,24 +14124,30 @@ window.CA_CRM = (function () {
         el.classList.toggle('active', parseInt(el.dataset.step, 10) === step);
         el.classList.toggle('done', parseInt(el.dataset.step, 10) < step);
       });
-      for (var i = 1; i <= 4; i++) {
+      for (var i = 1; i <= 5; i++) {
         var panel = document.getElementById('bulk-wizard-panel-' + i);
         if (panel) panel.classList.toggle('hidden', i !== step);
       }
       var backBtn = document.getElementById('bulk-wizard-back-btn');
       var nextBtn = document.getElementById('bulk-wizard-next-btn');
       var importBtn = document.getElementById('bulk-wizard-import-btn');
-      if (backBtn) backBtn.disabled = step === 1 || step === 4;
+      if (backBtn) backBtn.disabled = step === 1 || step === 5;
       if (nextBtn) {
-        nextBtn.classList.toggle('hidden', step === 3 || step === 4);
-        nextBtn.disabled = (step === 1 && !bulkImportWizardState.sessionId) || step === 4;
-        nextBtn.textContent = step === 2 ? 'Validate Data' : 'Next';
+        nextBtn.classList.toggle('hidden', step === 4 || step === 5);
+        nextBtn.disabled = (step === 1 && !bulkImportWizardState.sessionId) || step === 5;
+        nextBtn.textContent = step === 2 ? 'Validate Rows' : (step === 3 ? 'Review Duplicates' : 'Next');
       }
-      if (importBtn) importBtn.classList.toggle('hidden', step !== 3);
+      if (importBtn) importBtn.classList.toggle('hidden', step !== 4);
+      if (step === 4) {
+        document.getElementById('bulk-import-progress-wrap')?.classList.add('hidden');
+      }
       icons();
     }
 
     function resetWizard() {
+      if (bulkImportWizardState.pollTimer) {
+        clearInterval(bulkImportWizardState.pollTimer);
+      }
       bulkImportWizardState = {
         step: 1,
         sessionId: null,
@@ -5779,15 +14159,20 @@ window.CA_CRM = (function () {
         crmFields: [],
         mapping: {},
         validation: null,
+        rowActions: {},
+        canForceActions: false,
         lastBulkActionId: null,
+        pollTimer: null,
       };
       fileInput.value = '';
       document.getElementById('bulk-upload-meta')?.classList.add('hidden');
       document.getElementById('bulk-mapping-table').innerHTML = '';
       document.getElementById('bulk-validation-table').innerHTML = '';
+      document.getElementById('bulk-duplicate-actions-table').innerHTML = '';
       document.getElementById('bulk-import-summary').innerHTML = '';
       document.getElementById('bulk-validation-downloads')?.classList.add('hidden');
       document.getElementById('bulk-import-summary-downloads')?.classList.add('hidden');
+      document.getElementById('bulk-import-progress-wrap')?.classList.add('hidden');
       setWizardStep(1);
     }
 
@@ -5960,18 +14345,55 @@ window.CA_CRM = (function () {
           });
         })
         .then(function (data) {
-          bulkImportWizardState.validation = data;
-          bulkImportWizardState.hasMobileColumn = !!data.has_mobile_column;
-          if (data.crm_fields) bulkImportWizardState.crmFields = data.crm_fields;
-          setText('bulk-valid-count', String(data.valid_rows || 0));
-          setText('bulk-invalid-count', String(data.invalid_rows || 0));
-          setText('bulk-duplicate-count', String(data.duplicate_rows || 0));
-          renderValidationPreview(data.preview_rows || []);
-          var errorCount = (data.error_row_count || 0);
-          document.getElementById('bulk-validation-downloads')?.classList.toggle('hidden', errorCount === 0);
+          applyValidationData(data);
           setWizardStep(3);
-          toast('Validation complete — ' + data.valid_rows + ' valid rows', data.invalid_rows > 0 ? 'warning' : 'success');
+          toast('Validation complete — ' + (data.ready_to_import_rows || data.valid_rows || 0) + ' ready to import', data.invalid_rows > 0 || data.duplicate_rows > 0 ? 'warning' : 'success');
         });
+    }
+
+    function applyValidationData(data) {
+      bulkImportWizardState.validation = data;
+      bulkImportWizardState.hasMobileColumn = !!data.has_mobile_column;
+      bulkImportWizardState.canForceActions = !!data.can_force_actions;
+      if (data.crm_fields) bulkImportWizardState.crmFields = data.crm_fields;
+      setText('bulk-total-count', String(data.total_rows || 0));
+      setText('bulk-valid-count', String(data.valid_rows || 0));
+      setText('bulk-invalid-count', String(data.invalid_rows || 0));
+      setText('bulk-duplicate-count', String(data.duplicate_rows || 0));
+      setText('bulk-missing-mobile-count', String(data.missing_mobile_rows || 0));
+      setText('bulk-missing-email-count', String(data.missing_email_rows || 0));
+      setText('bulk-landline-count', String(data.landline_rows || 0));
+      setText('bulk-ready-count', String(data.ready_to_import_rows || 0));
+      setText('bulk-confirm-ready-count', String(data.ready_to_import_rows || 0));
+      setText('bulk-confirm-duplicate-count', String(data.duplicate_rows || 0));
+      setText('bulk-confirm-missing-mobile-count', String(data.missing_mobile_rows || 0));
+      setText('bulk-confirm-missing-email-count', String(data.missing_email_rows || 0));
+      var dupNote = document.getElementById('bulk-duplicate-report-note');
+      if (dupNote) {
+        var dupTotal = data.duplicate_report_total || (data.duplicate_report || []).length || 0;
+        var dupShown = (data.duplicate_report || []).length;
+        if (dupTotal > dupShown) {
+          dupNote.textContent = 'Showing first ' + dupShown + ' of ' + dupTotal + ' duplicate rows. Remaining duplicates will be skipped automatically during import.';
+          dupNote.classList.remove('hidden');
+        } else if (dupTotal > 0) {
+          dupNote.textContent = dupTotal + ' duplicate row(s) found. These are skipped by default and are not caused by blank mobile or email.';
+          dupNote.classList.remove('hidden');
+        } else {
+          dupNote.classList.add('hidden');
+        }
+      }
+      renderValidationPreview(data.preview_rows || []);
+      renderDuplicateActionsTable(data.duplicate_report || []);
+      var errorCount = (data.error_row_count || 0);
+      document.getElementById('bulk-validation-downloads')?.classList.toggle('hidden', errorCount === 0);
+    }
+
+    function statusBadgeHtml(status) {
+      if (status === 'valid') return '<span class="badge-success">Valid</span>';
+      if (status === 'duplicate') return '<span class="badge-brand">Duplicate</span>';
+      if (status === 'landline') return '<span class="badge-brand">Landline</span>';
+      if (status === 'missing_mobile') return '<span class="badge-brand">Missing Mobile</span>';
+      return '<span class="badge-danger">Invalid</span>';
     }
 
     function renderValidationPreview(rows) {
@@ -5984,27 +14406,75 @@ window.CA_CRM = (function () {
       tbody.innerHTML = rows.map(function (row) {
         var data = row.data || {};
         var status = row.status || 'invalid';
-        var statusBadge = status === 'valid'
-          ? '<span class="badge-success">Valid</span>'
-          : (status === 'duplicate' ? '<span class="badge-brand">Duplicate</span>' : '<span class="badge-danger">Invalid</span>');
         var issues = (row.errors || []).join('; ') || '—';
         var fieldErrors = row.field_errors || {};
         var cells = ['ca_name', 'firm_name', 'mobile_no', 'email_id', 'gst_no', 'state_id', 'city_id'].map(function (key) {
           var cls = fieldErrors[key] ? 'text-rose-600 font-medium' : '';
           return '<td class="' + cls + '">' + escapeHtml(data[key] || '—') + '</td>';
         }).join('');
-        return '<tr class="' + (status === 'valid' ? '' : 'bg-rose-50/60') + '">' +
-          '<td>' + row.row_number + '</td><td>' + statusBadge + '</td>' + cells +
+        var rowCls = (status === 'valid' || status === 'landline' || status === 'missing_mobile') ? '' : 'bg-rose-50/60';
+        return '<tr class="' + rowCls + '">' +
+          '<td>' + row.row_number + '</td><td>' + statusBadgeHtml(status) + '</td>' + cells +
           '<td class="max-w-xs truncate" title="' + escapeHtml(issues) + '">' + escapeHtml(issues) + '</td></tr>';
       }).join('');
     }
 
-    function runImport() {
-      var mapping = collectMappingFromForm();
-      var templateName = document.getElementById('bulk-mapping-template-name')?.value.trim() || '';
-      var saveTemplate = templateName.length > 0;
-      toast('Importing valid rows…', 'info');
-      return fetch('/ca-masters/bulk-import', {
+    function renderDuplicateActionsTable(rows) {
+      var tbody = document.getElementById('bulk-duplicate-actions-table');
+      var empty = document.getElementById('bulk-duplicate-actions-empty');
+      if (!tbody) return;
+      if (!rows.length) {
+        tbody.innerHTML = '';
+        if (empty) empty.classList.remove('hidden');
+        return;
+      }
+      if (empty) empty.classList.add('hidden');
+      var canForce = bulkImportWizardState.canForceActions;
+      tbody.innerHTML = rows.map(function (row) {
+        var rowNumber = row.row_number;
+        var current = bulkImportWizardState.rowActions[rowNumber] || row.action || 'skip';
+        var options = [
+          { value: 'skip', label: 'Skip' },
+          { value: 'import_anyway', label: 'Import Anyway', force: true },
+          { value: 'merge', label: 'Merge With Existing', force: true },
+          { value: 'replace', label: 'Replace Existing', force: true },
+        ].filter(function (opt) { return !opt.force || canForce; });
+        var select = '<select class="input-field bulk-dup-action" data-row="' + rowNumber + '">' +
+          options.map(function (opt) {
+            return '<option value="' + opt.value + '"' + (current === opt.value ? ' selected' : '') + '>' + opt.label + '</option>';
+          }).join('') + '</select>';
+        return '<tr>' +
+          '<td>' + rowNumber + '</td>' +
+          '<td>' + escapeHtml(row.ca_name || '—') + '</td>' +
+          '<td>' + escapeHtml(row.firm_name || '—') + '</td>' +
+          '<td>' + escapeHtml(row.mobile || '—') + '</td>' +
+          '<td>' + escapeHtml(row.email || '—') + '</td>' +
+          '<td><span class="badge-brand">' + escapeHtml(row.duplicate_type_label || row.duplicate_type || '—') + '</span></td>' +
+          '<td class="max-w-xs truncate" title="' + escapeHtml(row.matched_lead_label || '') + '">' + escapeHtml(row.matched_lead_label || '—') + '</td>' +
+          '<td>' + select + '</td></tr>';
+      }).join('');
+      tbody.querySelectorAll('.bulk-dup-action').forEach(function (sel) {
+        sel.addEventListener('change', function () {
+          bulkImportWizardState.rowActions[sel.dataset.row] = sel.value;
+        });
+      });
+    }
+
+    function collectRowActions() {
+      var actions = Object.assign({}, bulkImportWizardState.rowActions || {});
+      document.querySelectorAll('.bulk-dup-action').forEach(function (sel) {
+        actions[sel.dataset.row] = sel.value;
+      });
+      bulkImportWizardState.rowActions = actions;
+      return actions;
+    }
+
+    function persistRowActions() {
+      var actions = collectRowActions();
+      if (!Object.keys(actions).length) {
+        return Promise.resolve(bulkImportWizardState.validation);
+      }
+      return fetch('/ca-masters/bulk-import/row-actions', {
         method: 'POST',
         headers: {
           'X-CSRF-TOKEN': csrfToken(),
@@ -6014,11 +14484,79 @@ window.CA_CRM = (function () {
         },
         body: JSON.stringify({
           session_id: bulkImportWizardState.sessionId,
-          mapping: mapping,
-          save_template: saveTemplate,
-          template_name: templateName,
+          row_actions: actions,
         }),
-      })
+      }).then(function (response) {
+        return response.json().then(function (body) {
+          if (!response.ok) throw new Error(body.message || 'Unable to save actions');
+          applyValidationData(body.data || {});
+          return body.data || {};
+        });
+      });
+    }
+
+    function setImportProgress(percent, label) {
+      var wrap = document.getElementById('bulk-import-progress-wrap');
+      var bar = document.getElementById('bulk-import-progress-bar');
+      var text = document.getElementById('bulk-import-progress-label');
+      if (wrap) wrap.classList.remove('hidden');
+      if (bar) bar.style.width = Math.max(0, Math.min(100, percent || 0)) + '%';
+      if (text) text.textContent = label || ((percent || 0) + '%');
+    }
+
+    function pollImportStatus(bulkActionId) {
+      if (bulkImportWizardState.pollTimer) clearInterval(bulkImportWizardState.pollTimer);
+      setImportProgress(0, 'Queued…');
+      return new Promise(function (resolve, reject) {
+        bulkImportWizardState.pollTimer = setInterval(function () {
+          fetch('/ca-masters/bulk-import/history/' + encodeURIComponent(bulkActionId) + '/status', {
+            headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+          })
+            .then(function (response) { return response.json(); })
+            .then(function (body) {
+              var data = body.data || {};
+              setImportProgress(data.progress_percent || 0, (data.progress_percent || 0) + '% · ' + (data.status || 'Processing'));
+              if (data.completed) {
+                clearInterval(bulkImportWizardState.pollTimer);
+                bulkImportWizardState.pollTimer = null;
+                resolve(data);
+              }
+            })
+            .catch(function (error) {
+              clearInterval(bulkImportWizardState.pollTimer);
+              bulkImportWizardState.pollTimer = null;
+              reject(error);
+            });
+        }, 1500);
+      });
+    }
+
+    function runImport() {
+      var mapping = collectMappingFromForm();
+      var templateName = document.getElementById('bulk-mapping-template-name')?.value.trim() || '';
+      var saveTemplate = templateName.length > 0;
+      var rowActions = collectRowActions();
+      toast('Importing ready rows…', 'info');
+      setImportProgress(5, 'Starting…');
+      return persistRowActions()
+        .then(function () {
+          return fetch('/ca-masters/bulk-import', {
+            method: 'POST',
+            headers: {
+              'X-CSRF-TOKEN': csrfToken(),
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: JSON.stringify({
+              session_id: bulkImportWizardState.sessionId,
+              mapping: mapping,
+              save_template: saveTemplate,
+              template_name: templateName,
+              row_actions: rowActions,
+            }),
+          });
+        })
         .then(function (response) {
           return response.json().then(function (body) {
             if (!response.ok) throw new Error(body.message || 'Import failed');
@@ -6028,14 +14566,33 @@ window.CA_CRM = (function () {
         .then(function (result) {
           var summary = result.summary;
           bulkImportWizardState.lastBulkActionId = summary.bulk_action_id || null;
+          if (summary.uses_background && summary.bulk_action_id) {
+            return pollImportStatus(summary.bulk_action_id).then(function (statusData) {
+              summary = Object.assign({}, summary, statusData, {
+                inserted_rows: statusData.inserted_rows,
+                duplicate_rows: statusData.duplicate_rows,
+                failed_rows: statusData.failed_rows,
+                skipped_rows: statusData.skipped_rows,
+              });
+              return { body: result.body, summary: summary };
+            });
+          }
+          if (summary.queue_notice) {
+            toast(summary.queue_notice, 'warning');
+          }
+          setImportProgress(100, 'Completed');
+          return result;
+        })
+        .then(function (result) {
+          var summary = result.summary;
           renderImportSummaryPanel(summary);
           renderBulkImportSummary(summary, false);
           loadBulkImportHistory();
           realLeadsLoaded = false;
           refreshAll();
-          var hasErrors = (summary.error_row_count || 0) > 0 || (summary.failed_rows || 0) > 0;
+          var hasErrors = (summary.error_row_count || 0) > 0 || (summary.failed_rows || 0) > 0 || (summary.duplicate_rows || 0) > 0;
           document.getElementById('bulk-import-summary-downloads')?.classList.toggle('hidden', !hasErrors);
-          setWizardStep(4);
+          setWizardStep(5);
           toast(result.body.message || 'Import completed', summary.failed_rows > 0 ? 'warning' : 'success');
         })
         .catch(function (error) {
@@ -6047,16 +14604,18 @@ window.CA_CRM = (function () {
       var el = document.getElementById('bulk-import-summary');
       if (!el) return;
       var cards = [
+        { label: 'Imported Successfully', value: summary.inserted_rows || 0, cls: 'text-emerald-600' },
+        { label: 'Skipped Duplicates', value: summary.duplicate_rows || 0, cls: 'text-amber-600' },
+        { label: 'Invalid Rows', value: summary.invalid_rows || summary.failed_rows || 0, cls: 'text-rose-600' },
+        { label: 'Landline Rows', value: summary.landline_rows || 0, cls: 'text-sky-700' },
+        { label: 'Failed Rows', value: summary.failed_rows || 0, cls: 'text-rose-600' },
         { label: 'Total Rows', value: summary.total_rows || 0, cls: 'text-slate-900' },
-        { label: 'Inserted', value: summary.inserted_rows || 0, cls: 'text-emerald-600' },
-        { label: 'Duplicates Skipped', value: summary.duplicate_rows || 0, cls: 'text-amber-600' },
-        { label: 'Failed / Invalid', value: summary.failed_rows || 0, cls: 'text-rose-600' },
       ];
       el.innerHTML = cards.map(function (card) {
         return '<div class="card p-5"><p class="text-caption text-slate-500">' + card.label + '</p>' +
           '<p class="text-2xl font-semibold ' + card.cls + '">' + card.value + '</p></div>';
       }).join('') +
-        '<div class="card p-5 sm:col-span-2 lg:col-span-4"><p class="text-caption text-slate-500">Import Reference</p>' +
+        '<div class="card p-5 sm:col-span-2 lg:col-span-3"><p class="text-caption text-slate-500">Import Reference</p>' +
         '<p class="font-medium">' + (summary.bulk_action_id || '—') + ' · ' + escapeHtml(summary.file_name || '—') + '</p></div>';
     }
 
@@ -6078,7 +14637,7 @@ window.CA_CRM = (function () {
       fileInput.click();
     });
     document.getElementById('bulk-wizard-back-btn')?.addEventListener('click', function () {
-      if (bulkImportWizardState.step > 1 && bulkImportWizardState.step < 4) {
+      if (bulkImportWizardState.step > 1 && bulkImportWizardState.step < 5) {
         setWizardStep(bulkImportWizardState.step - 1);
       }
     });
@@ -6099,6 +14658,14 @@ window.CA_CRM = (function () {
         runValidation().catch(function (error) {
           toast(error.message || 'Validation failed', 'error');
         });
+        return;
+      }
+      if (bulkImportWizardState.step === 3) {
+        persistRowActions()
+          .then(function () { setWizardStep(4); })
+          .catch(function (error) {
+            toast(error.message || 'Unable to prepare confirm step', 'error');
+          });
       }
     });
     document.getElementById('bulk-wizard-import-btn')?.addEventListener('click', function () {
@@ -6686,7 +15253,7 @@ window.CA_CRM = (function () {
               return '<div class="card p-4"><p class="text-caption text-slate-500">' + pair[0] + '</p><p class="font-medium text-slate-900">' + escapeHtml(String(pair[1])) + '</p></div>';
             }).join('') +
           '</div>' +
-          '<p class="text-caption text-slate-500">Download the generated export file when status is Completed.</p>';
+          '<p class="text-caption text-slate-500">Download the export file when status is Completed.</p>';
         var errorBtn = document.getElementById('bulk-detail-error-report-btn');
         var reimportBtn = document.getElementById('bulk-detail-reimport-btn');
         var reuploadBtn = document.getElementById('bulk-detail-reupload-btn');
@@ -7060,20 +15627,28 @@ window.CA_CRM = (function () {
 
   function paintReportChart(el, series) {
     if (!el) return;
+    el.dataset.chartReady = '1';
     if (!series || !series.length) {
-      el.innerHTML = '<p class="text-caption text-slate-400 p-2">No data for selected range</p>';
+      el.innerHTML = '<p class="dash-chart-empty">No data for selected range</p>';
       return;
     }
     var max = Math.max.apply(null, series.map(function (p) { return p.value; }).concat([1]));
-    el.innerHTML = '<div class="flex items-end justify-between gap-1.5 h-full px-2 pb-2" style="height:100%">' +
+    el.innerHTML = '<div class="dash-column-chart__inner">' +
       series.map(function (point, i) {
         var h = Math.max(8, Math.round((point.value / max) * 100));
-        return '<div class="flex-1 flex flex-col items-center justify-end h-full" title="' + escapeHtml(String(point.label)) + ': ' + point.value + '">' +
-          '<div class="ca-chart-bar w-full rounded-t-md" style="height:' + h + '%;transition-delay:' + (i * 40) + 'ms"></div></div>';
+        var shortLabel = String(point.label || '').length > 6
+          ? String(point.label).slice(0, 5) + '…'
+          : (point.label || '—');
+        return '<div class="dash-column-chart__col" title="' + escapeHtml(String(point.label)) + ': ' + point.value + '">' +
+          '<span class="dash-column-chart__value">' + point.value + '</span>' +
+          '<div class="ca-chart-bar dash-column-chart__bar" style="height:' + h + '%;transition-delay:' + (i * 40) + 'ms"></div>' +
+          '<span class="dash-column-chart__label">' + escapeHtml(shortLabel) + '</span>' +
+        '</div>';
       }).join('') + '</div>';
   }
 
   function renderReportCharts() {
+    if (!document.querySelector('[data-chart-key]')) return;
     loadReportsAnalytics(function (data) {
       var charts = (data && data.charts) || {};
       document.querySelectorAll('[data-chart-key]').forEach(function (el) {
@@ -7101,7 +15676,7 @@ window.CA_CRM = (function () {
             fields: fields,
           });
         }
-        toast((report.label || 'Report') + ' loaded — ' + (report.rows || []).length + ' rows', 'success');
+        toast((report.label || 'Report') + ' · ' + (report.rows || []).length + ' rows', 'success');
       })
       .catch(function (err) {
         toast(err.message || 'Unable to load report', 'error');
@@ -7204,14 +15779,14 @@ window.CA_CRM = (function () {
       .then(function (result) {
         if (result.kind === 'file') {
           triggerFileDownload(result.blob, result.filename);
-          toast((label || 'Report') + ' downloaded', 'success');
+          toast((label || 'Report') + ' ready', 'success');
           return;
         }
         var payload = (result.body && result.body.data) || {};
         if (!payload.export_id) {
           throw new Error('Unexpected export response.');
         }
-        toast('Large export queued — processing in background…', 'info');
+        toast('Large export queued — running in background…', 'info');
         return pollReportExport(payload.export_id).then(function () {
           window.location.href = '/reports/exports/' + encodeURIComponent(payload.export_id) + '/download';
           toast((label || 'Report') + ' ready — download started', 'success');
@@ -7320,7 +15895,9 @@ window.CA_CRM = (function () {
       else if (sms.has_api_key && sms.sender_id) status = 'connected';
       else status = 'not_configured';
     }
-    if (status === 'connected') return { label: 'Connected', badge: 'badge-success' };
+    if (status === 'integrated') return { label: 'Integrated', badge: 'badge-success' };
+    if (status === 'connected') return { label: 'Connected', badge: 'badge-brand' };
+    if (status === 'failed') return { label: 'Failed', badge: 'badge-danger' };
     if (status === 'disabled') return { label: 'Disabled', badge: 'badge-warning' };
     return { label: 'Not Configured', badge: 'badge-neutral' };
   }
@@ -7354,7 +15931,7 @@ window.CA_CRM = (function () {
   }
 
   function setSmsSettingsBusy(busy) {
-    ['sms-settings-save-btn', 'sms-settings-test-btn', 'sms-settings-reset-btn'].forEach(function (id) {
+    ['sms-settings-save-btn', 'sms-settings-test-btn', 'sms-settings-test-connection-btn', 'sms-settings-reset-btn'].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.disabled = !!busy;
     });
@@ -7402,6 +15979,43 @@ window.CA_CRM = (function () {
       .finally(function () {
         setSmsSettingsBusy(false);
       });
+  }
+
+  function testSmsConnection() {
+    var mobileEl = document.getElementById('sms-settings-test-mobile');
+    var messageEl = document.getElementById('sms-settings-test-message');
+    var mobileno = mobileEl ? mobileEl.value.trim() : '';
+    var text = messageEl ? messageEl.value.trim() : '';
+    if (!mobileno) {
+      showSmsSettingsError({ message: 'Test mobile number is required.' });
+      return;
+    }
+    if (!text) {
+      showSmsSettingsError({ message: 'Test message is required.' });
+      return;
+    }
+    showSmsSettingsError(null);
+    setSmsSettingsBusy(true);
+    apiFetch('/sms-settings/test-connection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mobileno: mobileno, text: text }),
+    }).then(function (body) {
+      var result = body.data || {};
+      if (result.settings) populateSmsSettingsForm(result.settings);
+      if (result.success) {
+        showSmsSettingsError(null);
+        toast(result.message || 'SMS Alert connection test succeeded', 'success');
+      } else {
+        showSmsSettingsError({ message: result.message || 'SMS Alert connection test failed' });
+        toast(result.message || 'SMS Alert connection test failed', 'error');
+      }
+    }).catch(function (err) {
+      showSmsSettingsError(err);
+      toast(err.message || 'SMS connection test failed', 'error');
+    }).finally(function () {
+      setSmsSettingsBusy(false);
+    });
   }
 
   function resetSmsSettings() {
@@ -7470,6 +16084,11 @@ window.CA_CRM = (function () {
         validateSmsSettings();
         return;
       }
+      if (e.target.closest('#sms-settings-test-connection-btn')) {
+        e.preventDefault();
+        testSmsConnection();
+        return;
+      }
       if (e.target.closest('#sms-settings-reset-btn')) {
         e.preventDefault();
         resetSmsSettings();
@@ -7490,6 +16109,7 @@ window.CA_CRM = (function () {
     setVal('sms-settings-provider-name', sms.provider_name || 'SMS Alert');
     setVal('sms-settings-api-url', sms.api_url || 'https://www.smsalert.co.in/api/push.json');
     setVal('sms-settings-sender-id', sms.sender_id || '');
+    setVal('sms-settings-dlt-template-id', sms.dlt_template_id || '');
     setVal('sms-settings-mode', sms.mode || 'simulation');
     setCheck('sms-settings-is-active', sms.is_active !== false);
     var apiKey = document.getElementById('sms-settings-api-key');
@@ -7502,16 +16122,30 @@ window.CA_CRM = (function () {
     }
     var badge = document.getElementById('sms-settings-mode-badge');
     if (badge) badge.textContent = (sms.mode || 'simulation') === 'live' ? 'Live' : 'Simulation';
+    var lastTestNote = document.getElementById('sms-settings-last-test-note');
+    if (lastTestNote) {
+      if (sms.last_tested_at) {
+        var statusLabel = sms.last_test_status === 'success' ? 'Last test succeeded' : 'Last test failed';
+        var detail = sms.last_test_message ? ' — ' + sms.last_test_message : '';
+        lastTestNote.textContent = statusLabel + ' at ' + sms.last_tested_at + detail;
+        lastTestNote.classList.remove('hidden');
+        lastTestNote.classList.toggle('text-red-600', sms.last_test_status === 'failed');
+        lastTestNote.classList.toggle('text-slate-400', sms.last_test_status !== 'failed');
+      } else {
+        lastTestNote.textContent = '';
+        lastTestNote.classList.add('hidden');
+      }
+    }
     updateSmsIntegrationStatusBadge(sms);
     applySmsSettingsReadOnly(!sms.can_edit);
   }
 
   function applySmsSettingsReadOnly(readOnly) {
-    ['sms-settings-provider-name', 'sms-settings-api-url', 'sms-settings-api-key', 'sms-settings-sender-id', 'sms-settings-mode', 'sms-settings-is-active'].forEach(function (id) {
+    ['sms-settings-provider-name', 'sms-settings-api-url', 'sms-settings-api-key', 'sms-settings-sender-id', 'sms-settings-dlt-template-id', 'sms-settings-mode', 'sms-settings-is-active', 'sms-settings-test-mobile', 'sms-settings-test-message'].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.disabled = readOnly;
     });
-    ['sms-settings-save-btn', 'sms-settings-test-btn', 'sms-settings-reset-btn'].forEach(function (id) {
+    ['sms-settings-save-btn', 'sms-settings-test-btn', 'sms-settings-test-connection-btn', 'sms-settings-reset-btn'].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.classList.toggle('hidden', readOnly);
     });
@@ -7522,6 +16156,7 @@ window.CA_CRM = (function () {
       provider_name: (document.getElementById('sms-settings-provider-name') || {}).value || '',
       api_url: (document.getElementById('sms-settings-api-url') || {}).value || '',
       sender_id: (document.getElementById('sms-settings-sender-id') || {}).value || '',
+      dlt_template_id: (document.getElementById('sms-settings-dlt-template-id') || {}).value || '',
       mode: (document.getElementById('sms-settings-mode') || {}).value || 'simulation',
       is_active: !!(document.getElementById('sms-settings-is-active') || {}).checked,
     };
@@ -7534,7 +16169,1232 @@ window.CA_CRM = (function () {
     bindSmsSettingsHandlers();
   }
 
+  function whatsappIntegrationStatusMeta(wa) {
+    wa = wa || {};
+    var status = wa.integration_status || 'not_configured';
+    if (!wa.integration_status) {
+      if (wa.is_active === false) status = 'disabled';
+      else if (wa.has_access_token && wa.phone_number_id && wa.business_account_id) status = 'connected';
+      else status = 'not_configured';
+    }
+    if (status === 'integrated') return { label: 'Integrated', badge: 'badge-success' };
+    if (status === 'connected' || status === 'mapped') return { label: 'Connected', badge: 'badge-warning' };
+    if (status === 'failed') return { label: 'Failed', badge: 'badge-danger' };
+    if (status === 'disabled') return { label: 'Disabled', badge: 'badge-warning' };
+    return { label: 'Not Configured', badge: 'badge-neutral' };
+  }
+
+  function updateWhatsAppIntegrationStatusBadge(wa) {
+    var badge = document.getElementById('whatsapp-integration-status-badge');
+    if (!badge) return;
+    var meta = whatsappIntegrationStatusMeta(wa);
+    badge.textContent = meta.label;
+    badge.className = meta.badge;
+  }
+
+  function showWhatsAppSettingsError(err) {
+    var box = document.getElementById('whatsapp-settings-error-box');
+    if (!box) return;
+    if (!err) {
+      box.classList.add('hidden');
+      box.textContent = '';
+      return;
+    }
+    var lines = [];
+    if (err.errors) {
+      Object.keys(err.errors).forEach(function (key) {
+        var msgs = err.errors[key];
+        if (Array.isArray(msgs)) lines.push(msgs[0]);
+      });
+    }
+    if (!lines.length && err.message) lines.push(err.message);
+    box.textContent = lines.join(' ');
+    box.classList.remove('hidden');
+  }
+
+  function setWhatsAppSettingsBusy(busy) {
+    ['whatsapp-settings-save-btn', 'whatsapp-settings-validate-btn', 'whatsapp-settings-reset-btn', 'whatsapp-settings-test-connection-btn', 'whatsapp-settings-send-test-template-btn'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.disabled = !!busy;
+    });
+  }
+
+  function openWhatsAppIntegrationPanel() {
+    var panel = document.getElementById('whatsapp-settings-panel');
+    if (panel) {
+      panel.classList.remove('hidden');
+      document.body.classList.add('whatsapp-settings-open');
+      var fabWrap = document.getElementById('fab-wrap');
+      if (fabWrap) fabWrap.classList.add('hidden');
+      panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    apiFetch('/whatsapp-settings').then(function (body) {
+      populateWhatsAppSettingsForm(body.data || {});
+      loadWhatsAppTemplatesFromDatabase(function () {
+        populateWhatsAppTemplateSelect();
+      });
+    }).catch(function () {});
+    if (typeof icons === 'function') icons();
+  }
+
+  function closeWhatsAppIntegrationPanel() {
+    var panel = document.getElementById('whatsapp-settings-panel');
+    if (panel) panel.classList.add('hidden');
+    document.body.classList.remove('whatsapp-settings-open');
+    var fabWrap = document.getElementById('fab-wrap');
+    if (fabWrap) fabWrap.classList.remove('hidden');
+  }
+
+  function saveWhatsAppSettings() {
+    showWhatsAppSettingsError(null);
+    setWhatsAppSettingsBusy(true);
+    apiFetch('/whatsapp-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(collectWhatsAppSettingsPayload()),
+    }).then(function (body) {
+      populateWhatsAppSettingsForm(body.data || {});
+      var token = document.getElementById('whatsapp-settings-access-token');
+      if (token) token.value = '';
+      toast('WhatsApp settings saved', 'success');
+    }).catch(function (err) {
+      showWhatsAppSettingsError(err);
+      toast(err.message || 'Unable to save WhatsApp settings', 'error');
+    }).finally(function () {
+      setWhatsAppSettingsBusy(false);
+    });
+  }
+
+  function validateWhatsAppSettings() {
+    showWhatsAppSettingsError(null);
+    setWhatsAppSettingsBusy(true);
+    apiFetch('/whatsapp-settings/validate', { method: 'POST' })
+      .then(function (body) {
+        var result = body.data || {};
+        if (result.valid) {
+          showWhatsAppSettingsError(null);
+          toast('WhatsApp mapping configuration is valid (no API call made)', 'success');
+        } else {
+          showWhatsAppSettingsError({ message: (result.errors || []).join(' ') });
+          toast((result.errors || []).join(' ') || 'WhatsApp validation failed', 'error');
+        }
+        if (result.settings) populateWhatsAppSettingsForm(result.settings);
+      })
+      .catch(function (err) {
+        showWhatsAppSettingsError(err);
+        toast(err.message || 'Validation failed', 'error');
+      })
+      .finally(function () {
+        setWhatsAppSettingsBusy(false);
+      });
+  }
+
+  function resetWhatsAppSettings() {
+    if (!window.confirm('Reset WhatsApp settings to defaults? Credentials will be cleared.')) return;
+    showWhatsAppSettingsError(null);
+    setWhatsAppSettingsBusy(true);
+    apiFetch('/whatsapp-settings/reset', { method: 'POST' })
+      .then(function (body) {
+        populateWhatsAppSettingsForm(body.data || {});
+        toast('WhatsApp settings reset', 'success');
+      })
+      .catch(function (err) {
+        showWhatsAppSettingsError(err);
+        toast(err.message || 'Unable to reset WhatsApp settings', 'error');
+      })
+      .finally(function () {
+        setWhatsAppSettingsBusy(false);
+      });
+  }
+
+  function populateWhatsAppSettingsForm(wa) {
+    wa = wa || {};
+    var setVal = function (id, val) {
+      var el = document.getElementById(id);
+      if (el && val != null) el.value = val;
+    };
+    var setCheck = function (id, val) {
+      var el = document.getElementById(id);
+      if (el) el.checked = !!val;
+    };
+    setVal('whatsapp-settings-provider-name', wa.provider_name || 'Meta WhatsApp Cloud API');
+    setVal('whatsapp-settings-phone-number-id', wa.phone_number_id || '');
+    setVal('whatsapp-settings-business-account-id', wa.business_account_id || '');
+    setVal('whatsapp-settings-api-version', wa.api_version || 'v23.0');
+    setVal('whatsapp-settings-mode', wa.mode || 'simulation');
+    setVal('whatsapp-settings-test-mobile', wa.test_mobile_number || '');
+    setCheck('whatsapp-settings-is-active', wa.is_active !== false);
+    var token = document.getElementById('whatsapp-settings-access-token');
+    if (token) token.value = '';
+    var webhookToken = document.getElementById('whatsapp-settings-webhook-verify-token');
+    if (webhookToken) webhookToken.value = '';
+    var tokenNote = document.getElementById('whatsapp-settings-token-note');
+    if (tokenNote) {
+      tokenNote.textContent = wa.has_access_token
+        ? 'Access token is configured (encrypted). Leave blank to keep current token.'
+        : 'Access token is encrypted at rest and never returned by the API.';
+    }
+    var webhookNote = document.getElementById('whatsapp-settings-webhook-note');
+    if (webhookNote) {
+      webhookNote.textContent = wa.has_webhook_verify_token
+        ? 'Webhook verify token is configured. Leave blank to keep current value.'
+        : 'Optional — used when Meta verifies your webhook subscription.';
+    }
+    var statusSummary = document.getElementById('whatsapp-settings-status-summary');
+    if (statusSummary) {
+      var parts = [];
+      if (wa.phone_number_id) parts.push('Phone Number ID: ' + wa.phone_number_id);
+      if (wa.business_account_id) parts.push('Business Account ID: ' + wa.business_account_id);
+      parts.push('Token: ' + (wa.has_access_token ? 'Configured' : 'Missing'));
+      if (wa.last_tested_at) parts.push('Last test: ' + wa.last_test_status + ' (' + wa.last_tested_at + ')');
+      if (wa.last_successful_send_at) parts.push('Last send: ' + wa.last_successful_send_at);
+      statusSummary.textContent = parts.join(' · ');
+    }
+    var lastTestNote = document.getElementById('whatsapp-settings-last-test-note');
+    if (lastTestNote) {
+      if (wa.last_tested_at) {
+        var statusLabel = wa.last_test_status === 'success' ? 'Last test succeeded' : 'Last test failed';
+        var detail = wa.last_test_message ? ' — ' + wa.last_test_message : '';
+        lastTestNote.textContent = statusLabel + ' at ' + wa.last_tested_at + detail;
+        lastTestNote.classList.remove('hidden');
+        lastTestNote.classList.toggle('text-red-600', wa.last_test_status === 'failed');
+        lastTestNote.classList.toggle('text-slate-400', wa.last_test_status !== 'failed');
+      } else {
+        lastTestNote.textContent = '';
+        lastTestNote.classList.add('hidden');
+      }
+    }
+    var badge = document.getElementById('whatsapp-settings-mode-badge');
+    if (badge) badge.textContent = (wa.mode || 'simulation') === 'live' ? 'Live' : 'Simulation';
+    var canEdit = wa.can_edit !== false;
+    ['whatsapp-settings-save-btn', 'whatsapp-settings-validate-btn', 'whatsapp-settings-reset-btn', 'whatsapp-settings-test-connection-btn', 'whatsapp-settings-send-test-template-btn'].forEach(function (id) {
+      var btn = document.getElementById(id);
+      if (btn) btn.disabled = !canEdit;
+    });
+    updateWhatsAppIntegrationStatusBadge(wa);
+  }
+
+  function collectWhatsAppSettingsPayload() {
+    var payload = {
+      provider_name: (document.getElementById('whatsapp-settings-provider-name') || {}).value || '',
+      phone_number_id: (document.getElementById('whatsapp-settings-phone-number-id') || {}).value || '',
+      business_account_id: (document.getElementById('whatsapp-settings-business-account-id') || {}).value || '',
+      api_version: (document.getElementById('whatsapp-settings-api-version') || {}).value || 'v23.0',
+      mode: (document.getElementById('whatsapp-settings-mode') || {}).value || 'simulation',
+      is_active: !!(document.getElementById('whatsapp-settings-is-active') || {}).checked,
+      test_mobile_number: (document.getElementById('whatsapp-settings-test-mobile') || {}).value || '',
+    };
+    var tokenVal = (document.getElementById('whatsapp-settings-access-token') || {}).value || '';
+    if (tokenVal) payload.access_token = tokenVal;
+    var webhookVal = (document.getElementById('whatsapp-settings-webhook-verify-token') || {}).value || '';
+    if (webhookVal) payload.webhook_verify_token = webhookVal;
+    return payload;
+  }
+
+  function testWhatsAppConnection() {
+    showWhatsAppSettingsError(null);
+    setWhatsAppSettingsBusy(true);
+    apiFetch('/whatsapp-settings/test-connection', { method: 'POST' })
+      .then(function (body) {
+        var result = body.data || {};
+        populateWhatsAppSettingsForm(result.settings || {});
+        updateWhatsAppIntegrationStatusBadge(result.settings || {});
+        toast(result.message || body.message || 'WhatsApp connection test completed', result.success ? 'success' : 'error');
+      })
+      .catch(function (error) {
+        showWhatsAppSettingsError(error);
+        toast(error.message || 'WhatsApp connection test failed', 'error');
+      })
+      .finally(function () { setWhatsAppSettingsBusy(false); });
+  }
+
+  function sendWhatsAppTestTemplate() {
+    showWhatsAppSettingsError(null);
+    var templateId = (document.getElementById('whatsapp-settings-test-template-id') || {}).value || '';
+    var mobile = (document.getElementById('whatsapp-settings-test-mobile') || {}).value || '';
+    if (!templateId) {
+      toast('Select an approved template for the test send', 'error');
+      return;
+    }
+    setWhatsAppSettingsBusy(true);
+    apiFetch('/whatsapp-settings/send-test-template', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message_template_id: parseInt(templateId, 10), mobile_no: mobile || undefined }),
+    })
+      .then(function (body) {
+        var result = body.data || {};
+        var msg = result.message || body.message || 'Test template sent';
+        if (result.success && result.meta_message_id) {
+          msg += ' (ID: ' + result.meta_message_id + ')';
+        }
+        toast(msg, result.success ? 'success' : 'error');
+        if (!result.success && result.provider_response) {
+          console.info('WhatsApp test send provider response', result.provider_response);
+        }
+      })
+      .catch(function (error) {
+        var detail = error.data && error.data.message ? error.data.message : error.message;
+        showWhatsAppSettingsError(error);
+        toast(detail || 'Failed to send test template', 'error');
+      })
+      .finally(function () { setWhatsAppSettingsBusy(false); });
+  }
+
+  function loadWhatsAppTemplatesFromDatabase(callback, force, dispatchableOnly) {
+    var cacheKey = dispatchableOnly ? 'realWhatsAppCampaignTemplates' : 'realWhatsAppTemplates';
+    if (window[cacheKey] && !force) {
+      if (callback) callback(window[cacheKey]);
+      return;
+    }
+    var url = '/message-templates/whatsapp' + (dispatchableOnly ? '?dispatchable=1' : '');
+    apiFetch(url)
+      .then(function (body) {
+        window[cacheKey] = body.data || [];
+        if (callback) callback(window[cacheKey]);
+      })
+      .catch(function () {
+        window[cacheKey] = [];
+        if (callback) callback([]);
+      });
+  }
+
+  function formatWhatsAppLanguageLabel(code) {
+    var labels = {
+      en_US: 'English (US)',
+      en_GB: 'English (UK)',
+      en: 'English',
+      hi: 'Hindi',
+    };
+    return labels[code] || code || 'en';
+  }
+
+  function populateWhatsAppTemplateSelect() {
+    var select = document.getElementById('form-campaign-whatsapp-template-id');
+    var testSelect = document.getElementById('whatsapp-settings-test-template-id');
+    var campaignTemplates = window.realWhatsAppCampaignTemplates || window.realWhatsAppTemplates || [];
+    var allTemplates = window.realWhatsAppTemplates || campaignTemplates;
+    var labelFor = function (t) {
+      return escapeHtml(t.template_name) + ' · ' + escapeHtml(formatWhatsAppLanguageLabel(t.language_code));
+    };
+    var options = '<option value="">Select approved WhatsApp template</option>' +
+      campaignTemplates.map(function (t) {
+        return '<option value="' + t.id + '">' + labelFor(t) + '</option>';
+      }).join('');
+    var allOptions = '<option value="">Select approved WhatsApp template</option>' +
+      allTemplates.map(function (t) {
+        return '<option value="' + t.id + '">' + labelFor(t) + '</option>';
+      }).join('');
+    if (select) select.innerHTML = options;
+    if (testSelect) {
+      testSelect.innerHTML = allOptions;
+      var regTemplate = allTemplates.find(function (t) { return t.template_name === 'task_customermp2et391nk'; })
+        || allTemplates.find(function (t) { return t.template_name === 'task_scheduled_reminder'; })
+        || allTemplates.find(function (t) { return t.template_name === 'company_registration_docs'; });
+      if (regTemplate) testSelect.value = String(regTemplate.id);
+    }
+    if (select && !select.value) {
+      var defaultTemplate = campaignTemplates.find(function (t) { return t.template_name === 'task_customermp2et391nk'; })
+        || campaignTemplates[0];
+      if (defaultTemplate) select.value = String(defaultTemplate.id);
+    }
+    syncWhatsAppCampaignTemplateBody();
+  }
+
+  function syncWhatsAppCampaignTemplateBody() {
+    var select = document.getElementById('form-campaign-whatsapp-template-id');
+    var body = document.getElementById('form-campaign-whatsapp-message-template');
+    var hidden = document.getElementById('form-campaign-message-template');
+    var templateId = parseInt(select?.value || '', 10);
+    var templates = window.realWhatsAppCampaignTemplates || window.realWhatsAppTemplates || [];
+    var template = templates.find(function (t) { return t.id === templateId; });
+    if (body) body.value = template ? (template.body_template || '') : '';
+    if (hidden) hidden.value = template ? (template.body_template || '') : '';
+    scheduleWhatsAppCampaignPreview(true);
+  }
+
+  function getWhatsAppPreviewLead() {
+    var selected = getCampaignSelectedLeads()[0];
+    if (selected) return selected;
+    var pickerItems = getCampaignLeadPickerState().items || [];
+    if (pickerItems.length) return pickerItems[0];
+    return getLeadsForSelects()[0] || null;
+  }
+
+  function renderWhatsAppVariablesLocally(templateBody, lead, template) {
+    if (!templateBody || !lead) return '';
+    var cityName = lead.city_name || (lead.city && lead.city.city_name) || '';
+    var stateName = lead.state_name || (lead.state && lead.state.state_name) || '';
+    var variables = {
+      '{{name}}': lead.ca_name || '',
+      '{{firm_name}}': lead.firm_name || '',
+      '{{city}}': cityName,
+      '{{mobile}}': lead.mobile_no || '',
+      '{{state}}': stateName,
+      '{{employee_name}}': lead.executive || lead.employee_name || '',
+      '{{demo_date}}': lead.demo_date || '',
+      '{{demo_time}}': lead.demo_time || '',
+      '{{task_name}}': lead.task_name || 'Follow-up',
+      '{{task_status}}': lead.task_status || 'Scheduled',
+      '{{scheduled_date}}': lead.scheduled_date || '',
+      '{{scheduled_time}}': lead.scheduled_time || '',
+      '{{1}}': lead.ca_name || '',
+      '{{2}}': 'LawSeva',
+    };
+    if (template && template.variable_map && typeof template.variable_map === 'object') {
+      Object.keys(template.variable_map).forEach(function (placeholder) {
+        var source = template.variable_map[placeholder];
+        if (typeof source === 'string' && source.indexOf('static:') === 0) {
+          variables[placeholder] = source.slice(7);
+        } else if (source === 'ca_name' || source === 'client_name') {
+          variables[placeholder] = lead.ca_name || '';
+        }
+      });
+    }
+    return Object.keys(variables).reduce(function (text, key) {
+      return text.split(key).join(variables[key]);
+    }, templateBody);
+  }
+
+  var waPreviewTimer = null;
+
+  function scheduleWhatsAppCampaignPreview(silent) {
+    clearTimeout(waPreviewTimer);
+    waPreviewTimer = setTimeout(function () {
+      refreshWhatsAppCampaignPreview(!!silent);
+    }, 250);
+  }
+
+  function showWhatsAppCampaignValidation(messages, isError) {
+    var box = document.getElementById('form-campaign-whatsapp-validation');
+    if (!box) return;
+    if (!messages || !messages.length) {
+      box.classList.add('hidden');
+      box.textContent = '';
+      return;
+    }
+    box.classList.remove('hidden');
+    box.classList.toggle('border-amber-200', !isError);
+    box.classList.toggle('bg-amber-50', !isError);
+    box.classList.toggle('text-amber-800', !isError);
+    box.classList.toggle('border-red-200', !!isError);
+    box.classList.toggle('bg-red-50', !!isError);
+    box.classList.toggle('text-red-700', !!isError);
+    box.textContent = messages.join(' ');
+  }
+
+  function refreshWhatsAppCampaignPreview(silent) {
+    var channel = document.getElementById('form-campaign-channel')?.value;
+    if (channel !== 'whatsapp') return;
+
+    var templateId = parseInt(document.getElementById('form-campaign-whatsapp-template-id')?.value || '', 10);
+    var lead = getWhatsAppPreviewLead();
+    var template = (window.realWhatsAppTemplates || []).find(function (t) { return t.id === templateId; });
+    var templateBody = document.getElementById('form-campaign-whatsapp-message-template')?.value || '';
+    var previewEl = document.getElementById('form-campaign-whatsapp-preview-message');
+
+    if (!templateId || !templateBody) {
+      if (previewEl) previewEl.value = '';
+      return;
+    }
+
+    if (lead) {
+      if (previewEl) previewEl.value = renderWhatsAppVariablesLocally(templateBody, lead, template);
+    }
+
+    if (!templateId || !lead || !lead.ca_id) return;
+
+    apiFetch('/whatsapp-campaigns/preview-message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message_template_id: templateId, lead_id: lead.ca_id }),
+    })
+      .then(function (body) {
+        var data = body.data || {};
+        if (previewEl && data.preview) previewEl.value = data.preview;
+        if (!silent) toast('Preview ready', 'success');
+      })
+      .catch(function (error) {
+        if (!silent) toast(error.message || 'Failed to preview WhatsApp message', 'error');
+      });
+  }
+
+  function validateWhatsAppCampaignPrerequisites(payload, onSuccess) {
+    apiFetch('/whatsapp-campaigns/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(function (body) {
+      var result = body.data || {};
+      if (!result.valid) {
+        showWhatsAppCampaignValidation(result.errors || ['WhatsApp campaign validation failed'], true);
+        toast((result.errors && result.errors[0]) || 'WhatsApp campaign validation failed', 'error');
+        return;
+      }
+      showWhatsAppCampaignValidation(result.warnings || [], false);
+      if (result.warnings && result.warnings.length && !onSuccess) {
+        result.warnings.forEach(function (warning) {
+          toast(warning, 'warning');
+        });
+      }
+      if (onSuccess) onSuccess(result);
+    }).catch(function (error) {
+      showWhatsAppCampaignValidation([error.message || 'WhatsApp campaign validation failed'], true);
+      toast(error.message || 'WhatsApp campaign validation failed', 'error');
+    });
+  }
+
+  function submitWhatsAppCampaign(form, callback) {
+    if (!form || !isCampaignModalOpen()) return;
+    var fd = new FormData(form);
+    var data = Object.fromEntries(fd.entries());
+    if (!campaignNameFromForm(data)) {
+      toast('Campaign name is required', 'error');
+      return;
+    }
+    if (!(data.campaign_type && data.campaign_type.trim())) {
+      toast('Campaign type is required', 'error');
+      return;
+    }
+    var waTemplateId = parseInt(document.getElementById('form-campaign-whatsapp-template-id')?.value || '', 10);
+    if (!waTemplateId) {
+      toast('Select an approved WhatsApp template', 'error');
+      return;
+    }
+    var scheduleCheck = validateCampaignScheduledAt(data.scheduled_at);
+    if (!scheduleCheck.valid) {
+      toast(scheduleCheck.message || 'Scheduled date is invalid', 'error');
+      return;
+    }
+    var waPayload = buildCampaignAudiencePayload(data);
+    if (waPayload.audience_mode === 'selected_leads' && (!waPayload.ca_ids || !waPayload.ca_ids.length)) {
+      toast('Select at least one lead', 'error');
+      return;
+    }
+    waPayload.message_template_id = waTemplateId;
+    waPayload.message_template = (document.getElementById('form-campaign-message-template') || {}).value || '';
+    waPayload.scheduled_at = scheduleCheck.value;
+
+    validateWhatsAppCampaignPrerequisites(waPayload, function () {
+      var createBtn = document.getElementById('btn-create-campaign');
+      if (createBtn) createBtn.disabled = true;
+      apiFetch('/whatsapp-campaigns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(waPayload),
+      })
+        .then(function (body) {
+          var campaign = body.data || {};
+          if (callback) {
+            callback(campaign);
+            return;
+          }
+          closeModal(document.getElementById('modal-add-campaign'));
+          form.reset();
+          resetFormDateTimePickers(form);
+          showWhatsAppCampaignValidation([], false);
+          configureCampaignModal('whatsapp');
+          refreshWhatsAppPage();
+          if (document.getElementById('recent-activity-list')) renderRecentActivity();
+          var sent = campaign.sent_count || 0;
+          var delivered = campaign.delivered_count || 0;
+          var failed = campaign.failed_count || 0;
+          var status = campaign.status || 'Completed';
+          if (status === 'Scheduled' && campaign.scheduled_at) {
+            toast('Scheduled for ' + formatSchedulePreview(campaign.scheduled_at), 'success');
+          } else if (status === 'Processing') {
+            afterCampaignQueued('whatsapp', campaign.id, function () {
+              refreshWhatsAppPage();
+              if (document.getElementById('recent-activity-list')) renderRecentActivity();
+            }, body.message || 'WhatsApp campaign queued successfully.');
+          } else {
+            var toastMsg = 'Campaign "' + (campaign.campaign_name || campaignNameFromForm(data)) + '" · ' +
+              (campaign.total_messages || 0) + ' recipients · Sent to Meta ' + sent;
+            if (failed > 0) {
+              toastMsg += ' · Failed ' + failed;
+            } else if (delivered > 0) {
+              toastMsg += ' · Delivered ' + delivered;
+            } else if (sent > 0) {
+              toastMsg += ' · Phone delivery pending';
+            }
+            toast(toastMsg, failed > 0 ? 'warning' : 'success');
+          }
+        })
+        .catch(function (error) {
+          showWhatsAppCampaignValidation([error.message || 'Failed to send WhatsApp campaign'], true);
+          toast(error.message || 'Failed to send WhatsApp campaign', 'error');
+        })
+        .finally(function () {
+          if (createBtn) createBtn.disabled = false;
+        });
+    });
+  }
+
+  function loadEmailTemplatesFromDatabase(callback, force) {
+    if (window.realEmailTemplates && !force) {
+      if (callback) callback(window.realEmailTemplates);
+      return;
+    }
+    apiFetch('/email-templates')
+      .then(function (body) {
+        window.realEmailTemplates = body.data || [];
+        if (callback) callback(window.realEmailTemplates);
+      })
+      .catch(function () {
+        window.realEmailTemplates = [];
+        if (callback) callback([]);
+      });
+  }
+
+  function populateEmailTemplateSelect() {
+    var select = document.getElementById('form-campaign-email-template-id');
+    if (!select) return;
+    var templates = window.realEmailTemplates || [];
+    select.innerHTML = '<option value="">Select email template (optional)</option>' +
+      templates.map(function (t) {
+        return '<option value="' + t.id + '">' + escapeHtml(t.name || t.slug || ('Template ' + t.id)) + '</option>';
+      }).join('');
+    var auditTemplate = templates.find(function (t) { return t.slug === 'company-registration-docs'; })
+      || templates.find(function (t) { return t.slug === 'audit-data-request'; });
+    if (auditTemplate) select.value = String(auditTemplate.id);
+  }
+
+  function syncEmailCampaignTemplateFields() {
+    var select = document.getElementById('form-campaign-email-template-id');
+    var templateId = parseInt(select?.value || '', 10);
+    var template = (window.realEmailTemplates || []).find(function (t) { return t.id === templateId; });
+    var subject = document.getElementById('form-campaign-email-subject');
+    var body = document.getElementById('form-campaign-body-template');
+    if (template) {
+      if (subject) subject.value = template.subject || '';
+      if (body) body.value = template.body || '';
+    }
+    scheduleEmailCampaignPreview(true);
+  }
+
+  function renderEmailVariablesLocally(subject, body, lead) {
+    if (!lead) return { subject: subject || '', body: body || '' };
+    var cityName = lead.city_name || (lead.city && lead.city.city_name) || '';
+    var senderName = (window.currentUser && window.currentUser.name) || 'CA Cloud Desk';
+    var vars = {
+      '{CLIENT_NAME}': lead.ca_name || '',
+      '{{CLIENT_NAME}}': lead.ca_name || '',
+      '{{SERVICE_NAME}}': 'GST Return',
+      '{{INVOICE_DATE}}': '24-June-2025',
+      '{{INVOICE_AMOUNT}}': '₹10,150',
+      '{{DUE_DATE}}': '28-June-2025',
+      '{SERVICE_NAME}': 'GST Return',
+      '{INVOICE_DATE}': '24-June-2025',
+      '{INVOICE_AMOUNT}': '₹10,150',
+      '{DUE_DATE}': '28-June-2025',
+      '{CA_ORGANIZATION_NAME}': lead.firm_name || '',
+      '{SENDER_NAME}': senderName,
+      '{EMAIL}': lead.email_id || '',
+      '{PHONE}': lead.mobile_no || '',
+      '{CITY}': cityName,
+      '{{name}}': lead.ca_name || '',
+      '{{firm_name}}': lead.firm_name || '',
+      '{{email}}': lead.email_id || '',
+      '{{mobile}}': lead.mobile_no || '',
+      '{{city}}': cityName,
+    };
+    var applyVars = function (text) {
+      return Object.keys(vars).reduce(function (result, key) {
+        return result.split(key).join(vars[key]);
+      }, text || '');
+    };
+    return { subject: applyVars(subject), body: applyVars(body) };
+  }
+
+  var emailPreviewTimer = null;
+
+  function scheduleEmailCampaignPreview(silent) {
+    clearTimeout(emailPreviewTimer);
+    emailPreviewTimer = setTimeout(function () {
+      refreshEmailCampaignPreview(!!silent);
+    }, 250);
+  }
+
+  function refreshEmailCampaignPreview(silent) {
+    var channel = document.getElementById('form-campaign-channel')?.value;
+    if (channel !== 'email') return;
+    var templateId = parseInt(document.getElementById('form-campaign-email-template-id')?.value || '', 10);
+    var subject = document.getElementById('form-campaign-email-subject')?.value || '';
+    var body = document.getElementById('form-campaign-body-template')?.value || '';
+    var lead = getWhatsAppPreviewLead();
+    var previewEl = document.getElementById('form-campaign-email-preview');
+    if (lead && (subject || body)) {
+      var local = renderEmailVariablesLocally(subject, body, lead);
+      if (previewEl) previewEl.value = 'Subject: ' + local.subject + '\n\n' + local.body;
+    }
+    if (!templateId || !lead || !lead.ca_id) return;
+    apiFetch('/email-templates/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email_template_id: templateId, lead_id: lead.ca_id }),
+    }).then(function (resp) {
+      var data = resp.data || {};
+      if (previewEl) previewEl.value = 'Subject: ' + (data.subject || subject) + '\n\n' + (data.body || body);
+      if (!silent) toast('Email preview ready', 'success');
+    }).catch(function (error) {
+      if (!silent) toast(error.message || 'Failed to preview email', 'error');
+    });
+  }
+
+  function previewEmailCampaignMessage() {
+    refreshEmailCampaignPreview(false);
+  }
+
+  function populateEmailSettingsForm(email) {
+    email = email || {};
+    var setVal = function (id, val) {
+      var el = document.getElementById(id);
+      if (el && val != null && val !== '') el.value = val;
+    };
+    setVal('email-settings-provider-name', email.provider_name || 'cloud desk');
+    setVal('email-settings-smtp-host', email.smtp_host || 'smtpout.secureserver.net');
+    setVal('email-settings-smtp-port', email.smtp_port || 465);
+    setVal('email-settings-smtp-username', email.smtp_username || 'CRM Email');
+    setVal('email-settings-smtp-encryption', email.smtp_encryption || 'tls');
+    setVal('email-settings-from-email', email.from_email || 'cacloud12@gmail.com');
+    setVal('email-settings-from-name', email.from_name || 'CA Cloud Desk');
+    setVal('email-settings-reply-to-email', email.reply_to_email || 'cacloud12@gmail.com');
+    setVal('email-settings-mode', email.mode || 'simulation');
+    var pwd = document.getElementById('email-settings-smtp-password');
+    if (pwd) pwd.value = '';
+    var pwdNote = document.getElementById('email-settings-password-note');
+    if (pwdNote) {
+      pwdNote.textContent = email.has_smtp_password
+        ? 'SMTP password is configured (encrypted). Leave blank to keep current password.'
+        : 'Set SMTP password here or via SMTP_PASSWORD in .env.';
+    }
+    var emailBadge = document.getElementById('email-settings-mode-badge');
+    if (emailBadge) emailBadge.textContent = (email.mode || 'simulation') === 'live' ? 'Live' : 'Simulation';
+    var summary = document.getElementById('email-settings-status-summary');
+    if (summary) {
+      var parts = [];
+      if (email.last_tested_at) parts.push('Last test: ' + email.last_test_status + ' (' + email.last_tested_at + ')');
+      if (email.is_configured) parts.push('Configured');
+      summary.textContent = parts.length ? parts.join(' · ') : 'Configure GoDaddy / cloud desk SMTP for live campaign delivery.';
+    }
+  }
+
+  function showEmailSettingsError(err) {
+    var box = document.getElementById('email-settings-error-box');
+    if (!box) return;
+    if (!err) {
+      box.classList.add('hidden');
+      box.textContent = '';
+      return;
+    }
+    box.classList.remove('hidden');
+    box.textContent = err.message || String(err);
+  }
+
+  function collectEmailSettingsPayload() {
+    var payload = {
+      provider_name: (document.getElementById('email-settings-provider-name') || {}).value || '',
+      smtp_host: (document.getElementById('email-settings-smtp-host') || {}).value || '',
+      smtp_port: parseInt((document.getElementById('email-settings-smtp-port') || {}).value, 10) || null,
+      smtp_username: (document.getElementById('email-settings-smtp-username') || {}).value || '',
+      smtp_encryption: (document.getElementById('email-settings-smtp-encryption') || {}).value || '',
+      from_email: (document.getElementById('email-settings-from-email') || {}).value || '',
+      from_name: (document.getElementById('email-settings-from-name') || {}).value || '',
+      reply_to_email: (document.getElementById('email-settings-reply-to-email') || {}).value || '',
+      mode: (document.getElementById('email-settings-mode') || {}).value || 'simulation',
+    };
+    var pwdVal = (document.getElementById('email-settings-smtp-password') || {}).value || '';
+    if (pwdVal) payload.smtp_password = pwdVal;
+    return payload;
+  }
+
+  function bindEmailSettingsHandlers() {
+    var emailSaveBtn = document.getElementById('email-settings-save-btn');
+    if (emailSaveBtn && !emailSaveBtn._emailSettingsBound) {
+      emailSaveBtn._emailSettingsBound = true;
+      emailSaveBtn.addEventListener('click', function () {
+        showEmailSettingsError(null);
+        apiFetch('/email-settings', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(collectEmailSettingsPayload()),
+        }).then(function (body) {
+          populateEmailSettingsForm(body.data || {});
+          toast('Email settings saved', 'success');
+        }).catch(function (err) {
+          showEmailSettingsError(err);
+          toast(err.message || 'Unable to save email settings', 'error');
+        });
+      });
+    }
+    var validateBtn = document.getElementById('email-settings-validate-btn');
+    if (validateBtn && !validateBtn._emailSettingsBound) {
+      validateBtn._emailSettingsBound = true;
+      validateBtn.addEventListener('click', function () {
+        showEmailSettingsError(null);
+        apiFetch('/email-settings/validate', { method: 'POST' })
+          .then(function (body) {
+            var result = body.data || {};
+            if (result.valid) {
+              toast('SMTP configuration is valid', 'success');
+              if (result.settings) populateEmailSettingsForm(result.settings);
+            } else {
+              var message = (result.errors || []).join(' ') || 'SMTP validation failed';
+              showEmailSettingsError({ message: message });
+              toast(message, 'error');
+            }
+          })
+          .catch(function (err) {
+            showEmailSettingsError(err);
+            toast(err.message || 'SMTP validation failed', 'error');
+          });
+      });
+    }
+    var testBtn = document.getElementById('email-settings-send-test-btn');
+    if (testBtn && !testBtn._emailSettingsBound) {
+      testBtn._emailSettingsBound = true;
+      testBtn.addEventListener('click', function () {
+        var recipient = (document.getElementById('email-settings-test-recipient') || {}).value || '';
+        if (!recipient) {
+          toast('Enter a test recipient email address', 'error');
+          return;
+        }
+        showEmailSettingsError(null);
+        testBtn.disabled = true;
+        apiFetch('/email-settings/send-test-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ recipient_email: recipient }),
+        }).then(function (body) {
+          var result = body.data || {};
+          if (result.settings) populateEmailSettingsForm(result.settings);
+          toast(result.message || 'Test email sent successfully', 'success');
+          refreshEmailPage();
+        }).catch(function (err) {
+          showEmailSettingsError(err);
+          toast(err.message || 'Failed to send test email', 'error');
+        }).finally(function () {
+          testBtn.disabled = false;
+        });
+      });
+    }
+  }
+
+  function previewWhatsAppCampaignMessage() {
+    refreshWhatsAppCampaignPreview(false);
+  }
+
+  function bindWhatsAppSettingsHandlers() {
+    if (window._whatsappSettingsDocDelegation) return;
+    window._whatsappSettingsDocDelegation = true;
+
+    document.addEventListener('click', function (e) {
+      if (e.target.closest('#whatsapp-integration-card')) {
+        e.preventDefault();
+        openWhatsAppIntegrationPanel();
+        return;
+      }
+      if (e.target.closest('#whatsapp-settings-open-btn')) {
+        e.preventDefault();
+        openWhatsAppIntegrationPanel();
+        return;
+      }
+      if (e.target.closest('#whatsapp-settings-close-btn') || e.target.closest('#whatsapp-settings-cancel-btn')) {
+        e.preventDefault();
+        apiFetch('/whatsapp-settings').then(function (body) {
+          populateWhatsAppSettingsForm(body.data || {});
+        }).catch(function () {}).finally(closeWhatsAppIntegrationPanel);
+        return;
+      }
+      if (e.target.closest('#whatsapp-settings-save-btn')) {
+        e.preventDefault();
+        saveWhatsAppSettings();
+        return;
+      }
+      if (e.target.closest('#whatsapp-settings-validate-btn')) {
+        e.preventDefault();
+        validateWhatsAppSettings();
+        return;
+      }
+      if (e.target.closest('#whatsapp-settings-test-connection-btn')) {
+        e.preventDefault();
+        testWhatsAppConnection();
+        return;
+      }
+      if (e.target.closest('#whatsapp-settings-send-test-template-btn')) {
+        e.preventDefault();
+        sendWhatsAppTestTemplate();
+        return;
+      }
+      if (e.target.closest('#whatsapp-settings-reset-btn')) {
+        e.preventDefault();
+        resetWhatsAppSettings();
+      }
+    });
+  }
+
+  function initWhatsAppSettingsModule() {
+    bindWhatsAppSettingsHandlers();
+  }
+
   initSmsSettingsModule();
+  initWhatsAppSettingsModule();
+
+  var _emailAccountState = {
+    items: [],
+    smtpToken: '',
+    imapToken: '',
+    smtpVerified: false,
+    imapVerified: false,
+  };
+
+  function resetEmailAccountVerification() {
+    _emailAccountState.smtpToken = '';
+    _emailAccountState.imapToken = '';
+    _emailAccountState.smtpVerified = false;
+    _emailAccountState.imapVerified = false;
+    var smtpBadge = document.getElementById('email-account-smtp-test-badge');
+    var imapBadge = document.getElementById('email-account-imap-test-badge');
+    var imapDetails = document.getElementById('email-account-imap-test-details');
+    if (smtpBadge) { smtpBadge.textContent = 'Not tested'; smtpBadge.className = 'badge-neutral'; }
+    if (imapBadge) { imapBadge.textContent = 'Not tested'; imapBadge.className = 'badge-neutral'; }
+    if (imapDetails) { imapDetails.classList.add('hidden'); imapDetails.innerHTML = ''; }
+    updateEmailAccountSaveState();
+  }
+
+  function renderImapTestDetails(data) {
+    var el = document.getElementById('email-account-imap-test-details');
+    if (!el) return;
+    var folders = (data.folders || []).slice(0, 8).join(', ');
+    el.innerHTML =
+      '<div class="ecfg-imap-success-card">' +
+        '<p class="font-medium text-emerald-700">Connected to: ' + escapeHtml(data.connected_mailbox || '') + '</p>' +
+        '<ul class="text-caption text-slate-600 mt-2 space-y-1">' +
+          '<li>Inbox found: ' + (data.inbox_found ? 'Yes' : 'No') + '</li>' +
+          '<li>Messages in inbox: ' + (data.inbox_count != null ? data.inbox_count : '—') + '</li>' +
+          '<li>Unread messages: ' + (data.unread_count != null ? data.unread_count : '—') + '</li>' +
+          '<li>Folders found: ' + (data.folders_count != null ? data.folders_count : '—') + (folders ? ' (' + escapeHtml(folders) + ')' : '') + '</li>' +
+        '</ul>' +
+      '</div>';
+    el.classList.remove('hidden');
+  }
+
+  function renderImapTestError(message) {
+    var el = document.getElementById('email-account-imap-test-details');
+    if (!el) return;
+    el.innerHTML = '<div class="ecfg-imap-error-card"><p class="text-rose-700 text-sm">' + escapeHtml(message || 'IMAP connection failed') + '</p></div>';
+    el.classList.remove('hidden');
+  }
+
+  function updateEmailAccountSaveState() {
+    var saveBtn = document.getElementById('email-account-save-btn');
+    if (!saveBtn) return;
+    var imapEnabled = !!(document.getElementById('email-account-imap-enabled') || {}).checked;
+    var ok = _emailAccountState.smtpVerified && (!imapEnabled || _emailAccountState.imapVerified);
+    saveBtn.disabled = !ok;
+  }
+
+  function toggleImapFieldsUi() {
+    var enabled = !!(document.getElementById('email-account-imap-enabled') || {}).checked;
+    var fields = document.getElementById('email-account-imap-fields');
+    var testBtn = document.getElementById('email-account-test-imap-btn');
+    var testBadge = document.getElementById('email-account-imap-test-badge');
+    if (fields) fields.classList.toggle('hidden', !enabled);
+    if (testBtn) testBtn.classList.toggle('hidden', !enabled);
+    if (testBadge) testBadge.classList.toggle('hidden', !enabled);
+    updateEmailAccountSaveState();
+  }
+
+  function applyGmailAutofill(force) {
+    var emailEl = document.getElementById('email-account-from-email');
+    if (!emailEl) return;
+    var email = (emailEl.value || '').trim().toLowerCase();
+    if (!email.endsWith('@gmail.com')) return;
+    var host = document.getElementById('email-account-smtp-host');
+    var port = document.getElementById('email-account-smtp-port');
+    var enc = document.getElementById('email-account-smtp-encryption');
+    var imapHost = document.getElementById('email-account-imap-host');
+    var imapPort = document.getElementById('email-account-imap-port');
+    if (host && (force || !host.value.trim() || host.value.indexOf('secureserver') !== -1)) host.value = 'smtp.gmail.com';
+    if (port && (force || !port.value.trim())) port.value = '587';
+    if (enc) enc.value = 'tls';
+    if (imapHost && (force || !imapHost.value.trim() || imapHost.value.indexOf('secureserver') !== -1)) imapHost.value = 'imap.gmail.com';
+    if (imapPort && (force || !imapPort.value.trim())) imapPort.value = '993';
+    var username = document.getElementById('email-account-smtp-username');
+    if (username) username.value = email;
+    var imapUsername = document.getElementById('email-account-imap-username');
+    if (imapUsername) imapUsername.value = email;
+    var display = document.getElementById('email-account-display-name');
+    if (display && !display.value.trim()) {
+      display.value = email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+    }
+  }
+
+  function switchEmailConfigTab(tabId) {
+    var group = 'email-account';
+    document.querySelectorAll('.ca-tab[data-tab-group="' + group + '"]').forEach(function (t) {
+      t.classList.toggle('active', t.dataset.tab === tabId);
+    });
+    document.querySelectorAll('.ca-tab-panel[data-tab-group="' + group + '"]').forEach(function (p) {
+      p.classList.toggle('active', p.dataset.panel === tabId);
+    });
+    icons();
+  }
+
+  function collectEmailAccountPayload() {
+    var fromEmail = (document.getElementById('email-account-from-email') || {}).value || '';
+    var smtpPassword = ((document.getElementById('email-account-smtp-password') || {}).value || '').replace(/\s+/g, '');
+    var smtpUsernameEl = document.getElementById('email-account-smtp-username');
+    var displayEl = document.getElementById('email-account-display-name');
+    var imapEnabled = !!(document.getElementById('email-account-imap-enabled') || {}).checked;
+    if (smtpUsernameEl) smtpUsernameEl.value = fromEmail.trim();
+    if (displayEl && !displayEl.value.trim() && fromEmail) {
+      displayEl.value = fromEmail.split('@')[0];
+    }
+    return {
+      account_id: (document.getElementById('email-account-id') || {}).value || null,
+      from_email: fromEmail,
+      display_name: (displayEl || {}).value || '',
+      from_name: (displayEl || {}).value || '',
+      smtp_host: (document.getElementById('email-account-smtp-host') || {}).value || '',
+      smtp_port: parseInt((document.getElementById('email-account-smtp-port') || {}).value, 10) || null,
+      smtp_encryption: (document.getElementById('email-account-smtp-encryption') || {}).value || 'ssl',
+      smtp_username: (smtpUsernameEl || {}).value || fromEmail.trim(),
+      smtp_password: smtpPassword,
+      imap_enabled: imapEnabled,
+      imap_host: (document.getElementById('email-account-imap-host') || {}).value || '',
+      imap_port: parseInt((document.getElementById('email-account-imap-port') || {}).value, 10) || 993,
+      imap_encryption: (document.getElementById('email-account-imap-encryption') || {}).value || 'ssl',
+      imap_username: fromEmail.trim(),
+      imap_password: smtpPassword,
+      is_default: !!(document.getElementById('email-account-is-default') || {}).checked,
+      is_active: !!(document.getElementById('email-account-is-active') || {}).checked,
+      mode: 'live',
+      smtp_verification_token: _emailAccountState.smtpToken,
+      imap_verification_token: _emailAccountState.imapToken,
+    };
+  }
+
+  function emailAccountStatusBadge(account) {
+    if (!account.is_active) return '<span class="badge-neutral">Inactive</span>';
+    if (account.smtp_last_test_status === 'success') return '<span class="badge-success">Connected</span>';
+    if (account.smtp_last_test_status === 'failed') return '<span class="badge-danger">Failed</span>';
+    return '<span class="badge-neutral">Untested</span>';
+  }
+
+  function paintEmailAccountsViewTable(items) {
+    var body = document.getElementById('email-accounts-view-body');
+    if (!body) return;
+    if (!items.length) {
+      body.innerHTML = '<tr><td colspan="7" class="text-center text-slate-500 p-6">No email accounts yet. Configure SMTP on the left tab and save.</td></tr>';
+      return;
+    }
+    body.innerHTML = items.map(function (a) {
+      var actionItems = [
+        { action: 'edit', label: 'Edit', icon: 'pencil' },
+      ];
+      if (!a.is_default) {
+        actionItems.push({ action: 'default', label: 'Make Default', icon: 'star' });
+      }
+      actionItems.push({ action: 'delete', label: 'Delete', icon: 'trash-2', danger: true });
+      var actionsCell = window.CAActionDropdown
+        ? CAActionDropdown.renderCell(actionItems, {
+          scope: 'email-account',
+          rowId: a.id,
+          cellClass: 'crm-actions-cell text-right',
+          ariaLabel: 'Email account actions',
+        })
+        : '<td class="crm-actions-cell text-right"><span class="cam-cell-empty">—</span></td>';
+      return '<tr class="ca-table-row" data-email-account-id="' + a.id + '">' +
+        '<td>' + escapeHtml(a.from_email) + '</td>' +
+        '<td>' + escapeHtml(a.smtp_host || '—') + '</td>' +
+        '<td>' + escapeHtml(a.smtp_port != null ? String(a.smtp_port) : '—') + '</td>' +
+        '<td>' + (a.imap_enabled ? '<span class="badge-success">Yes</span>' : '<span class="badge-neutral">No</span>') + '</td>' +
+        '<td>' + (a.is_default ? '<span class="badge-brand">Default</span>' : '—') + '</td>' +
+        '<td>' + emailAccountStatusBadge(a) + '</td>' +
+        actionsCell +
+      '</tr>';
+    }).join('');
+    icons();
+  }
+
+  function paintEmailAccountsList(items) {
+    paintEmailAccountsViewTable(items);
+  }
+
+  function loadEmailAccountIntoForm(id) {
+    var account = _emailAccountState.items.find(function (a) { return String(a.id) === String(id); });
+    if (!account) return;
+    document.getElementById('email-account-id').value = account.id;
+    document.getElementById('email-account-from-email').value = account.from_email || '';
+    document.getElementById('email-account-display-name').value = account.display_name || account.from_name || '';
+    document.getElementById('email-account-smtp-host').value = account.smtp_host || '';
+    document.getElementById('email-account-smtp-port').value = account.smtp_port || 465;
+    document.getElementById('email-account-smtp-encryption').value = account.smtp_encryption || 'ssl';
+    document.getElementById('email-account-smtp-username').value = account.smtp_username || '';
+    document.getElementById('email-account-smtp-password').value = '';
+    document.getElementById('email-account-imap-enabled').checked = !!account.imap_enabled;
+    document.getElementById('email-account-imap-host').value = account.imap_host || '';
+    document.getElementById('email-account-imap-port').value = account.imap_port || 993;
+    var imapEnc = document.getElementById('email-account-imap-encryption');
+    if (imapEnc) imapEnc.value = account.imap_encryption || 'ssl';
+    document.getElementById('email-account-is-default').checked = !!account.is_default;
+    document.getElementById('email-account-is-active').checked = !!account.is_active;
+    document.getElementById('email-account-delete-btn')?.classList.remove('hidden');
+    document.getElementById('email-account-sync-imap-btn')?.classList.toggle('hidden', !account.imap_enabled);
+    toggleImapFieldsUi();
+    switchEmailConfigTab('smtp');
+    resetEmailAccountVerification();
+  }
+
+  function clearEmailAccountForm() {
+    var form = document.getElementById('email-account-form');
+    if (!form) return;
+    form.reset();
+    document.getElementById('email-account-id').value = '';
+    document.getElementById('email-account-is-active').checked = true;
+    document.getElementById('email-account-delete-btn')?.classList.add('hidden');
+    document.getElementById('email-account-sync-imap-btn')?.classList.add('hidden');
+    toggleImapFieldsUi();
+    switchEmailConfigTab('smtp');
+    resetEmailAccountVerification();
+  }
+
+  function reloadEmailAccountsList() {
+    return apiFetch('/email-accounts').then(function (body) {
+      _emailAccountState.items = (body.data && body.data.items) ? body.data.items : [];
+      paintEmailAccountsViewTable(_emailAccountState.items);
+    }).catch(function (err) {
+      toast(err.message || 'Unable to load email accounts', 'error');
+    });
+  }
+
+  function initEmailConfigurationPage() {
+    var root = document.getElementById('email-config-page-root');
+    if (!root) return;
+
+    if (!root._emailConfigBound) {
+      root._emailConfigBound = true;
+
+      root.querySelector('#email-account-add-btn')?.addEventListener('click', clearEmailAccountForm);
+      root.querySelector('#email-account-imap-enabled')?.addEventListener('change', function () {
+        resetEmailAccountVerification();
+        toggleImapFieldsUi();
+      });
+
+      root.querySelector('#email-account-from-email')?.addEventListener('blur', function () {
+        applyGmailAutofill(true);
+      });
+      root.querySelector('#email-account-from-email')?.addEventListener('input', function () {
+        resetEmailAccountVerification();
+        applyGmailAutofill(true);
+      });
+
+      root.querySelector('#email-account-test-smtp-btn')?.addEventListener('click', function () {
+        applyGmailAutofill(true);
+        var payload = collectEmailAccountPayload();
+        apiFetch('/email-accounts/test-smtp', { method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'application/json' } })
+          .then(function (body) {
+            var data = body.data || {};
+            _emailAccountState.smtpToken = data.verification_token || '';
+            _emailAccountState.smtpVerified = true;
+            var badge = document.getElementById('email-account-smtp-test-badge');
+            if (badge) { badge.textContent = 'SMTP OK'; badge.className = 'badge-success'; }
+            toast(data.message || 'SMTP connection successful', 'success');
+            updateEmailAccountSaveState();
+          })
+          .catch(function (err) {
+            _emailAccountState.smtpVerified = false;
+            var badge = document.getElementById('email-account-smtp-test-badge');
+            if (badge) { badge.textContent = 'SMTP Failed'; badge.className = 'badge-danger'; }
+            toast(err.message || 'SMTP test failed', 'error');
+            updateEmailAccountSaveState();
+          });
+      });
+
+      root.querySelector('#email-account-test-imap-btn')?.addEventListener('click', function () {
+        applyGmailAutofill(true);
+        var payload = collectEmailAccountPayload();
+        apiFetch('/email-accounts/test-imap', { method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'application/json' } })
+          .then(function (body) {
+            var data = body.data || {};
+            _emailAccountState.imapToken = data.verification_token || '';
+            _emailAccountState.imapVerified = true;
+            var imapToggle = document.getElementById('email-account-imap-enabled');
+            if (imapToggle) {
+              imapToggle.checked = true;
+              toggleImapFieldsUi();
+            }
+            var badge = document.getElementById('email-account-imap-test-badge');
+            if (badge) { badge.textContent = 'IMAP Connected'; badge.className = 'badge-success'; }
+            renderImapTestDetails(data);
+            toast(data.message || 'IMAP Connected Successfully', 'success');
+            updateEmailAccountSaveState();
+          })
+          .catch(function (err) {
+            _emailAccountState.imapVerified = false;
+            var badge = document.getElementById('email-account-imap-test-badge');
+            var errMsg = err.message || 'IMAP test failed';
+            if (badge) { badge.textContent = errMsg.length > 40 ? 'IMAP Failed' : errMsg; badge.className = 'badge-danger'; badge.title = errMsg; }
+            renderImapTestError(errMsg);
+            toast(errMsg, 'error');
+            updateEmailAccountSaveState();
+          });
+      });
+
+      root.querySelector('#email-account-form')?.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var payload = collectEmailAccountPayload();
+        var id = payload.account_id;
+        delete payload.account_id;
+        var method = id ? 'PUT' : 'POST';
+        var url = id ? '/email-accounts/' + encodeURIComponent(id) : '/email-accounts';
+        if (!payload.smtp_password) delete payload.smtp_password;
+        if (!payload.imap_password) delete payload.imap_password;
+        apiFetch(url, { method: method, body: JSON.stringify(payload), headers: { 'Content-Type': 'application/json' } })
+          .then(function () {
+            toast('Email account saved', 'success');
+            clearEmailAccountForm();
+            reloadEmailAccountsList();
+          })
+          .catch(function (err) {
+            toast(err.message || 'Unable to save email account', 'error');
+          });
+      });
+
+      root.querySelector('#email-account-delete-btn')?.addEventListener('click', function () {
+        var id = (document.getElementById('email-account-id') || {}).value;
+        if (!id || !window.confirm('Delete this email account?')) return;
+        apiFetch('/email-accounts/' + encodeURIComponent(id), { method: 'DELETE' })
+          .then(function () {
+            toast('Email account deleted', 'success');
+            clearEmailAccountForm();
+            reloadEmailAccountsList();
+          })
+          .catch(function (err) { toast(err.message || 'Unable to delete account', 'error'); });
+      });
+
+      root.querySelector('#email-account-sync-imap-btn')?.addEventListener('click', function () {
+        var id = (document.getElementById('email-account-id') || {}).value;
+        if (!id) return;
+        apiFetch('/email-accounts/' + encodeURIComponent(id) + '/sync-imap', { method: 'POST' })
+          .then(function (body) {
+            toast((body.data && body.data.message) || 'IMAP sync completed', 'success');
+            reloadEmailAccountsList();
+          })
+          .catch(function (err) { toast(err.message || 'IMAP sync failed', 'error'); });
+      });
+
+      ['email-account-smtp-host', 'email-account-smtp-port', 'email-account-smtp-password', 'email-account-imap-host', 'email-account-imap-port', 'email-account-smtp-encryption'].forEach(function (fieldId) {
+        root.querySelector('#' + fieldId)?.addEventListener('input', resetEmailAccountVerification);
+      });
+    }
+
+    toggleImapFieldsUi();
+    if (typeof initPasswordToggleButtons === 'function') initPasswordToggleButtons(root);
+    reloadEmailAccountsList();
+    icons();
+  }
 
   function initSettingsPage() {
     var saveBtn = document.getElementById('settings-save-btn');
@@ -7562,10 +17422,19 @@ window.CA_CRM = (function () {
       })
       .catch(function () {});
     var smsIntegrationCard = document.getElementById('sms-integration-card');
+    var whatsappIntegrationCard = document.getElementById('whatsapp-integration-card');
     var crmUser = window.__CRM_USER__ || {};
-    if (crmUser.role === 'employee' && smsIntegrationCard) {
-      smsIntegrationCard.classList.add('hidden');
+    if (crmUser.role === 'employee') {
+      if (smsIntegrationCard) smsIntegrationCard.classList.add('hidden');
+      if (whatsappIntegrationCard) whatsappIntegrationCard.classList.add('hidden');
     }
+    apiFetch('/whatsapp-settings')
+      .then(function (body) {
+        populateWhatsAppSettingsForm(body.data || {});
+      })
+      .catch(function () {
+        if (whatsappIntegrationCard) whatsappIntegrationCard.classList.add('hidden');
+      });
     apiFetch('/sms-settings')
       .then(function (body) {
         populateSmsSettingsForm(body.data || {});
@@ -7575,63 +17444,10 @@ window.CA_CRM = (function () {
       });
     apiFetch('/email-settings')
       .then(function (body) {
-        var email = body.data || {};
-        var setVal = function (id, val) {
-          var el = document.getElementById(id);
-          if (el && val != null && val !== '') el.value = val;
-        };
-        setVal('email-settings-provider-name', email.provider_name || 'GoDaddy SMTP');
-        setVal('email-settings-smtp-host', email.smtp_host || 'smtpout.secureserver.net');
-        setVal('email-settings-smtp-port', email.smtp_port || 465);
-        setVal('email-settings-smtp-username', email.smtp_username || '');
-        setVal('email-settings-smtp-encryption', email.smtp_encryption || 'ssl');
-        setVal('email-settings-from-email', email.from_email || '');
-        setVal('email-settings-from-name', email.from_name || '');
-        setVal('email-settings-mode', email.mode || 'simulation');
-        var pwd = document.getElementById('email-settings-smtp-password');
-        if (pwd) pwd.value = '';
-        var pwdNote = document.getElementById('email-settings-password-note');
-        if (pwdNote) {
-          pwdNote.textContent = email.has_smtp_password
-            ? 'SMTP password is configured (encrypted). Leave blank to keep current password.'
-            : 'SMTP password is encrypted at rest and never returned by the API.';
-        }
-        var emailBadge = document.getElementById('email-settings-mode-badge');
-        if (emailBadge) emailBadge.textContent = (email.mode || 'simulation') === 'live' ? 'Live' : 'Simulation';
+        populateEmailSettingsForm(body.data || {});
+        bindEmailSettingsHandlers();
       })
       .catch(function () {});
-    var emailSaveBtn = document.getElementById('email-settings-save-btn');
-    if (emailSaveBtn && !emailSaveBtn._emailSettingsBound) {
-      emailSaveBtn._emailSettingsBound = true;
-      emailSaveBtn.addEventListener('click', function () {
-        var payload = {
-          provider_name: (document.getElementById('email-settings-provider-name') || {}).value || '',
-          smtp_host: (document.getElementById('email-settings-smtp-host') || {}).value || '',
-          smtp_port: parseInt((document.getElementById('email-settings-smtp-port') || {}).value, 10) || null,
-          smtp_username: (document.getElementById('email-settings-smtp-username') || {}).value || '',
-          smtp_encryption: (document.getElementById('email-settings-smtp-encryption') || {}).value || '',
-          from_email: (document.getElementById('email-settings-from-email') || {}).value || '',
-          from_name: (document.getElementById('email-settings-from-name') || {}).value || '',
-          mode: (document.getElementById('email-settings-mode') || {}).value || 'simulation',
-        };
-        var pwdVal = (document.getElementById('email-settings-smtp-password') || {}).value || '';
-        if (pwdVal) payload.smtp_password = pwdVal;
-        apiFetch('/email-settings', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        }).then(function (body) {
-          toast('Email settings saved', 'success');
-          var email = (body && body.data) || {};
-          var pwd = document.getElementById('email-settings-smtp-password');
-          if (pwd) pwd.value = '';
-          var emailBadge = document.getElementById('email-settings-mode-badge');
-          if (emailBadge) emailBadge.textContent = payload.mode === 'live' ? 'Live' : 'Simulation';
-        }).catch(function (err) {
-          toast(err.message || 'Unable to save email settings', 'error');
-        });
-      });
-    }
     if (saveBtn && !saveBtn._settingsBound) {
       saveBtn._settingsBound = true;
       saveBtn.addEventListener('click', function () {
@@ -7662,6 +17478,275 @@ window.CA_CRM = (function () {
     }
   }
 
+  function initSettingsEmailTemplatesPage() {
+    if (window.CrmTemplateManagement) {
+      window.CrmTemplateManagement.initEmail();
+    }
+  }
+
+  function initSettingsWhatsAppTemplatesPage() {
+    if (window.CrmTemplateManagement) {
+      window.CrmTemplateManagement.initWhatsApp();
+    }
+  }
+
+  function initSettingsGoogleApiPage() {
+    var root = document.getElementById('settings-google-api-page');
+    if (!root || root._googleApiBound) return;
+    root._googleApiBound = true;
+
+    var form = document.getElementById('google-api-settings-form');
+    var badge = document.getElementById('google-api-status-badge');
+    var sourceLabel = document.getElementById('google-api-source-label');
+    var maskedEl = document.getElementById('google-api-key-masked');
+    var testBtn = document.getElementById('google-api-test-btn');
+    var testResult = document.getElementById('google-api-test-result');
+    var keyInput = document.getElementById('google-api-key-input');
+
+    function populate(data) {
+      data = data || {};
+      if (badge) {
+        badge.textContent = data.places_api_key_configured ? 'API key configured' : 'Not configured';
+        badge.className = data.places_api_key_configured ? 'badge-success' : 'badge-neutral';
+      }
+      if (sourceLabel) {
+        var sourceMap = { database: 'Stored in CRM settings', environment: 'From environment variable', none: 'No key found' };
+        sourceLabel.textContent = sourceMap[data.source] || '';
+      }
+      if (maskedEl) {
+        maskedEl.textContent = data.places_api_key_masked ? ('Current key: ' + data.places_api_key_masked) : '';
+      }
+    }
+
+    function loadSettings() {
+      apiFetch('/google-api-settings')
+        .then(function (body) { populate(body.data || {}); })
+        .catch(function (err) { toast(err.message || 'Unable to load Google API settings', 'error'); });
+    }
+
+    loadSettings();
+
+    if (form) {
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var saveBtn = document.getElementById('google-api-save-btn');
+        if (saveBtn) saveBtn.disabled = true;
+        apiFetch('/google-api-settings', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ places_api_key: keyInput ? keyInput.value : '' }),
+        }).then(function (body) {
+          populate(body.data || {});
+          if (keyInput) keyInput.value = '';
+          toast('Google API settings saved', 'success');
+        }).catch(function (err) {
+          toast(err.message || 'Unable to save settings', 'error');
+        }).finally(function () {
+          if (saveBtn) saveBtn.disabled = false;
+        });
+      });
+    }
+
+    if (testBtn) {
+      testBtn.addEventListener('click', function () {
+        testBtn.disabled = true;
+        if (testResult) {
+          testResult.classList.remove('hidden');
+          testResult.textContent = 'Testing connection…';
+        }
+        apiFetch('/google-api-settings/test', { method: 'POST' })
+          .then(function (body) {
+            var result = body.data || {};
+            if (testResult) {
+              var lines = [result.message || body.message || 'Test complete'];
+              if (result.recommendation) lines.push(result.recommendation);
+              if (result.google_reason) lines.push('Reason: ' + result.google_reason);
+              testResult.textContent = lines.join(' ');
+              testResult.className = 'text-body mt-2 ' + (result.valid ? 'text-emerald-700' : 'text-red-600');
+            }
+            toast(result.message || body.message, result.valid ? 'success' : 'error');
+          })
+          .catch(function (err) {
+            if (testResult) {
+              testResult.textContent = err.message || 'Test failed';
+              testResult.className = 'text-body mt-2 text-red-600';
+            }
+            toast(err.message || 'Test failed', 'error');
+          })
+          .finally(function () { testBtn.disabled = false; });
+      });
+    }
+  }
+
+  function initRolesPermissionsPage() {
+    var root = document.getElementById('roles-permissions-page');
+    if (!root || root._rolesPermBound) return;
+    root._rolesPermBound = true;
+
+    var roleSelect = document.getElementById('roles-perm-role-select');
+    var matrixHead = document.getElementById('roles-perm-matrix-head');
+    var matrixBody = document.getElementById('roles-perm-matrix-body');
+    var statusEl = document.getElementById('roles-perm-status');
+    var saveBtn = document.getElementById('roles-perm-save-btn');
+    var resetBtn = document.getElementById('roles-perm-reset-btn');
+    var state = {
+      modules: [],
+      permissions: [],
+      moduleLabels: {},
+      permissionLabels: {},
+      matrix: {},
+      dirty: {},
+    };
+
+    function showStatus(message, type) {
+      if (!statusEl) return;
+      statusEl.textContent = message || '';
+      statusEl.classList.remove('hidden', 'is-success', 'is-error', 'is-info');
+      if (!message) {
+        statusEl.classList.add('hidden');
+        return;
+      }
+      statusEl.classList.add(type === 'error' ? 'is-error' : type === 'success' ? 'is-success' : 'is-info');
+    }
+
+    function selectedRole() {
+      return roleSelect ? roleSelect.value : 'manager';
+    }
+
+    function roleGrants(role) {
+      var grants = {};
+      var roleMatrix = state.matrix[role] || {};
+      state.modules.forEach(function (module) {
+        grants[module] = (roleMatrix[module] || []).slice();
+      });
+      return grants;
+    }
+
+    function isGranted(role, module, permission) {
+      var grants = state.dirty[role] || roleGrants(role);
+      var moduleGrants = grants[module] || [];
+      return moduleGrants.indexOf(permission) >= 0;
+    }
+
+    function renderMatrix() {
+      if (!matrixHead || !matrixBody) return;
+      var role = selectedRole();
+      matrixHead.innerHTML = '<tr><th class="sticky-left roles-perm-module-col">Module</th>' +
+        state.permissions.map(function (permission) {
+          var label = state.permissionLabels[permission] || rbacPermissionLabel(permission);
+          return '<th class="roles-perm-action-col" title="' + escapeHtml(label) + '">' + escapeHtml(label) + '</th>';
+        }).join('') + '</tr>';
+
+      matrixBody.innerHTML = state.modules.map(function (module) {
+        var moduleLabel = state.moduleLabels[module] || activityModuleLabel(module);
+        var cells = state.permissions.map(function (permission) {
+          var granted = isGranted(role, module, permission);
+          return '<td class="roles-perm-action-col text-center">' +
+            '<label class="roles-perm-toggle">' +
+              '<input type="checkbox" class="roles-perm-checkbox" data-module="' + escapeHtml(module) + '" data-permission="' + escapeHtml(permission) + '"' + (granted ? ' checked' : '') + ' />' +
+              '<span class="roles-perm-toggle-ui" aria-hidden="true"></span>' +
+            '</label></td>';
+        }).join('');
+        return '<tr class="ca-table-row"><th scope="row" class="sticky-left roles-perm-module-col font-medium text-slate-800">' + escapeHtml(moduleLabel) + '</th>' + cells + '</tr>';
+      }).join('') || '<tr><td colspan="99" class="text-center text-slate-500 p-6">No modules configured.</td></tr>';
+
+      matrixBody.querySelectorAll('.roles-perm-checkbox').forEach(function (input) {
+        input.addEventListener('change', function () {
+          var r = selectedRole();
+          if (!state.dirty[r]) state.dirty[r] = roleGrants(r);
+          var module = input.getAttribute('data-module');
+          var permission = input.getAttribute('data-permission');
+          var list = state.dirty[r][module] || [];
+          if (input.checked) {
+            if (list.indexOf(permission) < 0) list.push(permission);
+          } else {
+            list = list.filter(function (item) { return item !== permission; });
+          }
+          state.dirty[r][module] = list;
+          showStatus('Unsaved changes for ' + rbacRoleLabel(r) + '.', 'info');
+        });
+      });
+    }
+
+    function loadMatrix() {
+      showStatus('Loading permissions…', 'info');
+      apiFetch('/admin/role-permissions')
+        .then(function (body) {
+          var data = body.data || {};
+          state.modules = data.modules || [];
+          state.permissions = data.permissions || [];
+          state.moduleLabels = data.module_labels || {};
+          state.permissionLabels = data.permission_labels || {};
+          state.matrix = data.matrix || {};
+          state.dirty = {};
+          renderMatrix();
+          showStatus('', '');
+        })
+        .catch(function (err) {
+          showStatus(err.message || 'Unable to load role permissions.', 'error');
+        });
+    }
+
+    if (roleSelect) {
+      roleSelect.addEventListener('change', function () {
+        renderMatrix();
+        showStatus('', '');
+      });
+    }
+
+    if (saveBtn) {
+      saveBtn.addEventListener('click', function () {
+        var role = selectedRole();
+        var grants = state.dirty[role] || roleGrants(role);
+        saveBtn.disabled = true;
+        showStatus('Saving permissions…', 'info');
+        apiFetch('/admin/role-permissions', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: role, grants: grants }),
+        }).then(function (body) {
+          state.matrix = (body.data && body.data.matrix) || state.matrix;
+          delete state.dirty[role];
+          renderMatrix();
+          showStatus('Permissions saved successfully.', 'success');
+          toast('Permissions saved successfully', 'success');
+        }).catch(function (err) {
+          showStatus(err.message || 'Unable to save permissions.', 'error');
+          toast(err.message || 'Unable to save permissions', 'error');
+        }).finally(function () {
+          saveBtn.disabled = false;
+        });
+      });
+    }
+
+    if (resetBtn) {
+      resetBtn.addEventListener('click', function () {
+        var role = selectedRole();
+        if (!window.confirm('Reset ' + rbacRoleLabel(role) + ' permissions to default values?')) return;
+        resetBtn.disabled = true;
+        showStatus('Resetting permissions…', 'info');
+        apiFetch('/admin/role-permissions/reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: role }),
+        }).then(function (body) {
+          state.matrix = (body.data && body.data.matrix) || state.matrix;
+          delete state.dirty[role];
+          renderMatrix();
+          showStatus('Permissions reset to default.', 'success');
+          toast('Permissions reset to default', 'success');
+        }).catch(function (err) {
+          showStatus(err.message || 'Unable to reset permissions.', 'error');
+          toast(err.message || 'Unable to reset permissions', 'error');
+        }).finally(function () {
+          resetBtn.disabled = false;
+        });
+      });
+    }
+
+    loadMatrix();
+  }
+
   function initSecurityPage() {
     apiFetch('/admin/security-matrix')
       .then(function (body) {
@@ -7672,8 +17757,8 @@ window.CA_CRM = (function () {
         var note = document.getElementById('security-matrix-note');
         if (note) {
           note.textContent = data.can_edit
-            ? 'Toggle permissions for admin, manager, and employee roles. Changes save immediately.'
-            : 'Read-only view. Only Super Admin and Admin can edit permissions.';
+            ? 'Toggle permissions for manager, employee, and admin roles. Changes save immediately.'
+            : 'Read-only view. Only Super Admin can edit permissions.';
         }
         if (rbacBody) {
           var rows = [];
@@ -7740,17 +17825,48 @@ window.CA_CRM = (function () {
   }
 
   function init() {
+    initLeadPickerDeps();
+    bindCampaignLeadPickerEvents();
+    if (window.CrmLeadPicker) {
+      window.CrmLeadPicker.bind('followup', {
+        onSelectionChange: function () {
+          var typeSel = document.getElementById('form-followup')?.elements?.followup_type;
+          if (typeSel && isFollowupDemoScheduledType(typeSel.value)) {
+            populateFollowupDemoFieldsFromLead();
+          }
+        },
+      });
+    }
     initForms();
     initCampaignActions();
     initMasterDataActions();
+    ensureInboxSelectionBound();
+    ensureKpiCardsBound();
+    ensureFollowupCalendarPopoverBound();
     bindModalTriggers(document);
     initQuickActions();
+    if (window.CAActionDropdown) {
+      CAActionDropdown.init();
+      registerActionDropdownHandlers();
+      CAActionDropdown.bindScrollDismiss(document);
+    }
+    window.icons = icons;
+    if (window.CATablePagination) {
+      CATablePagination.init();
+      CATablePagination.register('bulk-assign-batches', {
+        onPageChange: function (page) { loadBulkAssignBatches(page); },
+      });
+      CATablePagination.register('bulk-assign-employees', {
+        onPageChange: function (page) { loadBulkAssignEmployees(page); },
+      });
+    }
+    ensureLeadQuickActionsDelegated();
+    if (window.CrmDateTimePicker) {
+      window.CrmDateTimePicker.initAll(document);
+    }
     if (window.CA_STATE_CITY) {
-      window.CA_STATE_CITY.loadStates().catch(function () { /* retry on open */ });
       window.CA_STATE_CITY.initAllPairs(document);
     }
-    var initialPage = window.__CRM_INITIAL_PAGE__ || 'dashboard';
-    onPage(initialPage);
     loadNotifications(true).then(function () {
       notificationPollStopped = false;
       notificationPollFailures = 0;
@@ -7770,6 +17886,124 @@ window.CA_CRM = (function () {
       }
     });
     window.addEventListener('pagehide', stopNotificationPoller);
+    enhanceEntityLookups();
+    initResetPasswordEmployeeLookup();
+  }
+
+  function applyListingFetchBody(key, body, extra, options) {
+    options = options || {};
+    var cfg = CA_LISTING_SEARCH.REGISTRY[key];
+    var listingGen = 0;
+    if (key === 'ca_masters') {
+      listingGen = options.fromCache ? _listingLoadGeneration : ++_listingLoadGeneration;
+    }
+    var parsed = CA_LISTING_SEARCH.unwrapListingBody(body, cfg.itemsKey || 'items');
+    var items = parsed.items || [];
+
+    if (key === 'ca_masters') {
+      if (listingGen !== _listingLoadGeneration) return parsed;
+      var leads = items.map(mapLeadRecord);
+      window._listingLeadsPage = leads;
+      realLeadsLoaded = true;
+      enrichLeadsWithAssignments();
+      if (document.getElementById('leads-data-table')) renderLeadsTable(leads);
+      if (document.getElementById('kanban-board') && isLeadsPipelineTabActive()) {
+        loadKanbanLeads();
+      }
+      var camCtx = getCaMasterTableContext();
+      if (document.getElementById('ca-master-data-table')) renderCaMasterTable(leads, 'ca-master-data-table');
+      if (document.getElementById('ca-master-new-data-table') && document.querySelector('.ca-tab-panel[data-panel="new"].active')) {
+        renderCaMasterTable(leads, 'ca-master-new-data-table');
+      }
+      var paginationSlot = null;
+      if (document.getElementById('leads-data-table') && document.getElementById('leads-pagination-slot') && !document.querySelector('.cam-page')) {
+        paginationSlot = 'leads-pagination-slot';
+      } else if (document.getElementById(camCtx.paginationSlot)) {
+        paginationSlot = camCtx.paginationSlot;
+      }
+      var paginationTableId = document.getElementById('leads-table')
+        ? 'leads-table'
+        : (document.getElementById(camCtx.tableId) ? camCtx.tableId : 'leads-data-table');
+      applyListingPagination(key, paginationTableId, body, paginationSlot);
+      if (document.getElementById('leads-table')) {
+        CA_LISTING_SEARCH.bindSortableHeaders(key, 'leads-table', { 1: 'firm_name', 2: 'ca_name', 7: 'status' });
+      }
+      if (document.getElementById(camCtx.tableId)) {
+        CA_LISTING_SEARCH.bindSortableHeaders(key, camCtx.tableId, { 0: 'firm_name', 1: 'ca_name', 8: 'status', 11: 'updated_at' });
+      }
+    } else if (key === 'employees') {
+      var employees = items.map(mapEmployeeRecord);
+      window.realEmployees = employees;
+      realEmployeesLoaded = true;
+      renderEmployeesTable(employees);
+      populateAssignmentExecutiveFilter();
+      if (document.getElementById('leaderboard')) renderLeaderboard();
+      applyListingPagination(key, cfg.tableId, body);
+    } else if (key === 'lead_assignments') {
+      window.realAssignments = items;
+      renderAssignmentTable(items, parsed.pagination);
+      renderAssignmentKpis();
+      applyListingPagination(key, cfg.tableId, body, 'assignment-pagination-slot');
+      customizeAssignmentPaginationSummary(parsed.pagination);
+    } else if (key === 'follow_ups') {
+      window.realFollowUps = items;
+      realFollowUpsLoaded = true;
+      renderFollowupsTable(items);
+      renderFollowupKpis();
+      renderFollowupCalendarFromData();
+      applyListingPagination(key, cfg.tableId, body);
+    } else if (key === 'activity_logs') {
+      activityLogsCache = items;
+      if (parsed.filter_options) activityFilterOptions = parsed.filter_options;
+      renderActivityLogsTable(items);
+      if (document.getElementById('audit-logs-table')) renderAuditLogsTable(items);
+      applyListingPagination(key, cfg.tableId, body);
+    } else if (key === 'assignment_histories') {
+      renderAssignmentHistoryTable(items);
+      applyListingPagination(key, cfg.tableId, body, 'assignment-history-pagination-slot');
+    } else if (key === 'consent_trackings') {
+      window.realConsentRecords = items;
+      renderConsentRecordsTable(items);
+      applyListingPagination(key, cfg.tableId, body);
+    } else if (key === 'dnd_management') {
+      window.realDndRecords = items;
+      renderDndRecordsTable(items);
+      applyListingPagination(key, cfg.tableId, body);
+    } else if (key === 'bulk_operations') {
+      window._bulkOperationsHistoryCache = items;
+      renderBulkOperationsHistoryTable(items);
+      applyListingPagination(key, cfg.tableId, body);
+    } else if (key === 'sales_list') {
+      renderSalesListTable(items);
+      applyListingPagination(key, cfg.tableId, body);
+      CA_LISTING_SEARCH.bindSortableHeaders(key, 'sales-list-table', {
+        0: 'serial_number', 1: 'sale_month', 2: 'points', 3: 'customer_name', 4: 'firm_name',
+        6: 'mobile_no', 7: 'city_name', 8: 'plan_purchased', 9: 'purchase_date', 10: 'cooling_period_days',
+        11: 'expiry_date', 12: 'total_amount', 13: 'amount_received', 14: 'balance_amount',
+        15: 'invoice_number', 16: 'payment_status',
+      });
+    } else if (key === 'states') {
+      window.realStates = items;
+      renderMasterTables();
+      applyListingPagination(key, cfg.tableId, body);
+    } else if (key === 'cities') {
+      window.realCitiesCache = items;
+      var citiesEl = document.getElementById('master-cities-table');
+      if (citiesEl) {
+        citiesEl.innerHTML = items.length ? items.map(function (c) {
+          return '<tr class="ca-table-row">' +
+            '<td class="font-medium">' + escapeHtml(c.city_name) + '</td>' +
+            '<td>' + escapeHtml(c.state_name || (c.state && c.state.state_name) || '—') + '</td>' +
+            '<td>—</td>' +
+            '<td class="text-caption">' + formatRelativeDate(c.created_at) + '</td>' +
+            masterActionCell('city', c.city_id) +
+          '</tr>';
+        }).join('') : '<tr><td colspan="5" class="text-center text-slate-500 p-4">No cities yet.</td></tr>';
+      }
+      applyListingPagination(key, cfg.tableId, body);
+    }
+
+    return parsed;
   }
 
   function reloadListing(key) {
@@ -7780,11 +18014,16 @@ window.CA_CRM = (function () {
     var extra = {};
     if (key === 'ca_masters') {
       var onLeadsHub = !!(document.getElementById('leads-data-table') || document.getElementById('leads-kpi-strip'));
+      var onCaMaster = !!document.querySelector('.cam-page');
       if (onLeadsHub && window._leadSegmentFilter && window._leadSegmentFilter !== 'all') {
         extra.segment = window._leadSegmentFilter;
       }
       if (onLeadsHub) {
         Object.assign(extra, CA_LISTING_SEARCH.readLeadDrawerFilters());
+      }
+      if (onCaMaster) {
+        var newPanel = document.querySelector('.ca-tab-panel[data-panel="new"].active');
+        if (newPanel) extra.segment = 'new';
       }
     }
     if (key === 'activity_logs') Object.assign(extra, readActivityFiltersFromForm());
@@ -7805,86 +18044,15 @@ window.CA_CRM = (function () {
       if (dndType) extra.dnd_type = dndType;
     }
 
+    var cachedListing = readListingPageCache(key, extra);
+    if (cachedListing && cachedListing.body) {
+      applyListingFetchBody(key, cachedListing.body, extra, { fromCache: true });
+    }
+
     return apiFetch(cfg.endpoint + listingPageQuery(key, extra))
       .then(function (body) {
-        var parsed = CA_LISTING_SEARCH.unwrapListingBody(body, cfg.itemsKey || 'items');
-        var items = parsed.items || [];
-
-        if (key === 'ca_masters') {
-          var leads = items.map(mapLeadRecord);
-          window._listingLeadsPage = leads;
-          window.realLeads = leads.slice();
-          realLeadsLoaded = true;
-          if (document.getElementById('leads-data-table')) renderLeadsTable(leads);
-          if (document.getElementById('ca-master-data-table')) renderCaMasterTable(leads);
-          var paginationTableId = document.getElementById('ca-master-data-table')
-            ? 'ca-master-data-table'
-            : 'leads-data-table';
-          applyListingPagination(key, paginationTableId, body);
-          if (document.getElementById('leads-data-table')) {
-            CA_LISTING_SEARCH.bindSortableHeaders(key, 'leads-data-table', { 1: 'firm_name', 2: 'ca_name', 7: 'status' });
-          }
-        } else if (key === 'employees') {
-          var employees = items.map(mapEmployeeRecord);
-          window.realEmployees = employees;
-          realEmployeesLoaded = true;
-          renderEmployeesTable(employees);
-          if (document.getElementById('leaderboard')) renderLeaderboard();
-          applyListingPagination(key, cfg.tableId, body);
-        } else if (key === 'lead_assignments') {
-          window.realAssignments = items;
-          renderAssignmentTable(items);
-          renderAssignmentKpis();
-          applyListingPagination(key, cfg.tableId, body);
-        } else if (key === 'follow_ups') {
-          window.realFollowUps = items;
-          renderFollowupsTable(items);
-          renderFollowupKpis();
-          renderFollowupCalendarFromData();
-          applyListingPagination(key, cfg.tableId, body);
-        } else if (key === 'activity_logs') {
-          activityLogsCache = items;
-          if (parsed.filter_options) activityFilterOptions = parsed.filter_options;
-          renderActivityLogsTable(items);
-          if (document.getElementById('audit-logs-table')) renderAuditLogsTable(items);
-          applyListingPagination(key, cfg.tableId, body);
-        } else if (key === 'assignment_histories') {
-          renderAssignmentHistoryTable(items);
-          applyListingPagination(key, cfg.tableId, body);
-        } else if (key === 'consent_trackings') {
-          window.realConsentRecords = items;
-          renderConsentRecordsTable(items);
-          applyListingPagination(key, cfg.tableId, body);
-        } else if (key === 'dnd_management') {
-          window.realDndRecords = items;
-          renderDndRecordsTable(items);
-          applyListingPagination(key, cfg.tableId, body);
-        } else if (key === 'bulk_operations') {
-          window._bulkOperationsHistoryCache = items;
-          renderBulkOperationsHistoryTable(items);
-          applyListingPagination(key, cfg.tableId, body);
-        } else if (key === 'states') {
-          window.realStates = items;
-          renderMasterTables();
-          applyListingPagination(key, cfg.tableId, body);
-        } else if (key === 'cities') {
-          window.realCitiesCache = items;
-          var citiesEl = document.getElementById('master-cities-table');
-          if (citiesEl) {
-            citiesEl.innerHTML = items.length ? items.map(function (c) {
-              return '<tr class="ca-table-row">' +
-                '<td class="font-medium">' + escapeHtml(c.city_name) + '</td>' +
-                '<td>' + escapeHtml(c.state_name || (c.state && c.state.state_name) || '—') + '</td>' +
-                '<td>—</td>' +
-                '<td class="text-caption">' + formatRelativeDate(c.created_at) + '</td>' +
-                '<td class="text-right whitespace-nowrap">' + masterActionButtons('city', c.city_id) + '</td>' +
-              '</tr>';
-            }).join('') : '<tr><td colspan="5" class="text-center text-slate-500 p-4">No cities yet.</td></tr>';
-          }
-          applyListingPagination(key, cfg.tableId, body);
-        }
-
-        return parsed;
+        writeListingPageCache(key, extra, body);
+        return applyListingFetchBody(key, body, extra);
       })
       .catch(function (error) {
         toast(error && error.message ? error.message : 'Unable to load data.', 'error');
@@ -7892,12 +18060,449 @@ window.CA_CRM = (function () {
       });
   }
 
+  var salesListOptionsCache = null;
+
+  function readSalesListColumnFilters() {
+    var root = document.getElementById('sales-list-module');
+    if (!root) return {};
+    var filters = {};
+    root.querySelectorAll('[data-col-filter-group="sales_list"][data-col-filter]').forEach(function (input) {
+      var key = input.getAttribute('data-col-filter');
+      if (!key) return;
+      var value = (input.value || '').trim();
+      if (value) filters[key] = value;
+    });
+    root.querySelectorAll('[data-col-filter-group="sales_list"][data-col-filter-min]').forEach(function (input) {
+      var key = input.getAttribute('data-col-filter-min');
+      if (!key) return;
+      var value = (input.value || '').trim();
+      if (value) filters[key] = value;
+    });
+    root.querySelectorAll('[data-col-filter-group="sales_list"][data-col-filter-max]').forEach(function (input) {
+      var key = input.getAttribute('data-col-filter-max');
+      if (!key) return;
+      var value = (input.value || '').trim();
+      if (value) filters[key] = value;
+    });
+    return filters;
+  }
+
+  function applySalesListFilters() {
+    if (!window.CA_LISTING_SEARCH) return;
+    CA_LISTING_SEARCH.setState('sales_list', {
+      page: 1,
+      filters: readSalesListColumnFilters(),
+    });
+    reloadListing('sales_list');
+  }
+
+  function renderSalesListTable(items) {
+    var el = document.getElementById('sales-list-data-table');
+    if (!el) return;
+    items = items || [];
+    var canEdit = canEditSalesList();
+    var canHistory = canViewSalesListHistory();
+    if (!items.length) {
+      el.innerHTML = '<tr><td colspan="20" class="text-center text-slate-500 p-6">No sales records yet. Converted leads will appear here automatically.</td></tr>';
+      return;
+    }
+    el.innerHTML = items.map(function (row) {
+      var actions = '';
+      if (canEdit) {
+        actions += '<button type="button" class="crm-row-action-btn" data-sales-edit="' + escapeHtml(String(row.id)) + '" title="Edit record" aria-label="Edit record"><i data-lucide="pencil" class="h-4 w-4"></i></button>';
+      }
+      if (canHistory) {
+        actions += '<button type="button" class="crm-row-action-btn" data-sales-history="' + escapeHtml(String(row.id)) + '" title="View edit history" aria-label="View edit history"><i data-lucide="history" class="h-4 w-4"></i></button>';
+      }
+      if (!actions) actions = '<span class="text-slate-400 text-xs">—</span>';
+      return '<tr class="ca-table-row crm-table-row" data-sales-id="' + escapeHtml(String(row.id)) + '">' +
+        '<td class="sticky-left crm-td-num">' + escapeHtml(String(row.serial_number || '—')) + '</td>' +
+        '<td class="crm-td-date">' + escapeHtml(row.sale_month || '—') + '</td>' +
+        '<td class="crm-td-num">' + escapeHtml(String(row.points != null ? row.points : '—')) + '</td>' +
+        '<td class="sticky-left-2 crm-td-person font-medium text-slate-900">' + previewTextCell(row.customer_name, 'crm-ca-cell') + '</td>' +
+        '<td class="crm-td-firm">' + previewTextCell(row.firm_name, 'crm-firm-cell') + '</td>' +
+        '<td class="crm-td-person">' + escapeHtml(row.reference_name || '—') + '</td>' +
+        '<td class="crm-td-mobile">' + camPhoneCell(row.mobile_no) + '</td>' +
+        '<td class="crm-td-geo">' + escapeHtml(row.city_name || '—') + '</td>' +
+        '<td class="crm-td-source">' + escapeHtml(row.plan_purchased || '—') + '</td>' +
+        '<td class="crm-td-date">' + escapeHtml(row.purchase_date || '—') + '</td>' +
+        '<td class="crm-td-num">' + escapeHtml(String(row.cooling_period_days != null ? row.cooling_period_days + ' days' : '—')) + '</td>' +
+        '<td class="crm-td-date">' + escapeHtml(row.expiry_date || '—') + '</td>' +
+        '<td class="crm-td-num">' + escapeHtml(formatSalesCurrency(row.total_amount)) + '</td>' +
+        '<td class="crm-td-num">' + escapeHtml(formatSalesCurrency(row.amount_received)) + '</td>' +
+        '<td class="crm-td-num">' + escapeHtml(formatSalesCurrency(row.balance_amount)) + '</td>' +
+        '<td class="crm-td-mono">' + escapeHtml(row.invoice_number || '—') + '</td>' +
+        '<td class="crm-td-status">' + salesPaymentBadge(row.payment_status) + '</td>' +
+        '<td class="crm-td-person">' + escapeHtml(row.employee_name || '—') + '</td>' +
+        '<td class="crm-td-person">' + escapeHtml(row.manager_name || '—') + '</td>' +
+        '<td class="sticky-right crm-td-actions crm-td-actions--cluster">' + actions + '</td>' +
+      '</tr>';
+    }).join('');
+    icons();
+  }
+
+  function populateSalesListFilterOptions(options) {
+    options = options || salesListOptionsCache || {};
+
+    function fillSelect(id, emptyLabel, items, labelFn) {
+      var select = document.getElementById(id);
+      if (!select) return;
+      var current = select.value;
+      select.innerHTML = '<option value="">' + escapeHtml(emptyLabel) + '</option>' +
+        (items || []).map(function (item) {
+          var value = String(item);
+          var label = labelFn ? labelFn(item) : value;
+          return '<option value="' + escapeHtml(value) + '">' + escapeHtml(label) + '</option>';
+        }).join('');
+      if (current) select.value = current;
+    }
+
+    fillSelect('sales-filter-plan', 'All plans', options.plans);
+    fillSelect('sales-filter-payment-status', 'All statuses', options.payment_statuses);
+    fillSelect('sales-filter-month', 'All months', options.sale_months);
+    fillSelect('sales-filter-executive', 'All executives', options.executives);
+    fillSelect('sales-filter-manager', 'All managers', options.managers);
+    fillSelect('sales-filter-cooling', 'All periods', options.cooling_periods, function (days) {
+      return days + ' days';
+    });
+  }
+
+  function fillSalesListChoiceSelect(selectId, choices, selectedId) {
+    var select = document.getElementById(selectId);
+    if (!select) return;
+    enhanceEntityLookups(select.parentElement || document);
+    if (!selectedId) {
+      if (window.CrmEntityLookup) window.CrmEntityLookup.setValue(select, '', null);
+      return;
+    }
+    var match = (choices || []).find(function (choice) {
+      return String(choice.id) === String(selectedId);
+    });
+    var record = match ? { employee_id: String(match.id), name: match.name || String(match.id) } : null;
+    if (window.CrmEntityLookup) {
+      window.CrmEntityLookup.setValue(select, String(selectedId), record);
+    } else {
+      select.value = String(selectedId);
+    }
+  }
+
+  function addMonthsToDateString(dateStr, months) {
+    if (!dateStr) return '';
+    var parts = String(dateStr).split('-');
+    if (parts.length !== 3) return '';
+    var year = parseInt(parts[0], 10);
+    var month = parseInt(parts[1], 10) - 1;
+    var day = parseInt(parts[2], 10);
+    var date = new Date(year, month + Number(months || 0), day);
+    var y = date.getFullYear();
+    var m = String(date.getMonth() + 1).padStart(2, '0');
+    var d = String(date.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + d;
+  }
+
+  function previewSalesListPaymentStatus(total, received, expiryDate) {
+    var balance = Math.max(0, Math.round((Number(total || 0) - Number(received || 0)) * 100) / 100);
+    if (balance <= 0 && Number(total || 0) > 0) return 'Paid';
+    if (Number(received || 0) > 0 && balance > 0) {
+      if (expiryDate) {
+        var expiry = new Date(expiryDate + 'T23:59:59');
+        if (!isNaN(expiry.getTime()) && expiry < new Date()) return 'Overdue';
+      }
+      return 'Partial';
+    }
+    if (expiryDate && Number(total || 0) > 0) {
+      var exp = new Date(expiryDate + 'T23:59:59');
+      if (!isNaN(exp.getTime()) && exp < new Date()) return 'Overdue';
+    }
+    return 'Pending';
+  }
+
+  function syncSalesListEditPreview(applyPlanDefaults) {
+    var options = salesListOptionsCache || {};
+    var plan = (document.getElementById('sales-list-edit-plan') || {}).value || '';
+    var purchaseDate = (document.getElementById('sales-list-edit-purchase-date') || {}).value || '';
+    var planConfig = (options.plan_configs || {})[plan] || {};
+    var coolingInput = document.getElementById('sales-list-edit-cooling');
+    var pointsInput = document.getElementById('sales-list-edit-points');
+
+    if (applyPlanDefaults && planConfig) {
+      if (coolingInput && planConfig.cooling_period_days != null) {
+        coolingInput.value = String(planConfig.cooling_period_days);
+      }
+      if (pointsInput && planConfig.points != null) {
+        pointsInput.value = String(planConfig.points);
+      }
+    }
+
+    var expiryInput = document.getElementById('sales-list-edit-expiry');
+    if (expiryInput) {
+      var expiry = purchaseDate && planConfig.duration_months
+        ? addMonthsToDateString(purchaseDate, planConfig.duration_months)
+        : '';
+      expiryInput.value = expiry || '—';
+    }
+
+    var total = parseFloat((document.getElementById('sales-list-edit-total') || {}).value || '0');
+    var received = parseFloat((document.getElementById('sales-list-edit-received') || {}).value || '0');
+    var balance = Math.max(0, Math.round((total - received) * 100) / 100);
+    var balanceInput = document.getElementById('sales-list-edit-balance');
+    if (balanceInput) balanceInput.value = formatSalesCurrency(balance);
+
+    var statusEl = document.getElementById('sales-list-edit-status');
+    if (statusEl) {
+      var expiryDate = expiryInput && expiryInput.value !== '—' ? expiryInput.value : '';
+      statusEl.innerHTML = salesPaymentBadge(previewSalesListPaymentStatus(total, received, expiryDate));
+    }
+  }
+
+  function bindSalesListEditPreview() {
+    var form = document.getElementById('sales-list-edit-form');
+    if (!form || form._salesPreviewBound) return;
+    form._salesPreviewBound = true;
+    form.addEventListener('input', function (e) {
+      if (!e.target || !e.target.id) return;
+      if (e.target.id === 'sales-list-edit-plan') {
+        syncSalesListEditPreview(true);
+        return;
+      }
+      if (['sales-list-edit-purchase-date', 'sales-list-edit-total', 'sales-list-edit-received', 'sales-list-edit-cooling', 'sales-list-edit-points'].indexOf(e.target.id) !== -1) {
+        syncSalesListEditPreview(false);
+      }
+    });
+    form.addEventListener('change', function (e) {
+      if (!e.target || !e.target.id) return;
+      if (e.target.id === 'sales-list-edit-plan' || e.target.id === 'sales-list-edit-purchase-date') {
+        syncSalesListEditPreview(e.target.id === 'sales-list-edit-plan');
+      }
+    });
+  }
+
+  function openSalesListEditModal(id) {
+    if (!canEditSalesList()) {
+      toast('You do not have permission to edit sales records.', 'error');
+      return;
+    }
+    apiFetch('/sales-list/' + encodeURIComponent(id))
+      .then(function (body) {
+        var row = body.data || {};
+        var modal = document.getElementById('modal-sales-list-edit');
+        if (!modal) return;
+        document.getElementById('sales-list-edit-id').value = row.id || '';
+        document.getElementById('sales-list-edit-serial-preview').textContent = row.serial_number != null ? String(row.serial_number) : '—';
+        document.getElementById('sales-list-edit-invoice-preview').textContent = row.invoice_number || '—';
+        document.getElementById('sales-list-edit-points').value = row.points != null ? row.points : '';
+        document.getElementById('sales-list-edit-customer').value = row.customer_name || '';
+        document.getElementById('sales-list-edit-firm').value = row.firm_name || '';
+        document.getElementById('sales-list-edit-reference').value = row.reference_name || '';
+        document.getElementById('sales-list-edit-mobile').value = row.mobile_no || '';
+        document.getElementById('sales-list-edit-city').value = row.city_name || '';
+        document.getElementById('sales-list-edit-purchase-date').value = row.purchase_date || '';
+        document.getElementById('sales-list-edit-cooling').value = row.cooling_period_days != null ? row.cooling_period_days : '';
+        document.getElementById('sales-list-edit-total').value = row.total_amount != null ? row.total_amount : '';
+        document.getElementById('sales-list-edit-received').value = row.amount_received != null ? row.amount_received : '';
+        document.getElementById('sales-list-edit-invoice').value = row.invoice_number || '';
+        document.getElementById('sales-list-edit-notes').value = row.notes || '';
+        var planSelect = document.getElementById('sales-list-edit-plan');
+        if (planSelect) {
+          planSelect.innerHTML = (salesListOptionsCache && salesListOptionsCache.plans || []).map(function (plan) {
+            return '<option value="' + escapeHtml(plan) + '"' + (plan === row.plan_purchased ? ' selected' : '') + '>' + escapeHtml(plan) + '</option>';
+          }).join('');
+        }
+        fillSalesListChoiceSelect('sales-list-edit-executive', (salesListOptionsCache || {}).executive_choices, row.employee_id);
+        fillSalesListChoiceSelect('sales-list-edit-manager', (salesListOptionsCache || {}).manager_choices, row.manager_id);
+        bindSalesListEditPreview();
+        syncSalesListEditPreview(false);
+        openExclusiveCrmModal(modal);
+        icons();
+      })
+      .catch(function (err) {
+        toast(err.message || 'Unable to load sales record', 'error');
+      });
+  }
+
+  function openSalesListHistoryModal(id) {
+    if (!canViewSalesListHistory()) {
+      toast('Only Super Admin can view edit history.', 'error');
+      return;
+    }
+    var modal = document.getElementById('modal-sales-list-history');
+    var bodyEl = document.getElementById('sales-list-history-body');
+    var subtitle = document.getElementById('sales-list-history-subtitle');
+    if (!modal || !bodyEl) return;
+    bodyEl.innerHTML = '<tr><td colspan="5" class="text-center text-slate-500 p-4">Loading history…</td></tr>';
+    openExclusiveCrmModal(modal);
+    apiFetch('/sales-list/' + encodeURIComponent(id) + '/history')
+      .then(function (resp) {
+        var items = resp.data || [];
+        if (subtitle) subtitle.textContent = items.length ? 'Showing ' + items.length + ' change' + (items.length === 1 ? '' : 's') + ' for this record.' : 'No edits recorded yet for this sales record.';
+        if (!items.length) {
+          bodyEl.innerHTML = '<tr><td colspan="5" class="text-center text-slate-500 p-6">No edit history yet.</td></tr>';
+          return;
+        }
+        bodyEl.innerHTML = items.map(function (item) {
+          return '<tr class="ca-table-row">' +
+            '<td class="crm-td-date whitespace-nowrap">' + escapeHtml(formatDateTime(item.edited_at)) + '</td>' +
+            '<td class="crm-td-person">' + escapeHtml(item.edited_by || 'System') + '</td>' +
+            '<td class="crm-td-source">' + escapeHtml(item.field_label || item.field_name || '—') + '</td>' +
+            '<td class="text-slate-600">' + escapeHtml(item.old_value || '—') + '</td>' +
+            '<td class="text-slate-900 font-medium">' + escapeHtml(item.new_value || '—') + '</td>' +
+          '</tr>';
+        }).join('');
+      })
+      .catch(function (err) {
+        bodyEl.innerHTML = '<tr><td colspan="5" class="text-center text-red-600 p-4">' + escapeHtml(err.message || 'Unable to load history') + '</td></tr>';
+      });
+  }
+
+  function initSalesListPage() {
+    if (!document.getElementById('sales-list-data-table')) return;
+    enhanceEntityLookups(document.getElementById('modal-sales-list-edit') || document);
+
+    apiFetch('/sales-list/options')
+      .then(function (body) {
+        salesListOptionsCache = body.data || {};
+        populateSalesListFilterOptions(salesListOptionsCache);
+      })
+      .catch(function () { /* optional */ });
+
+    reloadListing('sales_list');
+
+    var root = document.getElementById('sales-list-module');
+    if (root && !root._salesFiltersBound) {
+      root._salesFiltersBound = true;
+      var debounceTimer;
+      var searchTimer;
+      root.addEventListener('input', function (e) {
+        if (e.target.id === 'sales-list-search') {
+          clearTimeout(searchTimer);
+          searchTimer = setTimeout(function () {
+            if (!window.CA_LISTING_SEARCH) return;
+            CA_LISTING_SEARCH.setState('sales_list', {
+              search: (e.target.value || '').trim(),
+              page: 1,
+            });
+            reloadListing('sales_list');
+          }, 300);
+          return;
+        }
+        if (!e.target.matches('[data-col-filter-group="sales_list"]')) return;
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(applySalesListFilters, 300);
+      });
+      root.addEventListener('change', function (e) {
+        if (!e.target.matches('[data-col-filter-group="sales_list"]')) return;
+        applySalesListFilters();
+      });
+      root.addEventListener('click', function (e) {
+        if (e.target.closest('#sales-filter-reset')) {
+          root.querySelectorAll('[data-col-filter-group="sales_list"]').forEach(function (input) {
+            input.value = '';
+          });
+          var searchEl = document.getElementById('sales-list-search');
+          if (searchEl) searchEl.value = '';
+          if (window.CA_LISTING_SEARCH) {
+            CA_LISTING_SEARCH.setState('sales_list', { search: '', page: 1, filters: {} });
+          }
+          reloadListing('sales_list');
+          return;
+        }
+        var editBtn = e.target.closest('[data-sales-edit]');
+        if (editBtn) openSalesListEditModal(editBtn.getAttribute('data-sales-edit'));
+        var historyBtn = e.target.closest('[data-sales-history]');
+        if (historyBtn) openSalesListHistoryModal(historyBtn.getAttribute('data-sales-history'));
+      });
+    }
+
+    var searchInput = document.getElementById('sales-list-search');
+    if (searchInput && window.CA_LISTING_SEARCH) {
+      var salesSearchState = CA_LISTING_SEARCH.getState('sales_list');
+      if (salesSearchState && salesSearchState.search) searchInput.value = salesSearchState.search;
+    }
+
+    var exportCsvBtn = document.getElementById('sales-list-export-csv');
+    if (exportCsvBtn && !exportCsvBtn._bound) {
+      exportCsvBtn._bound = true;
+      exportCsvBtn.addEventListener('click', function () {
+        if (window.CA_LISTING_SEARCH) CA_LISTING_SEARCH.exportListing('sales_list');
+      });
+    }
+    var exportPdfBtn = document.getElementById('sales-list-export-pdf');
+    if (exportPdfBtn && !exportPdfBtn._bound) {
+      exportPdfBtn._bound = true;
+      exportPdfBtn.addEventListener('click', function () {
+        var qs = window.CA_LISTING_SEARCH ? CA_LISTING_SEARCH.buildQueryString('sales_list').replace(/^\?/, '') : '';
+        window.location.href = '/sales-list/export?format=pdf' + (qs ? '&' + qs : '');
+      });
+    }
+
+    var saveBtn = document.getElementById('sales-list-edit-save');
+    if (saveBtn && !saveBtn._bound) {
+      saveBtn._bound = true;
+      saveBtn.addEventListener('click', function () {
+        if (!canEditSalesList()) {
+          toast('You do not have permission to edit sales records.', 'error');
+          return;
+        }
+        var id = document.getElementById('sales-list-edit-id').value;
+        if (!id) return;
+        var employeeVal = document.getElementById('sales-list-edit-executive').value;
+        var managerVal = document.getElementById('sales-list-edit-manager').value;
+        apiFetch('/sales-list/' + encodeURIComponent(id), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            points: parseInt(document.getElementById('sales-list-edit-points').value || '0', 10),
+            customer_name: document.getElementById('sales-list-edit-customer').value,
+            firm_name: document.getElementById('sales-list-edit-firm').value,
+            reference_name: document.getElementById('sales-list-edit-reference').value,
+            mobile_no: document.getElementById('sales-list-edit-mobile').value,
+            city_name: document.getElementById('sales-list-edit-city').value,
+            plan_purchased: document.getElementById('sales-list-edit-plan').value,
+            purchase_date: document.getElementById('sales-list-edit-purchase-date').value,
+            cooling_period_days: parseInt(document.getElementById('sales-list-edit-cooling').value || '0', 10),
+            total_amount: parseFloat(document.getElementById('sales-list-edit-total').value || '0'),
+            amount_received: parseFloat(document.getElementById('sales-list-edit-received').value || '0'),
+            invoice_number: document.getElementById('sales-list-edit-invoice').value,
+            employee_id: employeeVal ? parseInt(employeeVal, 10) : null,
+            manager_id: managerVal ? parseInt(managerVal, 10) : null,
+            notes: document.getElementById('sales-list-edit-notes').value,
+          }),
+        }).then(function () {
+          closeModal(document.getElementById('modal-sales-list-edit'));
+          toast('Sales record updated', 'success');
+          reloadListing('sales_list');
+        }).catch(function (err) {
+          toast(err.message || 'Unable to update sales record', 'error');
+        });
+      });
+    }
+
+    document.querySelectorAll('[data-close-sales-list-history]').forEach(function (btn) {
+      if (btn._bound) return;
+      btn._bound = true;
+      btn.addEventListener('click', function () {
+        closeModal(document.getElementById('modal-sales-list-history'));
+      });
+    });
+
+    document.querySelectorAll('[data-close-sales-list-edit]').forEach(function (btn) {
+      if (btn._bound) return;
+      btn._bound = true;
+      btn.addEventListener('click', function () {
+        closeModal(document.getElementById('modal-sales-list-edit'));
+      });
+    });
+  }
+
   return {
     init: init,
+    preloadDashboardMetrics: preloadDashboardMetrics,
     apiFetch: apiFetch,
     onPage: onPage,
     refreshAll: refreshAll,
     openModal: openModal,
+    openExclusiveCrmModal: openExclusiveCrmModal,
+    submitLeadForm: submitLeadForm,
     populateSelects: populateSelects,
     renderLeadsHub: renderLeadsHub,
     openLeadFormForEdit: openLeadFormForEdit,
@@ -7918,6 +18523,11 @@ window.CA_CRM = (function () {
     renderFollowupCalendarFromData: renderFollowupCalendarFromData,
     initAuditPage: initAuditPage,
     initSettingsPage: initSettingsPage,
+    initEmailConfigurationPage: initEmailConfigurationPage,
+    initRolesPermissionsPage: initRolesPermissionsPage,
+    initSettingsEmailTemplatesPage: initSettingsEmailTemplatesPage,
+    initSettingsWhatsAppTemplatesPage: initSettingsWhatsAppTemplatesPage,
+    initSettingsGoogleApiPage: initSettingsGoogleApiPage,
     initSecurityPage: initSecurityPage,
     initQuickActions: initQuickActions,
     openEmployeeFormForEdit: openEmployeeFormForEdit,
@@ -7928,6 +18538,14 @@ window.CA_CRM = (function () {
     refreshEmailPage: refreshEmailPage,
     refreshSmsPage: refreshSmsPage,
     reloadListing: reloadListing,
+    initSalesListPage: initSalesListPage,
+    applyFollowupTypeFilter: applyFollowupTypeFilter,
+    loadDemoHistory: loadDemoHistory,
+    loadRecycleBin: loadRecycleBin,
+    loadKanbanLeads: loadKanbanLeads,
+    loadLeadSegmentCounts: loadLeadSegmentCounts,
+    renderLeaderboard: renderLeaderboard,
+    renderEmployeesPerformanceTable: renderEmployeesPerformanceTable,
     loadNotifications: loadNotifications,
     pollNotifications: pollNotifications,
     markNotificationReadApi: markNotificationReadApi,
@@ -7944,7 +18562,11 @@ window.CA_CRM = (function () {
     exportReportsSummary: exportReportsSummary,
     refreshReportsHub: refreshReportsHub,
     initPasswordToggleButtons: initPasswordToggleButtons,
+    openChangeLoginEmailModal: openChangeLoginEmailModal,
     populateResetPasswordEmployeeSelect: populateResetPasswordEmployeeSelect,
     configureEmployeeCrmRoleSelect: configureEmployeeCrmRoleSelect,
+    enhanceEntityLookups: enhanceEntityLookups,
+    mapLeadRecord: mapLeadRecord,
+    mapEmployeeRecord: mapEmployeeRecord,
   };
 })();

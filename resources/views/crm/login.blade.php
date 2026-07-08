@@ -5,8 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>Sign in — CA Cloud Desk CRM</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="{{ asset('crm-ui/src/styles.css') }}" />
 </head>
 <body class="min-h-screen bg-surface antialiased flex items-center justify-center p-4">
@@ -39,6 +37,14 @@
       </label>
       <button type="submit" class="btn-primary w-full justify-center">Sign in</button>
     </form>
+
+    <p class="text-caption text-slate-500 mt-4 text-center">
+      <a href="{{ route('crm.password.request') }}" class="text-brand hover:underline">Forgot password?</a>
+    </p>
+
+    @if (session('status'))
+      <p class="text-caption text-emerald-600 mt-4 text-center">{{ session('status') }}</p>
+    @endif
 
     <p class="text-caption text-slate-400 mt-6 text-center">Demo: manager@ca.local / password</p>
   </div>

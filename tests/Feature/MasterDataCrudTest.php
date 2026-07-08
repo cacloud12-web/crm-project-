@@ -55,9 +55,9 @@ class MasterDataCrudTest extends TestCase
     public function test_state_delete_blocked_when_used_by_ca_master(): void
     {
         $this->actingAsAdmin();
-        $ca = CaMaster::query()->first();
+        $ca = CaMaster::query()->whereNotNull('state_id')->first();
         if (! $ca) {
-            $this->markTestSkipped('No CA Master records in seed data.');
+            $this->markTestSkipped('No CA Master records with state in seed data.');
         }
 
         $this->deleteJson('/states/'.$ca->state_id)
@@ -95,9 +95,9 @@ class MasterDataCrudTest extends TestCase
     public function test_city_delete_blocked_when_used_by_ca_master(): void
     {
         $this->actingAsAdmin();
-        $ca = CaMaster::query()->first();
+        $ca = CaMaster::query()->whereNotNull('city_id')->first();
         if (! $ca) {
-            $this->markTestSkipped('No CA Master records in seed data.');
+            $this->markTestSkipped('No CA Master records with city in seed data.');
         }
 
         $this->deleteJson('/cities/'.$ca->city_id)

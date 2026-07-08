@@ -29,8 +29,12 @@ class EmailLogResource extends JsonResource
             'clicked_at' => $this->clicked_at,
             'bounced_at' => $this->bounced_at,
             'failed_reason' => $this->failed_reason,
+            'smtp_error' => $this->smtp_error,
             'provider_response' => $this->provider_response,
             'error_message' => $this->error_message ?? $this->failed_reason,
+            'reply_received_at' => $this->reply_received_at,
+            'reply_from' => $this->reply_from,
+            'reply_preview' => $this->reply_preview,
             'created_at' => $this->created_at,
         ];
     }

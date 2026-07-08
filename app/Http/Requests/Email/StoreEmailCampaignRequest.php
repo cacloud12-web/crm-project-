@@ -2,14 +2,24 @@
 
 namespace App\Http\Requests\Email;
 
+use App\Http\Requests\Concerns\SanitizesUserText;
+use App\Http\Requests\Concerns\ValidatesFutureSchedule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 class StoreEmailCampaignRequest extends FormRequest
 {
+    use SanitizesUserText;
+    use ValidatesFutureSchedule;
+
     public function authorize(): bool
     {
         return true;
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $this->sanitizeTextFields(['body_template', 'subject', 'campaign_name']);
     }
 
     public function rules(): array
@@ -22,8 +32,10 @@ class StoreEmailCampaignRequest extends FormRequest
                 'string',
                 Rule::in(['selected_leads', 'all_leads', 'city', 'state', 'source', 'rating', 'team_size', 'existing_software']),
             ],
-            'subject' => 'required|string|max:255',
-            'body_template' => 'required|string|max:10000',
+            'subject' => 'required_without:email_template_id|string|max:255',
+            'body_template' => 'required_without:email_template_id|string|max:10000',
+            'email_template_id' => 'nullable|integer|exists:email_templates,id',
+            'email_config_id' => 'nullable|integer|exists:email_settings,id',
             'scheduled_at' => 'nullable|date',
             'ca_ids' => 'required_if:audience_mode,selected_leads|array|min:1',
             'ca_ids.*' => 'integer|exists:ca_masters,ca_id',

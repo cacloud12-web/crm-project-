@@ -64,7 +64,9 @@ class SmsCampaignController extends Controller
 
         return ApiResponse::success(
             new SmsCampaignResource($campaign),
-            'SMS campaign processed successfully',
+            $campaign->status === 'Processing'
+                ? 'SMS campaign queued successfully.'
+                : 'SMS campaign processed successfully.',
         );
     }
 
@@ -131,13 +133,14 @@ class SmsCampaignController extends Controller
     public function validatePreparation(Request $request): JsonResponse
     {
         try {
-            $this->smsCampaignService->ensureCanManageCampaigns(auth()->user());
+            $this->smsCampaignService->ensureCanSendSms(auth()->user());
         } catch (AuthorizationException $exception) {
             return ApiResponse::error($exception->getMessage(), 403);
         }
 
         $data = $request->validate([
-            'message_template' => 'required|string',
+            'message_template' => 'nullable|string',
+            'sms_template_id' => 'required|integer|exists:sms_templates,id',
             'audience_mode' => 'required|string',
             'ca_ids' => 'nullable|array',
             'city_id' => 'nullable|integer',
@@ -159,18 +162,23 @@ class SmsCampaignController extends Controller
     public function previewMessage(Request $request): JsonResponse
     {
         try {
-            $this->smsCampaignService->ensureCanManageCampaigns(auth()->user());
+            $this->smsCampaignService->ensureCanSendSms(auth()->user());
         } catch (AuthorizationException $exception) {
             return ApiResponse::error($exception->getMessage(), 403);
         }
 
         $data = $request->validate([
-            'message_template' => 'required|string',
+            'message_template' => 'nullable|string',
+            'sms_template_id' => 'nullable|integer|exists:sms_templates,id',
             'lead_id' => 'required|integer|exists:ca_masters,ca_id',
         ]);
 
         return ApiResponse::success(
-            $this->smsCampaignService->previewMessage($data['message_template'], (int) $data['lead_id']),
+            $this->smsCampaignService->previewMessage(
+                (string) ($data['message_template'] ?? ''),
+                (int) $data['lead_id'],
+                isset($data['sms_template_id']) ? (int) $data['sms_template_id'] : null,
+            ),
             'Message preview generated',
         );
     }

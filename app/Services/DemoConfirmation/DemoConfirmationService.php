@@ -258,7 +258,22 @@ class DemoConfirmationService
 
         $message = $this->renderMessage($lead, $confirmation, $isReschedule);
         $settings = $this->smsSettingsService->current();
-        $prepared = $this->smsAlertMappingService->prepareForLead($lead, $message, $settings);
+        try {
+            $prepared = $this->smsAlertMappingService->prepareForLead($lead, $message, $settings);
+        } catch (\Throwable $exception) {
+            \Illuminate\Support\Facades\Log::error('Demo confirmation SMS preparation failed', [
+                'demo_confirmation_id' => $confirmation->id,
+                'lead_id' => $lead->ca_id,
+                'error' => $exception->getMessage(),
+            ]);
+            $this->logActivity(
+                'Confirmation SMS Skipped',
+                (string) $confirmation->id,
+                ($lead->firm_name ?: $lead->ca_name).' — '.$exception->getMessage(),
+            );
+
+            return null;
+        }
 
         if (! $prepared['valid']) {
             $this->logActivity(
@@ -589,9 +604,14 @@ class DemoConfirmationService
     private function invalidateDashboardCache(): void
     {
         $this->cacheService->forgetDashboardMetrics('org');
+        $this->cacheService->forgetLeadSegmentCounts('org');
+        $this->cacheService->forgetPipelineStageCounts('org');
+        $this->cacheService->forgetEmployeeRankings();
         $scopeKey = $this->employeeDataScope->cacheScopeKey();
         if ($scopeKey !== 'org') {
             $this->cacheService->forgetDashboardMetrics($scopeKey);
+            $this->cacheService->forgetLeadSegmentCounts($scopeKey);
+            $this->cacheService->forgetPipelineStageCounts($scopeKey);
         }
     }
 }

@@ -22,12 +22,12 @@ class EnsureRbacPermission
             if ($this->wantsApiResponse($request)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'You do not have permission to perform this action.',
+                    'message' => 'You do not have permission to access this action.',
                     'required' => $rule,
                 ], 403);
             }
 
-            abort(403, 'You do not have permission to perform this action.');
+            abort(403, 'You do not have permission to access this action.');
         }
 
         return $next($request);

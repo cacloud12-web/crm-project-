@@ -2,14 +2,24 @@
 
 namespace App\Http\Requests\Sms;
 
+use App\Http\Requests\Concerns\SanitizesUserText;
+use App\Http\Requests\Concerns\ValidatesFutureSchedule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 class StoreSmsCampaignRequest extends FormRequest
 {
+    use SanitizesUserText;
+    use ValidatesFutureSchedule;
+
     public function authorize(): bool
     {
         return true;
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $this->sanitizeTextFields(['message_template', 'campaign_name']);
     }
 
     public function rules(): array
@@ -32,7 +42,8 @@ class StoreSmsCampaignRequest extends FormRequest
                 ]),
             ],
             'sender_id' => 'nullable|string|max:11',
-            'message_template' => 'required|string|max:1000',
+            'sms_template_id' => 'required|integer|exists:sms_templates,id',
+            'message_template' => 'nullable|string|max:1000',
             'scheduled_at' => 'nullable|date',
             'save_as_draft' => 'sometimes|boolean',
             'ca_ids' => 'required_if:audience_mode,selected_leads|array|min:1',

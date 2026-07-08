@@ -1,0 +1,153 @@
+/**
+ * CA Cloud Desk — Global Typography System
+ * Single source of truth for font family, sizes, weights, and line heights.
+ */
+
+:root {
+  --crm-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
+    Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+
+  /* Colors */
+  --crm-color-heading: #0f172a;
+
+  /* Font sizes */
+  --crm-font-size-page-title: 32px;
+  --crm-font-size-section: 28px;
+  --crm-font-size-card-title: 20px;
+  --crm-font-size-subheading: 16px;
+  --crm-font-size-sidebar: 16px;
+  --crm-font-size-body: 14px;
+  --crm-font-size-button: 14px;
+  --crm-font-size-badge: 12px;
+  --crm-font-size-tooltip: 12px;
+  --crm-font-size-stat-number: 32px;
+  --crm-font-size-stat-label: 14px;
+  --crm-font-size-kpi-value: 22px;
+
+  /* Semantic aliases */
+  --font-page-title: var(--crm-font-size-page-title);
+  --font-section-title: var(--crm-font-size-section);
+  --font-card-title: var(--crm-font-size-card-title);
+  --font-subheading: var(--crm-font-size-subheading);
+  --font-table-header: var(--crm-font-size-body);
+  --font-table-cell: var(--crm-font-size-body);
+  --font-label: var(--crm-font-size-body);
+  --font-input: var(--crm-font-size-body);
+  --font-button: var(--crm-font-size-button);
+
+  /* Font weights */
+  --crm-font-weight-page-title: 600;
+  --crm-font-weight-section: 600;
+  --crm-font-weight-card-title: 600;
+  --crm-font-weight-subheading: 500;
+  --crm-font-weight-sidebar: 500;
+  --crm-font-weight-table-header: 600;
+  --crm-font-weight-table-data: 400;
+  --crm-font-weight-label: 500;
+  --crm-font-weight-input: 400;
+  --crm-font-weight-button: 500;
+  --crm-font-weight-badge: 600;
+  --crm-font-weight-tooltip: 500;
+  --crm-font-weight-pagination: 500;
+  --crm-font-weight-stat-number: 700;
+  --crm-font-weight-stat-label: 500;
+  --crm-font-weight-kpi-value: 600;
+
+  /* Line heights */
+  --crm-line-height-page-title: 40px;
+  --crm-line-height-section: 36px;
+  --crm-line-height-card-title: 28px;
+  --crm-line-height-subheading: 24px;
+  --crm-line-height-body: 1.5;
+  --crm-line-height-heading: 1.3;
+  --crm-line-height-kpi-value: 26px;
+  --crm-line-height-tight: 1.25;
+  --crm-letter-spacing: normal;
+  --crm-letter-spacing-page-title: 0;
+
+  /* Page heading spacing */
+  --crm-page-title-margin-bottom: 24px;
+}
+
+html {
+  font-family: var(--crm-font-family);
+  letter-spacing: var(--crm-letter-spacing);
+}
+
+body {
+  font-family: var(--crm-font-family);
+  font-size: var(--crm-font-size-body);
+  font-weight: var(--crm-font-weight-table-data);
+  line-height: var(--crm-line-height-body);
+  letter-spacing: var(--crm-letter-spacing);
+}
+
+/* ─── Typography utility classes ─── */
+.text-page-title,
+.page-title {
+  font-family: var(--crm-font-family);
+  font-size: var(--crm-font-size-page-title);
+  line-height: var(--crm-line-height-page-title);
+  font-weight: var(--crm-font-weight-page-title);
+  letter-spacing: var(--crm-letter-spacing-page-title);
+  color: var(--crm-color-heading);
+  margin: 0 0 var(--crm-page-title-margin-bottom) 0;
+}
+
+.text-section-heading {
+  font-family: var(--crm-font-family);
+  font-size: var(--crm-font-size-section);
+  line-height: var(--crm-line-height-section);
+  font-weight: var(--crm-font-weight-section);
+  letter-spacing: var(--crm-letter-spacing);
+  color: var(--crm-color-heading);
+}
+
+.text-card-heading {
+  font-family: var(--crm-font-family);
+  font-size: var(--crm-font-size-card-title);
+  line-height: var(--crm-line-height-card-title);
+  font-weight: var(--crm-font-weight-card-title);
+  letter-spacing: var(--crm-letter-spacing);
+  color: var(--crm-color-heading);
+}
+
+.text-subheading {
+  font-family: var(--crm-font-family);
+  font-size: var(--crm-font-size-subheading);
+  line-height: var(--crm-line-height-subheading);
+  font-weight: var(--crm-font-weight-subheading);
+  letter-spacing: var(--crm-letter-spacing);
+}
+
+.text-body {
+  font-family: var(--crm-font-family);
+  font-size: var(--crm-font-size-body);
+  line-height: var(--crm-line-height-body);
+  font-weight: var(--crm-font-weight-table-data);
+  letter-spacing: var(--crm-letter-spacing);
+}
+
+.text-caption {
+  font-family: var(--crm-font-family);
+  font-size: var(--crm-font-size-badge);
+  line-height: var(--crm-line-height-body);
+  font-weight: var(--crm-font-weight-badge);
+  letter-spacing: var(--crm-letter-spacing);
+}
+
+.text-stat-number {
+  font-family: var(--crm-font-family);
+  font-size: var(--crm-font-size-stat-number);
+  line-height: var(--crm-line-height-page-title);
+  font-weight: var(--crm-font-weight-stat-number);
+  letter-spacing: var(--crm-letter-spacing);
+}
+
+.text-stat-label {
+  font-family: var(--crm-font-family);
+  font-size: var(--crm-font-size-stat-label);
+  line-height: var(--crm-line-height-body);
+  font-weight: var(--crm-font-weight-stat-label);
+  letter-spacing: var(--crm-letter-spacing);
+}

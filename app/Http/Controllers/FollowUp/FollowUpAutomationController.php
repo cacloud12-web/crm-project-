@@ -16,6 +16,7 @@ use App\Services\FollowUp\FollowUpService;
 use App\Services\FollowUp\ManagerFollowUpDashboardService;
 use App\Services\FollowUp\TaskService;
 use App\Services\Rbac\EmployeeDataScopeService;
+use App\Services\Workflow\LeadWorkflowService;
 use App\Support\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -30,20 +31,62 @@ class FollowUpAutomationController extends Controller
         private readonly FollowUpSequenceService $sequenceService,
         private readonly TaskService $taskService,
         private readonly ManagerFollowUpDashboardService $managerDashboardService,
+        private readonly EmployeeDataScopeService $employeeDataScope,
+        private readonly LeadWorkflowService $workflowService,
     ) {}
 
     public function recordCallOutcome(RecordCallOutcomeRequest $request): JsonResponse
     {
         try {
-            $result = $this->automationService->recordCallOutcome($request->validated());
+            $data = $request->validated();
+            $outcome = (string) ($data['outcome'] ?? '');
+
+            if ($outcome === 'Demo Scheduled') {
+                $this->workflowService->recordCall([
+                    'ca_id' => $data['ca_id'] ?? null,
+                    'followup_id' => $data['followup_id'] ?? null,
+                    'employee_id' => $data['employee_id'] ?? null,
+                    'call_status' => 'Demo Scheduled',
+                    'call_note' => $data['remarks'],
+                ]);
+
+                $demo = $this->workflowService->scheduleDemo([
+                    'ca_id' => $data['ca_id'] ?? null,
+                    'followup_id' => $data['followup_id'] ?? null,
+                    'employee_id' => $data['employee_id'] ?? null,
+                    'demo_at' => $data['demo_at'] ?? null,
+                    'demo_date' => $data['demo_date'] ?? null,
+                    'demo_time' => $data['demo_time'] ?? null,
+                    'meeting_link' => $data['meeting_link'] ?? '',
+                    'notes' => $data['remarks'] ?? null,
+                ]);
+
+                return ApiResponse::success([
+                    'completed_follow_up' => null,
+                    'next_follow_up' => $demo['follow_up']
+                        ? new FollowUpResource($demo['follow_up'])
+                        : null,
+                    'demo_schedule' => $demo['demo_schedule'],
+                    'outcome' => 'Demo Scheduled',
+                ], 'Demo scheduled');
+            }
+
+            $result = $this->workflowService->recordCall([
+                'ca_id' => $data['ca_id'] ?? null,
+                'followup_id' => $data['followup_id'] ?? null,
+                'employee_id' => $data['employee_id'] ?? null,
+                'call_status' => $outcome,
+                'call_note' => $data['remarks'] ?? null,
+                'next_followup_date' => $data['next_followup_date'] ?? null,
+                'next_followup_time' => $data['next_followup_time'] ?? null,
+            ]);
 
             return ApiResponse::success([
-                'completed_follow_up' => $result['completed_follow_up']
-                    ? new FollowUpResource($result['completed_follow_up']->load(['caMaster', 'employee']))
-                    : null,
+                'completed_follow_up' => null,
                 'next_follow_up' => $result['next_follow_up']
-                    ? new FollowUpResource($result['next_follow_up']->load(['caMaster', 'employee']))
+                    ? new FollowUpResource($result['next_follow_up'])
                     : null,
+                'call_log' => $result['call_log'],
                 'outcome' => $result['outcome'],
             ], 'Call outcome recorded');
         } catch (InvalidArgumentException $e) {
@@ -53,6 +96,7 @@ class FollowUpAutomationController extends Controller
 
     public function leadHistory(int $caId): JsonResponse
     {
+        $this->employeeDataScope->ensureCanAccessCaMaster($caId);
         $items = $this->followUpService->historyForLead($caId);
 
         return ApiResponse::success(
@@ -63,6 +107,7 @@ class FollowUpAutomationController extends Controller
 
     public function followUpHistory(int $followupId): JsonResponse
     {
+        $this->employeeDataScope->ensureCanAccessFollowUp($followupId);
         $items = $this->historyService->timelineForFollowUp($followupId);
 
         return ApiResponse::success(
@@ -107,6 +152,8 @@ class FollowUpAutomationController extends Controller
 
     public function managerMetrics(): JsonResponse
     {
+        $this->employeeDataScope->ensureCanViewManagerMetrics(auth()->user());
+
         return ApiResponse::success(
             $this->managerDashboardService->metrics(),
             'Manager follow-up metrics loaded',

@@ -1,0 +1,52 @@
+<?php
+
+return [
+    'master_data_filter' => [
+        'Interested',
+        'Thinking',
+        'Purchasing',
+        'Purchased',
+        'Not Interested',
+        'Next Week',
+        'Next Month',
+        'Hold',
+    ],
+
+    'allowed' => [
+        'New',
+        'Cold',
+        'Hot',
+        'Warm',
+        'Pipeline',
+        'Demo Scheduled',
+        'Demo Completed',
+        'Details Shared',
+        'Negotiation',
+        'Interested',
+        'Thinking',
+        'Purchasing',
+        'Purchased',
+        'Not Interested',
+        'Next Week',
+        'Next Month',
+        'Hold',
+        'Follow Up Scheduled',
+        'Follow Up Reminder',
+        'Active',
+        'Inactive',
+        'Lost',
+        'Wrong Number',
+        'Number Missing',
+    ],
+
+    'demo_results' => [
+        'Interested',
+        'Thinking',
+        'Purchasing',
+        'Purchased',
+        'Not Interested',
+        'Next Week',
+        'Next Month',
+        'Hold',
+    ],
+];

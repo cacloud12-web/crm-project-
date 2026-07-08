@@ -35,4 +35,15 @@ return [
         ],
     ],
 
+    'google' => [
+        /*
+         * One Google Cloud API key can power both server-side Places and browser Maps JS.
+         * Backend: GOOGLE_PLACES_API_KEY or GOOGLE_MAPS_API_KEY (server IP / none restrictions).
+         * Frontend Maps JS only: VITE_GOOGLE_MAPS_API_KEY (HTTP referrer restrictions).
+         */
+        'maps_api_key' => env('GOOGLE_MAPS_API_KEY', env('GOOGLE_PLACES_API_KEY')),
+        'places_api_key' => env('GOOGLE_PLACES_API_KEY', env('GOOGLE_MAPS_API_KEY')),
+        'maps_js_api_key' => env('VITE_GOOGLE_MAPS_API_KEY', env('GOOGLE_MAPS_API_KEY', env('GOOGLE_PLACES_API_KEY'))),
+    ],
+
 ];

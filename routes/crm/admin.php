@@ -3,6 +3,7 @@
 use App\Http\Controllers\Activity\ActivityLogController;
 use App\Http\Controllers\Admin\DatabaseHealthController;
 use App\Http\Controllers\Admin\QueueStatusController;
+use App\Http\Controllers\Admin\RolePermissionsController;
 use App\Http\Controllers\Admin\SecurityController;
 use App\Http\Controllers\Dashboard\NotificationController;
 use Illuminate\Support\Facades\Route;
@@ -29,6 +30,9 @@ Route::middleware(['auth', 'rbac'])->group(function () {
     Route::get('admin/db-health', [DatabaseHealthController::class, 'show']);
     Route::get('admin/security-matrix', [SecurityController::class, 'show']);
     Route::put('admin/security-matrix', [SecurityController::class, 'update']);
+    Route::get('admin/role-permissions', [RolePermissionsController::class, 'show']);
+    Route::put('admin/role-permissions', [RolePermissionsController::class, 'update']);
+    Route::post('admin/role-permissions/reset', [RolePermissionsController::class, 'reset']);
     Route::get('admin/database-health', fn () => view('crm.index', ['spaPage' => 'db-health']))
         ->middleware('spa.access:db-health');
 });

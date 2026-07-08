@@ -7,6 +7,8 @@ use App\Models\FollowUpRescheduleLog;
 use App\Models\Task;
 use App\Services\Activity\ActivityLogService;
 use App\Services\DemoConfirmation\DemoConfirmationService;
+use App\Services\Leads\CaMasterStatusSyncService;
+use App\Services\Leads\LeadQualityHistoryService;
 use App\Services\Notifications\NotificationService;
 use App\Services\Rbac\EmployeeDataScopeService;
 use Illuminate\Support\Carbon;
@@ -23,6 +25,8 @@ class FollowUpAutomationService
         private readonly NotificationService $notificationService,
         private readonly DemoConfirmationService $demoConfirmationService,
         private readonly EmployeeDataScopeService $employeeDataScope,
+        private readonly LeadQualityHistoryService $leadQualityHistory,
+        private readonly CaMasterStatusSyncService $statusSyncService,
     ) {}
 
     public function recordCallOutcome(array $data): array
@@ -40,14 +44,24 @@ class FollowUpAutomationService
         }
 
         $user = auth()->user();
-        $employeeId = (int) ($data['employee_id'] ?? $current?->employee_id ?? $this->employeeDataScope->scopedEmployeeId($user) ?? 0);
-        if ($employeeId <= 0) {
-            throw new InvalidArgumentException('Employee is required to record a call outcome.');
-        }
-
         $caId = (int) ($data['ca_id'] ?? $current?->ca_id);
         if ($caId <= 0) {
             throw new InvalidArgumentException('Lead is required.');
+        }
+
+        $employeeId = (int) ($data['employee_id']
+            ?? $current?->employee_id
+            ?? $this->employeeDataScope->scopedEmployeeId($user)
+            ?? $this->employeeDataScope->resolveEmployeeId($user)
+            ?? 0);
+        if ($employeeId <= 0) {
+            $employeeId = (int) (\App\Models\LeadAssignmentEngine::query()
+                ->where('ca_id', $caId)
+                ->where('status', 'Active')
+                ->value('employee_id') ?? 0);
+        }
+        if ($employeeId <= 0) {
+            $employeeId = null;
         }
 
         $remarks = $data['remarks'] ?? null;
@@ -93,6 +107,13 @@ class FollowUpAutomationService
                 ->update(['status' => 'Closed']);
         }
 
+        if (($outcomeConfig['marks_wrong_number'] ?? false) === true) {
+            $lead = \App\Models\CaMaster::query()->find($caId);
+            if ($lead) {
+                $this->leadQualityHistory->markWrongNumber($lead, 'Call outcome: '.$outcome, $user);
+            }
+        }
+
         return [
             'completed_follow_up' => $completedFollowUp,
             'next_follow_up' => $nextFollowUp,
@@ -134,6 +155,19 @@ class FollowUpAutomationService
             $remarks,
             ['followup_type' => $followUp->followup_type],
         );
+
+        $crmStatus = $this->statusSyncService->statusForCallOutcome((string) ($outcome ?? ''))
+            ?? $this->statusSyncService->statusForFollowUp($followUp);
+        if ($crmStatus) {
+            $lead = $followUp->caMaster ?? \App\Models\CaMaster::query()->find($followUp->ca_id);
+            if ($lead) {
+                $this->statusSyncService->apply(
+                    $lead,
+                    $crmStatus,
+                    $this->statusSyncService->workflowExtrasForStatus($crmStatus),
+                );
+            }
+        }
 
         return $followUp;
     }

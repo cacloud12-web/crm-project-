@@ -116,6 +116,12 @@ class ManagerDemoSeeder extends Seeder
             );
         }
 
+        if (app()->environment('testing')) {
+            $this->command?->info('Manager demo data ready (campaigns skipped in testing).');
+
+            return;
+        }
+
         $waService = app(WhatsAppCampaignService::class);
         $emailService = app(EmailCampaignService::class);
         $smsService = app(SmsCampaignService::class);

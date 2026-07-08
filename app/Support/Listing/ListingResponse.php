@@ -2,6 +2,7 @@
 
 namespace App\Support\Listing;
 
+use App\Http\Resources\CaMasterResource;
 use App\Support\ApiResponse;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
@@ -48,12 +49,15 @@ class ListingResponse
 
         $first = $items[0];
 
-        // Cached listings store plain array rows — skip JsonResource wrapping.
         if (is_array($first) && ! $first instanceof Model) {
             return array_map(
                 fn ($row) => is_array($row) ? $row : (array) $row,
                 $items,
             );
+        }
+
+        if ($resourceClass === CaMasterResource::class) {
+            CaMasterResource::prepareCollection($items);
         }
 
         /** @var JsonResource $resourceClass */

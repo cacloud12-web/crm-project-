@@ -26,10 +26,9 @@ class ProfileService
             ->first();
 
         DB::transaction(function () use ($user, $data, $employee) {
-            $user->update([
-                'name' => $data['name'],
-                'email' => $data['email'],
-            ]);
+            $userUpdate = ['name' => $data['name']];
+
+            $user->update($userUpdate);
 
             if (! $employee) {
                 return;
@@ -37,7 +36,6 @@ class ProfileService
 
             $employeeData = [
                 'name' => $data['name'],
-                'email_id' => $data['email'],
             ];
 
             if (! empty($data['designation'])) {

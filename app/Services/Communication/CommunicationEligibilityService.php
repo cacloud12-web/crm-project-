@@ -36,7 +36,7 @@ class CommunicationEligibilityService
         self::CHANNEL_SMS => 'SMS',
     ];
 
-    public function assess(?CaMaster $lead, string $channel): array
+    public function assess(?CaMaster $lead, string $channel, bool $requireConsent = true): array
     {
         if (! in_array($channel, self::VALID_CHANNELS, true)) {
             return $this->ineligible(self::SKIP_INVALID_CHANNEL);
@@ -59,11 +59,20 @@ class CommunicationEligibilityService
             return $this->ineligible(self::SKIP_DND);
         }
 
-        if (! $this->hasConsent($lead->ca_id, $channel)) {
+        if ($requireConsent && ! $this->hasConsent($lead->ca_id, $channel)) {
             return $this->ineligible(self::SKIP_NO_CONSENT);
         }
 
         return ['eligible' => true, 'skip_reason' => null];
+    }
+
+    /**
+     * Campaign sends: selecting a lead as campaign audience is treated as send intent.
+     * DND and contact validity still block delivery.
+     */
+    public function assessForCampaign(?CaMaster $lead, string $channel): array
+    {
+        return $this->assess($lead, $channel, requireConsent: false);
     }
 
     public function assessByCaId(int $caId, string $channel): array

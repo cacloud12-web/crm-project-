@@ -2,14 +2,24 @@
 
 namespace App\Http\Requests\WhatsApp;
 
+use App\Http\Requests\Concerns\SanitizesUserText;
+use App\Http\Requests\Concerns\ValidatesFutureSchedule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 class StoreWhatsAppCampaignRequest extends FormRequest
 {
+    use SanitizesUserText;
+    use ValidatesFutureSchedule;
+
     public function authorize(): bool
     {
         return true;
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $this->sanitizeTextFields(['message_template', 'campaign_name']);
     }
 
     public function rules(): array
@@ -24,7 +34,10 @@ class StoreWhatsAppCampaignRequest extends FormRequest
                 'string',
                 Rule::in(['selected_leads', 'all_leads', 'city', 'state', 'source', 'rating', 'team_size', 'existing_software']),
             ],
-            'message_template' => 'required|string|max:5000',
+            'message_template' => 'required_without:message_template_id|string|max:5000',
+            'message_template_id' => 'nullable|integer|exists:message_templates,id',
+            'template_name' => 'nullable|string|max:255',
+            'language_code' => 'nullable|string|max:12',
             'scheduled_at' => 'nullable|date',
             'ca_ids' => 'required_if:audience_mode,selected_leads|array|min:1',
             'ca_ids.*' => 'integer|exists:ca_masters,ca_id',

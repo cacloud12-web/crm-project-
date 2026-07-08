@@ -24,7 +24,9 @@ class UpdateEmailSettingsRequest extends FormRequest
             'smtp_encryption' => ['sometimes', 'nullable', 'string', Rule::in(['ssl', 'tls', 'starttls', null])],
             'from_email' => ['sometimes', 'nullable', 'email', 'max:255'],
             'from_name' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'reply_to_email' => ['sometimes', 'nullable', 'email', 'max:255'],
             'mode' => ['sometimes', 'string', Rule::in([EmailSetting::MODE_SIMULATION, EmailSetting::MODE_LIVE])],
+            'is_active' => ['sometimes', 'boolean'],
         ];
     }
 }

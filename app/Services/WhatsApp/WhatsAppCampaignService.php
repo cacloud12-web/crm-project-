@@ -2,18 +2,27 @@
 
 namespace App\Services\WhatsApp;
 
+use App\Jobs\WhatsApp\ProcessWhatsAppCampaignJob;
 use App\Models\CaMaster;
 use App\Models\City;
 use App\Models\SourceLead;
 use App\Models\State;
 use App\Models\WaMessageLog;
+use App\Models\User;
+use App\Models\WaMessageLogStatus;
 use App\Models\WhatsAppCampaign;
+use App\Models\WhatsAppSetting;
+use App\Services\Rbac\EmployeeDataScopeService;
+use App\Services\Rbac\RbacService;
 use App\Services\Activity\ActivityLogService;
 use App\Services\Campaign\CampaignMessageLogProcessor;
 use App\Services\Communication\CommunicationEligibilityService;
 use App\Services\Concerns\SearchesListings;
 use App\Services\Notifications\NotificationService;
+use App\Support\Database\SqlAggregate;
+use App\Support\Queue\QueueDispatcher;
 use Carbon\Carbon;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -38,11 +47,133 @@ class WhatsAppCampaignService
         private readonly CommunicationEligibilityService $eligibilityService,
         private readonly NotificationService $notificationService,
         private readonly CampaignMessageLogProcessor $campaignLogProcessor,
+        private readonly WhatsAppSettingsService $whatsAppSettingsService,
+        private readonly WhatsAppTemplateService $whatsAppTemplateService,
+        private readonly WhatsAppCloudMappingService $cloudMappingService,
+        private readonly WhatsAppLogService $whatsAppLogService,
+        private readonly WhatsAppDispatchService $whatsAppDispatchService,
+        private readonly RbacService $rbacService,
+        private readonly EmployeeDataScopeService $employeeDataScope,
     ) {}
+
+    public function ensureCanSendWhatsapp(?User $user): void
+    {
+        if (! $this->canSendWhatsapp($user)) {
+            throw new AuthorizationException('You do not have permission to send WhatsApp campaigns.');
+        }
+    }
+
+    public function canSendWhatsapp(?User $user): bool
+    {
+        return in_array($this->rbacService->roleKey($user), ['admin', 'super_admin', 'manager', 'employee'], true);
+    }
+
+    public function ensureCanManageCampaigns(?User $user): void
+    {
+        if (! $this->canManageCampaigns($user)) {
+            throw new AuthorizationException('Only Admin and Super Admin can create or modify WhatsApp campaigns.');
+        }
+    }
+
+    public function canManageCampaigns(?User $user): bool
+    {
+        return in_array($this->rbacService->roleKey($user), ['admin', 'super_admin'], true);
+    }
+
+    /**
+     * @return array{valid: bool, errors: array<int, string>, warnings: array<int, string>}
+     */
+    public function validatePreparation(array $data): array
+    {
+        $settings = $this->whatsAppSettingsService->current();
+        $errors = [];
+        $warnings = [];
+
+        $local = $this->whatsAppSettingsService->validateConfiguration();
+        if (! $local['valid']) {
+            $errors = array_merge($errors, $local['errors']);
+        }
+
+        $template = null;
+        if (! empty($data['message_template_id'])) {
+            try {
+                $template = $this->whatsAppTemplateService->findApproved((int) $data['message_template_id']);
+            } catch (\Throwable) {
+                $errors[] = 'Selected WhatsApp template is not approved.';
+            }
+        } else {
+            $errors[] = 'Select an approved WhatsApp template.';
+        }
+
+        $leads = $this->resolveAudience($data);
+        if ($leads->isEmpty()) {
+            $errors[] = 'No leads matched the selected audience.';
+        }
+
+        if ($template) {
+            foreach ($this->cloudMappingService->validateDispatchSettings($template, $settings) as $mappingError) {
+                $errors[] = $mappingError;
+            }
+
+            foreach ($leads as $lead) {
+                foreach ($this->cloudMappingService->validateLeadRecipient($lead) as $mappingError) {
+                    $warnings[] = $mappingError;
+                }
+
+                if (! $this->cloudMappingService->leadHasActiveAssignment($lead)) {
+                    $warnings[] = 'Lead '.$lead->ca_id.' is not assigned to an employee.';
+                }
+            }
+        }
+
+        if ($settings->isLiveMode() && $this->whatsAppSettingsService->integrationStatus($settings) !== WhatsAppSetting::INTEGRATION_INTEGRATED) {
+            $warnings[] = 'Live mode is enabled but WhatsApp connection test has not succeeded yet.';
+        }
+
+        return [
+            'valid' => $errors === [],
+            'errors' => array_values(array_unique($errors)),
+            'warnings' => array_values(array_unique($warnings)),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function previewMessage(int $templateId, int $leadId): array
+    {
+        $template = $this->whatsAppTemplateService->findApproved($templateId);
+        $lead = CaMaster::query()->with(['city', 'state'])->findOrFail($leadId);
+        $variables = $this->cloudMappingService->resolveVariables($lead);
+        $rendered = $this->cloudMappingService->renderTemplateBody($template->body_template, $variables);
+        $payload = $this->cloudMappingService->buildCloudPayload($lead, $template);
+
+        return [
+            'lead_id' => $lead->ca_id,
+            'firm_name' => $lead->firm_name,
+            'mobile_no' => $lead->mobile_no,
+            'template_name' => $template->template_name,
+            'language_code' => $template->language_code,
+            'variables' => $variables,
+            'preview' => $rendered,
+            'api_payload' => $payload,
+        ];
+    }
 
     public function search(array $params = []): array
     {
-        return $this->searchListing(WhatsAppCampaign::query(), $params, 'whatsapp_campaigns');
+        return $this->searchListing(
+            WhatsAppCampaign::query()            ->withCount([
+                'messageLogs as sent_messages_count' => fn ($query) => $query->whereIn('message_status', ['Sent', 'Delivered', 'Read']),
+                'messageLogs as delivered_messages_count' => fn ($query) => $query->where('message_status', 'Delivered'),
+                'messageLogs as read_messages_count' => fn ($query) => $query->where('message_status', 'Read'),
+                'messageLogs as failed_messages_count' => fn ($query) => $query->whereIn('message_status', ['Failed', 'API Error']),
+                'messageLogs as pending_messages_count' => fn ($query) => $query->whereIn('message_status', ['Pending', 'Payload Generated', 'Queued']),
+                'messageLogs as skipped_messages_count' => fn ($query) => $query->where('message_status', 'Skipped'),
+            ]),
+            $params,
+            'whatsapp_campaigns',
+        );
     }
 
     public function list(): Collection
@@ -63,9 +194,12 @@ class WhatsAppCampaignService
     {
         return WhatsAppCampaign::query()
             ->withCount([
+                'messageLogs as sent_messages_count' => fn ($query) => $query->whereIn('message_status', ['Sent', 'Delivered', 'Read']),
                 'messageLogs as delivered_messages_count' => fn ($query) => $query->where('message_status', 'Delivered'),
-                'messageLogs as failed_messages_count' => fn ($query) => $query->where('message_status', 'Failed'),
-                'messageLogs as queued_messages_count' => fn ($query) => $query->where('message_status', 'Queued'),
+                'messageLogs as read_messages_count' => fn ($query) => $query->where('message_status', 'Read'),
+                'messageLogs as failed_messages_count' => fn ($query) => $query->whereIn('message_status', ['Failed', 'API Error']),
+                'messageLogs as pending_messages_count' => fn ($query) => $query->whereIn('message_status', ['Pending', 'Payload Generated', 'Queued']),
+                'messageLogs as skipped_messages_count' => fn ($query) => $query->where('message_status', 'Skipped'),
             ])
             ->findOrFail($id);
     }
@@ -82,6 +216,8 @@ class WhatsAppCampaignService
 
     public function create(array $data): WhatsAppCampaign
     {
+        $this->ensureCanSendWhatsapp(auth()->user());
+
         return DB::transaction(function () use ($data) {
             $recipients = $this->resolveAudience($data);
 
@@ -94,7 +230,11 @@ class WhatsAppCampaignService
                 : null;
             $processNow = ! $scheduledAt || $scheduledAt->lte(now());
 
-            $campaign = WhatsAppCampaign::create([
+            $template = $this->resolveCampaignTemplate($data);
+            $settings = $this->whatsAppSettingsService->current();
+            $metadata = app(\App\Services\Campaign\CampaignMetadataRecorder::class)->whatsappCreateAttributes($data, $template);
+
+            $campaign = WhatsAppCampaign::create(array_merge([
                 'campaign_name' => $data['campaign_name'],
                 'campaign_type' => $data['campaign_type'],
                 'audience_mode' => $data['audience_mode'],
@@ -103,24 +243,40 @@ class WhatsAppCampaignService
                 'selected_ca_ids' => $data['audience_mode'] === 'selected_leads'
                     ? array_values(array_map('intval', $data['ca_ids'] ?? []))
                     : null,
-                'message_template' => $data['message_template'],
+                'message_template' => $template
+                    ? $template->body_template
+                    : $data['message_template'],
+                'message_template_id' => $template?->id,
+                'template_name' => $template?->template_name,
+                'language_code' => $template?->language_code,
+                'api_version' => $settings->api_version,
                 'scheduled_at' => $scheduledAt,
                 'status' => $processNow ? 'Processing' : 'Scheduled',
-                'performed_by' => $data['performed_by'] ?? 'System',
                 'total_messages' => $recipients->count(),
                 'queued_count' => 0,
                 'skipped_count' => 0,
-            ]);
+            ], $metadata));
+
+            if ($template) {
+                $this->whatsAppTemplateService->logTemplateSelected($template, auth()->user());
+            }
+
+            $this->activityLogService->log(
+                'WHATSAPP_CAMPAIGN',
+                'Campaign Created',
+                (string) $campaign->id,
+                $campaign->campaign_name.' · '.$campaign->total_messages.' recipients',
+            );
 
             if ($this->campaignLogProcessor->shouldQueue($recipients->count())) {
                 $this->campaignLogProcessor->dispatch('whatsapp', $campaign->id);
 
-                return $campaign->fresh();
+                return $this->find($campaign->id);
             }
 
             $this->populateMessageLogs($campaign, $recipients, $data, $processNow);
 
-            return $campaign->fresh();
+            return $this->find($campaign->id);
         });
     }
 
@@ -131,7 +287,7 @@ class WhatsAppCampaignService
 
             if (WaMessageLog::query()->where('campaign_id', $campaignId)->exists()) {
                 if ($campaign->status === 'Processing') {
-                    $this->simulateDelivery($campaign);
+                    $this->finalizeCampaign($campaign);
                 }
 
                 return;
@@ -157,23 +313,66 @@ class WhatsAppCampaignService
         Collection $recipients,
         array $data,
         bool $processNow,
+        bool $queueFinalize = true,
     ): WhatsAppCampaign {
-        $now = now();
+        $template = $campaign->message_template_id
+            ? $this->whatsAppTemplateService->findApproved((int) $campaign->message_template_id)
+            : null;
+
+        $settings = $this->whatsAppSettingsService->current();
+
+        if ($template) {
+            $settingsErrors = $this->cloudMappingService->validateDispatchSettings($template, $settings);
+            if ($settingsErrors !== []) {
+                throw new InvalidArgumentException(implode(' ', $settingsErrors));
+            }
+        }
+
         $queuedCount = 0;
         $skippedCount = 0;
         $skipSummary = [];
 
         foreach ($recipients as $lead) {
-            $eligibility = $this->eligibilityService->assess($lead, CommunicationEligibilityService::CHANNEL_WHATSAPP);
+            $eligibility = $this->whatsAppLogService->assessEligibilityForCampaign($lead);
+
+            if ($template) {
+                $leadErrors = $this->cloudMappingService->validateLeadRecipient($lead);
+                if ($leadErrors !== []) {
+                    $eligibility = ['eligible' => false, 'skip_reason' => implode(' ', $leadErrors)];
+                }
+            }
+
+            if ($template && $eligibility['eligible']) {
+                $this->whatsAppLogService->storeMappedPayload($campaign, $lead, $template, true);
+                $queuedCount++;
+
+                continue;
+            }
+
+            if ($template) {
+                $this->whatsAppLogService->storeMappedPayload(
+                    $campaign,
+                    $lead,
+                    $template,
+                    false,
+                    $eligibility['skip_reason'] ?? 'Not eligible',
+                );
+                $skippedCount++;
+                $reason = $eligibility['skip_reason'] ?? 'Not eligible';
+                $skipSummary[$reason] = ($skipSummary[$reason] ?? 0) + 1;
+
+                continue;
+            }
 
             if ($eligibility['eligible']) {
                 WaMessageLog::create([
                     'campaign_id' => $campaign->id,
                     'ca_id' => $lead->ca_id,
+                    'employee_id' => $this->cloudMappingService->resolveEmployeeId($lead),
                     'mobile_no' => $lead->mobile_no,
                     'message' => $this->renderMessage($data['message_template'], $lead),
-                    'message_status' => 'Queued',
-                    'queued_at' => $now,
+                    'message_status' => config('whatsapp_cloud.log_statuses.pending', WaMessageLogStatus::PENDING),
+                    'queued_at' => now(),
                 ]);
                 $queuedCount++;
 
@@ -183,10 +382,12 @@ class WhatsAppCampaignService
             WaMessageLog::create([
                 'campaign_id' => $campaign->id,
                 'ca_id' => $lead->ca_id,
+                'employee_id' => $this->cloudMappingService->resolveEmployeeId($lead),
                 'mobile_no' => $lead->mobile_no,
                 'message' => $this->renderMessage($data['message_template'], $lead),
-                'message_status' => 'Skipped',
+                'message_status' => config('whatsapp_cloud.log_statuses.skipped', 'Skipped'),
                 'failed_reason' => $eligibility['skip_reason'],
+                'error_message' => $eligibility['skip_reason'],
             ]);
             $skippedCount++;
             $skipSummary[$eligibility['skip_reason']] = ($skipSummary[$eligibility['skip_reason']] ?? 0) + 1;
@@ -195,10 +396,15 @@ class WhatsAppCampaignService
         $campaign->update([
             'queued_count' => $queuedCount,
             'skipped_count' => $skippedCount,
+            'payload_generated_at' => now(),
         ]);
 
         if ($processNow) {
-            $this->simulateDelivery($campaign);
+            if ($queueFinalize) {
+                QueueDispatcher::dispatchOrRun(new ProcessWhatsAppCampaignJob((int) $campaign->id));
+            } else {
+                $this->finalizeCampaign($campaign->fresh());
+            }
         }
 
         $campaign = $campaign->fresh();
@@ -210,9 +416,10 @@ class WhatsAppCampaignService
             $campaign->campaign_name.' · '.$campaign->total_messages.' recipients · '.$campaign->audience_label,
         );
 
+        $this->whatsAppLogService->logPayloadGenerated($campaign, $queuedCount);
         $this->logComplianceSkips($campaign, $skipSummary);
 
-        return $campaign;
+        return $this->find($campaign->id);
     }
 
     private function campaignDataFromModel(WhatsAppCampaign $campaign): array
@@ -226,16 +433,44 @@ class WhatsAppCampaignService
 
     public function process(int|string $id): WhatsAppCampaign
     {
-        return DB::transaction(function () use ($id) {
-            $campaign = WhatsAppCampaign::query()->findOrFail($id);
+        $this->ensureCanSendWhatsapp(auth()->user());
 
-            if (! in_array($campaign->status, ['Scheduled', 'Draft'], true)) {
-                throw new InvalidArgumentException('Campaign has already been processed.');
+        $campaign = WhatsAppCampaign::query()->findOrFail($id);
+
+        if (! in_array($campaign->status, ['Scheduled', 'Draft', 'Payload Generated'], true)) {
+            throw new InvalidArgumentException('Campaign has already been processed.');
+        }
+
+        $settings = $this->whatsAppSettingsService->current();
+        if ($settings->isLiveMode()) {
+            $this->whatsAppSettingsService->assertReadyForLiveDispatch($settings);
+        }
+
+        $campaign->update(['status' => 'Processing']);
+
+        QueueDispatcher::dispatchOrRun(new ProcessWhatsAppCampaignJob((int) $campaign->id));
+
+        return $campaign->fresh();
+    }
+
+    public function runProcess(int $campaignId): void
+    {
+        DB::transaction(function () use ($campaignId) {
+            $campaign = WhatsAppCampaign::query()->findOrFail($campaignId);
+
+            if (! WaMessageLog::query()->where('campaign_id', $campaignId)->exists()) {
+                $data = $this->campaignDataFromModel($campaign);
+                $recipients = $this->resolveRecipients($data);
+                $this->populateMessageLogs($campaign, $recipients, $data, false, false);
+                $campaign = $campaign->fresh();
             }
 
-            $campaign->update(['status' => 'Processing']);
-            $this->simulateDelivery($campaign);
-            $campaign = $campaign->fresh();
+            if (in_array($campaign->status, ['Processing', 'Payload Generated'], true)) {
+                $this->finalizeCampaign($campaign);
+                $campaign = $campaign->fresh();
+            }
+
+            $this->whatsAppLogService->logCampaignProcessed($campaign);
 
             $this->notificationService->campaignCompleted(
                 'whatsapp',
@@ -244,17 +479,21 @@ class WhatsAppCampaignService
                 (int) ($campaign->delivered_count ?? 0),
                 $campaign->id,
             );
-
-            return $campaign;
         });
+    }
+
+    public function markProcessFailed(int $campaignId, string $message): void
+    {
+        WhatsAppCampaign::query()->where('id', $campaignId)->update(['status' => 'Failed']);
     }
 
     public function dashboardMetrics(): array
     {
         $statusCounts = WaMessageLog::query()
-            ->selectRaw("COUNT(*) FILTER (WHERE message_status = 'Delivered') as delivered")
-            ->selectRaw("COUNT(*) FILTER (WHERE message_status = 'Failed') as failed")
-            ->selectRaw("COUNT(*) FILTER (WHERE message_status = 'Queued') as queued")
+            ->selectRaw(SqlAggregate::countFilter('*', "message_status = 'Delivered'").' as delivered')
+            ->selectRaw(SqlAggregate::countFilter('*', "message_status IN ('Failed', 'API Error')").' as failed')
+            ->selectRaw(SqlAggregate::countFilter('*', "message_status IN ('Pending', 'Payload Generated', 'Queued')").' as queued')
+            ->selectRaw(SqlAggregate::countFilter('*', "message_status IN ('Sent', 'Delivered', 'Read')").' as sent')
             ->selectRaw('COUNT(*) as total')
             ->first();
 
@@ -264,12 +503,13 @@ class WhatsAppCampaignService
             'whatsapp_delivered' => (int) ($statusCounts->delivered ?? 0),
             'whatsapp_failed' => (int) ($statusCounts->failed ?? 0),
             'whatsapp_queued' => (int) ($statusCounts->queued ?? 0),
+            'whatsapp_sent' => (int) ($statusCounts->sent ?? 0),
         ];
     }
 
     private function resolveAudience(array $data): Collection
     {
-        $query = CaMaster::query();
+        $query = $this->employeeDataScope->audienceCaMasterQuery();
 
         return match ($data['audience_mode']) {
             'selected_leads' => $query->whereIn('ca_id', $data['ca_ids'] ?? [])->get(),
@@ -315,81 +555,139 @@ class WhatsAppCampaignService
 
     private function renderMessage(string $template, CaMaster $lead): string
     {
-        $lead->loadMissing(['city', 'state', 'sourceLead']);
-
-        $replacements = [
-            '{{name}}' => $lead->ca_name ?? '',
-            '{{firm_name}}' => $lead->firm_name ?? '',
-            '{{mobile}}' => $lead->mobile_no ?? '',
-            '{{city}}' => $lead->city?->city_name ?? '',
-            '{{state}}' => $lead->state?->state_name ?? '',
-            '{{source}}' => $lead->sourceLead?->source_name ?? '',
-            '{{rating}}' => (string) ($lead->rating ?? ''),
-            '{{team_size}}' => (string) ($lead->team_size ?? ''),
-        ];
-
-        return strtr($template, $replacements);
+        return $this->cloudMappingService->renderTemplateBody(
+            $template,
+            $this->cloudMappingService->resolveVariables($lead),
+        );
     }
 
-    private function simulateDelivery(WhatsAppCampaign $campaign): void
+    private function finalizeCampaign(WhatsAppCampaign $campaign): void
     {
-        $logs = WaMessageLog::query()
-            ->where('campaign_id', $campaign->id)
-            ->orderBy('id')
-            ->get();
+        $settings = $this->whatsAppSettingsService->current();
 
-        $delivered = 0;
-        $failed = 0;
-        $queued = 0;
-        $skipped = 0;
-        $now = now();
-
-        foreach ($logs as $index => $log) {
-            if ($log->message_status === 'Skipped') {
-                $skipped++;
-
-                continue;
-            }
-
-            $log->update([
-                'message_status' => 'Processing',
-                'sent_at' => $now->copy()->addMilliseconds($index * 5),
+        if (! $settings->isLiveMode()) {
+            $campaign->update([
+                'status' => 'Completed',
+                'payload_generated_at' => $campaign->payload_generated_at ?? now(),
             ]);
+            $this->syncCampaignStats((int) $campaign->id);
 
-            $shouldFail = ! $log->mobile_no || strlen(preg_replace('/\D/', '', $log->mobile_no)) < 10;
-
-            if (! $shouldFail && random_int(1, 100) > 96) {
-                $shouldFail = true;
-            }
-
-            if ($shouldFail) {
-                $log->update([
-                    'message_status' => 'Failed',
-                    'failed_reason' => ! $log->mobile_no ? 'Missing mobile number' : 'Simulation: delivery failed',
-                ]);
-                $failed++;
-
-                continue;
-            }
-
-            $log->update([
-                'message_status' => 'Delivered',
-                'delivered_at' => $now->copy()->addMilliseconds(($index * 5) + 10),
-            ]);
-            $delivered++;
+            return;
         }
 
+        $this->whatsAppSettingsService->assertReadyForLiveDispatch($settings);
+
+        $logs = WaMessageLog::query()->where('campaign_id', $campaign->id)->get();
+        $dispatchableStatuses = [
+            config('whatsapp_cloud.log_statuses.pending', WaMessageLogStatus::PENDING),
+            config('whatsapp_cloud.log_statuses.payload_generated', WaMessageLogStatus::PAYLOAD_GENERATED),
+        ];
+        $skipped = $logs->where('message_status', config('whatsapp_cloud.log_statuses.skipped', WaMessageLogStatus::SKIPPED))->count();
+
+        $sentCount = 0;
+        $failedCount = 0;
+
+        foreach ($logs as $log) {
+            if (! in_array($log->message_status, $dispatchableStatuses, true) || ! is_array($log->api_payload)) {
+                continue;
+            }
+
+            $result = $this->whatsAppDispatchService->send($settings, $log->api_payload);
+            $this->whatsAppDispatchService->applyDispatchResult($log, $result);
+
+            if ($result['success']) {
+                $sentCount++;
+            } else {
+                $failedCount++;
+            }
+        }
+
+        if ($sentCount > 0) {
+            $this->whatsAppSettingsService->recordSuccessfulSend($settings);
+        }
+
+        $finalStatus = match (true) {
+            $sentCount > 0 && $failedCount === 0 && $skipped === 0 => 'Completed',
+            $sentCount > 0 => 'Partial',
+            default => 'Failed',
+        };
+
         $campaign->update([
-            'status' => 'Completed',
-            'delivered_count' => $delivered,
-            'failed_count' => $failed,
-            'queued_count' => $queued,
-            'skipped_count' => $skipped,
+            'status' => $finalStatus,
+            'payload_generated_at' => $campaign->payload_generated_at ?? now(),
         ]);
+
+        $this->syncCampaignStats((int) $campaign->id);
+    }
+
+    public function syncCampaignStats(int $campaignId): void
+    {
+        $campaign = WhatsAppCampaign::query()->find($campaignId);
+        if (! $campaign) {
+            return;
+        }
+
+        $baseQuery = WaMessageLog::query()->where('campaign_id', $campaignId);
+
+        $campaign->update([
+            'queued_count' => (clone $baseQuery)->whereIn('message_status', [
+                WaMessageLogStatus::PENDING,
+                WaMessageLogStatus::PAYLOAD_GENERATED,
+                WaMessageLogStatus::QUEUED,
+            ])->count(),
+            'skipped_count' => (clone $baseQuery)->where('message_status', WaMessageLogStatus::SKIPPED)->count(),
+            'delivered_count' => (clone $baseQuery)->where('message_status', WaMessageLogStatus::DELIVERED)->count(),
+            'failed_count' => (clone $baseQuery)->whereIn('message_status', [
+                WaMessageLogStatus::FAILED,
+                WaMessageLogStatus::API_ERROR,
+            ])->count(),
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function resolveCampaignTemplate(array $data): ?\App\Models\MessageTemplate
+    {
+        if (! empty($data['message_template_id'])) {
+            return $this->whatsAppTemplateService->findApproved((int) $data['message_template_id']);
+        }
+
+        if (! empty($data['template_name'])) {
+            return $this->whatsAppTemplateService->findByName(
+                (string) $data['template_name'],
+                (string) ($data['language_code'] ?? 'en'),
+            );
+        }
+
+        return null;
+    }
+
+    /**
+     * Preview Cloud API payload for a single lead (mapping only).
+     *
+     * @return array<string, mixed>
+     */
+    public function previewPayload(int $campaignId, int $caId): array
+    {
+        $campaign = $this->find($campaignId);
+        $lead = CaMaster::query()->findOrFail($caId);
+        $template = $campaign->message_template_id
+            ? $this->whatsAppTemplateService->findApproved((int) $campaign->message_template_id)
+            : null;
+
+        if (! $template) {
+            throw new InvalidArgumentException('Campaign does not have an approved Cloud API template mapped.');
+        }
+
+        $this->cloudMappingService->assertCampaignMappable($lead, $template);
+
+        return $this->cloudMappingService->buildCloudPayload($lead, $template);
     }
 
     public function update(WhatsAppCampaign $campaign, array $data): WhatsAppCampaign
     {
+        $this->ensureCanManageCampaigns(auth()->user());
         if ($campaign->status === 'Processing') {
             throw new InvalidArgumentException('Cannot edit a campaign while it is processing.');
         }
@@ -414,6 +712,7 @@ class WhatsAppCampaignService
 
     public function delete(WhatsAppCampaign $campaign): void
     {
+        $this->ensureCanManageCampaigns(auth()->user());
         if ($campaign->status === 'Processing') {
             throw new InvalidArgumentException('Cannot delete a campaign while it is processing.');
         }

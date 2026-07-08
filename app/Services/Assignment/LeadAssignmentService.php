@@ -2,8 +2,10 @@
 
 namespace App\Services\Assignment;
 
+use App\Models\AssignmentHistory;
 use App\Models\LeadAssignmentEngine;
 use App\Services\Activity\ActivityLogService;
+use App\Services\Assignment\AssignmentRecorder;
 use App\Services\Cache\CrmCacheService;
 use App\Services\Concerns\SearchesListings;
 use App\Services\Rbac\EmployeeDataScopeService;
@@ -63,16 +65,30 @@ class LeadAssignmentService
     {
         $this->employeeDataScope->ensureCanAccessAssignment($assignment->assignment_id);
 
-        $before = $assignment->only(['ca_id', 'employee_id', 'assignment_type', 'status']);
         $previousEmployeeId = (int) $assignment->employee_id;
         $newEmployeeId = isset($data['employee_id']) ? (int) $data['employee_id'] : $previousEmployeeId;
 
+        if ($newEmployeeId !== $previousEmployeeId) {
+            $assignedBy = $this->employeeDataScope->resolveEmployeeId(auth()->user());
+            $result = $this->assignmentRecorder->assign(
+                (int) ($data['ca_id'] ?? $assignment->ca_id),
+                $newEmployeeId,
+                $data['assignment_type'] ?? $assignment->assignment_type ?? 'Manual',
+                $data['reason'] ?? $assignment->rotation_logic_used ?? 'REASSIGN',
+                $assignedBy,
+                'Lead Reassignment',
+                'manual',
+            );
+
+            return $result['assignment']->load(['caMaster.city', 'employee']);
+        }
+
+        $before = $assignment->only(['ca_id', 'employee_id', 'assignment_type', 'status']);
+
         $assignment->update([
             'ca_id' => $data['ca_id'] ?? $assignment->ca_id,
-            'employee_id' => $newEmployeeId,
             'assignment_type' => $data['assignment_type'] ?? $assignment->assignment_type,
             'rotation_logic_used' => $data['reason'] ?? $assignment->rotation_logic_used,
-            'assigned_date' => $newEmployeeId !== $previousEmployeeId ? now()->toDateString() : $assignment->assigned_date,
             'status' => $data['status'] ?? $assignment->status,
         ]);
 
@@ -83,10 +99,52 @@ class LeadAssignmentService
             json_encode(['before' => $before, 'after' => $assignment->only(['ca_id', 'employee_id', 'assignment_type', 'status'])]),
         );
 
-        if ($newEmployeeId !== $previousEmployeeId) {
-            app(CrmCacheService::class)
-                ->forgetDashboardMetricsAfterAssignment([$previousEmployeeId, $newEmployeeId]);
+        return $assignment->fresh(['caMaster.city', 'employee']);
+    }
+
+    public function setStatus(LeadAssignmentEngine $assignment, string $status): LeadAssignmentEngine
+    {
+        $this->employeeDataScope->ensureCanAccessAssignment($assignment->assignment_id);
+
+        $status = ucfirst(strtolower($status));
+        if (! in_array($status, ['Active', 'Paused'], true)) {
+            abort(422, 'Invalid assignment status.');
         }
+
+        $before = (string) $assignment->status;
+        if ($before === $status) {
+            return $assignment->fresh(['caMaster.city', 'employee']);
+        }
+
+        $assignment->update(['status' => $status]);
+
+        $actionLabel = $status === 'Paused' ? 'Assignment Paused' : 'Assignment Resumed';
+
+        $this->activityLogService->log(
+            'LEAD_ASSIGNMENT',
+            $actionLabel,
+            (string) $assignment->assignment_id,
+            json_encode([
+                'ca_id' => $assignment->ca_id,
+                'employee_id' => $assignment->employee_id,
+                'before' => $before,
+                'after' => $status,
+            ]),
+        );
+
+        AssignmentHistory::create([
+            'ca_id' => $assignment->ca_id,
+            'previous_employee_id' => $assignment->employee_id,
+            'new_employee_id' => $assignment->employee_id,
+            'assignment_type' => $assignment->assignment_type,
+            'reason' => $status === 'Paused' ? 'PAUSE_ASSIGNMENT' : 'RESUME_ASSIGNMENT',
+            'assignment_mode' => 'status_change',
+            'assigned_by' => $this->employeeDataScope->scopedEmployeeId(auth()->user()),
+            'assigned_at' => now(),
+        ]);
+
+        app(CrmCacheService::class)
+            ->forgetDashboardMetricsAfterAssignment([(int) $assignment->employee_id]);
 
         return $assignment->fresh(['caMaster.city', 'employee']);
     }

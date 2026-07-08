@@ -70,8 +70,10 @@ class BulkCaMasterImportTest extends TestCase
         $this->actingAsAdmin();
         $ts = (string) microtime(true);
 
+        $mobile = '9'.substr(str_replace('.', '', $ts), -9);
+
         $csv = "CA Name,Firm Name,Mobile No,Email\n";
-        $csv .= '"Mapped CA '.$ts.'","Mapped Firm '.$ts.'",9876543210,"mapped.'.$ts.'@test.local"'."\n";
+        $csv .= '"Mapped CA '.$ts.'","Mapped Firm '.$ts.'",'.$mobile.',"mapped.'.$ts.'@test.local"'."\n";
         $csv .= '"Empty Mobile CA '.$ts.'","Empty Mobile Firm '.$ts.'",,"empty.'.$ts.'@test.local"'."\n";
 
         $file = UploadedFile::fake()->createWithContent('firms-with-mobile.csv', $csv);
@@ -106,7 +108,7 @@ class BulkCaMasterImportTest extends TestCase
 
         $this->assertDatabaseHas('ca_masters', [
             'firm_name' => 'Mapped Firm '.$ts,
-            'mobile_no' => '9876543210',
+            'mobile_no' => $mobile,
         ]);
         $this->assertDatabaseHas('ca_masters', [
             'firm_name' => 'Empty Mobile Firm '.$ts,
@@ -185,6 +187,80 @@ class BulkCaMasterImportTest extends TestCase
         $this->assertDatabaseHas('ca_masters', [
             'firm_name' => 'Ignored Mobile Firm '.$ts,
             'mobile_no' => null,
+        ]);
+    }
+
+    public function test_bulk_import_parses_excel_template(): void
+    {
+        $this->actingAsAdmin();
+
+        $binary = app(\App\Services\Bulk\BulkImportTemplateService::class)->sampleXlsx();
+        $file = UploadedFile::fake()->createWithContent('firms.xlsx', $binary);
+
+        $parse = $this->post('/ca-masters/bulk-import/parse', ['file' => $file], [
+            'Accept' => 'application/json',
+        ]);
+
+        $parse->assertOk();
+        $parse->assertJsonPath('data.total_rows', 1);
+        $parse->assertJsonPath('data.headers.0', 'ca_name');
+    }
+
+    public function test_bulk_import_accepts_ca_master_profile_without_mobile_or_email(): void
+    {
+        $this->actingAsAdmin();
+        $ts = (string) microtime(true);
+
+        $csv = "Firm Name,CA Name,Membership No,FRN,Address,City,State,Pincode,Mobile,Email\n";
+        $csv .= '"Profile Firm '.$ts.'","Profile CA '.$ts.'",M-1001,FRN-2001,"12 Main Road","Unknown City","Unknown State",400001,,'."\n";
+        $csv .= '"Profile Firm B '.$ts.'","Profile CA B '.$ts.'",,,,"Another City","Another State",,,NA'."\n";
+
+        $file = UploadedFile::fake()->createWithContent('ca-master-profile.csv', $csv);
+
+        $parse = $this->post('/ca-masters/bulk-import/parse', ['file' => $file], [
+            'Accept' => 'application/json',
+        ]);
+        $parse->assertOk();
+
+        $sessionId = $parse->json('data.session_id');
+        $mapping = [
+            'firm_name' => 'Firm Name',
+            'ca_name' => 'CA Name',
+            'membership_no' => 'Membership No',
+            'frn' => 'FRN',
+            'address' => 'Address',
+            'city_id' => 'City',
+            'state_id' => 'State',
+            'pincode' => 'Pincode',
+            'mobile_no' => 'Mobile',
+            'email_id' => 'Email',
+        ];
+
+        $validate = $this->postJson('/ca-masters/bulk-import/validate', [
+            'session_id' => $sessionId,
+            'mapping' => $mapping,
+        ]);
+        $validate->assertOk();
+        $validate->assertJsonPath('data.valid_rows', 2);
+        $validate->assertJsonPath('data.invalid_rows', 0);
+        $validate->assertJsonPath('data.missing_mobile_rows', 2);
+        $validate->assertJsonPath('data.missing_email_rows', 2);
+        $validate->assertJsonPath('data.ready_to_import_rows', 2);
+
+        $import = $this->postJson('/ca-masters/bulk-import', [
+            'session_id' => $sessionId,
+            'mapping' => $mapping,
+        ]);
+        $import->assertOk();
+        $import->assertJsonPath('data.inserted_rows', 2);
+
+        $this->assertDatabaseHas('ca_masters', [
+            'firm_name' => 'Profile Firm '.$ts,
+            'ca_name' => 'Profile CA '.$ts,
+            'membership_no' => 'M-1001',
+            'frn' => 'FRN-2001',
+            'mobile_no' => null,
+            'email_id' => null,
         ]);
     }
 }

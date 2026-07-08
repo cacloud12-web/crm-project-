@@ -14,7 +14,10 @@ use App\Models\SmsLog;
 use App\Models\WaMessageLog;
 use App\Models\WhatsAppCampaign;
 use App\Services\Cache\CrmCacheService;
+use App\Services\Leads\EmployeeProductivityService;
 use App\Services\Rbac\EmployeeDataScopeService;
+use App\Support\Database\SqlAggregate;
+use App\Support\Database\SqlDate;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -25,6 +28,7 @@ class ReportsService
     public function __construct(
         private readonly EmployeeDataScopeService $employeeDataScope,
         private readonly CrmCacheService $cacheService,
+        private readonly EmployeeProductivityService $employeeProductivity,
     ) {}
 
     public function summary(array $params = []): array
@@ -82,22 +86,26 @@ class ReportsService
     public function dashboardInsights(array $params = []): array
     {
         $filters = $this->parseFilters(array_merge($params, ['months' => 6]));
-        $conversion = $this->leadConversion($filters);
-        $employees = $this->employeePerformance($filters);
-        $monthly = $this->monthlyTrends($filters);
-        $campaigns = $this->campaignAnalytics($filters);
+        $filterMeta = $this->filterMeta($filters);
+        $scopeKey = $this->employeeDataScope->cacheScopeKey();
 
-        return [
-            'conversion_summary' => $conversion['summary'],
-            'status_breakdown' => $conversion['breakdown'],
-            'monthly_trends' => $monthly['rows'],
-            'employee_performance' => array_slice($employees['rows'], 0, 12),
-            'city_breakdown' => $this->cityAnalysis($filters)['rows'],
-            'source_breakdown' => $this->sourceBreakdownRows($filters),
-            'campaign_summary' => $campaigns['summary'],
-            'campaign_channels' => $campaigns['breakdown'] ?? [],
-            'daily_calls' => $this->dailyCallsSeries($filters),
-        ];
+        return $this->cacheService->rememberDashboardInsights($scopeKey, $filterMeta, function () use ($filters) {
+            $conversion = $this->leadConversion($filters);
+            $employees = $this->employeePerformance($filters);
+            $monthly = $this->monthlyTrends($filters);
+            $campaigns = $this->campaignAnalytics($filters);
+
+            return [
+                'conversion_summary' => $conversion['summary'],
+                'status_breakdown' => $conversion['breakdown'],
+                'monthly_trends' => $monthly['rows'],
+                'employee_performance' => array_slice($employees['rows'], 0, 12),
+                'city_breakdown' => $this->cityAnalysis($filters)['rows'],
+                'source_breakdown' => $this->sourceBreakdownRows($filters),
+                'campaign_summary' => $campaigns['summary'],
+                'campaign_channels' => $campaigns['breakdown'] ?? [],
+            ];
+        });
     }
 
     public function report(string $slug, array $params = []): array
@@ -113,6 +121,7 @@ class ReportsService
             'monthly_trends' => $this->monthlyTrends($filters),
             'city_analysis' => $this->cityAnalysis($filters),
             'lost_lead_analysis' => $this->lostLeadAnalysis($filters),
+            'duplicate_productivity' => $this->duplicateProductivityReport($filters),
             default => throw new InvalidArgumentException('Unknown report: '.$slug),
         };
     }
@@ -162,9 +171,37 @@ class ReportsService
         ];
     }
 
+    private function duplicateProductivityReport(array $filters): array
+    {
+        $report = $this->employeeProductivity->employeeReport(
+            $filters['from'] ?? null,
+            $filters['to'] ?? null,
+            $filters,
+        );
+
+        return [
+            'slug' => 'duplicate_productivity',
+            'label' => config('reports.reports.duplicate_productivity.label'),
+            'summary' => $report['summary'],
+            'columns' => [
+                'rank' => 'Rank',
+                'employee_name' => 'Employee',
+                'total_assigned' => 'Total Assigned',
+                'total_completed' => 'Follow-ups Completed',
+                'unique_leads' => 'Unique Leads',
+                'duplicate_attempts' => 'Duplicate Attempts',
+                'wrong_numbers' => 'Wrong Numbers',
+                'verified_leads' => 'Verified Leads',
+                'followup_completion_pct' => 'Follow-up %',
+                'communication_success_pct' => 'Communication Success %',
+                'quality_score' => 'Quality Score',
+            ],
+            'rows' => $report['rows'],
+        ];
+    }
+
     private function leadConversion(array $filters): array
     {
-        $won = $this->quotedList(config('reports.won_statuses', []));
         $lost = $this->quotedList(config('reports.lost_statuses', []));
         $pipeline = $this->quotedList(config('reports.pipeline_statuses', []));
 
@@ -173,13 +210,13 @@ class ReportsService
             ->when($filters['to'], fn ($q) => $q->where('created_at', '<=', $filters['to']))
             ->when($filters['city_id'], fn ($q) => $q->where('city_id', $filters['city_id']))
             ->selectRaw('COUNT(*) as total_leads')
-            ->selectRaw("COUNT(*) FILTER (WHERE status = 'Hot') as hot_leads")
-            ->selectRaw("COUNT(*) FILTER (WHERE status = 'Warm') as warm_leads")
-            ->selectRaw('COUNT(*) FILTER (WHERE status IN ('.$pipeline.')) as pipeline_leads')
-            ->selectRaw('COUNT(*) FILTER (WHERE status IN ('.$won.')) as won_leads')
-            ->selectRaw('COUNT(*) FILTER (WHERE status IN ('.$lost.')) as lost_leads')
-            ->selectRaw("COUNT(*) FILTER (WHERE status = 'Demo Scheduled') as demo_scheduled")
-            ->selectRaw("COUNT(*) FILTER (WHERE status = 'New') as new_leads")
+            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Hot'").' as hot_leads')
+            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Warm'").' as warm_leads')
+            ->selectRaw(SqlAggregate::countFilter('*', 'status IN ('.$pipeline.')').' as pipeline_leads')
+            ->selectRaw(SqlAggregate::countFilter('*', 'software_purchased = true').' as won_leads')
+            ->selectRaw(SqlAggregate::countFilter('*', 'status IN ('.$lost.')').' as lost_leads')
+            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Demo Scheduled'").' as demo_scheduled')
+            ->selectRaw(SqlAggregate::countFilter('*', "status = 'New'").' as new_leads')
             ->first();
 
         $total = (int) ($summaryRow->total_leads ?? 0);
@@ -202,22 +239,39 @@ class ReportsService
             ])
             ->all();
 
-        $dailyRows = $this->scopedCaMasterQuery($filters)
+        $newLeadRows = $this->scopedCaMasterQuery($filters)
             ->when($filters['from'], fn ($q) => $q->where('created_at', '>=', $filters['from']))
             ->when($filters['to'], fn ($q) => $q->where('created_at', '<=', $filters['to']))
             ->when($filters['city_id'], fn ($q) => $q->where('city_id', $filters['city_id']))
             ->selectRaw('DATE(created_at) as report_date')
             ->selectRaw('COUNT(*) as new_leads')
-            ->selectRaw('COUNT(*) FILTER (WHERE status IN ('.$won.')) as converted_leads')
             ->groupBy(DB::raw('DATE(created_at)'))
             ->orderBy('report_date')
             ->get()
-            ->map(fn ($row) => [
-                'report_date' => $row->report_date,
-                'new_leads' => (int) $row->new_leads,
-                'converted_leads' => (int) $row->converted_leads,
-            ])
-            ->all();
+            ->keyBy('report_date');
+
+        $convertedRows = $this->scopedCaMasterQuery($filters)
+            ->where('software_purchased', true)
+            ->whereNotNull('purchase_date')
+            ->when($filters['from'], fn ($q) => $q->where('purchase_date', '>=', $filters['from']))
+            ->when($filters['to'], fn ($q) => $q->where('purchase_date', '<=', $filters['to']))
+            ->when($filters['city_id'], fn ($q) => $q->where('city_id', $filters['city_id']))
+            ->selectRaw(SqlDate::dateCast('purchase_date').' as report_date')
+            ->selectRaw('COUNT(*) as converted_leads')
+            ->groupBy(DB::raw(SqlDate::dateCast('purchase_date')))
+            ->orderBy('report_date')
+            ->get()
+            ->keyBy('report_date');
+
+        $allDates = $newLeadRows->keys()->merge($convertedRows->keys())->unique()->sort()->values();
+
+        $dailyRows = $allDates->map(function ($date) use ($newLeadRows, $convertedRows) {
+            return [
+                'report_date' => $date,
+                'new_leads' => (int) ($newLeadRows->get($date)?->new_leads ?? 0),
+                'converted_leads' => (int) ($convertedRows->get($date)?->converted_leads ?? 0),
+            ];
+        })->all();
 
         return [
             'slug' => 'lead_conversion',
@@ -274,9 +328,9 @@ class ReportsService
             ->selectRaw('COALESCE(SUM(lae.target_leads), 0) as target_leads')
             ->selectRaw('COALESCE(SUM(lae.achieved_leads), 0) as achieved_leads')
             ->selectRaw('COUNT(fu.followup_id) as total_followups')
-            ->selectRaw('COUNT(fu.followup_id) FILTER (WHERE fu.status IN ('.$completed.')) as completed_followups')
-            ->selectRaw('COUNT(fu.followup_id) FILTER (WHERE fu.status IN ('.$open.') AND fu.scheduled_date < CURRENT_DATE) as overdue_followups')
-            ->selectRaw("COUNT(fu.followup_id) FILTER (WHERE fu.followup_type ILIKE '%Demo%') as demo_followups")
+            ->selectRaw(SqlAggregate::countFilter('fu.followup_id', 'fu.status IN ('.$completed.')').' as completed_followups')
+            ->selectRaw(SqlAggregate::countFilter('fu.followup_id', 'fu.status IN ('.$open.') AND fu.scheduled_date < CURRENT_DATE').' as overdue_followups')
+            ->selectRaw(SqlAggregate::countFilter('fu.followup_id', "fu.followup_type ILIKE '%Demo%'").' as demo_followups')
             ->orderByDesc('achieved_leads')
             ->get()
             ->map(function ($row) {
@@ -315,7 +369,7 @@ class ReportsService
             'label' => config('reports.reports.employee_performance.label'),
             'summary' => $summary,
             'columns' => [
-                'employee_name' => 'Executive',
+                'employee_name' => 'Employee',
                 'city' => 'City',
                 'assigned_leads' => 'Assigned',
                 'achieved_leads' => 'Achieved',
@@ -340,10 +394,10 @@ class ReportsService
             ->when($filters['employee_id'], fn ($q) => $q->where('employee_id', $filters['employee_id']))
             ->selectRaw('followup_type')
             ->selectRaw('COUNT(*) as total_followups')
-            ->selectRaw('COUNT(*) FILTER (WHERE status IN ('.$completed.')) as completed')
-            ->selectRaw('COUNT(*) FILTER (WHERE status IN ('.$open.')) as open_count')
-            ->selectRaw('COUNT(*) FILTER (WHERE status IN ('.$open.') AND scheduled_date < CURRENT_DATE) as overdue')
-            ->selectRaw("COUNT(*) FILTER (WHERE followup_type ILIKE '%Demo%') as demo_related")
+            ->selectRaw(SqlAggregate::countFilter('*', 'status IN ('.$completed.')').' as completed')
+            ->selectRaw(SqlAggregate::countFilter('*', 'status IN ('.$open.')').' as open_count')
+            ->selectRaw(SqlAggregate::countFilter('*', 'status IN ('.$open.') AND scheduled_date < CURRENT_DATE').' as overdue')
+            ->selectRaw(SqlAggregate::countFilter('*', "followup_type ILIKE '%Demo%'").' as demo_related')
             ->groupBy('followup_type')
             ->orderByDesc('total_followups')
             ->get()
@@ -365,9 +419,9 @@ class ReportsService
             ->when($filters['to'], fn ($q) => $q->where('scheduled_date', '<=', $filters['to']))
             ->when($filters['employee_id'], fn ($q) => $q->where('employee_id', $filters['employee_id']))
             ->selectRaw('COUNT(*) as total_followups')
-            ->selectRaw('COUNT(*) FILTER (WHERE status IN ('.$completed.')) as completed')
-            ->selectRaw('COUNT(*) FILTER (WHERE status IN ('.$open.') AND scheduled_date < CURRENT_DATE) as overdue')
-            ->selectRaw("COUNT(*) FILTER (WHERE followup_type ILIKE '%Demo%') as demo_followups")
+            ->selectRaw(SqlAggregate::countFilter('*', 'status IN ('.$completed.')').' as completed')
+            ->selectRaw(SqlAggregate::countFilter('*', 'status IN ('.$open.') AND scheduled_date < CURRENT_DATE').' as overdue')
+            ->selectRaw(SqlAggregate::countFilter('*', "followup_type ILIKE '%Demo%'").' as demo_followups')
             ->first();
 
         return [
@@ -552,18 +606,17 @@ class ReportsService
     {
         $months = $filters['months'];
         $from = now()->subMonths($months - 1)->startOfMonth();
-        $won = $this->quotedList(config('reports.won_statuses', []));
         $lost = $this->quotedList(config('reports.lost_statuses', []));
 
         $rows = $this->scopedCaMasterQuery($filters)
             ->where('created_at', '>=', $from)
-            ->selectRaw("TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM') as month")
+            ->selectRaw(SqlDate::monthLabel('created_at'))
             ->selectRaw('COUNT(*) as new_leads')
-            ->selectRaw('COUNT(*) FILTER (WHERE status IN ('.$won.')) as won_leads')
-            ->selectRaw('COUNT(*) FILTER (WHERE status IN ('.$lost.')) as lost_leads')
-            ->selectRaw("COUNT(*) FILTER (WHERE status = 'Demo Scheduled') as demo_leads")
-            ->groupBy(DB::raw("DATE_TRUNC('month', created_at)"))
-            ->orderBy(DB::raw("DATE_TRUNC('month', created_at)"))
+            ->selectRaw(SqlAggregate::countFilter('*', 'software_purchased = true').' as won_leads')
+            ->selectRaw(SqlAggregate::countFilter('*', 'status IN ('.$lost.')').' as lost_leads')
+            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Demo Scheduled'").' as demo_leads')
+            ->groupBy(DB::raw(SqlDate::monthBucket('created_at')))
+            ->orderBy(DB::raw(SqlDate::monthBucket('created_at')))
             ->get()
             ->map(fn ($row) => [
                 'month' => $row->month,
@@ -599,7 +652,6 @@ class ReportsService
 
     private function cityAnalysis(array $filters): array
     {
-        $won = $this->quotedList(config('reports.won_statuses', []));
         $lost = $this->quotedList(config('reports.lost_statuses', []));
 
         $rows = $this->scopedCaMasterQuery($filters)
@@ -608,9 +660,9 @@ class ReportsService
             ->when($filters['to'], fn ($q) => $q->where('ca_masters.created_at', '<=', $filters['to']))
             ->selectRaw('cities.city_name as city')
             ->selectRaw('COUNT(*) as total_leads')
-            ->selectRaw('COUNT(*) FILTER (WHERE ca_masters.status IN ('.$won.')) as won_leads')
-            ->selectRaw('COUNT(*) FILTER (WHERE ca_masters.status IN ('.$lost.')) as lost_leads')
-            ->selectRaw("COUNT(*) FILTER (WHERE ca_masters.status = 'Hot') as hot_leads")
+            ->selectRaw(SqlAggregate::countFilter('*', 'ca_masters.software_purchased = true').' as won_leads')
+            ->selectRaw(SqlAggregate::countFilter('*', 'ca_masters.status IN ('.$lost.')').' as lost_leads')
+            ->selectRaw(SqlAggregate::countFilter('*', "ca_masters.status = 'Hot'").' as hot_leads')
             ->groupBy('cities.city_name')
             ->orderByDesc('total_leads')
             ->get()
@@ -686,7 +738,7 @@ class ReportsService
         $summaryRow = $this->scopedCaMasterQuery($filters)
             ->when($filters['from'], fn ($q) => $q->where('updated_at', '>=', $filters['from']))
             ->when($filters['to'], fn ($q) => $q->where('updated_at', '<=', $filters['to']))
-            ->selectRaw('COUNT(*) FILTER (WHERE status IN ('.$lost.')) as lost_leads')
+            ->selectRaw(SqlAggregate::countFilter('*', 'status IN ('.$lost.')').' as lost_leads')
             ->first();
 
         return [
@@ -701,7 +753,7 @@ class ReportsService
                 'status' => 'Status',
                 'city' => 'City',
                 'source' => 'Source',
-                'executive' => 'Executive',
+                'executive' => 'Employee',
                 'updated_at' => 'Updated',
             ],
             'rows' => $rows,
@@ -718,8 +770,8 @@ class ReportsService
         $logStats = (clone $logQuery)
             ->when($from, fn ($q) => $q->where('created_at', '>=', $from))
             ->when($to, fn ($q) => $q->where('created_at', '<=', $to))
-            ->selectRaw("COUNT(*) FILTER (WHERE {$statusColumn} = 'Delivered') as delivered")
-            ->selectRaw("COUNT(*) FILTER (WHERE {$statusColumn} = 'Failed') as failed")
+            ->selectRaw(SqlAggregate::countFilter('*', "{$statusColumn} = 'Delivered'").' as delivered')
+            ->selectRaw(SqlAggregate::countFilter('*', "{$statusColumn} = 'Failed'").' as failed')
             ->selectRaw('COUNT(*) as messages_total')
             ->first();
 
@@ -751,15 +803,13 @@ class ReportsService
 
     private function demoRatioSeries(array $filters): array
     {
-        $won = $this->quotedList(config('reports.won_statuses', []));
-
         return $this->scopedCaMasterQuery($filters)
             ->when($filters['from'], fn ($q) => $q->where('created_at', '>=', $filters['from']))
             ->when($filters['to'], fn ($q) => $q->where('created_at', '<=', $filters['to']))
-            ->selectRaw("TO_CHAR(DATE_TRUNC('week', created_at), 'YYYY-MM-DD') as label")
-            ->selectRaw("ROUND(COUNT(*) FILTER (WHERE status = 'Demo Scheduled')::numeric / NULLIF(COUNT(*), 0) * 100, 1) as value")
-            ->groupBy(DB::raw("DATE_TRUNC('week', created_at)"))
-            ->orderBy(DB::raw("DATE_TRUNC('week', created_at)"))
+            ->selectRaw(SqlDate::weekLabel('created_at'))
+            ->selectRaw(SqlAggregate::roundPercentOfTotal("status = 'Demo Scheduled'").' as value')
+            ->groupBy(DB::raw(SqlDate::weekBucket('created_at')))
+            ->orderBy(DB::raw(SqlDate::weekBucket('created_at')))
             ->get()
             ->map(fn ($row) => ['label' => $row->label, 'value' => (float) ($row->value ?? 0)])
             ->all();
@@ -767,15 +817,13 @@ class ReportsService
 
     private function conversionSeries(array $filters): array
     {
-        $won = $this->quotedList(config('reports.won_statuses', []));
-
         return $this->scopedCaMasterQuery($filters)
             ->when($filters['from'], fn ($q) => $q->where('created_at', '>=', $filters['from']))
             ->when($filters['to'], fn ($q) => $q->where('created_at', '<=', $filters['to']))
-            ->selectRaw("TO_CHAR(DATE_TRUNC('week', created_at), 'YYYY-MM-DD') as label")
-            ->selectRaw('ROUND(COUNT(*) FILTER (WHERE status IN ('.$won.'))::numeric / NULLIF(COUNT(*), 0) * 100, 1) as value')
-            ->groupBy(DB::raw("DATE_TRUNC('week', created_at)"))
-            ->orderBy(DB::raw("DATE_TRUNC('week', created_at)"))
+            ->selectRaw(SqlDate::weekLabel('created_at'))
+            ->selectRaw(SqlAggregate::roundPercentOfTotal('software_purchased = true').' as value')
+            ->groupBy(DB::raw(SqlDate::weekBucket('created_at')))
+            ->orderBy(DB::raw(SqlDate::weekBucket('created_at')))
             ->get()
             ->map(fn ($row) => ['label' => $row->label, 'value' => (float) ($row->value ?? 0)])
             ->all();
@@ -824,7 +872,7 @@ class ReportsService
 
     private function scopedCaMasterQuery(array $filters): Builder
     {
-        $query = CaMaster::query();
+        $query = CaMaster::query()->countableInStatistics();
 
         if (! empty($filters['employee_id'])) {
             $this->employeeDataScope->scopeCaMasterQuery($query, (int) $filters['employee_id']);

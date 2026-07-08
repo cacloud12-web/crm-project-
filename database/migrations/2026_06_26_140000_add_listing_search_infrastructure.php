@@ -4,7 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-
+use App\Support\Database\MigrationIndexHelper;
 return new class extends Migration
 {
     public function up(): void
@@ -32,22 +32,22 @@ return new class extends Migration
         }
 
         Schema::table('ca_masters', function (Blueprint $table) {
-            if (! $this->indexExists('ca_masters', 'ca_masters_status_created_at_index')) {
+            if (! MigrationIndexHelper::exists('ca_masters', 'ca_masters_status_created_at_index')) {
                 $table->index(['status', 'created_at'], 'ca_masters_status_created_at_index');
             }
-            if (! $this->indexExists('ca_masters', 'ca_masters_city_id_status_index')) {
+            if (! MigrationIndexHelper::exists('ca_masters', 'ca_masters_city_id_status_index')) {
                 $table->index(['city_id', 'status'], 'ca_masters_city_id_status_index');
             }
         });
 
         Schema::table('follow_ups', function (Blueprint $table) {
-            if (! $this->indexExists('follow_ups', 'follow_ups_scheduled_date_index')) {
+            if (! MigrationIndexHelper::exists('follow_ups', 'follow_ups_scheduled_date_index')) {
                 $table->index('scheduled_date', 'follow_ups_scheduled_date_index');
             }
         });
 
         Schema::table('activity_logs', function (Blueprint $table) {
-            if (! $this->indexExists('activity_logs', 'activity_logs_module_action_created_index')) {
+            if (! MigrationIndexHelper::exists('activity_logs', 'activity_logs_module_action_created_index')) {
                 $table->index(['module_name', 'action', 'created_at'], 'activity_logs_module_action_created_index');
             }
         });
@@ -77,17 +77,4 @@ return new class extends Migration
         DB::statement("CREATE INDEX IF NOT EXISTS {$index} ON {$table} USING gin ({$column} gin_trgm_ops)");
     }
 
-    private function indexExists(string $table, string $index): bool
-    {
-        if (DB::getDriverName() === 'pgsql') {
-            $result = DB::selectOne(
-                'SELECT 1 FROM pg_indexes WHERE tablename = ? AND indexname = ?',
-                [$table, $index],
-            );
-
-            return $result !== null;
-        }
-
-        return false;
-    }
 };

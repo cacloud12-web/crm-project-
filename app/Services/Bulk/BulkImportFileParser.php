@@ -8,6 +8,11 @@ use ZipArchive;
 
 class BulkImportFileParser
 {
+    private const SPREADSHEET_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+
+    private const RELATIONSHIP_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
+
+    private const OFFICE_REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
     public function parse(UploadedFile $file): array
     {
         $path = $file->getRealPath();
@@ -68,7 +73,7 @@ class BulkImportFileParser
         }
 
         $sharedStrings = $this->readSharedStrings($zip);
-        $sheetXml = $zip->getFromName('xl/worksheets/sheet1.xml');
+        $sheetXml = $this->resolveWorksheetXml($zip);
         $zip->close();
 
         if (! $sheetXml) {
@@ -80,14 +85,32 @@ class BulkImportFileParser
             throw new RuntimeException('Unable to parse the Excel worksheet.');
         }
 
-        $sheet->registerXPathNamespace('m', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
+        $sheet->registerXPathNamespace('m', self::SPREADSHEET_NS);
+        $sheetRows = $sheet->xpath('//m:sheetData/m:row');
+        if ($sheetRows === false || $sheetRows === []) {
+            throw new RuntimeException('The Excel file has no data rows.');
+        }
+
         $matrix = [];
 
-        foreach ($sheet->sheetData->row as $row) {
+        foreach ($sheetRows as $row) {
+            $row->registerXPathNamespace('m', self::SPREADSHEET_NS);
             $rowIndex = (int) ($row['r'] ?? 0);
-            foreach ($row->c as $cell) {
-                $ref = (string) $cell['r'];
-                [$column, $line] = $this->splitCellReference($ref);
+            $cells = $row->xpath('m:c') ?: [];
+
+            foreach ($cells as $cell) {
+                $ref = (string) ($cell['r'] ?? '');
+                if ($ref !== '') {
+                    [$column, $line] = $this->splitCellReference($ref);
+                } else {
+                    $line = $rowIndex;
+                    $column = 'A';
+                }
+
+                if ($line <= 0) {
+                    $line = $rowIndex > 0 ? $rowIndex : 1;
+                }
+
                 $matrix[$line][$column] = $this->readCellValue($cell, $sharedStrings);
             }
         }
@@ -119,6 +142,59 @@ class BulkImportFileParser
         ];
     }
 
+    private function resolveWorksheetXml(ZipArchive $zip): ?string
+    {
+        $sheetXml = $zip->getFromName('xl/worksheets/sheet1.xml');
+        if ($sheetXml) {
+            return $sheetXml;
+        }
+
+        $workbookXml = $zip->getFromName('xl/workbook.xml');
+        $relsXml = $zip->getFromName('xl/_rels/workbook.xml.rels');
+        if (! $workbookXml || ! $relsXml) {
+            return null;
+        }
+
+        $workbook = simplexml_load_string($workbookXml);
+        $rels = simplexml_load_string($relsXml);
+        if ($workbook === false || $rels === false) {
+            return null;
+        }
+
+        $workbook->registerXPathNamespace('m', self::SPREADSHEET_NS);
+        $workbook->registerXPathNamespace('r', self::OFFICE_REL_NS);
+        $firstSheet = $workbook->xpath('//m:sheets/m:sheet')[0] ?? null;
+        if ($firstSheet === null) {
+            return null;
+        }
+
+        $relId = (string) ($firstSheet->attributes(self::OFFICE_REL_NS)->id ?? '');
+        if ($relId === '') {
+            return null;
+        }
+
+        $rels->registerXPathNamespace('rel', self::RELATIONSHIP_NS);
+        $relationships = $rels->xpath('//rel:Relationship') ?: [];
+        foreach ($relationships as $relationship) {
+            if ((string) ($relationship['Id'] ?? '') !== $relId) {
+                continue;
+            }
+
+            $target = (string) ($relationship['Target'] ?? '');
+            if ($target === '') {
+                return null;
+            }
+
+            $path = str_starts_with($target, 'worksheets/')
+                ? 'xl/'.$target
+                : 'xl/worksheets/'.ltrim($target, '/');
+
+            return $zip->getFromName($path) ?: null;
+        }
+
+        return null;
+    }
+
     private function readSharedStrings(ZipArchive $zip): array
     {
         $xml = $zip->getFromName('xl/sharedStrings.xml');
@@ -131,17 +207,22 @@ class BulkImportFileParser
             return [];
         }
 
+        $shared->registerXPathNamespace('m', self::SPREADSHEET_NS);
+        $items = $shared->xpath('//m:si') ?: [];
+
         $strings = [];
-        foreach ($shared->si as $item) {
-            if (isset($item->t)) {
-                $strings[] = (string) $item->t;
+        foreach ($items as $item) {
+            $item->registerXPathNamespace('m', self::SPREADSHEET_NS);
+            $inline = $item->xpath('m:t');
+            if ($inline !== false && $inline !== []) {
+                $strings[] = (string) $inline[0];
 
                 continue;
             }
 
             $text = '';
-            foreach ($item->r as $run) {
-                $text .= (string) $run->t;
+            foreach ($item->xpath('.//m:t') ?: [] as $part) {
+                $text .= (string) $part;
             }
             $strings[] = $text;
         }
@@ -151,18 +232,23 @@ class BulkImportFileParser
 
     private function readCellValue(\SimpleXMLElement $cell, array $sharedStrings): string
     {
+        $cell->registerXPathNamespace('m', self::SPREADSHEET_NS);
         $type = (string) ($cell['t'] ?? '');
         if ($type === 's') {
-            $index = (int) $cell->v;
+            $index = (int) ($cell->xpath('m:v')[0] ?? 0);
 
             return trim($sharedStrings[$index] ?? '');
         }
 
         if ($type === 'inlineStr') {
-            return trim((string) ($cell->is->t ?? ''));
+            $inline = $cell->xpath('m:is/m:t');
+
+            return trim((string) ($inline[0] ?? ''));
         }
 
-        return trim((string) ($cell->v ?? ''));
+        $value = $cell->xpath('m:v');
+
+        return trim((string) ($value[0] ?? ''));
     }
 
     private function splitCellReference(string $reference): array

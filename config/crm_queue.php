@@ -14,13 +14,28 @@ return [
 
     'import_sync_row_limit' => (int) env('CRM_IMPORT_SYNC_ROW_LIMIT', 100),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Inline large imports
+    |--------------------------------------------------------------------------
+    |
+    | When true, imports above import_sync_row_limit run in the HTTP request
+    | instead of waiting for a queue worker. Defaults to true in local env.
+    |
+    */
+
+    'import_process_inline' => filter_var(
+        env('CRM_IMPORT_PROCESS_INLINE', env('APP_ENV', 'production') === 'local'),
+        FILTER_VALIDATE_BOOL,
+    ),
+
     'campaign_log_sync_limit' => (int) env('CRM_CAMPAIGN_LOG_SYNC_LIMIT', 50),
 
     'report_export_sync_row_limit' => (int) env('CRM_REPORT_EXPORT_SYNC_ROW_LIMIT', 500),
 
     'login_max_attempts' => (int) env('CRM_LOGIN_MAX_ATTEMPTS', 5),
 
-    'login_decay_minutes' => (int) env('CRM_LOGIN_DECAY_MINUTES', 1),
+    'login_decay_minutes' => (int) env('CRM_LOGIN_DECAY_MINUTES', 15),
 
     /*
     |--------------------------------------------------------------------------

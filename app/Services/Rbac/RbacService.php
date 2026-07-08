@@ -38,7 +38,41 @@ class RbacService
 
         $modulePermissions = $roleMatrix[$module] ?? $roleMatrix['*'] ?? [];
 
-        return in_array($permission, $modulePermissions, true);
+        if (in_array($permission, $modulePermissions, true)) {
+            return true;
+        }
+
+        return $this->permissionAliasGranted($permission, $modulePermissions);
+    }
+
+    /**
+     * @param  list<string>  $modulePermissions
+     */
+    private function permissionAliasGranted(string $permission, array $modulePermissions): bool
+    {
+        $aliases = [
+            'reports' => ['view_reports', 'reports'],
+            'view_reports' => ['reports', 'view_reports'],
+            'campaigns' => ['campaigns', 'send_email', 'send_sms'],
+            'send_email' => ['campaigns', 'send_email'],
+            'send_sms' => ['campaigns', 'send_sms'],
+            'assign' => ['assign', 'create'],
+            'reassign' => ['reassign', 'edit'],
+            'schedule_followup' => ['schedule_followup', 'create'],
+            'schedule_demo' => ['schedule_demo', 'create'],
+            'mark_completed' => ['mark_completed', 'edit'],
+            'manage_settings' => ['manage_settings', 'edit'],
+        ];
+
+        $candidates = $aliases[$permission] ?? [$permission];
+
+        foreach ($candidates as $candidate) {
+            if (in_array($candidate, $modulePermissions, true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function permissionsFor(?User $user): array
@@ -152,8 +186,8 @@ class RbacService
             return ['module' => 'dashboard', 'permission' => 'view'];
         }
 
-        if ($path === 'dashboard/metrics') {
-            return ['module' => 'reports', 'permission' => 'reports'];
+        if ($path === 'dashboard/metrics' || $path === 'dashboard/productivity-employees') {
+            return ['module' => 'dashboard', 'permission' => 'view'];
         }
 
         if ($path === 'dashboard/employee') {
@@ -161,7 +195,19 @@ class RbacService
         }
 
         if (str_starts_with($path, 'ca-masters') && $this->roleKey($request->user()) === 'employee') {
-            return ['module' => 'leads', 'permission' => $method === 'GET' ? 'view' : 'edit'];
+            if ($method === 'GET') {
+                return ['module' => 'leads', 'permission' => 'view'];
+            }
+
+            if ($method === 'DELETE') {
+                return ['module' => 'leads', 'permission' => 'delete'];
+            }
+
+            if ($method === 'POST' && ! preg_match('#ca-masters/\d+#', $path)) {
+                return ['module' => 'leads', 'permission' => 'create'];
+            }
+
+            return ['module' => 'leads', 'permission' => 'edit'];
         }
 
         if (str_starts_with($path, 'lookups/')) {
@@ -184,6 +230,10 @@ class RbacService
             return ['module' => 'settings', 'permission' => 'view'];
         }
 
+        if (str_starts_with($path, 'auth/login-email-change')) {
+            return ['module' => 'settings', 'permission' => 'view'];
+        }
+
         if ($path === 'employees/provision-logins' || preg_match('#^employees/\d+/reset-password$#', $path)) {
             return ['module' => 'employees', 'permission' => 'edit'];
         }
@@ -195,7 +245,14 @@ class RbacService
         if (str_starts_with($path, 'admin/security-matrix')) {
             return [
                 'module' => 'security',
-                'permission' => $method === 'GET' ? 'view' : 'edit',
+                'permission' => $method === 'GET' ? 'view' : 'manage_settings',
+            ];
+        }
+
+        if (str_starts_with($path, 'admin/role-permissions')) {
+            return [
+                'module' => 'roles_permissions',
+                'permission' => $method === 'GET' ? 'view' : 'manage_settings',
             ];
         }
 
@@ -207,8 +264,16 @@ class RbacService
             return ['module' => 'settings', 'permission' => in_array($method, ['PUT', 'POST'], true) ? 'edit' : 'view'];
         }
 
+        if (str_starts_with($path, 'email-accounts')) {
+            return ['module' => 'admin', 'permission' => $method === 'GET' ? 'reports' : 'edit'];
+        }
+
         if (str_starts_with($path, 'email-settings')) {
             return ['module' => 'settings', 'permission' => $method === 'GET' ? 'view' : 'edit'];
+        }
+
+        if (str_starts_with($path, 'google-api-settings')) {
+            return ['module' => 'settings', 'permission' => in_array($method, ['PUT', 'POST'], true) ? 'edit' : 'view'];
         }
 
         if (str_starts_with($path, 'reports/exports/')) {
@@ -233,6 +298,10 @@ class RbacService
 
         if (preg_match('#^ca-masters/\d+/contact$#', $path) && $method === 'PATCH') {
             return ['module' => 'leads', 'permission' => 'edit'];
+        }
+
+        if (preg_match('#^lead-assignments/\d+/status$#', $path) && $method === 'PATCH') {
+            return ['module' => 'assignment', 'permission' => 'edit'];
         }
 
         if (str_contains($path, 'bulk-import')) {
@@ -260,9 +329,11 @@ class RbacService
         }
 
         if (
-            str_starts_with($path, 'whatsapp-campaigns')
+            str_starts_with($path, 'campaigns')
+            || str_starts_with($path, 'whatsapp-campaigns')
             || str_starts_with($path, 'email-campaigns')
             || str_starts_with($path, 'sms-campaigns')
+            || str_starts_with($path, 'sms-templates')
             || str_starts_with($path, 'wa-message-logs')
             || str_starts_with($path, 'email-logs')
             || str_starts_with($path, 'sms-logs')
@@ -272,6 +343,22 @@ class RbacService
 
         if (str_starts_with($path, 'consent-trackings') || str_starts_with($path, 'dnd-management')) {
             return ['module' => 'consent', 'permission' => $this->methodPermission($method)];
+        }
+
+        if (str_starts_with($path, 'workflow')) {
+            return ['module' => 'followups', 'permission' => $this->methodPermission($method)];
+        }
+
+        if ($path === 'ca-masters/bulk-delete'
+            || $path === 'ca-masters/trashed/restore'
+            || $path === 'ca-masters/trashed/force-delete'
+            || preg_match('#^ca-masters/\d+/restore$#', $path)
+            || preg_match('#^ca-masters/\d+/force$#', $path)) {
+            return ['module' => 'ca_master', 'permission' => 'delete'];
+        }
+
+        if ($path === 'ca-masters/trashed') {
+            return ['module' => 'ca_master', 'permission' => 'delete'];
         }
 
         $prefixes = [

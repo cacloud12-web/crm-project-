@@ -14,5 +14,7 @@ trait LogsMasterActivity
             $recordId,
             $entity.': '.$description,
         );
+
+        app(\App\Services\Cache\CrmCacheService::class)->forgetMasterListings();
     }
 }

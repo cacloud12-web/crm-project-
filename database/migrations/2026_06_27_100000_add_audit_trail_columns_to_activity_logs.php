@@ -3,7 +3,7 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
-
+use App\Support\Database\MigrationIndexHelper;
 return new class extends Migration
 {
     public function up(): void
@@ -21,7 +21,7 @@ return new class extends Migration
         });
 
         Schema::table('activity_logs', function (Blueprint $table) {
-            if (! $this->indexExists('activity_logs', 'activity_logs_performed_by_index')) {
+            if (! MigrationIndexHelper::exists('activity_logs', 'activity_logs_performed_by_index')) {
                 $table->index('performed_by', 'activity_logs_performed_by_index');
             }
         });
@@ -30,37 +30,11 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('activity_logs', function (Blueprint $table) {
-            if ($this->indexExists('activity_logs', 'activity_logs_performed_by_index')) {
+            if (MigrationIndexHelper::exists('activity_logs', 'activity_logs_performed_by_index')) {
                 $table->dropIndex('activity_logs_performed_by_index');
             }
             $table->dropColumn(['before_value', 'after_value', 'ip_address']);
         });
     }
 
-    private function indexExists(string $table, string $index): bool
-    {
-        $connection = Schema::getConnection();
-        $driver = $connection->getDriverName();
-
-        if ($driver === 'pgsql') {
-            $result = $connection->selectOne(
-                'SELECT 1 FROM pg_indexes WHERE tablename = ? AND indexname = ?',
-                [$table, $index],
-            );
-
-            return $result !== null;
-        }
-
-        if ($driver === 'sqlite') {
-            $indexes = $connection->select("PRAGMA index_list({$table})");
-
-            foreach ($indexes as $row) {
-                if (($row->name ?? null) === $index) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
 };

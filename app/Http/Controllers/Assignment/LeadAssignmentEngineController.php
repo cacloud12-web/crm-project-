@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Assignment;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\LeadAssignment\StoreLeadAssignmentRequest;
+use App\Http\Requests\LeadAssignment\UpdateLeadAssignmentStatusRequest;
 use App\Http\Resources\LeadAssignmentResource;
 use App\Models\LeadAssignmentEngine;
 use App\Services\Assignment\LeadAssignmentService;
@@ -62,6 +63,19 @@ class LeadAssignmentEngineController extends Controller
         return ApiResponse::success(
             new LeadAssignmentResource($assignment),
             'Assignment updated successfully',
+        );
+    }
+
+    public function updateStatus(UpdateLeadAssignmentStatusRequest $request, string $id): JsonResponse
+    {
+        $assignment = $this->leadAssignmentService->setStatus(
+            LeadAssignmentEngine::findOrFail($id),
+            $request->validated('status'),
+        );
+
+        return ApiResponse::success(
+            new LeadAssignmentResource($assignment),
+            $assignment->status === 'Paused' ? 'Assignment paused' : 'Assignment resumed',
         );
     }
 

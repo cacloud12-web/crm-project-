@@ -25,6 +25,7 @@
 /storage/framework/cache/data/
 /storage/framework/sessions/
 /storage/framework/views/
+/storage/backups/
 /vendor
 _ide_helper.php
 Homestead.json

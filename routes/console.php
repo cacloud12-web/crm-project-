@@ -10,6 +10,12 @@ Artisan::command('inspire', function () {
 
 Schedule::command('notifications:scan-due-followups')->everyFifteenMinutes();
 Schedule::command('followups:process-automation')->everyFiveMinutes();
+Schedule::command('workflow:process-demo-reminders')->everyMinute()->withoutOverlapping();
+Schedule::command('email:sync')->everyFiveMinutes()->withoutOverlapping();
+Schedule::command('campaigns:process-scheduled')->everyMinute()->withoutOverlapping();
+
+// Local dev: run `php artisan schedule:work` to process email:sync, campaigns, and auto-drain.
+// Production: add * * * * * php artisan schedule:run to cron.
 
 Schedule::command('queue:work --stop-when-empty --max-time=55 --tries=3')
     ->everyMinute()

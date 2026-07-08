@@ -25,6 +25,18 @@ class GoDaddyMailService
     public const MAIL_FROM_NAME = 'MAIL_FROM_NAME';
 
     public const TEMPLATE_VARIABLES = [
+        '{CLIENT_NAME}' => 'ca_name',
+        '{{CLIENT_NAME}}' => 'ca_name',
+        '{CA_ORGANIZATION_NAME}' => 'firm_name',
+        '{EMAIL}' => 'email_id',
+        '{PHONE}' => 'mobile_no',
+        '{CITY}' => 'city.city_name',
+        '{STATE}' => 'state.state_name',
+        '{SENDER_NAME}' => 'sender_name',
+        '{{SERVICE_NAME}}' => 'service_name',
+        '{{INVOICE_DATE}}' => 'invoice_date',
+        '{{INVOICE_AMOUNT}}' => 'invoice_amount',
+        '{{DUE_DATE}}' => 'due_date',
         '{{name}}' => 'ca_name',
         '{{firm_name}}' => 'firm_name',
         '{{city}}' => 'city.city_name',
@@ -35,6 +47,7 @@ class GoDaddyMailService
 
     public function __construct(
         private readonly EmailSettingsService $emailSettingsService,
+        private readonly EmailRecipientValidationService $recipientValidationService,
     ) {}
 
     /**
@@ -131,8 +144,9 @@ class GoDaddyMailService
         }
 
         $email = trim((string) $recipientEmail);
-        if ($email === '' || ! filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $errors[] = 'Lead email address is missing or invalid.';
+        $validation = $this->recipientValidationService->validate($email, checkMx: ! config('email_smtp.skip_mx_check', false) ? true : false);
+        if (! $validation['valid']) {
+            $errors[] = $validation['reason'] ?? 'Lead email address is missing or invalid.';
         }
 
         return $errors;
@@ -214,7 +228,7 @@ class GoDaddyMailService
         $success = (bool) ($providerResponse['success'] ?? $providerResponse['sent'] ?? false);
 
         return [
-            'email_status' => $success ? 'Delivered' : 'Failed',
+            'email_status' => $success ? EmailRecipientValidationService::STATUS_SENT : EmailRecipientValidationService::STATUS_FAILED,
             'provider_response' => json_encode($providerResponse),
             'error_message' => $success
                 ? null
@@ -223,28 +237,70 @@ class GoDaddyMailService
         ];
     }
 
-    public function renderTemplate(string $template, CaMaster $lead): string
+    public function renderTemplate(string $template, CaMaster $lead, ?string $senderName = null): string
+    {
+        return strtr($template, $this->resolveReplacements($lead, $senderName));
+    }
+
+    public function renderEmailTemplate(string $subject, string $body, CaMaster $lead, $sender = null): array
+    {
+        $senderName = is_object($sender) ? (string) ($sender->name ?? $sender->email ?? '') : (string) ($sender ?? '');
+
+        return [
+            'subject' => $this->renderTemplate($subject, $lead, $senderName),
+            'body' => $this->renderTemplate($body, $lead, $senderName),
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function resolveReplacements(CaMaster $lead, ?string $senderName = null): array
     {
         $lead->loadMissing(['city', 'state']);
 
-        $replacements = [
-            '{{name}}' => $lead->ca_name ?? '',
-            '{{firm_name}}' => $lead->firm_name ?? '',
-            '{{city}}' => $lead->city?->city_name ?? '',
-            '{{state}}' => $lead->state?->state_name ?? '',
-            '{{mobile}}' => $lead->mobile_no ?? '',
-            '{{email}}' => $lead->email_id ?? '',
+        return [
+            '{CLIENT_NAME}' => (string) ($lead->ca_name ?? ''),
+            '{CA_ORGANIZATION_NAME}' => (string) ($lead->firm_name ?? ''),
+            '{EMAIL}' => (string) ($lead->email_id ?? ''),
+            '{PHONE}' => (string) ($lead->mobile_no ?? ''),
+            '{CITY}' => (string) ($lead->city?->city_name ?? ''),
+            '{STATE}' => (string) ($lead->state?->state_name ?? ''),
+            '{SENDER_NAME}' => (string) ($senderName ?? ''),
+            '{{CLIENT_NAME}}' => (string) ($lead->ca_name ?? ''),
+            '{{SERVICE_NAME}}' => '',
+            '{{INVOICE_DATE}}' => '',
+            '{{INVOICE_AMOUNT}}' => '',
+            '{{DUE_DATE}}' => '',
+            '{SERVICE_NAME}' => '',
+            '{INVOICE_DATE}' => '',
+            '{INVOICE_AMOUNT}' => '',
+            '{DUE_DATE}' => '',
+            '{{name}}' => (string) ($lead->ca_name ?? ''),
+            '{{firm_name}}' => (string) ($lead->firm_name ?? ''),
+            '{{city}}' => (string) ($lead->city?->city_name ?? ''),
+            '{{state}}' => (string) ($lead->state?->state_name ?? ''),
+            '{{mobile}}' => (string) ($lead->mobile_no ?? ''),
+            '{{email}}' => (string) ($lead->email_id ?? ''),
         ];
-
-        return strtr($template, $replacements);
     }
 
-    public function renderEmailTemplate(string $subject, string $body, CaMaster $lead): array
+    public function toHtmlBody(string $body): string
     {
-        return [
-            'subject' => $this->renderTemplate($subject, $lead),
-            'body' => $this->renderTemplate($body, $lead),
-        ];
+        $trimmed = trim($body);
+        if ($trimmed === '') {
+            return '';
+        }
+
+        if (preg_match('/<html|<body|<p>|<div|<br\s*\/?>/i', $trimmed)) {
+            return $trimmed;
+        }
+
+        $escaped = e($trimmed);
+
+        return '<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;line-height:1.6;color:#1e293b;">'
+            .nl2br($escaped, false)
+            .'</body></html>';
     }
 
     /**

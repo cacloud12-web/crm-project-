@@ -14,6 +14,8 @@ Route::middleware(['auth', 'rbac'])->group(function () {
     Route::post('lead-assignments/bulk', [BulkAssignmentController::class, 'store']);
 
     Route::get('assignment-histories', [AssignmentHistoryController::class, 'index']);
+    Route::patch('lead-assignments/{lead_assignment}/status', [LeadAssignmentEngineController::class, 'updateStatus'])
+        ->middleware('spa.browser:assignment');
     Route::resource('lead-assignments', LeadAssignmentEngineController::class)
         ->middleware('spa.browser:assignment');
 

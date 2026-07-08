@@ -2,6 +2,7 @@
 
 namespace App\Services\Rbac;
 
+use App\Models\CaMaster;
 use App\Models\Employee;
 use App\Models\FollowUp;
 use App\Models\LeadAssignmentEngine;
@@ -51,6 +52,10 @@ class EmployeeDataScopeService
 
     public function scopedEmployeeId(?User $user): ?int
     {
+        if (! $user) {
+            return null;
+        }
+
         if (! $this->shouldScopeToEmployee($user)) {
             return null;
         }
@@ -87,6 +92,15 @@ class EmployeeDataScopeService
                 fn (Builder $assignment) => $assignment
                     ->where('employee_id', $employeeId)
                     ->where('status', 'Active'),
+            ),
+            'assigned_lead_ca' => $query->whereHas(
+                'caMaster',
+                fn (Builder $lead) => $lead->whereHas(
+                    'leadAssignments',
+                    fn (Builder $assignment) => $assignment
+                        ->where('employee_id', $employeeId)
+                        ->where('status', 'Active'),
+                ),
             ),
             'employee_id' => $query->where(
                 $query->getModel()->getTable().'.employee_id',
@@ -138,6 +152,21 @@ class EmployeeDataScopeService
         );
     }
 
+    public function audienceCaMasterQuery(): Builder
+    {
+        return $this->scopeCaMasterQuery(
+            CaMaster::query(),
+            $this->scopedEmployeeId(auth()->user()),
+        );
+    }
+
+    public function ensureCanViewManagerMetrics(?User $user): void
+    {
+        if ($this->shouldScopeToEmployee($user)) {
+            abort(403, 'You do not have permission to view manager follow-up metrics.');
+        }
+    }
+
     public function scopeFollowUpQuery(Builder $query, ?int $employeeId): Builder
     {
         if ($employeeId === null) {
@@ -148,7 +177,19 @@ class EmployeeDataScopeService
             return $query->whereRaw('1 = 0');
         }
 
-        return $query->where('employee_id', $employeeId);
+        $userId = auth()->id();
+
+        return $query->where(function (Builder $outer) use ($employeeId, $userId) {
+            $outer->where('employee_id', $employeeId);
+
+            // Include follow-ups the employee created before employee_id was auto-assigned.
+            if ($userId) {
+                $outer->orWhere(function (Builder $inner) use ($userId) {
+                    $inner->whereNull('employee_id')
+                        ->where('created_by_user_id', $userId);
+                });
+            }
+        });
     }
 
     public function scopeLeadAssignmentQuery(Builder $query, ?int $employeeId): Builder
@@ -200,9 +241,18 @@ class EmployeeDataScopeService
             abort(403, 'You do not have access to this follow-up.');
         }
 
+        $userId = auth()->id();
         $allowed = FollowUp::query()
             ->where('followup_id', $followupId)
-            ->where('employee_id', $employeeId)
+            ->where(function (Builder $outer) use ($employeeId, $userId) {
+                $outer->where('employee_id', $employeeId);
+                if ($userId) {
+                    $outer->orWhere(function (Builder $inner) use ($userId) {
+                        $inner->whereNull('employee_id')
+                            ->where('created_by_user_id', $userId);
+                    });
+                }
+            })
             ->exists();
 
         if (! $allowed) {

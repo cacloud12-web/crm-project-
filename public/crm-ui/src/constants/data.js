@@ -17,11 +17,11 @@ window.CAData = (function () {
   };
 
   var executives = [
-    { employee_id: 'emp-01', name: 'Priya Sharma', email_id: 'priya.sharma@caclouddesk.com', mobile_no: '+91 98701 11101', role_id: 'role-03', role: 'Sales Executive', reporting_manager_id: 'emp-mgr', manager: 'Rahul Verma', city: 'Mumbai', date_of_joining: '2023-03-15', status: 'Active', target_leads: 40, achieved_leads: 38, daily_calls: 42, demos: 10, conversion: '28%', revenue: '₹6.2L' },
-    { employee_id: 'emp-02', name: 'Anita Desai', email_id: 'anita.desai@caclouddesk.com', mobile_no: '+91 98702 22202', role_id: 'role-03', role: 'Sales Executive', reporting_manager_id: 'emp-mgr', manager: 'Rahul Verma', city: 'Pune', date_of_joining: '2023-06-01', status: 'Active', target_leads: 35, achieved_leads: 32, daily_calls: 38, demos: 9, conversion: '26%', revenue: '₹5.1L' },
-    { employee_id: 'emp-03', name: 'Vikram Singh', email_id: 'vikram.singh@caclouddesk.com', mobile_no: '+91 98703 33303', role_id: 'role-03', role: 'Sales Executive', reporting_manager_id: 'emp-mgr', manager: 'Rahul Verma', city: 'Bangalore', date_of_joining: '2023-09-10', status: 'Active', target_leads: 38, achieved_leads: 34, daily_calls: 40, demos: 11, conversion: '30%', revenue: '₹5.8L' },
-    { employee_id: 'emp-04', name: 'Deepak Mehta', email_id: 'deepak.mehta@caclouddesk.com', mobile_no: '+91 98704 44404', role_id: 'role-03', role: 'Sales Executive', reporting_manager_id: 'emp-mgr', manager: 'Rahul Verma', city: 'Delhi', date_of_joining: '2024-01-20', status: 'Active', target_leads: 32, achieved_leads: 28, daily_calls: 36, demos: 8, conversion: '24%', revenue: '₹4.6L' },
-    { employee_id: 'emp-05', name: 'Kavita Nair', email_id: 'kavita.nair@caclouddesk.com', mobile_no: '+91 98705 55505', role_id: 'role-03', role: 'Sales Executive', reporting_manager_id: 'emp-mgr', manager: 'Rahul Verma', city: 'Ahmedabad', date_of_joining: '2024-04-05', status: 'Active', target_leads: 30, achieved_leads: 26, daily_calls: 34, demos: 7, conversion: '22%', revenue: '₹4.2L' },
+    { employee_id: 'emp-01', name: 'Priya Sharma', email_id: 'priya.sharma@caclouddesk.com', mobile_no: '+91 98701 11101', role_id: 'role-03', role: 'Employee', reporting_manager_id: 'emp-mgr', manager: 'Rahul Verma', city: 'Mumbai', date_of_joining: '2023-03-15', status: 'Active', target_leads: 40, achieved_leads: 38, daily_calls: 42, demos: 10, conversion: '28%', revenue: '₹6.2L' },
+    { employee_id: 'emp-02', name: 'Anita Desai', email_id: 'anita.desai@caclouddesk.com', mobile_no: '+91 98702 22202', role_id: 'role-03', role: 'Employee', reporting_manager_id: 'emp-mgr', manager: 'Rahul Verma', city: 'Pune', date_of_joining: '2023-06-01', status: 'Active', target_leads: 35, achieved_leads: 32, daily_calls: 38, demos: 9, conversion: '26%', revenue: '₹5.1L' },
+    { employee_id: 'emp-03', name: 'Vikram Singh', email_id: 'vikram.singh@caclouddesk.com', mobile_no: '+91 98703 33303', role_id: 'role-03', role: 'Employee', reporting_manager_id: 'emp-mgr', manager: 'Rahul Verma', city: 'Bangalore', date_of_joining: '2023-09-10', status: 'Active', target_leads: 38, achieved_leads: 34, daily_calls: 40, demos: 11, conversion: '30%', revenue: '₹5.8L' },
+    { employee_id: 'emp-04', name: 'Deepak Mehta', email_id: 'deepak.mehta@caclouddesk.com', mobile_no: '+91 98704 44404', role_id: 'role-03', role: 'Employee', reporting_manager_id: 'emp-mgr', manager: 'Rahul Verma', city: 'Delhi', date_of_joining: '2024-01-20', status: 'Active', target_leads: 32, achieved_leads: 28, daily_calls: 36, demos: 8, conversion: '24%', revenue: '₹4.6L' },
+    { employee_id: 'emp-05', name: 'Kavita Nair', email_id: 'kavita.nair@caclouddesk.com', mobile_no: '+91 98705 55505', role_id: 'role-03', role: 'Employee', reporting_manager_id: 'emp-mgr', manager: 'Rahul Verma', city: 'Ahmedabad', date_of_joining: '2024-04-05', status: 'Active', target_leads: 30, achieved_leads: 26, daily_calls: 34, demos: 7, conversion: '22%', revenue: '₹4.2L' },
   ];
 
   var leads = [
@@ -53,12 +53,12 @@ window.CAData = (function () {
     { notification_id: 'ntf-02', title: 'Payment received', message: '₹24,999 from Iyer & Partners', time: '1 hr ago', type: 'emerald', read: false },
     { notification_id: 'ntf-03', title: 'Follow-up overdue', message: 'Patel Tax Consultants — 2 hrs overdue', time: '3 hrs ago', type: 'amber', read: false },
     { notification_id: 'ntf-04', title: 'Demo confirmed via WhatsApp', message: 'Jain Associates — Jun 18 10:30', time: '5 hrs ago', type: 'brand', read: false },
-    { notification_id: 'ntf-05', title: 'Lead assigned to executive', message: 'Reddy Tax Services → Priya Sharma', time: '6 hrs ago', type: 'brand', read: false },
+    { notification_id: 'ntf-05', title: 'Lead assigned to employee', message: 'Reddy Tax Services → Priya Sharma', time: '6 hrs ago', type: 'brand', read: false },
     { notification_id: 'ntf-06', title: 'SMS campaign delivered', message: 'Festival greeting — 248 recipients', time: '7 hrs ago', type: 'emerald', read: false },
     { notification_id: 'ntf-07', title: 'Demo scheduled', message: 'Singh Chartered Accountants — Jun 20', time: '8 hrs ago', type: 'brand', read: false },
     { notification_id: 'ntf-08', title: 'Payment reminder sent', message: 'Bose Consultants — ₹18,500 pending', time: '9 hrs ago', type: 'amber', read: false },
     { notification_id: 'ntf-09', title: 'New lead from website', message: 'Gupta & Co. — Mumbai', time: '10 hrs ago', type: 'brand', read: false },
-    { notification_id: 'ntf-10', title: 'Executive target alert', message: 'Deepak Mehta at 87% monthly target', time: '11 hrs ago', type: 'amber', read: false },
+    { notification_id: 'ntf-10', title: 'Employee target alert', message: 'Deepak Mehta at 87% monthly target', time: '11 hrs ago', type: 'amber', read: false },
     { notification_id: 'ntf-11', title: 'WhatsApp message read', message: 'Mehta Auditors viewed proposal', time: '12 hrs ago', type: 'emerald', read: false },
     { notification_id: 'ntf-12', title: 'System maintenance notice', message: 'Scheduled backup tonight 11 PM', time: '1 day ago', type: 'brand', read: false },
   ];
@@ -243,7 +243,7 @@ window.CAData = (function () {
       email_id: data.email_id,
       mobile_no: data.mobile_no,
       role_id: 'role-03',
-      role: 'Sales Executive',
+      role: 'Employee',
       reporting_manager_id: 'emp-mgr',
       manager: manager.name,
       city: data.city,

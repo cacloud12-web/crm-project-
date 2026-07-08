@@ -18,6 +18,7 @@ class SmsCampaignResource extends JsonResource
             'audience_filters' => $this->audience_filters,
             'selected_ca_ids' => $this->selected_ca_ids,
             'sender_id' => $this->sender_id,
+            'sms_template_id' => $this->sms_template_id,
             'message_template' => $this->message_template,
             'scheduled_at' => $this->scheduled_at,
             'status' => $this->status,

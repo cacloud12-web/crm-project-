@@ -2,14 +2,25 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
     public function up(): void
     {
-        DB::statement('ALTER TABLE activity_logs RENAME COLUMN module TO module_name');
-        DB::statement('ALTER TABLE activity_logs RENAME COLUMN user_name TO performed_by');
-        DB::statement('ALTER TABLE activity_logs RENAME COLUMN detail TO description');
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('ALTER TABLE activity_logs RENAME COLUMN module TO module_name');
+            DB::statement('ALTER TABLE activity_logs RENAME COLUMN user_name TO performed_by');
+            DB::statement('ALTER TABLE activity_logs RENAME COLUMN detail TO description');
+        } elseif (DB::getDriverName() === 'mysql' && Schema::hasColumn('activity_logs', 'module')) {
+            DB::statement('ALTER TABLE activity_logs CHANGE `module` `module_name` VARCHAR(255) NOT NULL');
+            DB::statement("ALTER TABLE activity_logs CHANGE `user_name` `performed_by` VARCHAR(255) NOT NULL DEFAULT 'System'");
+            DB::statement('ALTER TABLE activity_logs CHANGE `detail` `description` TEXT NULL');
+        }
+
+        if (! Schema::hasColumn('activity_logs', 'module_name')) {
+            return;
+        }
 
         DB::table('activity_logs')->where('action', 'Insert')->where('module_name', 'CA_MASTER')->update(['action' => 'Add Lead']);
         DB::table('activity_logs')->where('action', 'Update')->where('module_name', 'CA_MASTER')->update(['action' => 'Update Lead']);
@@ -26,8 +37,18 @@ return new class extends Migration
 
     public function down(): void
     {
-        DB::statement('ALTER TABLE activity_logs RENAME COLUMN module_name TO module');
-        DB::statement('ALTER TABLE activity_logs RENAME COLUMN performed_by TO user_name');
-        DB::statement('ALTER TABLE activity_logs RENAME COLUMN description TO detail');
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('ALTER TABLE activity_logs RENAME COLUMN module_name TO module');
+            DB::statement('ALTER TABLE activity_logs RENAME COLUMN performed_by TO user_name');
+            DB::statement('ALTER TABLE activity_logs RENAME COLUMN description TO detail');
+
+            return;
+        }
+
+        if (DB::getDriverName() === 'mysql' && Schema::hasColumn('activity_logs', 'module_name')) {
+            DB::statement('ALTER TABLE activity_logs CHANGE `module_name` `module` VARCHAR(255) NOT NULL');
+            DB::statement("ALTER TABLE activity_logs CHANGE `performed_by` `user_name` VARCHAR(255) NOT NULL DEFAULT 'System'");
+            DB::statement('ALTER TABLE activity_logs CHANGE `description` `detail` TEXT NULL');
+        }
     }
 };

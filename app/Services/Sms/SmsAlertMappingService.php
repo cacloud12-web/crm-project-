@@ -6,6 +6,7 @@ use App\Models\CaMaster;
 use App\Models\SmsCampaign;
 use App\Models\SmsLog;
 use App\Models\SmsSetting;
+use App\Models\SmsTemplate;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 
@@ -19,7 +20,11 @@ class SmsAlertMappingService
 
     public const API_FIELD_TEXT = 'text';
 
+    public const API_FIELD_TEMPLATE_ID = 'templateid';
+
     public const ERROR_MOBILE_REQUIRED = 'Mobile Number is required before sending SMS. Please update the lead first.';
+
+    public const ERROR_DLT_TEMPLATE_ID_REQUIRED = 'DLT Template ID is required when SMS provider is in Live mode.';
 
     public const ERROR_MOBILE_INVALID = 'Mobile Number must be at least 10 digits. Please update the lead first.';
 
@@ -27,21 +32,73 @@ class SmsAlertMappingService
 
     public function __construct(
         private readonly SmsSettingsService $smsSettingsService,
+        private readonly SmsDltTemplateService $smsDltTemplateService,
     ) {}
 
     /**
      * Map SMS Alert push.json request fields from CRM records.
      *
-     * @return array{apikey:?string,sender:?string,mobileno:string,text:string}
+     * @return array{apikey:?string,sender:?string,mobileno:string,text:string,templateid?:string}
      */
-    public function buildPushPayload(SmsSetting $settings, string $mobileNo, string $text): array
+    public function buildPushPayload(SmsSetting $settings, string $mobileNo, string $text, ?string $dltTemplateId = null): array
     {
-        return [
-            self::API_FIELD_API_KEY => $settings->api_key,
+        $payload = [
+            self::API_FIELD_API_KEY => $settings->safeApiKey(),
             self::API_FIELD_SENDER => $settings->sender_id,
             self::API_FIELD_MOBILE => $this->normalizeMobile($mobileNo),
             self::API_FIELD_TEXT => trim($text),
         ];
+
+        $resolvedDltId = $this->resolveDltTemplateId($dltTemplateId, $settings);
+        if (filled($resolvedDltId)) {
+            $payload[self::API_FIELD_TEMPLATE_ID] = $resolvedDltId;
+        }
+
+        return $payload;
+    }
+
+    public function resolveDltTemplateId(?string $templateDltId, ?SmsSetting $settings = null): ?string
+    {
+        if (filled($templateDltId)) {
+            return trim((string) $templateDltId);
+        }
+
+        if ($settings && filled($settings->dlt_template_id)) {
+            return trim((string) $settings->dlt_template_id);
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolve DLT Template ID for a selected campaign template only.
+     * Do not fall back to SMS settings — each template must carry its own DLT ID.
+     */
+    public function resolveCampaignDltTemplateId(?string $templateDltId): ?string
+    {
+        if (! filled($templateDltId)) {
+            return null;
+        }
+
+        return trim((string) $templateDltId);
+    }
+
+    public function campaignDltTemplateIdValidationError(?SmsSetting $settings, ?string $templateDltId): ?string
+    {
+        if ($settings && $settings->isLiveMode() && ! filled($templateDltId)) {
+            return 'Each DLT SMS template must have its own DLT Template ID. Edit the template and add the ID registered for its message body in your DLT portal.';
+        }
+
+        return $this->dltTemplateIdValidationError($settings, $templateDltId);
+    }
+
+    public function dltTemplateIdValidationError(?SmsSetting $settings, ?string $dltTemplateId): ?string
+    {
+        if ($settings && $settings->isLiveMode() && ! filled($dltTemplateId)) {
+            return self::ERROR_DLT_TEMPLATE_ID_REQUIRED;
+        }
+
+        return null;
     }
 
     /**
@@ -49,8 +106,12 @@ class SmsAlertMappingService
      *
      * @return array<int, string>
      */
-    public function validateDispatchPrerequisites(?SmsSetting $settings, ?string $mobileNo, string $message): array
-    {
+    public function validateDispatchPrerequisites(
+        ?SmsSetting $settings,
+        ?string $mobileNo,
+        string $message,
+        ?string $dltTemplateId = null,
+    ): array {
         $errors = [];
 
         if (! $settings) {
@@ -65,10 +126,18 @@ class SmsAlertMappingService
 
         if (! $settings->hasApiKey()) {
             $errors[] = 'SMS API Key is not configured.';
+        } elseif ($settings->safeApiKey() === null) {
+            $errors[] = 'SMS API Key is stored but cannot be decrypted. Re-enter the API key in SMS Settings.';
         }
 
         if (! filled($settings->sender_id)) {
             $errors[] = 'SMS Sender ID is not configured.';
+        }
+
+        $resolvedDltId = $this->resolveDltTemplateId($dltTemplateId, $settings);
+        $dltError = $this->dltTemplateIdValidationError($settings, $resolvedDltId);
+        if ($dltError !== null) {
+            $errors[] = $dltError;
         }
 
         if (! filled(trim($message))) {
@@ -108,14 +177,18 @@ class SmsAlertMappingService
      * @return array{
      *     valid: bool,
      *     errors: array<int, string>,
-     *     payload: array{apikey:?string,sender:?string,mobileno:string,text:string}|null,
+     *     payload: array{apikey:?string,sender:?string,mobileno:string,text:string,templateid?:string}|null,
      *     provider_response: ?string
      * }
      */
-    public function prepareForLead(CaMaster $lead, string $message, ?SmsSetting $settings = null): array
-    {
+    public function prepareForLead(
+        CaMaster $lead,
+        string $message,
+        ?SmsSetting $settings = null,
+        ?string $dltTemplateId = null,
+    ): array {
         $settings ??= $this->smsSettingsService->current();
-        $errors = $this->validateDispatchPrerequisites($settings, $lead->mobile_no, $message);
+        $errors = $this->validateDispatchPrerequisites($settings, $lead->mobile_no, $message, $dltTemplateId);
 
         if ($errors !== []) {
             return [
@@ -126,7 +199,7 @@ class SmsAlertMappingService
             ];
         }
 
-        $payload = $this->buildPushPayload($settings, (string) $lead->mobile_no, $message);
+        $payload = $this->buildPushPayload($settings, (string) $lead->mobile_no, $message, $dltTemplateId);
 
         return [
             'valid' => true,
@@ -159,11 +232,17 @@ class SmsAlertMappingService
     public function buildCampaignPayloads(SmsCampaign $campaign, Collection $leads, ?SmsSetting $settings = null): array
     {
         $settings ??= $this->smsSettingsService->current();
-        $template = (string) $campaign->message_template;
+        $dltTemplate = $this->resolveCampaignDltTemplate($campaign);
+        $dltTemplateId = $dltTemplate
+            ? $this->resolveCampaignDltTemplateId($dltTemplate->dlt_template_id)
+            : null;
+        $legacyTemplate = (string) $campaign->message_template;
 
-        return $leads->map(function (CaMaster $lead) use ($settings, $template) {
-            $message = $this->renderMessage($template, $lead);
-            $prepared = $this->prepareForLead($lead, $message, $settings);
+        return $leads->map(function (CaMaster $lead) use ($settings, $dltTemplate, $dltTemplateId, $legacyTemplate) {
+            $message = $dltTemplate
+                ? $this->smsDltTemplateService->renderBody($dltTemplate, $lead)
+                : $this->renderMessage($legacyTemplate, $lead);
+            $prepared = $this->prepareForLead($lead, $message, $settings, $dltTemplateId);
 
             return [
                 'ca_id' => (int) $lead->ca_id,
@@ -176,6 +255,15 @@ class SmsAlertMappingService
                 'api_payload' => $prepared['payload'],
             ];
         })->values()->all();
+    }
+
+    public function resolveCampaignDltTemplate(SmsCampaign $campaign): ?SmsTemplate
+    {
+        if (! $campaign->sms_template_id) {
+            return null;
+        }
+
+        return $this->smsDltTemplateService->findApproved((int) $campaign->sms_template_id);
     }
 
     /**
@@ -237,12 +325,18 @@ class SmsAlertMappingService
      */
     public function maskPayloadForDisplay(array $payload): array
     {
-        return [
+        $masked = [
             self::API_FIELD_API_KEY => filled($payload[self::API_FIELD_API_KEY] ?? null) ? '******' : null,
             self::API_FIELD_SENDER => filled($payload[self::API_FIELD_SENDER] ?? null) ? '******' : null,
             self::API_FIELD_MOBILE => $payload[self::API_FIELD_MOBILE] ?? '',
             self::API_FIELD_TEXT => $payload[self::API_FIELD_TEXT] ?? '',
         ];
+
+        if (filled($payload[self::API_FIELD_TEMPLATE_ID] ?? null)) {
+            $masked[self::API_FIELD_TEMPLATE_ID] = $payload[self::API_FIELD_TEMPLATE_ID];
+        }
+
+        return $masked;
     }
 
     /**
@@ -289,8 +383,12 @@ class SmsAlertMappingService
      * @param  Collection<int, CaMaster>  $leads
      * @return array{valid: bool, errors: array<int, string>, warnings: array<int, string>}
      */
-    public function validateCampaignPreparation(?SmsSetting $settings, Collection $leads, string $messageTemplate): array
-    {
+    public function validateCampaignPreparation(
+        ?SmsSetting $settings,
+        Collection $leads,
+        string $messageTemplate,
+        ?string $dltTemplateId = null,
+    ): array {
         $errors = [];
         $warnings = [];
 
@@ -310,10 +408,18 @@ class SmsAlertMappingService
 
         if (! $settings->hasApiKey()) {
             $errors[] = 'SMS API Key is not configured.';
+        } elseif ($settings->safeApiKey() === null) {
+            $errors[] = 'SMS API Key is stored but cannot be decrypted. Re-enter the API key in SMS Settings.';
         }
 
         if (! filled($settings->sender_id)) {
             $errors[] = 'SMS Sender ID is not configured.';
+        }
+
+        $resolvedDltId = $this->resolveCampaignDltTemplateId($dltTemplateId);
+        $dltError = $this->campaignDltTemplateIdValidationError($settings, $resolvedDltId);
+        if ($dltError !== null) {
+            $errors[] = $dltError;
         }
 
         if (! filled(trim($messageTemplate))) {

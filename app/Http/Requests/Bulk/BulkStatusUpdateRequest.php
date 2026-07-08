@@ -31,19 +31,6 @@ class BulkStatusUpdateRequest extends FormRequest
 
     public static function allowedStatuses(): array
     {
-        return [
-            'New',
-            'Hot',
-            'Warm',
-            'Cold',
-            'Pipeline',
-            'Demo Scheduled',
-            'Demo Completed',
-            'Negotiation',
-            'Details Shared',
-            'Active',
-            'Inactive',
-            'Lost',
-        ];
+        return config('crm_statuses.allowed', []);
     }
 }

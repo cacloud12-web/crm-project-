@@ -2,6 +2,8 @@
 
 namespace App\Services\Dashboard;
 
+use App\Http\Resources\ActivityLogResource;
+use App\Models\ActivityLog;
 use App\Models\AssignmentHistory;
 use App\Models\BulkAction;
 use App\Models\CaMaster;
@@ -19,9 +21,16 @@ use App\Models\WaMessageLog;
 use App\Models\WhatsAppCampaign;
 use App\Services\Cache\CrmCacheService;
 use App\Services\DemoConfirmation\DemoConfirmationService;
+use App\Services\FollowUp\ManagerFollowUpDashboardService;
+use App\Services\Leads\DuplicateAttemptService;
+use App\Services\Leads\EmployeeProductivityService;
 use App\Services\Rbac\EmployeeDataScopeService;
 use App\Services\Reports\ReportsService;
+use App\Support\Database\SqlAggregate;
+use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 
 class DashboardService
 {
@@ -30,6 +39,10 @@ class DashboardService
         private readonly CrmCacheService $cacheService,
         private readonly EmployeeDataScopeService $employeeDataScope,
         private readonly DemoConfirmationService $demoConfirmationService,
+        private readonly EmployeeProductivityService $employeeProductivity,
+        private readonly ManagerFollowUpDashboardService $managerFollowUpDashboard,
+        private readonly DuplicateAttemptService $duplicateAttemptService,
+        private readonly ManagerEmployeeProductivityService $managerEmployeeProductivity,
     ) {}
 
     private const PIPELINE_STATUSES = [
@@ -41,6 +54,30 @@ class DashboardService
         'Details Shared',
     ];
 
+    private const PIPELINE_STAGE_MAP = [
+        'New' => 'New Lead',
+        'Hot' => 'Negotiation',
+        'Demo Scheduled' => 'Demo Scheduled',
+        'Demo Completed' => 'Demo Completed',
+        'Pipeline' => 'Details Shared',
+        'Warm' => 'Details Shared',
+        'Details Shared' => 'Details Shared',
+        'Negotiation' => 'Negotiation',
+        'Lost' => 'Lost',
+        'Inactive' => 'Lost',
+        'Active' => 'Won',
+    ];
+
+    private const PIPELINE_STAGES = [
+        'New Lead',
+        'Details Shared',
+        'Demo Scheduled',
+        'Demo Completed',
+        'Negotiation',
+        'Won',
+        'Lost',
+    ];
+
     private const OPEN_FOLLOWUP_STATUSES = [
         'Pending',
         'Scheduled',
@@ -48,30 +85,86 @@ class DashboardService
         'Overdue',
     ];
 
-    public function metrics(): array
+    /**
+     * @param  array{preset?: string, from?: string, to?: string}|null  $dateInput
+     */
+    public function metrics(?int $filterEmployeeId = null, ?array $dateInput = null): array
     {
-        $scopeKey = $this->employeeDataScope->cacheScopeKey();
+        $viewerScope = $this->employeeDataScope->scopedEmployeeId(auth()->user());
+        $range = DashboardDateRange::resolve(
+            $dateInput['preset'] ?? 'today',
+            $dateInput['from'] ?? null,
+            $dateInput['to'] ?? null,
+        );
 
-        return $this->cacheService->rememberDashboardMetrics($scopeKey, function () {
-            return $this->buildMetrics();
+        // Drop stale/invalid employee filters instead of failing the whole dashboard.
+        if ($filterEmployeeId && $viewerScope === null && ! $this->managerEmployeeProductivity->canViewEmployee($filterEmployeeId)) {
+            $filterEmployeeId = null;
+        }
+
+        $employeeId = $viewerScope ?? $filterEmployeeId;
+        $scopeKey = $this->employeeDataScope->cacheScopeKey();
+        if ($employeeId && $viewerScope === null) {
+            $scopeKey = 'filter:'.$employeeId;
+        }
+
+        $filterKey = [
+            'employee_id' => $employeeId,
+            'preset' => $range['preset'],
+            'from' => $range['from']->toDateString(),
+            'to' => $range['to']->toDateString(),
+        ];
+
+        return $this->cacheService->rememberDashboardMetrics($scopeKey, $filterKey, function () use ($employeeId, $range) {
+            return $this->buildMetrics($employeeId, $range);
         });
     }
 
-    private function buildMetrics(): array
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function productivityEmployees(): array
     {
-        $employeeId = $this->employeeDataScope->scopedEmployeeId(auth()->user());
-        $leadCounts = $this->leadStatusCounts($employeeId);
+        return $this->managerEmployeeProductivity->listEmployees();
+    }
+
+    /**
+     * @param  array{preset: string, from: Carbon, to: Carbon, label: string}  $range
+     */
+    private function buildMetrics(?int $employeeId, array $range): array
+    {
+        $from = $range['from'];
+        $to = $range['to'];
+        $leadCounts = $this->leadStatusCounts($employeeId, $from, $to);
         $totalLeads = (int) ($leadCounts['total'] ?? 0);
-        $assignedLeads = $this->assignedLeadCount($employeeId);
-        $followUpCounts = $this->followUpCounts($employeeId);
-        $whatsappMetrics = $this->whatsappMetrics();
-        $emailMetrics = $this->emailMetrics();
-        $smsMetrics = $this->smsMetrics();
+        $assignedLeads = $this->assignedLeadCount($employeeId, $from, $to);
+        $followUpCounts = $this->followUpCounts($employeeId, $from, $to);
+        $whatsappMetrics = $this->whatsappMetrics($employeeId, $from, $to);
+        $emailMetrics = $this->emailMetrics($employeeId, $from, $to);
+        $smsMetrics = $this->smsMetrics($employeeId, $from, $to);
         $safetyMetrics = $this->communicationSafetyMetrics();
 
-        $reportParams = $employeeId ? ['employee_id' => $employeeId] : [];
+        $reportParams = array_filter([
+            'employee_id' => $employeeId,
+            'from' => $from->toDateString(),
+            'to' => $to->toDateString(),
+        ], fn ($v) => $v !== null);
+        $employeeProductivity = null;
+        try {
+            $employeeProductivity = $this->managerEmployeeProductivity->productivity($employeeId, null, $range);
+        } catch (InvalidArgumentException) {
+            $employeeProductivity = null;
+        }
 
         return [
+            'filter_employee_id' => $employeeId,
+            'date_range' => [
+                'preset' => $range['preset'],
+                'from' => $from->toDateString(),
+                'to' => $to->toDateString(),
+                'label' => $range['label'],
+            ],
+            'employee_productivity' => $employeeProductivity,
             'total_leads' => $totalLeads,
             'new_leads' => (int) ($leadCounts['new_established'] ?? 0),
             'hot_leads' => (int) ($leadCounts['hot'] ?? 0),
@@ -79,8 +172,8 @@ class DashboardService
             'cold_leads' => (int) ($leadCounts['cold'] ?? 0),
             'pipeline_leads' => (int) ($leadCounts['pipeline'] ?? 0),
             'lost_leads' => (int) ($leadCounts['lost'] ?? 0),
-            'calls_total' => $this->callsTotal($employeeId),
-            'meetings_today' => $this->meetingsTodayCount($employeeId),
+            'calls_total' => $this->callsTotal($employeeId, $from, $to),
+            'meetings_today' => $this->meetingsTodayCount($employeeId, $from, $to),
             'active_employees' => $employeeId
                 ? 1
                 : Employee::query()->where('status', 'Active')->count(),
@@ -109,6 +202,9 @@ class DashboardService
             'sms_delivered' => $smsMetrics['delivered'],
             'sms_failed' => $smsMetrics['failed'],
             'sms_queued' => $smsMetrics['queued'],
+            'sms_sent' => $smsMetrics['sent'],
+            'sms_pending' => $smsMetrics['pending'],
+            'sms_api_error' => $smsMetrics['api_error'],
             'sms_mapped' => $smsMetrics['mapped'],
             'sms_pending_campaigns' => $smsMetrics['pending_campaigns'],
             'sms_mode' => $smsMetrics['mode'],
@@ -121,22 +217,37 @@ class DashboardService
             'skipped_due_to_no_consent' => $safetyMetrics['skipped_due_to_no_consent'],
             'demo_confirmations' => $this->demoConfirmationService->dashboardMetrics($employeeId),
             'reports' => $this->reportsService->dashboardInsights($reportParams),
+            'productivity' => $this->employeeProductivity->managerDashboardWidgets(),
+            'pipeline_breakdown' => $this->pipelineBreakdown($employeeId, $from, $to),
+            'priority_leads' => $this->priorityLeads($employeeId, $from, $to),
+            'recent_leads' => $this->recentLeads($employeeId, $from, $to),
+            'team_summary' => $employeeId ? [] : $this->teamSummary(),
+            'followup_manager' => $employeeId ? null : $this->managerFollowUpDashboard->metrics(),
+            'duplicate_monitoring' => $employeeId ? null : $this->duplicateAttemptService->dashboardMetrics(),
+            'activity_preview' => $this->activityPreview($employeeId, $from, $to),
+            'generated_at' => now()->toIso8601String(),
         ];
     }
 
-    private function leadStatusCounts(?int $employeeId): array
+    private function applyDateRange(Builder $query, string $column, Carbon $from, Carbon $to): Builder
     {
-        $query = CaMaster::query();
+        return $query->whereBetween($column, [$from, $to]);
+    }
+
+    private function leadStatusCounts(?int $employeeId, Carbon $from, Carbon $to): array
+    {
+        $query = CaMaster::query()->countableInStatistics();
         $this->employeeDataScope->scopeCaMasterQuery($query, $employeeId);
+        $this->applyDateRange($query, 'ca_masters.created_at', $from, $to);
 
         $row = $query
             ->selectRaw('COUNT(*) as total')
-            ->selectRaw("COUNT(*) FILTER (WHERE status = 'Hot') as hot")
-            ->selectRaw("COUNT(*) FILTER (WHERE status = 'Warm') as warm")
-            ->selectRaw("COUNT(*) FILTER (WHERE status = 'Cold') as cold")
-            ->selectRaw('COUNT(*) FILTER (WHERE status IN ('.$this->quotedList(self::PIPELINE_STATUSES).')) as pipeline')
-            ->selectRaw("COUNT(*) FILTER (WHERE status IN ('Lost', 'Inactive')) as lost")
-            ->selectRaw('COUNT(*) FILTER (WHERE is_newly_established = true) as new_established')
+            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Hot'").' as hot')
+            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Warm'").' as warm')
+            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Cold'").' as cold')
+            ->selectRaw(SqlAggregate::countFilter('*', 'status IN ('.$this->quotedList(self::PIPELINE_STATUSES).')').' as pipeline')
+            ->selectRaw(SqlAggregate::countFilter('*', "status IN ('Lost', 'Inactive')").' as lost')
+            ->selectRaw(SqlAggregate::countFilter('*', 'is_newly_established = true').' as new_established')
             ->first();
 
         return [
@@ -150,41 +261,55 @@ class DashboardService
         ];
     }
 
-    private function assignedLeadCount(?int $employeeId): int
+    private function assignedLeadCount(?int $employeeId, Carbon $from, Carbon $to): int
     {
-        $query = LeadAssignmentEngine::query()->where('status', 'Active');
+        $query = LeadAssignmentEngine::query()
+            ->where('status', 'Active')
+            ->whereHas('caMaster', fn ($q) => $q->countableInStatistics());
         $this->employeeDataScope->scopeLeadAssignmentQuery($query, $employeeId);
+        $this->applyDateRange($query, 'assigned_date', $from, $to);
 
         return (int) $query->distinct()->count('ca_id');
     }
 
-    private function followUpCounts(?int $employeeId): array
+    private function followUpCounts(?int $employeeId, Carbon $from, Carbon $to): array
     {
         $query = FollowUp::query()->whereIn('status', self::OPEN_FOLLOWUP_STATUSES);
         $this->employeeDataScope->scopeFollowUpQuery($query, $employeeId);
+        $this->applyDateRange($query, 'scheduled_date', $from, $to);
 
         $row = $query
-            ->selectRaw('COUNT(*) FILTER (WHERE DATE(scheduled_date) = CURRENT_DATE) as due_today')
-            ->selectRaw('COUNT(*) FILTER (WHERE scheduled_date < CURRENT_DATE) as overdue')
+            ->selectRaw('COUNT(*) as due_today')
             ->first();
+
+        $overdueQuery = FollowUp::query()
+            ->whereIn('status', self::OPEN_FOLLOWUP_STATUSES)
+            ->where('scheduled_date', '<', $from);
+        $this->employeeDataScope->scopeFollowUpQuery($overdueQuery, $employeeId);
 
         return [
             'due_today' => (int) ($row->due_today ?? 0),
-            'overdue' => (int) ($row->overdue ?? 0),
+            'overdue' => (int) $overdueQuery->count(),
         ];
     }
 
-    private function whatsappMetrics(): array
+    private function whatsappMetrics(?int $employeeId, Carbon $from, Carbon $to): array
     {
-        $statusCounts = WaMessageLog::query()
-            ->selectRaw("COUNT(*) FILTER (WHERE message_status = 'Delivered') as delivered")
-            ->selectRaw("COUNT(*) FILTER (WHERE message_status = 'Failed') as failed")
-            ->selectRaw("COUNT(*) FILTER (WHERE message_status = 'Queued') as queued")
+        $query = WaMessageLog::query();
+        if ($employeeId) {
+            $query->where('employee_id', $employeeId);
+        }
+        $this->applyDateRange($query, 'created_at', $from, $to);
+
+        $statusCounts = $query
+            ->selectRaw(SqlAggregate::countFilter('*', "message_status = 'Delivered'").' as delivered')
+            ->selectRaw(SqlAggregate::countFilter('*', "message_status = 'Failed'").' as failed')
+            ->selectRaw(SqlAggregate::countFilter('*', "message_status = 'Queued'").' as queued')
             ->selectRaw('COUNT(*) as total')
             ->first();
 
         return [
-            'campaigns_total' => WhatsAppCampaign::query()->count(),
+            'campaigns_total' => $employeeId ? 0 : WhatsAppCampaign::query()->count(),
             'messages_total' => (int) ($statusCounts->total ?? 0),
             'delivered' => (int) ($statusCounts->delivered ?? 0),
             'failed' => (int) ($statusCounts->failed ?? 0),
@@ -192,17 +317,23 @@ class DashboardService
         ];
     }
 
-    private function emailMetrics(): array
+    private function emailMetrics(?int $employeeId, Carbon $from, Carbon $to): array
     {
-        $statusCounts = EmailLog::query()
-            ->selectRaw("COUNT(*) FILTER (WHERE email_status = 'Delivered') as delivered")
-            ->selectRaw("COUNT(*) FILTER (WHERE email_status = 'Failed') as failed")
-            ->selectRaw("COUNT(*) FILTER (WHERE email_status = 'Queued') as queued")
+        $query = EmailLog::query();
+        if ($employeeId) {
+            $query->where('employee_id', $employeeId);
+        }
+        $this->applyDateRange($query, 'created_at', $from, $to);
+
+        $statusCounts = $query
+            ->selectRaw(SqlAggregate::countFilter('*', "email_status IN ('Delivered', 'Sent')").' as delivered')
+            ->selectRaw(SqlAggregate::countFilter('*', "email_status = 'Failed'").' as failed')
+            ->selectRaw(SqlAggregate::countFilter('*', "email_status = 'Queued'").' as queued')
             ->selectRaw('COUNT(*) as total')
             ->first();
 
         return [
-            'campaigns_total' => EmailCampaign::query()->count(),
+            'campaigns_total' => $employeeId ? 0 : EmailCampaign::query()->count(),
             'messages_total' => (int) ($statusCounts->total ?? 0),
             'delivered' => (int) ($statusCounts->delivered ?? 0),
             'failed' => (int) ($statusCounts->failed ?? 0),
@@ -210,13 +341,22 @@ class DashboardService
         ];
     }
 
-    private function smsMetrics(): array
+    private function smsMetrics(?int $employeeId, Carbon $from, Carbon $to): array
     {
-        $statusCounts = SmsLog::query()
-            ->selectRaw("COUNT(*) FILTER (WHERE sms_status = 'Delivered') as delivered")
-            ->selectRaw("COUNT(*) FILTER (WHERE sms_status = 'Failed') as failed")
-            ->selectRaw("COUNT(*) FILTER (WHERE sms_status = 'Queued') as queued")
-            ->selectRaw("COUNT(*) FILTER (WHERE sms_status = 'Mapped') as mapped")
+        $query = SmsLog::query();
+        if ($employeeId) {
+            $query->where('employee_id', $employeeId);
+        }
+        $this->applyDateRange($query, 'created_at', $from, $to);
+
+        $statusCounts = $query
+            ->selectRaw(SqlAggregate::countFilter('*', "sms_status = 'Delivered'").' as delivered')
+            ->selectRaw(SqlAggregate::countFilter('*', "sms_status = 'Failed'").' as failed')
+            ->selectRaw(SqlAggregate::countFilter('*', "sms_status = 'Queued'").' as queued')
+            ->selectRaw(SqlAggregate::countFilter('*', "sms_status = 'Mapped'").' as mapped')
+            ->selectRaw(SqlAggregate::countFilter('*', "sms_status = 'Sent'").' as sent')
+            ->selectRaw(SqlAggregate::countFilter('*', "sms_status = 'Pending'").' as pending')
+            ->selectRaw(SqlAggregate::countFilter('*', "sms_status = 'API Error'").' as api_error')
             ->selectRaw('COUNT(*) as total')
             ->first();
 
@@ -225,10 +365,13 @@ class DashboardService
         return [
             'campaigns_total' => SmsCampaign::query()->count(),
             'messages_total' => (int) ($statusCounts->total ?? 0),
-            'delivered' => (int) ($statusCounts->delivered ?? 0),
-            'failed' => (int) ($statusCounts->failed ?? 0),
-            'queued' => (int) ($statusCounts->queued ?? 0),
+            'delivered' => (int) ($statusCounts->delivered ?? 0) + (int) ($statusCounts->sent ?? 0),
+            'failed' => (int) ($statusCounts->failed ?? 0) + (int) ($statusCounts->api_error ?? 0),
+            'queued' => (int) ($statusCounts->queued ?? 0) + (int) ($statusCounts->pending ?? 0),
             'mapped' => (int) ($statusCounts->mapped ?? 0),
+            'sent' => (int) ($statusCounts->sent ?? 0),
+            'pending' => (int) ($statusCounts->pending ?? 0),
+            'api_error' => (int) ($statusCounts->api_error ?? 0),
             'pending_campaigns' => SmsCampaign::query()->whereIn('status', ['Draft', 'Scheduled'])->count(),
             'mode' => $settings?->mode ?? SmsSetting::MODE_SIMULATION,
         ];
@@ -236,52 +379,71 @@ class DashboardService
 
     private function communicationSafetyMetrics(): array
     {
-        $dndSkipped = $this->countSkippedLogs('dnd_optout');
-        $noConsentSkipped = $this->countSkippedLogs('no_consent');
+        $skipped = $this->skippedLogCountsByReason();
+        $consent = ConsentTracking::query()
+            ->selectRaw(SqlAggregate::countFilter('*', "consent_status = 'Yes'").' as approved')
+            ->selectRaw(SqlAggregate::countFilter('*', "consent_status = 'No'").' as denied')
+            ->first();
 
         return [
             'dnd_contacts' => DndManagement::query()->distinct('ca_id')->count('ca_id'),
-            'consent_approved' => ConsentTracking::query()->where('consent_status', 'Yes')->count(),
-            'consent_denied' => ConsentTracking::query()->where('consent_status', 'No')->count(),
-            'skipped_due_to_dnd' => $dndSkipped,
-            'skipped_due_to_no_consent' => $noConsentSkipped,
+            'consent_approved' => (int) ($consent->approved ?? 0),
+            'consent_denied' => (int) ($consent->denied ?? 0),
+            'skipped_due_to_dnd' => $skipped['dnd_optout'],
+            'skipped_due_to_no_consent' => $skipped['no_consent'],
         ];
     }
 
-    private function callsTotal(?int $employeeId): int
+    private function callsTotal(?int $employeeId, Carbon $from, Carbon $to): int
     {
         $query = FollowUp::query()->where('followup_type', 'Call');
         $this->employeeDataScope->scopeFollowUpQuery($query, $employeeId);
+        $this->applyDateRange($query, 'scheduled_date', $from, $to);
 
         return (int) $query->count();
     }
 
-    private function meetingsTodayCount(?int $employeeId): int
+    private function meetingsTodayCount(?int $employeeId, Carbon $from, Carbon $to): int
     {
         $query = FollowUp::query()
-            ->whereDate('scheduled_date', now()->toDateString())
             ->whereIn('followup_type', ['Demo Scheduled', 'Demo Completed', 'Meeting']);
         $this->employeeDataScope->scopeFollowUpQuery($query, $employeeId);
+        $this->applyDateRange($query, 'scheduled_date', $from, $to);
 
         return (int) $query->count();
     }
 
-    private function countSkippedLogs(string $reason): int
+    /**
+     * @return array{dnd_optout: int, no_consent: int}
+     */
+    private function skippedLogCountsByReason(): array
     {
         $wa = WaMessageLog::query()
             ->where('message_status', 'Skipped')
-            ->where('failed_reason', $reason)
-            ->count();
+            ->whereIn('failed_reason', ['dnd_optout', 'no_consent'])
+            ->selectRaw('failed_reason')
+            ->selectRaw('COUNT(*) as total')
+            ->groupBy('failed_reason')
+            ->pluck('total', 'failed_reason');
         $email = EmailLog::query()
             ->where('email_status', 'Skipped')
-            ->where('failed_reason', $reason)
-            ->count();
+            ->whereIn('failed_reason', ['dnd_optout', 'no_consent'])
+            ->selectRaw('failed_reason')
+            ->selectRaw('COUNT(*) as total')
+            ->groupBy('failed_reason')
+            ->pluck('total', 'failed_reason');
         $sms = SmsLog::query()
             ->where('sms_status', 'Skipped')
-            ->where('failed_reason', $reason)
-            ->count();
+            ->whereIn('failed_reason', ['dnd_optout', 'no_consent'])
+            ->selectRaw('failed_reason')
+            ->selectRaw('COUNT(*) as total')
+            ->groupBy('failed_reason')
+            ->pluck('total', 'failed_reason');
 
-        return $wa + $email + $sms;
+        return [
+            'dnd_optout' => (int) ($wa['dnd_optout'] ?? 0) + (int) ($email['dnd_optout'] ?? 0) + (int) ($sms['dnd_optout'] ?? 0),
+            'no_consent' => (int) ($wa['no_consent'] ?? 0) + (int) ($email['no_consent'] ?? 0) + (int) ($sms['no_consent'] ?? 0),
+        ];
     }
 
     private function quotedList(array $values): string
@@ -289,5 +451,168 @@ class DashboardService
         return collect($values)
             ->map(fn (string $value) => DB::getPdo()->quote($value))
             ->implode(', ');
+    }
+
+    /**
+     * @return list<array{stage: string, count: int}>
+     */
+    private function pipelineBreakdown(?int $employeeId, Carbon $from, Carbon $to): array
+    {
+        $query = CaMaster::query()->countableInStatistics();
+        $this->employeeDataScope->scopeCaMasterQuery($query, $employeeId);
+        $this->applyDateRange($query, 'ca_masters.created_at', $from, $to);
+
+        $rows = $query
+            ->selectRaw('status')
+            ->selectRaw('COUNT(*) as lead_count')
+            ->groupBy('status')
+            ->get();
+
+        $counts = array_fill_keys(self::PIPELINE_STAGES, 0);
+        foreach ($rows as $row) {
+            $stage = self::PIPELINE_STAGE_MAP[$row->status] ?? 'New Lead';
+            $counts[$stage] = ($counts[$stage] ?? 0) + (int) $row->lead_count;
+        }
+
+        return collect($counts)
+            ->map(fn (int $count, string $stage) => ['stage' => $stage, 'count' => $count])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function priorityLeads(?int $employeeId, Carbon $from, Carbon $to): array
+    {
+        $query = CaMaster::query()->countableInStatistics()->with(['city:city_id,city_name']);
+        $this->employeeDataScope->scopeCaMasterQuery($query, $employeeId);
+        $this->applyDateRange($query, 'ca_masters.updated_at', $from, $to);
+
+        $leads = $query
+            ->where(function ($builder) {
+                $builder->where('status', 'Hot')
+                    ->orWhere('status', 'Demo Scheduled')
+                    ->orWhere('status', 'Negotiation');
+            })
+            ->orderByDesc('updated_at')
+            ->limit(5)
+            ->get(['ca_id', 'firm_name', 'ca_name', 'city_id', 'status', 'updated_at']);
+
+        return $this->mapLeadSummaries($leads);
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function recentLeads(?int $employeeId, Carbon $from, Carbon $to): array
+    {
+        $query = CaMaster::query()->countableInStatistics()->with(['city:city_id,city_name']);
+        $this->employeeDataScope->scopeCaMasterQuery($query, $employeeId);
+        $this->applyDateRange($query, 'ca_masters.updated_at', $from, $to);
+
+        $leads = $query
+            ->orderByDesc('updated_at')
+            ->limit(6)
+            ->get(['ca_id', 'firm_name', 'ca_name', 'city_id', 'status', 'updated_at']);
+
+        return $this->mapLeadSummaries($leads);
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function teamSummary(): array
+    {
+        $assignmentCounts = LeadAssignmentEngine::query()
+            ->join('ca_masters', 'ca_masters.ca_id', '=', 'lead_assignment_engines.ca_id')
+            ->where('lead_assignment_engines.status', 'Active')
+            ->where(function ($q) {
+                $q->whereNull('ca_masters.mobile_no_type')
+                    ->orWhere('ca_masters.mobile_no_type', 'mobile');
+            })
+            ->selectRaw('lead_assignment_engines.employee_id')
+            ->selectRaw('COUNT(DISTINCT lead_assignment_engines.ca_id) as assigned_count')
+            ->groupBy('lead_assignment_engines.employee_id')
+            ->pluck('assigned_count', 'employee_id');
+
+        return Employee::query()
+            ->with('city:city_id,city_name')
+            ->where('status', 'Active')
+            ->orderBy('name')
+            ->get(['employee_id', 'name', 'city_id'])
+            ->map(function (Employee $employee) use ($assignmentCounts) {
+                $achieved = (int) ($assignmentCounts->get($employee->employee_id) ?? 0);
+                $target = max(20, $achieved ?: 20);
+
+                return [
+                    'employee_id' => $employee->employee_id,
+                    'name' => $employee->name,
+                    'city' => $employee->city?->city_name,
+                    'achieved_leads' => $achieved,
+                    'target_leads' => $target,
+                    'daily_calls' => 0,
+                    'demos' => 0,
+                ];
+            })
+            ->all();
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function activityPreview(?int $employeeId, Carbon $from, Carbon $to): array
+    {
+        $query = ActivityLog::query();
+        $this->applyDateRange($query, 'created_at', $from, $to);
+
+        if ($employeeId) {
+            $employee = Employee::query()->find($employeeId);
+            if ($employee?->name) {
+                $query->where('performed_by', $employee->name);
+            }
+        }
+
+        return $query
+            ->orderByDesc('created_at')
+            ->limit(8)
+            ->get()
+            ->map(fn (ActivityLog $log) => (new ActivityLogResource($log))->resolve())
+            ->all();
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, CaMaster>  $leads
+     * @return list<array<string, mixed>>
+     */
+    private function mapLeadSummaries($leads): array
+    {
+        if ($leads->isEmpty()) {
+            return [];
+        }
+
+        $executives = LeadAssignmentEngine::query()
+            ->with('employee:employee_id,name')
+            ->whereIn('ca_id', $leads->pluck('ca_id'))
+            ->where('status', 'Active')
+            ->get()
+            ->keyBy('ca_id');
+
+        return $leads->map(function (CaMaster $lead) use ($executives) {
+            $assignment = $executives->get($lead->ca_id);
+            $stage = self::PIPELINE_STAGE_MAP[$lead->status] ?? 'New Lead';
+
+            return [
+                'ca_id' => $lead->ca_id,
+                'firm_name' => $lead->firm_name ?: $lead->ca_name,
+                'ca_name' => $lead->ca_name,
+                'city' => $lead->city?->city_name,
+                'status' => $lead->status,
+                'stage' => $stage,
+                'executive' => $assignment?->employee?->name,
+                'executive_id' => $assignment?->employee_id,
+                'updated_at' => $lead->updated_at,
+            ];
+        })->values()->all();
     }
 }

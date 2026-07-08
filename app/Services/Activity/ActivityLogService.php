@@ -30,6 +30,7 @@ class ActivityLogService
         'DEMO_CONFIRMATION',
         'REPORTS',
         'SECURITY',
+        'WHATSAPP_SETTINGS',
     ];
 
     public const ACTIONS = [
@@ -45,6 +46,7 @@ class ActivityLogService
         'Bulk Export',
         'Bulk Status Update',
         'WhatsApp Campaign Create',
+        'Campaign Created',
         'Email Campaign Create',
         'Follow-up Create',
         'Follow-up Update',
@@ -67,8 +69,18 @@ class ActivityLogService
         'DND Add',
         'DND Remove',
         'Campaign Skip',
+        'Payload Generated',
+        'Campaign Processed',
+        'WhatsApp Settings Updated',
+        'Template Selected',
         'Report Export',
         'Access Denied',
+        'Login Failed',
+        'Login Locked',
+        'Login Success',
+        'Approval Requested',
+        'Approval Granted',
+        'Approval Rejected',
     ];
 
     public function log(

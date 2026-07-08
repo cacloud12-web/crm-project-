@@ -19,11 +19,11 @@ class EnsureSpaPageAccess
             if ($request->expectsJson() || $request->ajax()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'You do not have access to this module.',
+                    'message' => 'You do not have permission to access this action.',
                 ], 403);
             }
 
-            abort(403, 'You do not have access to this module.');
+            abort(403, 'You do not have permission to access this action.');
         }
 
         return $next($request);

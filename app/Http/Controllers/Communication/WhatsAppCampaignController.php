@@ -35,7 +35,9 @@ class WhatsAppCampaignController extends Controller
 
         return ApiResponse::created(
             new WhatsAppCampaignResource($campaign),
-            'WhatsApp campaign created successfully',
+            $campaign->status === 'Processing'
+                ? 'WhatsApp campaign queued successfully.'
+                : 'WhatsApp campaign created successfully',
         );
     }
 
@@ -59,7 +61,9 @@ class WhatsAppCampaignController extends Controller
 
         return ApiResponse::success(
             new WhatsAppCampaignResource($campaign),
-            'WhatsApp campaign processed successfully',
+            $campaign->status === 'Processing'
+                ? 'WhatsApp campaign queued successfully.'
+                : 'WhatsApp campaign processed successfully.',
         );
     }
 
@@ -100,5 +104,54 @@ class WhatsAppCampaignController extends Controller
         $result = $this->whatsAppCampaignService->searchMessageLogs($request->query());
 
         return ListingResponse::from($result, WaMessageLogResource::class, 'WhatsApp message logs loaded');
+    }
+
+    public function payloadPreview(Request $request, string $id): JsonResponse
+    {
+        $caId = (int) $request->query('ca_id');
+        if ($caId <= 0) {
+            return ApiResponse::error('Lead ID (ca_id) is required for payload preview.', 422);
+        }
+
+        try {
+            $payload = $this->whatsAppCampaignService->previewPayload((int) $id, $caId);
+        } catch (\InvalidArgumentException $exception) {
+            return ApiResponse::error($exception->getMessage(), 422);
+        }
+
+        return ApiResponse::success($payload, 'WhatsApp Cloud API payload preview generated');
+    }
+
+    public function validatePreparation(Request $request): JsonResponse
+    {
+        try {
+            $result = $this->whatsAppCampaignService->validatePreparation($request->all());
+        } catch (\Throwable $exception) {
+            return ApiResponse::error($exception->getMessage(), 422);
+        }
+
+        return ApiResponse::success(
+            $result,
+            $result['valid'] ? 'WhatsApp campaign validation passed' : 'WhatsApp campaign validation failed',
+        );
+    }
+
+    public function previewMessage(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'message_template_id' => ['required', 'integer', 'exists:message_templates,id'],
+            'lead_id' => ['required', 'integer', 'exists:ca_masters,ca_id'],
+        ]);
+
+        try {
+            $preview = $this->whatsAppCampaignService->previewMessage(
+                (int) $validated['message_template_id'],
+                (int) $validated['lead_id'],
+            );
+        } catch (\Throwable $exception) {
+            return ApiResponse::error($exception->getMessage(), 422);
+        }
+
+        return ApiResponse::success($preview, 'WhatsApp message preview generated');
     }
 }

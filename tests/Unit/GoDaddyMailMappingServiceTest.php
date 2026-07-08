@@ -61,7 +61,7 @@ class GoDaddyMailMappingServiceTest extends TestCase
         $this->assertContains('SMTP host is not configured.', $errors);
         $this->assertContains('SMTP password is not configured.', $errors);
         $this->assertContains('Email subject is required.', $errors);
-        $this->assertContains('Lead email address is missing or invalid.', $errors);
+        $this->assertContains('Email address format is invalid.', $errors);
     }
 
     public function test_prepare_for_lead_stores_mapped_mail_without_sending(): void
@@ -79,7 +79,8 @@ class GoDaddyMailMappingServiceTest extends TestCase
         ]);
 
         $lead = CaMaster::query()->firstOrFail();
-        $lead->update(['email_id' => 'lead@example.com']);
+        $email = 'lead.'.uniqid().'@gmail.com';
+        $lead->update(['email_id' => $email]);
 
         $prepared = app(GoDaddyMailService::class)->prepareForLead(
             $lead,
@@ -88,8 +89,8 @@ class GoDaddyMailMappingServiceTest extends TestCase
             $settings,
         );
 
-        $this->assertTrue($prepared['valid']);
-        $this->assertSame('lead@example.com', $prepared['mail_object']['to']);
+        $this->assertTrue($prepared['valid'], implode('; ', $prepared['errors'] ?? []));
+        $this->assertSame($email, $prepared['mail_object']['to']);
         $this->assertStringContainsString('mapped_not_sent', (string) $prepared['provider_response']);
     }
 
@@ -97,10 +98,18 @@ class GoDaddyMailMappingServiceTest extends TestCase
     {
         EmailSetting::query()->delete();
 
+        config([
+            'email_smtp.env_defaults' => array_merge((array) config('email_smtp.env_defaults'), [
+                'smtp_username' => null,
+                'smtp_password' => null,
+                'mode' => EmailSetting::MODE_SIMULATION,
+            ]),
+        ]);
+
         $settings = app(EmailSettingsService::class)->current();
         $public = app(EmailSettingsService::class)->toPublicArray($settings);
 
-        $this->assertSame('GoDaddy SMTP', $settings->provider_name);
+        $this->assertSame('Cloud Desk', $settings->provider_name);
         $this->assertNull($settings->smtp_username);
         $this->assertFalse($public['has_smtp_password']);
         $this->assertArrayNotHasKey('smtp_password', $public);

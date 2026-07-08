@@ -222,6 +222,33 @@ class NotificationService
         return $user ? (int) $user->id : null;
     }
 
+    public function customerReplyReceived(
+        string $fromEmail,
+        string $subject,
+        ?int $caId,
+        int $inboundMessageId,
+        ?int $employeeUserId = null,
+    ): void {
+        $title = 'Customer reply received';
+        $message = ($subject ?: 'No subject').' from '.$fromEmail;
+        $extra = [
+            'entity_type' => 'email_inbound',
+            'entity_id' => (string) $inboundMessageId,
+            'payload' => [
+                'ca_id' => $caId,
+                'from_email' => $fromEmail,
+                'subject' => $subject,
+                'suggest_followup' => true,
+            ],
+        ];
+
+        if ($employeeUserId) {
+            $this->notifyUser($employeeUserId, 'email_reply_received', $title, $message, $extra);
+        }
+
+        $this->notifyManagement('email_reply_received', $title, $message, $extra);
+    }
+
     public function campaignCompleted(
         string $channel,
         string $name,
