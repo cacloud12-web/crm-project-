@@ -6,10 +6,98 @@
 |--------------------|-------------------|-------|
 | **Your Mac** (`php artisan serve`) | `127.0.0.1` + local `CRM-PROJECT` | Fast |
 | **Hostinger server** (live site) | `localhost` + Hostinger DB | Fast |
-| **Your Mac → Hostinger DB remotely** | `srv1999.hstgr.io` | **Very slow — do not use** |
+| **Your Mac → Hostinger DB remotely** | `srv1999.hstgr.io` | **Very slow — causes 500 errors** |
 
 Remote MySQL (`srv1999.hstgr.io`) is only for tools like MySQL Workbench from your PC.  
 When the Laravel app is **on Hostinger**, always use `DB_HOST=localhost`.
+
+---
+
+## Fix: Hostinger Git deploy "Build failed"
+
+If hPanel shows **Build failed** with root directory `public_html`, the built-in Git deploy is not configured for Laravel yet.
+
+Laravel cannot run with only files dumped into `public_html`. You need the **full project** plus a symlink from `public_html` → `public`.
+
+### Option A — SSH setup (recommended, one-time)
+
+Ask your manager / hosting admin to run these in **hPanel → Advanced → SSH** (replace domain path):
+
+```bash
+cd ~/domains/YOUR-DOMAIN.com
+
+# Remove default public_html so we can symlink it
+rm -rf public_html
+
+# Clone from GitHub (if not already done by hPanel)
+git clone git@github.com:cacloud12-web/crm-project-.git .
+
+# Install PHP dependencies (vendor/ is not in Git)
+composer install --no-dev --optimize-autoloader
+
+# Production environment
+cp .env.hostinger.example .env
+# Edit .env: set APP_URL, DB_HOST=localhost, DB credentials from hPanel
+php artisan key:generate --force
+
+# Database
+php artisan migrate --force
+php artisan db:seed --class=CrmUserSeeder --force
+
+# Point web root to Laravel public folder
+ln -s public public_html
+
+# Permissions
+chmod -R 775 storage bootstrap/cache
+php artisan config:cache
+php artisan route:cache
+php artisan view:cache
+```
+
+After this, **disable** hPanel auto-deploy to `public_html` (or use pull-only updates via SSH):
+
+```bash
+cd ~/domains/YOUR-DOMAIN.com
+git pull origin main
+composer install --no-dev --optimize-autoloader
+php artisan migrate --force
+php artisan config:cache
+php artisan route:cache
+php artisan view:cache
+```
+
+### Option B — hPanel Git panel settings
+
+If you must use hPanel Git integration:
+
+| Setting | Value |
+|---------|-------|
+| Repository | `cacloud12-web/crm-project-` |
+| Branch | `main` |
+| Install directory | Domain folder (e.g. `domains/your-domain.com/`) — **not** inside `public_html` |
+| Build command | `bash scripts/hostinger-build.sh` |
+| Web root | Symlink `public_html` → `public` (SSH, see Option A) |
+
+**Do not** set repository "root directory" to `public_html` — that folder does not exist in the Git repo and the build fails in a few seconds.
+
+### Production `.env` on server
+
+```env
+APP_URL=https://your-actual-domain.com
+APP_ENV=production
+APP_DEBUG=false
+DB_HOST=localhost
+DB_DATABASE=u636438798_crmproject
+DB_USERNAME=u636438798_crmuser
+DB_PASSWORD=your-password-from-hpanel
+```
+
+Default logins after seed:
+
+| Email | Password |
+|-------|----------|
+| superadmin@ca.local | password |
+| manager@ca.local | password |
 
 ---
 
