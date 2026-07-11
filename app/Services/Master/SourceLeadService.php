@@ -2,17 +2,20 @@
 
 namespace App\Services\Master;
 
-use App\Models\CaMaster;
 use App\Models\SourceLead;
 use App\Services\Concerns\SearchesListings;
 use App\Services\Master\Concerns\LogsMasterActivity;
 use Illuminate\Support\Collection;
-use InvalidArgumentException;
 
 class SourceLeadService
 {
     use LogsMasterActivity;
     use SearchesListings;
+
+    public function __construct(
+        private readonly MasterRecordLifecycleService $lifecycleService,
+        private readonly MasterDependencyService $dependencyService,
+    ) {}
 
     public function search(array $params = []): array
     {
@@ -33,6 +36,7 @@ class SourceLeadService
     {
         $source = SourceLead::create([
             'source_name' => trim($data['source_name']),
+            'is_active' => true,
         ]);
 
         $this->logMasterActivity(
@@ -62,16 +66,23 @@ class SourceLeadService
         return $source->fresh();
     }
 
+    public function dependencies(SourceLead $source): array
+    {
+        return $this->dependencyService->analyze(MasterDependencyService::ENTITY_SOURCE, $source);
+    }
+
     public function delete(SourceLead $source): void
     {
-        if (CaMaster::query()->where('source_id', $source->source_id)->exists()) {
-            throw new InvalidArgumentException('Cannot delete a source that is used by CA Master records.');
-        }
+        $this->lifecycleService->delete(MasterDependencyService::ENTITY_SOURCE, $source);
+    }
 
-        $name = $source->source_name;
-        $id = (string) $source->source_id;
-        $source->delete();
+    public function deactivate(SourceLead $source, ?int $userId = null): SourceLead
+    {
+        return $this->lifecycleService->deactivate(MasterDependencyService::ENTITY_SOURCE, $source, $userId);
+    }
 
-        $this->logMasterActivity('Delete Source', 'SOURCE_OF_LEAD', $id, $name);
+    public function reactivate(SourceLead $source): SourceLead
+    {
+        return $this->lifecycleService->reactivate(MasterDependencyService::ENTITY_SOURCE, $source);
     }
 }

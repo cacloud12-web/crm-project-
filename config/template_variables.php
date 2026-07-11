@@ -43,6 +43,19 @@ return [
             ['key' => '{{EXPIRY_DATE}}', 'label' => 'Expiry Date'],
             ['key' => '{{PAYMENT_STATUS}}', 'label' => 'Payment Status'],
         ],
+        'WhatsApp Expense Variables' => [
+            ['key' => '{{CLIENT_NAME}}', 'label' => 'Client Name'],
+            ['key' => '{{AMOUNT}}', 'label' => 'Expense Amount'],
+            ['key' => '{{EXPENSE_DATE}}', 'label' => 'Expense Date'],
+            ['key' => '{{EXPENSE_CATEGORY}}', 'label' => 'Expense Category'],
+            ['key' => '{{EXPENSE_ID}}', 'label' => 'Expense ID'],
+        ],
+        'WhatsApp Invoice Variables' => [
+            ['key' => '{{CLIENT_NAME}}', 'label' => 'Client Name'],
+            ['key' => '{{SERVICE_NAME}}', 'label' => 'Service Name'],
+            ['key' => '{{INVOICE_DATE}}', 'label' => 'Invoice Date'],
+            ['key' => '{{AMOUNT}}', 'label' => 'Invoice Amount'],
+        ],
         'Company Variables' => [
             ['key' => '{{COMPANY_NAME}}', 'label' => 'Company Name'],
             ['key' => '{{SUPPORT_EMAIL}}', 'label' => 'Support Email'],

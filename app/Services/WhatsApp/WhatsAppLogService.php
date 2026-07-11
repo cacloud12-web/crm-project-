@@ -177,4 +177,40 @@ class WhatsAppLogService
             CommunicationEligibilityService::CHANNEL_WHATSAPP,
         );
     }
+
+    /**
+     * Retry a failed WhatsApp message log (live mode only).
+     *
+     * @return array{success: bool, log: WaMessageLog, message: string}
+     */
+    public function retryMessageLog(WaMessageLog $log, WhatsAppSetting $settings, WhatsAppDispatchService $dispatchService): array
+    {
+        if (! in_array($log->message_status, [WaMessageLogStatus::FAILED, WaMessageLogStatus::API_ERROR], true)) {
+            throw new \InvalidArgumentException('Only failed messages can be retried.');
+        }
+
+        $apiPayload = is_array($log->api_payload) ? $log->api_payload : [];
+        if ($apiPayload === []) {
+            throw new \InvalidArgumentException('Message log has no stored payload to retry.');
+        }
+
+        $result = $dispatchService->send($settings, $apiPayload);
+        $log = $dispatchService->applyDispatchResult($log, $result);
+
+        if ($result['success']) {
+            app(WhatsAppSettingsService::class)->recordSuccessfulSend($settings);
+        }
+
+        if ($log->campaign_id) {
+            app(WhatsAppCampaignService::class)->syncCampaignStats((int) $log->campaign_id);
+        }
+
+        return [
+            'success' => $result['success'],
+            'log' => $log->fresh(['caMaster:ca_id,firm_name,ca_name', 'campaign:id,campaign_name']),
+            'message' => $result['success']
+                ? 'Message retried successfully.'
+                : ($result['error_message'] ?? 'Retry failed.'),
+        ];
+    }
 }

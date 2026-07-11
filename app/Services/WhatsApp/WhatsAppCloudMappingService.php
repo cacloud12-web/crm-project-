@@ -80,6 +80,7 @@ class WhatsAppCloudMappingService
         return [
             '{{name}}' => (string) ($lead->ca_name ?? ''),
             '{{client_name}}' => (string) ($lead->ca_name ?? ''),
+            '{{CLIENT_NAME}}' => (string) ($lead->ca_name ?? ''),
             '{{firm_name}}' => (string) ($lead->firm_name ?? ''),
             '{{mobile}}' => (string) ($lead->mobile_no ?? ''),
             '{{city}}' => (string) ($lead->city?->city_name ?? ''),
@@ -94,6 +95,12 @@ class WhatsAppCloudMappingService
             '{{expected_completion}}' => $expectedCompletion,
             '{{scheduled_date}}' => $taskDate,
             '{{scheduled_time}}' => $demoTime !== '' ? $demoTime : now()->format('h:i A'),
+            '{{AMOUNT}}' => (string) config('whatsapp_cloud.meta_parameter_fallbacks.amount', 'N/A'),
+            '{{EXPENSE_DATE}}' => (string) config('whatsapp_cloud.meta_parameter_fallbacks.expense_date', 'N/A'),
+            '{{EXPENSE_CATEGORY}}' => (string) config('whatsapp_cloud.meta_parameter_fallbacks.expense_category', 'N/A'),
+            '{{EXPENSE_ID}}' => (string) config('whatsapp_cloud.meta_parameter_fallbacks.expense_id', 'N/A'),
+            '{{SERVICE_NAME}}' => (string) config('whatsapp_cloud.meta_parameter_fallbacks.service_name', 'N/A'),
+            '{{INVOICE_DATE}}' => (string) config('whatsapp_cloud.meta_parameter_fallbacks.invoice_date', 'N/A'),
         ];
     }
 
@@ -130,9 +137,10 @@ class WhatsAppCloudMappingService
         CaMaster $lead,
         MessageTemplate $template,
         ?WhatsAppSetting $settings = null,
+        array $variableOverrides = [],
     ): array {
         $settings ??= $this->settingsService->current();
-        $variables = $this->resolveTemplateVariables($template, $lead);
+        $variables = $this->resolveTemplateVariables($template, $lead, $variableOverrides);
         $bodyText = $this->renderTemplateBody($template->body_template, $variables);
         $parameters = $this->sanitizeMetaBodyParameters(
             $this->extractBodyParameters($template->body_template, $variables),
@@ -231,7 +239,7 @@ class WhatsAppCloudMappingService
         }
 
         if ($this->requiresDocumentHeader($template) && $this->buildHeaderComponent($template) === null) {
-            $errors[] = 'Template '.$template->template_name.' requires a document header URL. Set WHATSAPP_TASK_DOCUMENT_URL in .env.';
+            $errors[] = 'Template '.$template->template_name.' requires a document header URL. Set WHATSAPP_INVOICE_DOCUMENT_URL or WHATSAPP_TASK_DOCUMENT_URL in .env.';
         }
 
         return $errors;
@@ -434,7 +442,7 @@ class WhatsAppCloudMappingService
      *
      * @return array<string, string>
      */
-    public function resolveTemplateVariables(MessageTemplate $template, ?CaMaster $lead = null): array
+    public function resolveTemplateVariables(MessageTemplate $template, ?CaMaster $lead = null, array $overrides = []): array
     {
         $leadVariables = $lead ? $this->resolveVariables($lead) : $this->baseDummyVariables();
         $resolved = $leadVariables;
@@ -455,6 +463,12 @@ class WhatsAppCloudMappingService
                 continue;
             }
 
+            if (isset($leadVariables[$placeholder])) {
+                $resolved[$placeholder] = $leadVariables[$placeholder];
+
+                continue;
+            }
+
             $namedKey = str_starts_with($source, '{{') ? $source : '{{'.$source.'}}';
             if (isset($leadVariables[$namedKey])) {
                 $resolved[$placeholder] = $leadVariables[$namedKey];
@@ -467,7 +481,12 @@ class WhatsAppCloudMappingService
                     'ca_name', 'client_name' => (string) ($lead->ca_name ?? ''),
                     'firm_name' => (string) ($lead->firm_name ?? ''),
                     'mobile_no', 'mobile' => (string) ($lead->mobile_no ?? ''),
-                    default => $leadVariables[$namedKey] ?? '',
+                    'amount', 'expense_date', 'expense_category', 'expense_id',
+                    'service_name', 'invoice_date', 'invoice_amount', 'due_date' => (string) (
+                        config('whatsapp_cloud.meta_parameter_fallbacks.'.$source)
+                        ?: config('whatsapp_cloud.meta_parameter_fallbacks.default', 'N/A')
+                    ),
+                    default => $leadVariables[$namedKey] ?? $leadVariables[$placeholder] ?? '',
                 };
             }
         }
@@ -477,6 +496,15 @@ class WhatsAppCloudMappingService
             if (! array_key_exists($placeholder, $resolved)) {
                 $resolved[$placeholder] = $leadVariables[$placeholder] ?? 'Test';
             }
+        }
+
+        foreach ($overrides as $key => $value) {
+            if (! is_string($key) || ! is_scalar($value)) {
+                continue;
+            }
+
+            $placeholder = str_starts_with($key, '{{') ? $key : '{{'.strtoupper($key).'}}';
+            $resolved[$placeholder] = (string) $value;
         }
 
         return $resolved;
@@ -554,8 +582,12 @@ class WhatsAppCloudMappingService
      */
     private function baseDummyVariables(): array
     {
+        $fallbacks = (array) config('whatsapp_cloud.meta_parameter_fallbacks', []);
+
         return [
-            '{{name}}' => 'Test User',
+            '{{name}}' => 'Rajesh Kumar',
+            '{{client_name}}' => 'Rajesh Kumar',
+            '{{CLIENT_NAME}}' => 'Rajesh Kumar',
             '{{firm_name}}' => 'Test Firm',
             '{{mobile}}' => '9876543210',
             '{{city}}' => 'Mumbai',
@@ -567,8 +599,17 @@ class WhatsAppCloudMappingService
             '{{task_status}}' => 'Scheduled',
             '{{scheduled_date}}' => now()->format('d M Y'),
             '{{scheduled_time}}' => now()->format('h:i A'),
-            '{{1}}' => 'Test User',
-            '{{2}}' => 'LawSeva',
+            '{{AMOUNT}}' => (string) ($fallbacks['amount'] ?? '2,500'),
+            '{{EXPENSE_DATE}}' => (string) ($fallbacks['expense_date'] ?? '10-July-2026'),
+            '{{EXPENSE_CATEGORY}}' => (string) ($fallbacks['expense_category'] ?? 'Travel'),
+            '{{EXPENSE_ID}}' => (string) ($fallbacks['expense_id'] ?? 'EXP-2026-0001'),
+            '{{SERVICE_NAME}}' => (string) ($fallbacks['service_name'] ?? 'GST Return Filing'),
+            '{{INVOICE_DATE}}' => (string) ($fallbacks['invoice_date'] ?? '10-July-2026'),
+            '{{1}}' => 'Rajesh Kumar',
+            '{{2}}' => 'GST Return',
+            '{{3}}' => '24-June-2025',
+            '{{4}}' => '10,150',
+            '{{5}}' => '28-June-2025',
         ];
     }
 

@@ -6,6 +6,7 @@ use App\Models\CaMaster;
 use App\Models\Employee;
 use App\Models\LeadAssignmentEngine;
 use App\Services\Rbac\RbacService;
+use App\Services\Settings\AssignmentCapacitySettings;
 use Illuminate\Support\Collection;
 use InvalidArgumentException;
 
@@ -30,6 +31,8 @@ class BulkAssignmentService
     public function __construct(
         private readonly BulkAssignmentWriter $bulkAssignmentWriter,
         private readonly RbacService $rbacService,
+        private readonly AssignmentCapacityService $assignmentCapacityService,
+        private readonly AssignmentCapacitySettings $capacitySettings,
     ) {}
 
     public function execute(array $data, bool $preview = false): array
@@ -67,6 +70,8 @@ class BulkAssignmentService
 
         $currentOwners = $this->currentOwnersByCaIds($caIds);
         $workloads = $this->activeAssignmentCounts($employeeIds);
+        $todayCounts = $this->assignmentCapacityService->assignedTodayCounts($employeeIds);
+        $maxDailyCapacity = $this->capacitySettings->dailyMaxCapacity();
         $plan = [];
         $roundRobinIndex = 0;
 
@@ -79,6 +84,8 @@ class BulkAssignmentService
                 $employeeIds,
                 $mode,
                 $workloads,
+                $todayCounts,
+                $maxDailyCapacity,
                 $roundRobinIndex,
             );
 
@@ -113,8 +120,11 @@ class BulkAssignmentService
                 $isDuplicate ? 'duplicate_assignment: lead already assigned to this executive' : null,
             );
 
-            if (! $isDuplicate && in_array($mode, ['workload_balance', 'city_match', 'state_match'], true)) {
-                $workloads[$pick['employee_id']] = ($workloads[$pick['employee_id']] ?? 0) + 1;
+            if (! $isDuplicate && $mode !== 'manual') {
+                if (in_array($mode, ['workload_balance', 'city_match', 'state_match'], true)) {
+                    $workloads[$pick['employee_id']] = ($workloads[$pick['employee_id']] ?? 0) + 1;
+                }
+                $todayCounts[$pick['employee_id']] = ($todayCounts[$pick['employee_id']] ?? 0) + 1;
             }
         }
 
@@ -266,6 +276,8 @@ class BulkAssignmentService
         array $employeeIds,
         string $mode,
         array &$workloads,
+        array &$todayCounts,
+        int $maxDailyCapacity,
         int &$roundRobinIndex,
     ): array {
         return match ($mode) {
@@ -274,45 +286,81 @@ class BulkAssignmentService
                 'reason' => self::MODE_REASONS['manual'],
                 'message' => null,
             ],
-            'round_robin' => $this->pickRoundRobin($employeeIds, $roundRobinIndex),
-            'workload_balance' => $this->pickWorkloadBalance($employeeIds, $workloads),
-            'city_match' => $this->pickCityMatch($lead, $employees, $employeeIds, $workloads),
-            'state_match' => $this->pickStateMatch($lead, $employees, $employeeIds, $workloads),
+            'round_robin' => $this->pickRoundRobin($employeeIds, $roundRobinIndex, $todayCounts, $maxDailyCapacity),
+            'workload_balance' => $this->pickWorkloadBalance($employeeIds, $workloads, $todayCounts, $maxDailyCapacity),
+            'city_match' => $this->pickCityMatch($lead, $employees, $employeeIds, $workloads, $todayCounts, $maxDailyCapacity),
+            'state_match' => $this->pickStateMatch($lead, $employees, $employeeIds, $workloads, $todayCounts, $maxDailyCapacity),
             default => ['employee_id' => $employeeIds[0], 'reason' => 'MANUAL_ASSIGN', 'message' => null],
         };
     }
 
-    private function pickRoundRobin(array $employeeIds, int &$index): array
+    private function pickRoundRobin(array $employeeIds, int &$index, array $todayCounts, int $maxDailyCapacity): array
     {
-        $employeeId = $employeeIds[$index % count($employeeIds)];
-        $index++;
+        if ($employeeIds === []) {
+            return [
+                'employee_id' => null,
+                'reason' => self::MODE_REASONS['round_robin'],
+                'message' => 'capacity_limit: no employees available',
+            ];
+        }
+
+        $attempts = 0;
+        while ($attempts < count($employeeIds)) {
+            $employeeId = $employeeIds[$index % count($employeeIds)];
+            $index++;
+            $attempts++;
+
+            if (($todayCounts[$employeeId] ?? 0) < $maxDailyCapacity) {
+                return [
+                    'employee_id' => $employeeId,
+                    'reason' => self::MODE_REASONS['round_robin'],
+                    'message' => null,
+                ];
+            }
+        }
 
         return [
-            'employee_id' => $employeeId,
+            'employee_id' => null,
             'reason' => self::MODE_REASONS['round_robin'],
-            'message' => null,
+            'message' => 'capacity_limit: all employees at daily capacity',
         ];
     }
 
-    private function pickWorkloadBalance(array $employeeIds, array $workloads): array
+    private function pickWorkloadBalance(array $employeeIds, array $workloads, array $todayCounts, int $maxDailyCapacity): array
     {
-        $sorted = $employeeIds;
-        usort($sorted, fn ($a, $b) => ($workloads[$a] ?? 0) <=> ($workloads[$b] ?? 0));
+        $eligible = array_values(array_filter(
+            $employeeIds,
+            fn ($id) => ($todayCounts[$id] ?? 0) < $maxDailyCapacity,
+        ));
 
-        $picked = $sorted[0];
+        if ($eligible === []) {
+            return [
+                'employee_id' => null,
+                'reason' => self::MODE_REASONS['workload_balance'],
+                'message' => 'capacity_limit: all employees at daily capacity',
+            ];
+        }
+
+        usort($eligible, fn ($a, $b) => ($workloads[$a] ?? 0) <=> ($workloads[$b] ?? 0));
 
         return [
-            'employee_id' => $picked,
+            'employee_id' => $eligible[0],
             'reason' => self::MODE_REASONS['workload_balance'],
             'message' => null,
         ];
     }
 
-    private function pickCityMatch(CaMaster $lead, Collection $employees, array $employeeIds, array &$workloads): array
-    {
+    private function pickCityMatch(
+        CaMaster $lead,
+        Collection $employees,
+        array $employeeIds,
+        array &$workloads,
+        array &$todayCounts,
+        int $maxDailyCapacity,
+    ): array {
         $leadCityId = $lead->city_id;
         if (! $leadCityId) {
-            return $this->pickWorkloadBalance($employeeIds, $workloads);
+            return $this->pickWorkloadBalance($employeeIds, $workloads, $todayCounts, $maxDailyCapacity);
         }
 
         $matches = array_values(array_filter($employeeIds, function ($id) use ($employees, $leadCityId) {
@@ -327,14 +375,20 @@ class BulkAssignmentService
             ];
         }
 
-        return $this->pickWorkloadBalance($matches, $workloads);
+        return $this->pickWorkloadBalance($matches, $workloads, $todayCounts, $maxDailyCapacity);
     }
 
-    private function pickStateMatch(CaMaster $lead, Collection $employees, array $employeeIds, array &$workloads): array
-    {
+    private function pickStateMatch(
+        CaMaster $lead,
+        Collection $employees,
+        array $employeeIds,
+        array &$workloads,
+        array &$todayCounts,
+        int $maxDailyCapacity,
+    ): array {
         $leadStateId = $lead->state_id ?: $lead->city?->state_id;
         if (! $leadStateId) {
-            return $this->pickWorkloadBalance($employeeIds, $workloads);
+            return $this->pickWorkloadBalance($employeeIds, $workloads, $todayCounts, $maxDailyCapacity);
         }
 
         $matches = array_values(array_filter($employeeIds, function ($id) use ($employees, $leadStateId) {
@@ -351,7 +405,7 @@ class BulkAssignmentService
             ];
         }
 
-        return $this->pickWorkloadBalance($matches, $workloads);
+        return $this->pickWorkloadBalance($matches, $workloads, $todayCounts, $maxDailyCapacity);
     }
 
     private function activeAssignmentCounts(array $employeeIds): array

@@ -127,6 +127,11 @@ class WhatsAppTemplateService
             'body_template' => $data['body_template'] ?? $template->body_template,
             'variable_map' => $data['variable_map'] ?? $template->variable_map,
             'display_name' => $data['display_name'] ?? $template->display_name,
+            'status' => MessageTemplate::STATUS_APPROVED,
+            'meta_status' => 'APPROVED',
+            'meta_status_updated_at' => now(),
+            'meta_rejection_reason' => null,
+            'is_active' => true,
         ]);
 
         $this->activityLogService->log(

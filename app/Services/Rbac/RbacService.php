@@ -288,6 +288,42 @@ class RbacService
             return ['module' => 'assignment', 'permission' => 'view'];
         }
 
+        if (str_starts_with($path, 'assignment-dashboard/')) {
+            if ($path === 'assignment-dashboard/capacity' && in_array($method, ['PUT', 'PATCH'], true)) {
+                return ['module' => 'assignment', 'permission' => 'assign'];
+            }
+
+            return ['module' => 'assignment', 'permission' => 'view'];
+        }
+
+        if (str_starts_with($path, 'yearly-employee-targets')) {
+            if ($path === 'yearly-employee-targets/current-year' && $this->roleKey($request->user()) === 'employee') {
+                return ['module' => 'dashboard', 'permission' => 'view'];
+            }
+
+            if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+                return ['module' => 'assignment', 'permission' => 'assign'];
+            }
+
+            return ['module' => 'assignment', 'permission' => 'view'];
+        }
+
+        if (str_starts_with($path, 'daily-employee-targets')) {
+            if ($method === 'GET' && $this->roleKey($request->user()) === 'employee') {
+                return ['module' => 'dashboard', 'permission' => 'view'];
+            }
+
+            if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+                return ['module' => 'assignment', 'permission' => 'assign'];
+            }
+
+            return ['module' => 'assignment', 'permission' => 'view'];
+        }
+
+        if (preg_match('#^(states|cities|source-leads|team-sizes|role-masters)/[^/]+/(dependencies|deactivate|reactivate)$#', $path)) {
+            return ['module' => 'ca_master', 'permission' => str_ends_with($path, '/dependencies') ? 'view' : 'edit'];
+        }
+
         if (str_starts_with($path, 'lead-actions')) {
             return ['module' => 'leads', 'permission' => 'edit'];
         }
@@ -343,6 +379,18 @@ class RbacService
 
         if (str_starts_with($path, 'consent-trackings') || str_starts_with($path, 'dnd-management')) {
             return ['module' => 'consent', 'permission' => $this->methodPermission($method)];
+        }
+
+        if (str_starts_with($path, 'demo-calendar')) {
+            if (str_contains($path, '/providers') && in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+                return ['module' => 'settings', 'permission' => 'manage_settings'];
+            }
+
+            if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+                return ['module' => 'followups', 'permission' => 'schedule_demo'];
+            }
+
+            return ['module' => 'followups', 'permission' => 'view'];
         }
 
         if (str_starts_with($path, 'workflow')) {

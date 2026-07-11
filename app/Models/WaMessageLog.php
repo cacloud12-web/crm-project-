@@ -25,6 +25,7 @@ class WaMessageLog extends Model
         'queued_at',
         'sent_at',
         'delivered_at',
+        'read_at',
         'failed_reason',
     ];
 

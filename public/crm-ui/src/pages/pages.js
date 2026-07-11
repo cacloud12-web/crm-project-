@@ -205,6 +205,7 @@ window.CAPages = (function () {
       { id: 'email-templates', page: 'settings-email-templates', label: 'Email Templates', icon: 'mail', group: 'Template Management', roles: ['super_admin', 'admin', 'manager'] },
       { id: 'whatsapp-templates', page: 'settings-whatsapp-templates', label: 'WhatsApp Templates', icon: 'message-circle', group: 'Template Management', roles: ['super_admin', 'admin', 'manager'] },
       { id: 'google-api', page: 'settings-google-api', label: 'Google API Settings', icon: 'map-pin' },
+      { id: 'demo-providers', page: 'settings-demo-providers', label: 'Demo Providers', icon: 'calendar-range', roles: ['super_admin'] },
       { id: 'email-configuration', page: 'email-configuration', label: 'Email Configuration', icon: 'at-sign', roles: ['super_admin'] },
     ];
   }
@@ -271,11 +272,43 @@ window.CAPages = (function () {
     return '<div class="ca-tab-panel' + (active ? ' active' : '') + '" data-panel="' + id + '" data-tab-group="' + group + '">' + html + '</div>';
   }
 
+  function demoCalendarSection(prefix) {
+    prefix = prefix || 'demo-cal';
+    return '<section class="mgr-panel card dash-section demo-calendar-card" id="' + prefix + '-section">' +
+      '<div class="demo-cal-head">' +
+        '<div><h3 class="mgr-panel-title"><i data-lucide="calendar-range" class="h-5 w-5 text-brand"></i> Demo Calendar</h3>' +
+        '<p class="text-caption text-slate-500 mt-1">Provider availability, bookings, and scheduling</p></div>' +
+        '<div class="demo-cal-head__actions">' +
+          '<div class="demo-cal-view-tabs" role="tablist">' +
+            '<button type="button" class="demo-cal-view-tab" data-demo-cal-view="day">Day</button>' +
+            '<button type="button" class="demo-cal-view-tab active" data-demo-cal-view="week">Week</button>' +
+            '<button type="button" class="demo-cal-view-tab" data-demo-cal-view="month">Month</button>' +
+            '<button type="button" class="demo-cal-view-tab" data-demo-cal-view="agenda">Agenda</button>' +
+          '</div>' +
+          '<button type="button" class="btn-secondary btn-sm" id="demo-cal-refresh-btn" title="Refresh"><i data-lucide="refresh-cw" class="h-4 w-4"></i></button>' +
+          '<button type="button" class="btn-primary btn-sm" id="demo-cal-schedule-btn"><i data-lucide="plus" class="h-4 w-4"></i> Schedule Demo</button>' +
+        '</div></div>' +
+      '<div class="demo-cal-summary" id="' + prefix + '-summary"></div>' +
+      '<div class="demo-cal-toolbar">' +
+        '<select id="' + prefix + '-provider" class="input-field input-field-sm"><option value="">All Demo Providers</option></select>' +
+        '<input type="date" id="' + prefix + '-date" class="input-field input-field-sm" data-crm-date-input data-allow-past data-hide-preview />' +
+        '<select id="' + prefix + '-status" class="input-field input-field-sm">' +
+          '<option value="">All Statuses</option><option value="scheduled">Scheduled</option><option value="rescheduled">Rescheduled</option>' +
+          '<option value="completed">Completed</option><option value="missed">Missed</option><option value="cancelled">Cancelled</option>' +
+        '</select></div>' +
+      '<div class="demo-cal-layout">' +
+        '<div class="demo-cal-main" id="' + prefix + '-body"><p class="text-caption text-slate-400 py-4">Loading demo calendar…</p></div>' +
+        '<aside class="demo-cal-side"><h4 class="text-sm font-semibold mb-2">Available Slots</h4><div id="' + prefix + '-slots"></div></aside>' +
+      '</div></section>';
+  }
+
   function employeeDashboardPage() {
     return '<div class="emp-dashboard mgr-dashboard">' +
       '<header class="mgr-top card" id="emp-top-header"></header>' +
       '<section class="dash-section" aria-label="Key metrics"><div class="dash-kpi-sections" id="emp-kpi-sections"></div></section>' +
+      '<section class="mgr-panel card dash-section" id="emp-daily-targets-panel"></section>' +
       '<div id="emp-productivity-panel" class="mgr-panel card dash-productivity-panel"></div>' +
+      demoCalendarSection('demo-cal') +
       '<div class="dash-toolbar-row">' +
         '<section class="mgr-panel card dash-quick-actions-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="zap" class="h-5 w-5 text-brand"></i> Quick Actions</h3></div><div class="emp-quick-actions dash-quick-actions" id="emp-quick-actions"></div></section>' +
         '<section class="mgr-panel card dash-activity-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="activity" class="h-5 w-5 text-brand"></i> Recent Activity</h3></div><div id="emp-activity-list" class="mgr-activity-feed dash-activity-feed"></div></section>' +
@@ -293,6 +326,7 @@ window.CAPages = (function () {
       '<header class="mgr-top card" id="mgr-top-header"></header>' +
       '<div id="mgr-employee-productivity-panel" class="mgr-panel card dash-productivity-panel hidden"></div>' +
       '<section class="dash-section" aria-label="Key metrics"><div class="dash-kpi-sections" id="mgr-kpi-sections"></div></section>' +
+      demoCalendarSection('demo-cal') +
       '<div class="dash-toolbar-row">' +
         '<section class="mgr-panel card dash-quick-actions-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="zap" class="h-5 w-5 text-brand"></i> Quick Actions</h3></div><div id="dash-quick-actions" class="dash-quick-actions"></div></section>' +
         '<section class="mgr-panel card dash-activity-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="activity" class="h-5 w-5 text-brand"></i> Recent Activity</h3><button type="button" class="mgr-link-btn" data-nav-page="activity">View all</button></div><div id="recent-activity-list" class="mgr-activity-feed dash-activity-feed"></div></section>' +
@@ -1145,6 +1179,89 @@ window.CAPages = (function () {
   }
 
   /* ─── Assignment + Team ─── */
+  function assignmentDashboardWidgets() {
+    return '<section class="assign-widgets-grid mb-6" id="assign-dashboard-widgets">' +
+      '<div class="card assign-widget assign-widget--heatmap" id="assign-heatmap-widget">' +
+        '<div class="assign-widget__head">' +
+          '<div><h3 class="text-card-heading">Assignment Heat Map</h3>' +
+          '<p class="assign-section__subtitle">Lead distribution by city for selected period.</p></div>' +
+        '</div>' +
+        '<div class="assign-heatmap-toolbar">' +
+          '<select class="input-field input-field-sm" id="assign-heatmap-period" aria-label="Period">' +
+            '<option value="today">Today</option>' +
+            '<option value="this_week">This Week</option>' +
+            '<option value="this_month">This Month</option>' +
+            '<option value="custom">Custom Date Range</option>' +
+          '</select>' +
+          '<select class="input-field input-field-sm" id="assign-heatmap-sort" aria-label="Sort">' +
+            '<option value="highest">Highest Assigned</option>' +
+            '<option value="lowest">Lowest Assigned</option>' +
+          '</select>' +
+          '<select class="input-field input-field-sm" id="assign-heatmap-employee" aria-label="Employee"><option value="">All Employees</option></select>' +
+          '<select class="input-field input-field-sm" id="assign-heatmap-state" aria-label="State"><option value="">All States</option></select>' +
+          '<select class="input-field input-field-sm" id="assign-heatmap-source" aria-label="Source"><option value="">All Sources</option></select>' +
+        '</div>' +
+        '<div class="assign-heatmap-custom hidden" id="assign-heatmap-custom-range">' +
+          '<input type="date" class="input-field input-field-sm" id="assign-heatmap-from" aria-label="From date" />' +
+          '<span class="assign-heatmap-custom__sep">to</span>' +
+          '<input type="date" class="input-field input-field-sm" id="assign-heatmap-to" aria-label="To date" />' +
+        '</div>' +
+        '<div class="assign-heatmap-summary" id="assign-heatmap-summary"></div>' +
+        '<div class="assign-heatmap-list" id="assign-heatmap-list">' +
+          '<p class="assign-widget__empty">Loading heat map…</p>' +
+        '</div>' +
+      '</div>' +
+    '</section>';
+  }
+
+  function assignmentYearlyTargetsSection() {
+    var year = new Date().getFullYear();
+    return '<section class="assign-section card mb-6 assign-daily-targets-card" id="assign-yearly-targets-section">' +
+      '<div class="assign-daily-targets-head">' +
+        '<div><h3 class="text-card-heading">Yearly Employee Targets</h3>' +
+        '<p class="assign-section__subtitle">Per-working-day targets for the full year. Sundays and company holidays are excluded automatically.</p></div>' +
+        '<div class="assign-daily-targets-actions" id="assign-yearly-targets-actions">' +
+          '<button type="button" class="btn-secondary btn-sm hidden" id="assign-holidays-open-btn"><i data-lucide="calendar-off" class="h-3.5 w-3.5"></i> Holidays</button>' +
+          '<button type="button" class="btn-primary btn-sm hidden" id="assign-yearly-target-open-modal"><i data-lucide="target" class="h-3.5 w-3.5"></i> Assign Yearly Target</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="assign-daily-targets-summary" id="assign-yearly-targets-summary"></div>' +
+      '<div class="assign-daily-targets-toolbar">' +
+        '<select class="input-field input-field-sm" id="assign-yearly-target-year" aria-label="Target year">' +
+          '<option value="' + year + '">' + year + '</option>' +
+          '<option value="' + (year + 1) + '">' + (year + 1) + '</option>' +
+          '<option value="' + (year - 1) + '">' + (year - 1) + '</option>' +
+        '</select>' +
+        '<select class="input-field input-field-sm" id="assign-yearly-target-employee-filter" aria-label="Employee"><option value="">All Employees</option></select>' +
+        '<select class="input-field input-field-sm" id="assign-yearly-target-status-filter" aria-label="Status">' +
+          '<option value="">All Status</option>' +
+          '<option value="not_started">Not Started</option>' +
+          '<option value="in_progress">In Progress</option>' +
+          '<option value="completed">Completed</option>' +
+          '<option value="exceeded">Exceeded</option>' +
+          '<option value="missed">Missed</option>' +
+          '<option value="no_target">No Target</option>' +
+        '</select>' +
+      '</div>' +
+      '<div class="crm-table-container scrollbar-thin assign-daily-targets-table-wrap">' +
+        '<table class="ca-table w-full assign-daily-targets-table assign-daily-targets-table--compact">' +
+          '<thead><tr>' +
+            '<th>Employee</th><th>Year</th><th>Working Days</th><th>Leads/day</th><th>Calls/day</th><th>Demos/day</th><th>Follow-ups/day</th>' +
+            '<th>YTD Progress</th><th>Status</th><th></th>' +
+          '</tr></thead>' +
+          '<tbody id="assign-yearly-targets-table"><tr><td colspan="10" class="text-center text-slate-500 py-4 text-sm">Loading…</td></tr></tbody>' +
+        '</table>' +
+      '</div>' +
+      '<details class="assign-daily-targets-history-toggle mt-3 hidden" id="assign-company-holidays-panel">' +
+        '<summary>Company Holidays (11 yearly holidays + Sundays auto-applied)</summary>' +
+        '<div class="mt-3" id="assign-company-holidays-list"></div>' +
+        '<div class="mt-3 hidden" id="assign-company-holidays-actions">' +
+          '<button type="button" class="btn-primary btn-sm" id="assign-company-holidays-save">Save Holidays</button>' +
+        '</div>' +
+      '</details>' +
+    '</section>';
+  }
+
   function assignmentRotationCard() {
     var rules = [
       {
@@ -1304,6 +1421,8 @@ window.CAPages = (function () {
         { icon: 'user-plus', label: 'Manual', value: '—', trend: 'Live', valueId: 'assign-kpi-manual' },
         { icon: 'target', label: 'Assigned Leads', value: '—', trend: 'Live', valueId: 'assign-kpi-target' },
       ]) +
+      assignmentDashboardWidgets() +
+      assignmentYearlyTargetsSection() +
       assignmentRotationCard() +
       activeAssignmentsSection() +
       '<section class="assign-section card mb-6" data-listing-toolbar="assignment_histories">' +
@@ -1404,6 +1523,26 @@ window.CAPages = (function () {
             '</tr></thead><tbody id="demo-history-table"></tbody></table>' +
           '</div>' +
         '</div>' +
+      '</div>' +
+      '<div class="card p-4 lg:p-5 mb-6 followup-history-card">' +
+        '<div class="followup-history-card__head">' +
+          '<div>' +
+            '<h3 class="text-card-heading">Activity History</h3>' +
+            '<p class="text-caption text-slate-500 mt-1">Calls, follow-ups, demos, communication, and outcomes for your leads</p>' +
+          '</div>' +
+          '<div class="flex items-center gap-2 shrink-0">' +
+            '<button type="button" class="btn-secondary btn-sm" id="followup-timeline-sort" data-sort="desc">' +
+              '<i data-lucide="arrow-down-narrow-wide" class="h-4 w-4"></i> Newest first' +
+            '</button>' +
+            '<button type="button" class="crm-toolbar-icon-btn" id="followup-timeline-refresh" title="Refresh activity history" aria-label="Refresh activity history">' +
+              '<i data-lucide="refresh-cw" class="h-4 w-4"></i>' +
+            '</button>' +
+          '</div>' +
+        '</div>' +
+        '<div id="followup-activity-timeline" class="followup-activity-timeline">' +
+          '<p class="text-caption text-slate-400 py-2">Loading activity history…</p>' +
+        '</div>' +
+        '<div class="crm-table-footer" id="followup-timeline-pagination"></div>' +
       '</div>';
   }
 
@@ -1554,7 +1693,7 @@ window.CAPages = (function () {
       panel('campaigns', true, '<div id="campaigns-grid-whatsapp" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>') +
       panel('logs', false,
         '<div class="card overflow-hidden crm-table-card"><div class="overflow-x-auto scrollbar-thin"><table class="ca-table w-full" id="wa-message-logs-table-el"><thead><tr>' +
-        '<th>Campaign</th><th>Lead</th><th>Mobile</th><th>Template</th><th>Status</th><th>Meta Message ID</th><th>Message</th><th>Error</th><th>Queued</th>' +
+        '<th>Date &amp; Time</th><th>Recipient</th><th>Lead</th><th>Template</th><th>Status</th><th>Meta Message ID</th><th>Delivered</th><th>Read</th><th>Failed</th><th>Actions</th>' +
         '</tr></thead><tbody id="wa-message-logs-table"></tbody></table></div><div class="crm-table-footer" id="wa-logs-pagination-slot"></div></div>') +
       '<div class="hidden card p-0 border border-brand/20 overflow-hidden flex flex-col mt-4" id="whatsapp-settings-panel">' +
         '<div class="p-4 pb-0 space-y-4">' +
@@ -1563,6 +1702,15 @@ window.CAPages = (function () {
             '<button type="button" class="btn-secondary btn-sm" id="whatsapp-settings-close-btn" aria-label="Close"><i data-lucide="x" class="h-4 w-4"></i></button>' +
           '</div>' +
           '<p class="text-caption text-slate-400" id="whatsapp-settings-status-summary"></p>' +
+          '<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3" id="whatsapp-connection-dashboard">' +
+            '<div class="rounded-lg border border-slate-200 p-3"><p class="text-caption text-slate-500">Connection</p><p class="text-sm font-medium" id="whatsapp-dash-connection"><span class="badge-neutral">—</span></p></div>' +
+            '<div class="rounded-lg border border-slate-200 p-3"><p class="text-caption text-slate-500">Webhook</p><p class="text-sm font-medium" id="whatsapp-dash-webhook"><span class="badge-neutral">—</span></p></div>' +
+            '<div class="rounded-lg border border-slate-200 p-3"><p class="text-caption text-slate-500">API</p><p class="text-sm font-medium" id="whatsapp-dash-api"><span class="badge-neutral">—</span></p></div>' +
+            '<div class="rounded-lg border border-slate-200 p-3"><p class="text-caption text-slate-500">Token</p><p class="text-sm font-medium" id="whatsapp-dash-token"><span class="badge-neutral">—</span></p></div>' +
+            '<div class="rounded-lg border border-slate-200 p-3"><p class="text-caption text-slate-500">Approved Templates</p><p class="text-sm font-medium" id="whatsapp-dash-templates">—</p></div>' +
+            '<div class="rounded-lg border border-slate-200 p-3"><p class="text-caption text-slate-500">Last Sync</p><p class="text-sm font-medium" id="whatsapp-dash-last-sync">—</p></div>' +
+            '<div class="rounded-lg border border-slate-200 p-3 lg:col-span-3"><p class="text-caption text-slate-500">Callback URL</p><p class="text-sm font-mono break-all" id="whatsapp-dash-callback">—</p></div>' +
+          '</div>' +
           '<div id="whatsapp-settings-error-box" class="hidden rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"></div>' +
           '<div class="grid lg:grid-cols-2 gap-4">' +
             '<div><label class="text-caption font-medium text-slate-600 mb-1.5 block">Phone Number ID</label><input id="whatsapp-settings-phone-number-id" class="input-field" placeholder="From Meta Business Manager" /></div>' +
@@ -2090,6 +2238,18 @@ window.CAPages = (function () {
     );
   }
 
+  function demoProvidersSettingsPage() {
+    return settingsHubLayout('demo-providers',
+      '<div id="settings-demo-providers-page" class="settings-demo-providers-page">' +
+        settingsSubPageHero(
+          'Demo Providers / Availability',
+          'Configure demo provider working hours, slot duration, breaks, leave dates, and meeting links.'
+        ) +
+        '<div class="card p-5"><div id="demo-providers-settings-list"><p class="text-caption text-slate-400">Loading providers…</p></div></div>' +
+      '</div>'
+    );
+  }
+
   function googleApiSettingsPage() {
     var content =
       '<div id="settings-google-api-page" class="settings-google-api-page">' +
@@ -2170,6 +2330,11 @@ window.CAPages = (function () {
           '<label class="flex items-center justify-between p-4 card"><span class="text-body font-medium">Hot Lead Priority</span><label class="ca-toggle"><input type="checkbox" id="settings-hot-lead-priority" checked><span class="ca-toggle-slider"></span></label></label>' +
           '<label class="flex items-center justify-between p-4 card"><span class="text-body font-medium">Workload Balancing</span><label class="ca-toggle"><input type="checkbox" id="settings-workload-balancing" checked><span class="ca-toggle-slider"></span></label></label>' +
           '<label class="flex items-center justify-between p-4 card"><span class="text-body font-medium">City-based Routing</span><label class="ca-toggle"><input type="checkbox" id="settings-city-routing" checked><span class="ca-toggle-slider"></span></label></label>' +
+          '<div class="card p-4" id="settings-daily-capacity-wrap">' +
+            '<label class="text-caption font-medium text-slate-600 mb-1.5 block" for="settings-daily-max-capacity">Maximum Daily Assignment Capacity</label>' +
+            '<p class="text-caption text-slate-500 mb-3">Maximum leads each employee can receive per day before automatic assignment stops.</p>' +
+            '<input type="number" min="1" max="500" step="1" id="settings-daily-max-capacity" class="input-field" value="50" />' +
+          '</div>' +
         '</div>') +
       panel('filters', false,
         '<p class="text-caption text-slate-500 mb-4">Default filter preferences for new users</p>' +
@@ -2239,6 +2404,15 @@ window.CAPages = (function () {
                 '<button type="button" class="btn-secondary btn-sm" id="whatsapp-settings-close-btn" aria-label="Close WhatsApp settings"><i data-lucide="x" class="h-4 w-4"></i></button>' +
               '</div>' +
               '<p class="text-caption text-slate-500">Meta WhatsApp Cloud API integration. Messages send only in Live mode after a successful connection test.</p>' +
+              '<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3" id="whatsapp-connection-dashboard">' +
+                '<div class="rounded-lg border border-slate-200 p-3"><p class="text-caption text-slate-500">Connection</p><p class="text-sm font-medium" id="whatsapp-dash-connection"><span class="badge-neutral">—</span></p></div>' +
+                '<div class="rounded-lg border border-slate-200 p-3"><p class="text-caption text-slate-500">Webhook</p><p class="text-sm font-medium" id="whatsapp-dash-webhook"><span class="badge-neutral">—</span></p></div>' +
+                '<div class="rounded-lg border border-slate-200 p-3"><p class="text-caption text-slate-500">API</p><p class="text-sm font-medium" id="whatsapp-dash-api"><span class="badge-neutral">—</span></p></div>' +
+                '<div class="rounded-lg border border-slate-200 p-3"><p class="text-caption text-slate-500">Token</p><p class="text-sm font-medium" id="whatsapp-dash-token"><span class="badge-neutral">—</span></p></div>' +
+                '<div class="rounded-lg border border-slate-200 p-3"><p class="text-caption text-slate-500">Approved Templates</p><p class="text-sm font-medium" id="whatsapp-dash-templates">—</p></div>' +
+                '<div class="rounded-lg border border-slate-200 p-3"><p class="text-caption text-slate-500">Last Sync</p><p class="text-sm font-medium" id="whatsapp-dash-last-sync">—</p></div>' +
+                '<div class="rounded-lg border border-slate-200 p-3 lg:col-span-3"><p class="text-caption text-slate-500">Callback URL</p><p class="text-sm font-mono break-all" id="whatsapp-dash-callback">—</p></div>' +
+              '</div>' +
               '<p class="text-caption text-slate-400" id="whatsapp-settings-status-summary"></p>' +
               '<div id="whatsapp-settings-error-box" class="hidden rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert"></div>' +
               '<div class="grid lg:grid-cols-2 gap-4">' +
@@ -2363,6 +2537,7 @@ window.CAPages = (function () {
     'settings-email-templates': { title: 'Settings — Email Templates', breadcrumb: 'Settings / Email Templates', er: 'Configuration', html: emailTemplatesPage() },
     'settings-whatsapp-templates': { title: 'Settings — WhatsApp Templates', breadcrumb: 'Settings / WhatsApp Templates', er: 'Configuration', html: whatsAppTemplatesPage() },
     'settings-google-api': { title: 'Settings — Google API Settings', breadcrumb: 'Settings / Google API Settings', er: 'Configuration', html: googleApiSettingsPage() },
+    'settings-demo-providers': { title: 'Settings — Demo Providers', breadcrumb: 'Settings / Demo Providers', er: 'Configuration', html: demoProvidersSettingsPage() },
     settings: { title: 'Settings', breadcrumb: 'Settings', er: 'Configuration', html: settingsPage() },
   };
 

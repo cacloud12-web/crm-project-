@@ -179,9 +179,81 @@ class CrmCacheService
         $this->forgetLeadSegmentCounts();
         $this->forgetPipelineStageCounts();
         $this->forgetEmployeeRankings();
+        $this->forgetAssignmentWidgets();
 
         foreach (array_unique(array_filter(array_map('intval', $employeeIds))) as $employeeId) {
             $this->forgetDashboardMetrics('employee:'.$employeeId);
+            $this->forgetEmployeeDashboard($employeeId);
+        }
+    }
+
+    public function rememberAssignmentCapacity(string $scopeKey, Closure $callback): mixed
+    {
+        $ttl = (int) config('crm_cache.dashboard_ttl', 60);
+        $version = $this->dashboardCacheVersion();
+
+        return Cache::remember(
+            'crm:assignment:capacity:v'.$version.':'.$scopeKey,
+            $ttl,
+            fn () => self::normalizeForCache($callback()),
+        );
+    }
+
+    public function rememberAssignmentHeatMap(string $cacheKey, Closure $callback): mixed
+    {
+        $ttl = (int) config('crm_cache.dashboard_ttl', 60);
+        $version = $this->dashboardCacheVersion();
+
+        return Cache::remember(
+            'crm:assignment:heatmap:v'.$version.':'.$cacheKey,
+            $ttl,
+            fn () => self::normalizeForCache($callback()),
+        );
+    }
+
+    public function forgetAssignmentWidgets(): void
+    {
+        $this->bumpDashboardCacheVersion();
+    }
+
+    public function rememberDailyEmployeeTargets(string $scopeKey, Closure $callback): mixed
+    {
+        $ttl = (int) config('crm_cache.dashboard_ttl', 60);
+        $version = $this->dashboardCacheVersion();
+
+        return Cache::remember(
+            'crm:assignment:daily-targets:v'.$version.':'.$scopeKey,
+            $ttl,
+            fn () => self::normalizeForCache($callback()),
+        );
+    }
+
+    public function forgetDailyEmployeeTargets(?int $employeeId = null): void
+    {
+        $this->forgetAssignmentWidgets();
+
+        if ($employeeId) {
+            $this->forgetEmployeeDashboard($employeeId);
+        }
+    }
+
+    public function rememberYearlyEmployeeTargets(string $scopeKey, Closure $callback): mixed
+    {
+        $ttl = (int) config('crm_cache.dashboard_ttl', 60);
+        $version = $this->dashboardCacheVersion();
+
+        return Cache::remember(
+            'crm:assignment:yearly-targets:v'.$version.':'.$scopeKey,
+            $ttl,
+            fn () => self::normalizeForCache($callback()),
+        );
+    }
+
+    public function forgetYearlyEmployeeTargets(?int $employeeId = null): void
+    {
+        $this->forgetAssignmentWidgets();
+
+        if ($employeeId) {
             $this->forgetEmployeeDashboard($employeeId);
         }
     }

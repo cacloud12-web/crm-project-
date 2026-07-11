@@ -141,39 +141,7 @@ class WhatsAppDispatchService
      */
     private function extractErrorMessage(array $providerResponse, int $httpStatus): string
     {
-        if (isset($providerResponse['error']) && is_array($providerResponse['error'])) {
-            $error = $providerResponse['error'];
-            $message = (string) ($error['message'] ?? 'Meta WhatsApp Cloud API returned an error.');
-            $code = $error['code'] ?? null;
-
-            if ($httpStatus === 429 || (int) $code === 4 || (int) $code === 80007) {
-                return 'Rate limit exceeded. '.$message;
-            }
-
-            if ((int) $code === 190) {
-                return 'Invalid access token. '.$message;
-            }
-
-            if ((int) $code === 100) {
-                return 'Invalid request or phone number ID. '.$message;
-            }
-
-            if ((int) $code === 132001) {
-                return 'Template must first be approved in Meta WhatsApp Manager. '.$message;
-            }
-
-            if ((int) $code === 131008) {
-                return 'A template variable was empty. Assign staff to the lead or ensure all fields are filled. '.$message;
-            }
-
-            return $message.($code ? " (code: {$code})" : '');
-        }
-
-        if ($httpStatus === 429) {
-            return 'Rate limit exceeded. Please retry later.';
-        }
-
-        return (string) ($providerResponse['message'] ?? $providerResponse['raw'] ?? 'Meta WhatsApp Cloud API returned an error.');
+        return MetaWhatsAppErrorMapper::map($providerResponse, $httpStatus);
     }
 
     /**

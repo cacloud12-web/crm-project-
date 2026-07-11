@@ -2,6 +2,7 @@
 
 namespace App\Services\WhatsApp;
 
+use App\Models\MessageTemplate;
 use App\Models\User;
 use App\Models\WhatsAppSetting;
 use App\Services\Activity\ActivityLogService;
@@ -33,6 +34,12 @@ class WhatsAppSettingsService
     public function toPublicArray(?WhatsAppSetting $settings = null): array
     {
         $settings ??= $this->current();
+        $integrationStatus = $this->integrationStatus($settings);
+        $approvedTemplates = MessageTemplate::query()
+            ->where('channel', MessageTemplate::CHANNEL_WHATSAPP)
+            ->where('is_active', true)
+            ->where('status', MessageTemplate::STATUS_APPROVED)
+            ->count();
 
         return [
             'provider_name' => $settings->provider_name,
@@ -43,8 +50,22 @@ class WhatsAppSettingsService
             'is_active' => (bool) $settings->is_active,
             'has_access_token' => $settings->hasAccessToken(),
             'has_webhook_verify_token' => $settings->hasWebhookVerifyToken(),
+            'has_app_secret' => filled(config('whatsapp_cloud.env_defaults.app_secret')),
             'is_configured' => $settings->isConfigured(),
-            'integration_status' => $this->integrationStatus($settings),
+            'integration_status' => $integrationStatus,
+            'connection_status' => $this->connectionStatusLabel($integrationStatus),
+            'connection_connected' => in_array($integrationStatus, [
+                WhatsAppSetting::INTEGRATION_CONNECTED,
+                WhatsAppSetting::INTEGRATION_INTEGRATED,
+            ], true),
+            'webhook_status' => $settings->hasWebhookVerifyToken() ? 'configured' : 'not_configured',
+            'api_status' => $settings->isConfigured() && filled($settings->api_version) ? 'configured' : 'not_configured',
+            'token_status' => $settings->hasAccessToken()
+                ? ($settings->last_test_status === 'failed' ? 'invalid' : 'configured')
+                : 'missing',
+            'callback_url' => url((string) config('whatsapp_cloud.webhook_callback_path', '/webhooks/whatsapp')),
+            'approved_templates_count' => $approvedTemplates,
+            'last_sync_at' => $this->lastSyncAt($settings)?->toIso8601String(),
             'last_tested_at' => $settings->last_tested_at?->toIso8601String(),
             'last_test_status' => $settings->last_test_status,
             'last_test_message' => $this->lastTestMessage($settings),
@@ -53,6 +74,32 @@ class WhatsAppSettingsService
             'can_edit' => $this->canManageSettings(auth()->user()),
             'messages_endpoint_pattern' => config('whatsapp_cloud.messages_endpoint_pattern'),
         ];
+    }
+
+    private function connectionStatusLabel(string $integrationStatus): string
+    {
+        return match ($integrationStatus) {
+            WhatsAppSetting::INTEGRATION_INTEGRATED => 'Connected',
+            WhatsAppSetting::INTEGRATION_CONNECTED => 'Connected',
+            WhatsAppSetting::INTEGRATION_FAILED => 'Disconnected',
+            WhatsAppSetting::INTEGRATION_DISABLED => 'Disconnected',
+            default => 'Disconnected',
+        };
+    }
+
+    private function lastSyncAt(?WhatsAppSetting $settings = null): ?\Illuminate\Support\Carbon
+    {
+        $settings ??= $this->current();
+        $candidates = array_filter([
+            $settings->last_successful_send_at,
+            $settings->last_tested_at,
+        ]);
+
+        if ($candidates === []) {
+            return null;
+        }
+
+        return collect($candidates)->sortDesc()->first();
     }
 
     public function integrationStatus(?WhatsAppSetting $settings = null): string

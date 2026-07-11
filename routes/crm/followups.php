@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Route;
 Route::middleware(['auth', 'rbac'])->group(function () {
     Route::post('follow-ups/call-outcome', [FollowUpAutomationController::class, 'recordCallOutcome'])
         ->middleware('throttle:follow-up');
+    Route::get('follow-ups/activity-timeline', [FollowUpAutomationController::class, 'activityTimeline']);
     Route::get('follow-ups/manager-metrics', [FollowUpAutomationController::class, 'managerMetrics']);
     Route::get('follow-ups/sequence', [FollowUpAutomationController::class, 'sequenceShow']);
     Route::put('follow-ups/sequence', [FollowUpAutomationController::class, 'sequenceUpdate']);

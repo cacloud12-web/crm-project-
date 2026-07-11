@@ -127,12 +127,14 @@ class FollowUpService
     private function forgetFollowUpCaches(FollowUp $followUp): void
     {
         if ($followUp->employee_id) {
-            $this->cacheService->forgetEmployeeDashboard((int) $followUp->employee_id);
+            $this->cacheService->forgetDailyEmployeeTargets((int) $followUp->employee_id);
+            $this->cacheService->forgetYearlyEmployeeTargets((int) $followUp->employee_id);
         }
 
         $actorEmployeeId = $this->employeeDataScope->resolveEmployeeId(auth()->user());
         if ($actorEmployeeId && (int) $actorEmployeeId !== (int) $followUp->employee_id) {
-            $this->cacheService->forgetEmployeeDashboard((int) $actorEmployeeId);
+            $this->cacheService->forgetDailyEmployeeTargets((int) $actorEmployeeId);
+            $this->cacheService->forgetYearlyEmployeeTargets((int) $actorEmployeeId);
         }
 
         $this->cacheService->forgetDashboardMetrics();
@@ -300,7 +302,7 @@ class FollowUpService
 
     public function historyForLead(int $caId): Collection
     {
-        return $this->historyService->timelineForLead($caId);
+        return app(LeadActivityTimelineService::class)->forLead($caId);
     }
 
     private function syncMasterStatusFromFollowUp(FollowUp $followUp): void

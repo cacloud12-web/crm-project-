@@ -14,6 +14,21 @@ Route::middleware(['auth', 'rbac'])->group(function () {
     Route::get('lookups/cities', [LocationLookupController::class, 'cities']);
     Route::get('lookups/executives', [EmployeeLookupController::class, 'executives']);
 
+    $registerMasterLifecycle = function (string $prefix, string $controller, string $parameter): void {
+        Route::get("{$prefix}/{{$parameter}}/dependencies", [$controller, 'dependencies'])
+            ->middleware('spa.browser:ca-master');
+        Route::patch("{$prefix}/{{$parameter}}/deactivate", [$controller, 'deactivate'])
+            ->middleware('spa.browser:ca-master');
+        Route::patch("{$prefix}/{{$parameter}}/reactivate", [$controller, 'reactivate'])
+            ->middleware('spa.browser:ca-master');
+    };
+
+    $registerMasterLifecycle('states', StateController::class, 'state');
+    $registerMasterLifecycle('cities', CityController::class, 'city');
+    $registerMasterLifecycle('source-leads', SourceLeadController::class, 'source_lead');
+    $registerMasterLifecycle('team-sizes', TeamSizeMasterController::class, 'team_size');
+    $registerMasterLifecycle('role-masters', RoleMasterController::class, 'role_master');
+
     Route::apiResource('states', StateController::class)
         ->middleware('spa.browser:ca-master');
     Route::apiResource('cities', CityController::class)

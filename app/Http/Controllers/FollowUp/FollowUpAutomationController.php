@@ -5,14 +5,15 @@ namespace App\Http\Controllers\FollowUp;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\FollowUp\RecordCallOutcomeRequest;
 use App\Http\Requests\FollowUp\UpdateFollowUpSequenceRequest;
-use App\Http\Resources\FollowUpHistoryResource;
 use App\Http\Resources\FollowUpResource;
 use App\Http\Resources\FollowUpSequenceResource;
+use App\Http\Resources\LeadActivityTimelineResource;
 use App\Http\Resources\TaskResource;
 use App\Services\FollowUp\FollowUpAutomationService;
 use App\Services\FollowUp\FollowUpHistoryService;
 use App\Services\FollowUp\FollowUpSequenceService;
 use App\Services\FollowUp\FollowUpService;
+use App\Services\FollowUp\LeadActivityTimelineService;
 use App\Services\FollowUp\ManagerFollowUpDashboardService;
 use App\Services\FollowUp\TaskService;
 use App\Services\Rbac\EmployeeDataScopeService;
@@ -33,6 +34,7 @@ class FollowUpAutomationController extends Controller
         private readonly ManagerFollowUpDashboardService $managerDashboardService,
         private readonly EmployeeDataScopeService $employeeDataScope,
         private readonly LeadWorkflowService $workflowService,
+        private readonly LeadActivityTimelineService $activityTimelineService,
     ) {}
 
     public function recordCallOutcome(RecordCallOutcomeRequest $request): JsonResponse
@@ -94,26 +96,38 @@ class FollowUpAutomationController extends Controller
         }
     }
 
-    public function leadHistory(int $caId): JsonResponse
+    public function leadHistory(int $caId, Request $request): JsonResponse
     {
         $this->employeeDataScope->ensureCanAccessCaMaster($caId);
-        $items = $this->followUpService->historyForLead($caId);
+        $sort = $request->query('sort', 'desc');
+        $items = $this->activityTimelineService->forLead($caId, (string) $sort);
 
         return ApiResponse::success(
-            FollowUpHistoryResource::collection($items),
+            LeadActivityTimelineResource::collection($items),
             'Follow-up history loaded',
         );
     }
 
-    public function followUpHistory(int $followupId): JsonResponse
+    public function followUpHistory(int $followupId, Request $request): JsonResponse
     {
         $this->employeeDataScope->ensureCanAccessFollowUp($followupId);
-        $items = $this->historyService->timelineForFollowUp($followupId);
+        $sort = $request->query('sort', 'desc');
+        $items = $this->activityTimelineService->forFollowUp($followupId, (string) $sort);
 
         return ApiResponse::success(
-            FollowUpHistoryResource::collection($items),
+            LeadActivityTimelineResource::collection($items),
             'Follow-up history loaded',
         );
+    }
+
+    public function activityTimeline(Request $request): JsonResponse
+    {
+        $result = $this->activityTimelineService->feed(auth()->user(), $request->query());
+
+        return ApiResponse::success([
+            'items' => LeadActivityTimelineResource::collection($result['items']),
+            'pagination' => $result['pagination'],
+        ], 'Activity timeline loaded');
     }
 
     public function tasks(Request $request): JsonResponse

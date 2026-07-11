@@ -104,19 +104,28 @@ class WhatsAppTemplateManagementService
     {
         $this->ensureCanManage($user);
         $templateName = $this->uniqueTemplateName($data['name']);
+        $publishStatus = $data['publish_status'] ?? 'draft';
+        $metaApiName = filled($data['meta_api_name'] ?? null)
+            ? (string) $data['meta_api_name']
+            : null;
+
+        // Approved Meta templates mapped by name should be dispatchable immediately.
+        $isMetaApproved = filled($metaApiName) && $publishStatus === 'active';
 
         return MessageTemplate::query()->create([
             'channel' => MessageTemplate::CHANNEL_WHATSAPP,
-            'template_name' => $templateName,
+            'template_name' => $metaApiName ?: $templateName,
+            'meta_api_name' => $metaApiName,
+            'meta_status' => $isMetaApproved ? 'APPROVED' : null,
             'display_name' => $data['name'],
             'category' => $data['category'],
             'header' => $data['header'] ?? null,
             'body_template' => $data['body'],
             'footer' => $data['footer'] ?? null,
             'language_code' => $data['language_code'] ?? 'en',
-            'status' => MessageTemplate::STATUS_PENDING,
-            'publish_status' => $data['publish_status'] ?? 'draft',
-            'is_active' => ($data['publish_status'] ?? 'draft') === 'active',
+            'status' => $isMetaApproved ? MessageTemplate::STATUS_APPROVED : MessageTemplate::STATUS_PENDING,
+            'publish_status' => $publishStatus,
+            'is_active' => $publishStatus === 'active',
             'variable_map' => $this->extractVariables($data['body'] ?? '', $data['header'] ?? '', $data['footer'] ?? ''),
             'created_by' => $user?->id,
             'updated_by' => $user?->id,
@@ -130,17 +139,39 @@ class WhatsAppTemplateManagementService
     {
         $this->ensureCanManage($user);
 
+        $publishStatus = $data['publish_status'] ?? $template->publish_status;
+        $metaApiName = array_key_exists('meta_api_name', $data)
+            ? ($data['meta_api_name'] !== '' && $data['meta_api_name'] !== null ? (string) $data['meta_api_name'] : null)
+            : $template->meta_api_name;
+
+        $markApproved = (bool) ($data['mark_meta_approved'] ?? false)
+            || (filled($metaApiName) && $publishStatus === 'active' && array_key_exists('meta_api_name', $data));
+
         $template->fill([
             'display_name' => $data['name'] ?? $template->display_name,
             'category' => $data['category'] ?? $template->category,
             'header' => array_key_exists('header', $data) ? $data['header'] : $template->header,
             'body_template' => $data['body'] ?? $template->body_template,
             'footer' => array_key_exists('footer', $data) ? $data['footer'] : $template->footer,
-            'publish_status' => $data['publish_status'] ?? $template->publish_status,
-            'is_active' => ($data['publish_status'] ?? $template->publish_status) === 'active',
-            'meta_api_name' => array_key_exists('meta_api_name', $data) ? $data['meta_api_name'] : $template->meta_api_name,
+            'language_code' => array_key_exists('language_code', $data) && filled($data['language_code'])
+                ? (string) $data['language_code']
+                : $template->language_code,
+            'publish_status' => $publishStatus,
+            'is_active' => $publishStatus === 'active',
+            'meta_api_name' => $metaApiName,
             'updated_by' => $user?->id,
         ]);
+
+        if ($markApproved && filled($metaApiName)) {
+            $template->status = MessageTemplate::STATUS_APPROVED;
+            $template->meta_status = 'APPROVED';
+            $template->meta_status_updated_at = now();
+            $template->meta_rejection_reason = null;
+            if (filled($data['meta_template_id'] ?? null)) {
+                $template->meta_template_id = (string) $data['meta_template_id'];
+            }
+        }
+
         $template->variable_map = $this->extractVariables(
             (string) $template->body_template,
             (string) ($template->header ?? ''),

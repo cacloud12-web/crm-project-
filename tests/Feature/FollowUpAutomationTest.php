@@ -8,6 +8,7 @@ use App\Models\Employee;
 use App\Models\FollowUp;
 use App\Models\FollowUpHistory;
 use App\Models\FollowUpReminder;
+use App\Models\LeadAssignmentEngine;
 use App\Models\State;
 use App\Models\Task;
 use App\Models\User;
@@ -281,6 +282,14 @@ class FollowUpAutomationTest extends TestCase
         $lead = $this->createLead();
         $employee = $this->createEmployee();
 
+        LeadAssignmentEngine::query()->create([
+            'ca_id' => $lead->ca_id,
+            'employee_id' => $employee->employee_id,
+            'assigned_date' => now()->toDateString(),
+            'assignment_type' => 'Manual',
+            'status' => 'Active',
+        ]);
+
         $this->postJson('/follow-ups', [
             'ca_id' => $lead->ca_id,
             'employee_id' => $employee->employee_id,
@@ -288,8 +297,27 @@ class FollowUpAutomationTest extends TestCase
             'scheduled_date' => now()->addDay()->toDateTimeString(),
         ])->assertCreated();
 
-        $this->getJson('/ca-masters/'.$lead->ca_id.'/follow-up-history')
+        $this->postJson('/workflow/calls', [
+            'ca_id' => $lead->ca_id,
+            'employee_id' => $employee->employee_id,
+            'call_status' => 'Connected',
+            'call_note' => 'Timeline sync check',
+        ])->assertOk();
+
+        $timeline = $this->getJson('/ca-masters/'.$lead->ca_id.'/follow-up-history')
             ->assertOk()
-            ->assertJsonStructure(['success', 'data']);
+            ->assertJsonStructure(['success', 'data'])
+            ->json('data');
+
+        $this->assertContains('Call Logged', array_column($timeline, 'activity_type'));
+        $this->assertContains('Follow-up Created', array_column($timeline, 'activity_type'));
+        $this->assertCount(1, array_filter($timeline, fn ($row) => ($row['activity_type'] ?? '') === 'Call Logged'));
+
+        $feed = $this->getJson('/follow-ups/activity-timeline?ca_id='.$lead->ca_id)
+            ->assertOk()
+            ->json('data.items');
+
+        $this->assertNotEmpty($feed);
+        $this->assertContains('Call Logged', array_column($feed, 'activity_type'));
     }
 }

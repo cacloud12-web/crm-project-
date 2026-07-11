@@ -19,6 +19,7 @@ use App\Services\FollowUp\FollowUpAutomationService;
 use App\Services\FollowUp\FollowUpHistoryService;
 use App\Services\Leads\CaMasterStatusSyncService;
 use App\Services\Leads\LeadQualityHistoryService;
+use App\Services\Demo\DemoAvailabilityService;
 use App\Services\Rbac\EmployeeDataScopeService;
 use App\Services\Rbac\RbacService;
 use Illuminate\Support\Carbon;
@@ -179,6 +180,26 @@ class LeadWorkflowService
         $meetingLink = trim((string) ($data['meeting_link'] ?? ''));
 
         $lead = CaMaster::query()->findOrFail($caId);
+        $teamSize = isset($data['team_size']) ? (int) $data['team_size'] : (int) ($lead->team_size ?? 0);
+
+        if (empty($data['skip_conflict_check'])) {
+            $availability = app(DemoAvailabilityService::class);
+            $provider = $availability->resolveProvider(
+                isset($data['demo_provider_id']) ? (int) $data['demo_provider_id'] : null,
+                $teamSize > 0 ? $teamSize : null,
+                $data['demo_provider_name'] ?? null,
+            );
+            if ($provider) {
+                $check = $availability->checkConflict(array_merge($data, [
+                    'demo_at' => $demoAt->toDateTimeString(),
+                    'team_size' => $teamSize > 0 ? $teamSize : null,
+                    'demo_provider_id' => $provider->id,
+                ]));
+                if (! $check['available']) {
+                    throw new InvalidArgumentException($check['conflict']['message'] ?? 'Demo slot is not available.');
+                }
+            }
+        }
 
         $followUp = $this->createFollowUp([
             'ca_id' => $caId,
@@ -865,7 +886,8 @@ class LeadWorkflowService
     private function forgetCaches(?int $employeeId): void
     {
         if ($employeeId) {
-            $this->cacheService->forgetEmployeeDashboard($employeeId);
+            $this->cacheService->forgetDailyEmployeeTargets($employeeId);
+            $this->cacheService->forgetYearlyEmployeeTargets($employeeId);
         }
         $this->cacheService->forgetDashboardMetrics();
         $this->cacheService->forgetLeadSegmentCounts();

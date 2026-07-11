@@ -247,7 +247,23 @@ window.CA_CRM = (function () {
     'DND Add': { icon: 'ban', color: 'bg-orange-500' },
     'DND Remove': { icon: 'shield-off', color: 'bg-amber-500' },
     'Campaign Skip': { icon: 'shield-alert', color: 'bg-rose-500' },
+    'Call Logged': { icon: 'phone', color: 'bg-brand' },
+    'Call Status': { icon: 'phone', color: 'bg-brand' },
+    'Call Created': { icon: 'phone', color: 'bg-brand' },
+    'Follow-up Created': { icon: 'calendar-plus', color: 'bg-blue-500' },
+    'Follow-up Completed': { icon: 'check-circle', color: 'bg-emerald-500' },
+    'Follow-up Rescheduled': { icon: 'calendar-clock', color: 'bg-amber-500' },
+    'Demo Completed': { icon: 'video', color: 'bg-violet-500' },
+    'Email Sent': { icon: 'mail', color: 'bg-sky-500' },
+    'SMS Sent': { icon: 'smartphone', color: 'bg-indigo-500' },
+    'WhatsApp Sent': { icon: 'message-circle', color: 'bg-emerald-500' },
+    'Purchased': { icon: 'shopping-bag', color: 'bg-emerald-600' },
+    'Not Interested': { icon: 'x-circle', color: 'bg-rose-500' },
+    'Status Changed': { icon: 'git-branch', color: 'bg-slate-500' },
   };
+
+  var followupActivitySort = 'desc';
+  var followupActivityPage = 1;
 
   function csrfToken() {
     return document.querySelector('meta[name="csrf-token"]')?.content || '';
@@ -420,6 +436,9 @@ window.CA_CRM = (function () {
           }
           if (response.status === 409 && body.errors && body.errors.duplicate) {
             err.duplicate = body.errors.duplicate;
+          }
+          if (response.status === 409 && body.data) {
+            err.data = body.data;
           }
           throw err;
         }
@@ -1793,20 +1812,7 @@ window.CA_CRM = (function () {
         return;
       }
       if (action === 'delete') {
-        var delCfg = masterEntityConfig(entity);
-        if (!delCfg || !window.confirm('Delete this ' + delCfg.title.toLowerCase() + '?')) return;
-        apiFetch(delCfg.endpoint + '/' + encodeURIComponent(id), { method: 'DELETE' })
-          .then(function () {
-            toast(delCfg.title + ' deleted', 'success');
-            refreshMasterDataCaches();
-            if (window.CA_LISTING_SEARCH) {
-              reloadListing('states');
-              reloadListing('cities');
-            }
-          })
-          .catch(function (err) {
-            toast(err.message || 'Unable to delete record', 'error');
-          });
+        beginMasterDeleteFlow(entity, id);
       }
     });
 
@@ -2868,10 +2874,14 @@ window.CA_CRM = (function () {
     }).join('');
   }
 
+  function activeMasterRecords(items) {
+    return (items || []).filter(function (row) { return row.is_active !== false; });
+  }
+
   function populateMasterDropdowns() {
     if (!masterDataLoaded) return;
 
-    var sources = window.realSourceLeads || [];
+    var sources = activeMasterRecords(window.realSourceLeads || []);
 
     document.querySelectorAll('select[name="source_id"]').forEach(function (sel) {
       var current = sel.value;
@@ -2885,6 +2895,244 @@ window.CA_CRM = (function () {
     if (window.CA_STATE_CITY) {
       window.CA_STATE_CITY.initAllPairs();
     }
+  }
+
+  function masterStatusBadge(record) {
+    if (record && record.is_system) {
+      return '<span class="master-status-badge master-status-badge--system" title="System-protected record">System</span>';
+    }
+    if (record && record.is_active === false) {
+      return '<span class="master-status-badge master-status-badge--inactive">Inactive</span>';
+    }
+    return '';
+  }
+
+  function masterRecordDisplayName(entity, record) {
+    if (!record) return 'Record';
+    if (entity === 'state') return record.state_name;
+    if (entity === 'city') return record.city_name;
+    if (entity === 'source') return record.source_name;
+    if (entity === 'team') return record.team_size_label;
+    if (entity === 'role') return record.role_name;
+    return 'Record';
+  }
+
+  function setMasterDeleteGuardLoading(on) {
+    var loading = document.getElementById('master-delete-guard-loading');
+    var body = document.getElementById('master-delete-guard-body');
+    if (loading) loading.classList.toggle('hidden', !on);
+    if (body) body.classList.toggle('hidden', !!on);
+    ['master-delete-guard-view-btn', 'master-delete-guard-reactivate-btn', 'master-delete-guard-deactivate-btn', 'master-delete-guard-confirm-delete-btn'].forEach(function (id) {
+      var btn = document.getElementById(id);
+      if (btn) btn.disabled = !!on;
+    });
+  }
+
+  function resetMasterDeleteGuardModal() {
+    window._masterDeleteGuardState = null;
+    var viewUsage = document.getElementById('master-delete-guard-view-usage');
+    if (viewUsage) viewUsage.classList.add('hidden');
+    ['master-delete-guard-view-btn', 'master-delete-guard-reactivate-btn', 'master-delete-guard-deactivate-btn', 'master-delete-guard-confirm-delete-btn'].forEach(function (id) {
+      var btn = document.getElementById(id);
+      if (btn) btn.classList.add('hidden');
+    });
+  }
+
+  function renderMasterDeleteGuardUsageList(dependencies, interactive) {
+    return (dependencies || []).map(function (dep) {
+      if (interactive && dep.filter_key && dep.filter_value != null) {
+        return '<button type="button" class="master-usage-nav-btn" data-master-usage-filter="' + escapeHtml(dep.filter_key) + '" data-master-usage-value="' + escapeHtml(String(dep.filter_value)) + '">' +
+          '<span>' + escapeHtml(dep.module) + '</span><strong>' + dep.count + '</strong></button>';
+      }
+      return '<li><span>' + escapeHtml(dep.module) + '</span><strong>' + dep.count + '</strong></li>';
+    }).join('');
+  }
+
+  function openMasterDeleteGuardModal(entity, id, analysis) {
+    var cfg = masterEntityConfig(entity);
+    var modal = document.getElementById('modal-master-delete-guard');
+    if (!cfg || !modal) return;
+
+    var record = findMasterRecord(entity, id) || {};
+    var recordName = analysis.record_name || masterRecordDisplayName(entity, record);
+    var titleEl = document.getElementById('master-delete-guard-title-text');
+    var messageEl = document.getElementById('master-delete-guard-message');
+    var usageWrap = document.getElementById('master-delete-guard-usage-wrap');
+    var usageList = document.getElementById('master-delete-guard-usage-list');
+    var recommendation = document.getElementById('master-delete-guard-recommendation');
+    var viewBtn = document.getElementById('master-delete-guard-view-btn');
+    var deactivateBtn = document.getElementById('master-delete-guard-deactivate-btn');
+    var reactivateBtn = document.getElementById('master-delete-guard-reactivate-btn');
+    var confirmDeleteBtn = document.getElementById('master-delete-guard-confirm-delete-btn');
+    var viewUsagePanel = document.getElementById('master-delete-guard-view-usage');
+    var viewUsageList = document.getElementById('master-delete-guard-view-usage-list');
+
+    window._masterDeleteGuardState = { entity: entity, id: id, cfg: cfg, analysis: analysis };
+
+    if (viewUsagePanel) viewUsagePanel.classList.add('hidden');
+    if (viewBtn) viewBtn.classList.add('hidden');
+    if (deactivateBtn) deactivateBtn.classList.add('hidden');
+    if (reactivateBtn) reactivateBtn.classList.add('hidden');
+    if (confirmDeleteBtn) confirmDeleteBtn.classList.add('hidden');
+
+    if (analysis.is_system) {
+      if (titleEl) titleEl.textContent = 'System-Protected Record';
+      if (messageEl) messageEl.textContent = 'This is a system-protected record and cannot be deleted.';
+      if (usageWrap) usageWrap.classList.add('hidden');
+      if (recommendation) recommendation.classList.add('hidden');
+    } else if (analysis.is_active === false) {
+      if (titleEl) titleEl.textContent = 'Record Already Inactive';
+      if (messageEl) messageEl.textContent = '"' + recordName + '" is already inactive.';
+      if (usageWrap) usageWrap.classList.add('hidden');
+      if (recommendation) recommendation.classList.add('hidden');
+      if (reactivateBtn && crmCanAction('ca_master', 'edit')) reactivateBtn.classList.remove('hidden');
+    } else if (analysis.can_delete) {
+      if (titleEl) titleEl.textContent = 'Delete ' + cfg.title + ' Permanently?';
+      if (messageEl) messageEl.textContent = 'Delete "' + recordName + '" permanently? This action cannot be undone.';
+      if (usageWrap) usageWrap.classList.add('hidden');
+      if (recommendation) recommendation.classList.add('hidden');
+      if (confirmDeleteBtn) confirmDeleteBtn.classList.remove('hidden');
+    } else {
+      if (titleEl) titleEl.textContent = 'Cannot Delete ' + cfg.title;
+      if (messageEl) messageEl.textContent = 'Cannot delete "' + recordName + '".';
+      if (usageWrap) usageWrap.classList.remove('hidden');
+      if (usageList) {
+        usageList.innerHTML = renderMasterDeleteGuardUsageList(analysis.dependencies || [], false);
+      }
+      if (recommendation) recommendation.classList.remove('hidden');
+      if (viewBtn) viewBtn.classList.remove('hidden');
+      if (deactivateBtn && crmCanAction('ca_master', 'edit')) deactivateBtn.classList.remove('hidden');
+      if (viewUsageList) {
+        viewUsageList.innerHTML = renderMasterDeleteGuardUsageList(analysis.dependencies || [], true);
+      }
+    }
+
+    setMasterDeleteGuardLoading(false);
+    openModal(modal);
+    icons();
+  }
+
+  function fetchMasterDependencies(entity, id) {
+    var cfg = masterEntityConfig(entity);
+    if (!cfg) return Promise.reject(new Error('Unsupported master entity'));
+    return apiFetch(cfg.endpoint + '/' + encodeURIComponent(id) + '/dependencies')
+      .then(function (body) { return body.data || {}; });
+  }
+
+  function beginMasterDeleteFlow(entity, id) {
+    var modal = document.getElementById('modal-master-delete-guard');
+    if (!modal) return;
+    resetMasterDeleteGuardModal();
+    setMasterDeleteGuardLoading(true);
+    openModal(modal);
+    fetchMasterDependencies(entity, id)
+      .then(function (analysis) {
+        closeModal(modal);
+        openMasterDeleteGuardModal(entity, id, analysis);
+      })
+      .catch(function (err) {
+        setMasterDeleteGuardLoading(false);
+        toast(err.message || 'Unable to check dependencies', 'error');
+        closeModal(modal);
+      });
+  }
+
+  function executeMasterDeactivate() {
+    var state = window._masterDeleteGuardState;
+    if (!state) return;
+    var btn = document.getElementById('master-delete-guard-deactivate-btn');
+    if (btn) btn.disabled = true;
+    apiFetch(state.cfg.endpoint + '/' + encodeURIComponent(state.id) + '/deactivate', { method: 'PATCH' })
+      .then(function () {
+        toast(state.cfg.title + ' deactivated', 'success');
+        closeModal(document.getElementById('modal-master-delete-guard'));
+        refreshMasterDataCaches();
+        if (window.CA_LISTING_SEARCH) {
+          reloadListing('states');
+          reloadListing('cities');
+        }
+      })
+      .catch(function (err) {
+        toast(err.message || 'Unable to deactivate record', 'error');
+      })
+      .finally(function () {
+        if (btn) btn.disabled = false;
+      });
+  }
+
+  function executeMasterReactivate() {
+    var state = window._masterDeleteGuardState;
+    if (!state) return;
+    var btn = document.getElementById('master-delete-guard-reactivate-btn');
+    if (btn) btn.disabled = true;
+    apiFetch(state.cfg.endpoint + '/' + encodeURIComponent(state.id) + '/reactivate', { method: 'PATCH' })
+      .then(function () {
+        toast(state.cfg.title + ' reactivated', 'success');
+        closeModal(document.getElementById('modal-master-delete-guard'));
+        refreshMasterDataCaches();
+        if (window.CA_LISTING_SEARCH) {
+          reloadListing('states');
+          reloadListing('cities');
+        }
+      })
+      .catch(function (err) {
+        toast(err.message || 'Unable to reactivate record', 'error');
+      })
+      .finally(function () {
+        if (btn) btn.disabled = false;
+      });
+  }
+
+  function executeMasterPermanentDelete() {
+    var state = window._masterDeleteGuardState;
+    if (!state) return;
+    var btn = document.getElementById('master-delete-guard-confirm-delete-btn');
+    if (btn) btn.disabled = true;
+    apiFetch(state.cfg.endpoint + '/' + encodeURIComponent(state.id), { method: 'DELETE' })
+      .then(function () {
+        toast(state.cfg.title + ' deleted', 'success');
+        closeModal(document.getElementById('modal-master-delete-guard'));
+        refreshMasterDataCaches();
+        if (window.CA_LISTING_SEARCH) {
+          reloadListing('states');
+          reloadListing('cities');
+        }
+      })
+      .catch(function (err) {
+        if (err.status === 409 && err.data) {
+          openMasterDeleteGuardModal(state.entity, state.id, err.data);
+        } else {
+          toast(err.message || 'Unable to delete record', 'error');
+        }
+      })
+      .finally(function () {
+        if (btn) btn.disabled = false;
+      });
+  }
+
+  function bindMasterDeleteGuardModal() {
+    if (window._masterDeleteGuardBound) return;
+    window._masterDeleteGuardBound = true;
+    document.getElementById('master-delete-guard-deactivate-btn')?.addEventListener('click', executeMasterDeactivate);
+    document.getElementById('master-delete-guard-reactivate-btn')?.addEventListener('click', executeMasterReactivate);
+    document.getElementById('master-delete-guard-confirm-delete-btn')?.addEventListener('click', executeMasterPermanentDelete);
+    document.getElementById('master-delete-guard-view-btn')?.addEventListener('click', function () {
+      var panel = document.getElementById('master-delete-guard-view-usage');
+      if (panel) panel.classList.toggle('hidden');
+    });
+    document.getElementById('master-delete-guard-view-usage-list')?.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-master-usage-filter]');
+      if (!btn) return;
+      var filterKey = btn.getAttribute('data-master-usage-filter');
+      var filterValue = btn.getAttribute('data-master-usage-value');
+      if (window.CA_LISTING_SEARCH) {
+        var filters = {};
+        filters[filterKey] = filterValue;
+        CA_LISTING_SEARCH.setState('ca_masters', { page: 1, search: '', filters: filters });
+      }
+      closeModal(document.getElementById('modal-master-delete-guard'));
+      if (typeof navigateTo === 'function') navigateTo('ca-master');
+    });
   }
 
   function masterActionCell(entity, id) {
@@ -3017,6 +3265,7 @@ window.CA_CRM = (function () {
   function initMasterDataActions() {
     if (window._masterActionsBound) return;
     window._masterActionsBound = true;
+    bindMasterDeleteGuardModal();
 
     document.addEventListener('click', function (e) {
       var addBtn = e.target.closest('[data-master-add]');
@@ -3069,8 +3318,8 @@ window.CA_CRM = (function () {
     if (statesEl) {
       var states = window.realStates || [];
       statesEl.innerHTML = states.length ? states.map(function (s) {
-        return '<tr class="ca-table-row">' +
-          '<td class="font-medium">' + s.state_name + '</td>' +
+        return '<tr class="ca-table-row' + (s.is_active === false ? ' opacity-70' : '') + '">' +
+          '<td class="font-medium">' + escapeHtml(s.state_name) + masterStatusBadge(s) + '</td>' +
           '<td>' + (s.cities_count != null ? s.cities_count : '—') + '</td>' +
           '<td>' + formatRelativeDate(s.created_at) + '</td>' +
           masterActionCell('state', s.state_id) +
@@ -3089,8 +3338,8 @@ window.CA_CRM = (function () {
     if (sourcesEl) {
       var sources = window.realSourceLeads || [];
       sourcesEl.innerHTML = sources.length ? sources.map(function (s) {
-        return '<tr class="ca-table-row">' +
-          '<td class="font-medium">' + s.source_name + '</td>' +
+        return '<tr class="ca-table-row' + (s.is_active === false ? ' opacity-70' : '') + '">' +
+          '<td class="font-medium">' + escapeHtml(s.source_name) + masterStatusBadge(s) + '</td>' +
           '<td>—</td>' +
           '<td>—</td>' +
           masterActionCell('source', s.source_id) +
@@ -3103,10 +3352,10 @@ window.CA_CRM = (function () {
       var teamSizes = window.realTeamSizes || [];
       teamSizesEl.innerHTML = teamSizes.length ? teamSizes.map(function (t) {
         var id = t.team_size_id || t.id;
-        return '<tr class="ca-table-row">' +
+        return '<tr class="ca-table-row' + (t.is_active === false ? ' opacity-70' : '') + '">' +
           '<td>' + (t.team_size_min != null ? t.team_size_min : '—') + '</td>' +
           '<td>' + (t.team_size_max != null ? t.team_size_max : '—') + '</td>' +
-          '<td>' + (t.team_size_label || '—') + '</td>' +
+          '<td>' + escapeHtml(t.team_size_label || '—') + masterStatusBadge(t) + '</td>' +
           '<td>—</td>' +
           masterActionCell('team', id) +
         '</tr>';
@@ -3117,8 +3366,8 @@ window.CA_CRM = (function () {
     if (rolesEl) {
       var roles = window.realRoleMasters || [];
       rolesEl.innerHTML = roles.length ? roles.map(function (r) {
-        return '<tr class="ca-table-row">' +
-          '<td class="font-medium">' + escapeHtml(r.role_name) + '</td>' +
+        return '<tr class="ca-table-row' + (r.is_active === false ? ' opacity-70' : '') + '">' +
+          '<td class="font-medium">' + escapeHtml(r.role_name) + masterStatusBadge(r) + '</td>' +
           '<td>' + escapeHtml(r.description || '—') + '</td>' +
           masterActionCell('role', r.id) +
         '</tr>';
@@ -3245,6 +3494,9 @@ window.CA_CRM = (function () {
     ]).then(function () {
       enrichLeadsWithAssignments();
       refreshLeadsUi({ invalidateMetrics: true, reloadListing: options.reloadListing !== false });
+      if (document.getElementById('assignment-page-root')) {
+        refreshAssignmentDashboardWidgets();
+      }
     });
   }
 
@@ -4854,6 +5106,7 @@ window.CA_CRM = (function () {
     renderEmployeeActivity(data.recent_activity || []);
     renderEmployeeQuickActions();
     renderEmployeeProductivityPanel(data.productivity || {});
+    renderEmployeeDailyTargetCard(data.daily_target || {}, data.daily_target_history || []);
     initEmployeeDashboardInteractions();
     loadEmployeeWorkflowLists();
     icons();
@@ -7470,6 +7723,7 @@ window.CA_CRM = (function () {
       upsertAssignmentInCache(merged);
       refreshAssignmentRowUi(merged);
       invalidateDataCaches(['metrics', 'segment_counts']);
+      refreshAssignmentDashboardWidgets();
       toast(status === 'Paused' ? 'Assignment paused' : 'Assignment resumed', 'success');
       return merged;
     });
@@ -7769,6 +8023,1095 @@ window.CA_CRM = (function () {
     ensureInboxSelectionBound();
   }
 
+  function canViewAssignmentDashboardWidgets() {
+    var role = (window.__CRM_USER__ || {}).role || 'employee';
+    return role === 'super_admin' || role === 'admin' || role === 'manager';
+  }
+
+  function assignmentCapacityBarClass(tier) {
+    if (tier === 'red') return 'assign-capacity-bar__fill--red';
+    if (tier === 'yellow') return 'assign-capacity-bar__fill--yellow';
+    return 'assign-capacity-bar__fill--green';
+  }
+
+  function canEditAssignmentCapacity() {
+    var role = (window.__CRM_USER__ || {}).role || 'employee';
+    return role === 'super_admin' || role === 'manager';
+  }
+
+  function renderAssignmentCapacityWidget(data) {
+    var listEl = document.getElementById('assign-capacity-list');
+    var dateEl = document.getElementById('assign-capacity-date');
+    var editWrap = document.getElementById('assign-capacity-edit');
+    var maxInput = document.getElementById('assign-capacity-max-input');
+    if (!listEl) return;
+
+    data = data || {};
+    var employees = data.employees || [];
+    var canEdit = !!(data.can_edit_capacity || canEditAssignmentCapacity());
+
+    if (editWrap) {
+      editWrap.classList.toggle('hidden', !canEdit);
+    }
+    if (maxInput && data.max_daily_capacity != null) {
+      maxInput.value = String(data.max_daily_capacity);
+    }
+
+    if (dateEl) {
+      dateEl.textContent = data.date ? ('Today · ' + formatDate(data.date)) : 'Today';
+    }
+
+    if (!employees.length) {
+      listEl.innerHTML = '<p class="assign-widget__empty">No active employees to display.</p>';
+      return;
+    }
+
+    listEl.innerHTML = employees.map(function (row) {
+      var pct = Math.min(100, row.percentage || 0);
+      var barClass = assignmentCapacityBarClass(row.capacity_tier);
+      var badge = row.at_full_capacity
+        ? '<span class="assign-capacity-item__badge" title="' + escapeHtml(row.tooltip || 'Daily assignment limit reached.') + '">Full Capacity</span>'
+        : '';
+      return '<article class="assign-capacity-item">' +
+        '<div class="assign-capacity-item__head">' +
+          '<span class="assign-capacity-item__name">' + escapeHtml(row.name || 'Employee') + '</span>' +
+          badge +
+        '</div>' +
+        '<p class="assign-capacity-item__label">Today\'s Capacity</p>' +
+        '<div class="assign-capacity-item__stats">' +
+          '<span class="assign-capacity-item__ratio">' + (row.assigned_today || 0) + ' / ' + (row.max_daily_capacity || 0) + '</span>' +
+          '<span class="assign-capacity-item__remaining">' + (row.remaining_capacity || 0) + ' remaining</span>' +
+          '<span class="assign-capacity-item__pct">' + pct + '%</span>' +
+        '</div>' +
+        '<div class="assign-capacity-bar" title="' + escapeHtml(row.tooltip || '') + '">' +
+          '<div class="assign-capacity-bar__fill ' + barClass + '" style="width:' + pct + '%"></div>' +
+        '</div>' +
+      '</article>';
+    }).join('');
+  }
+
+  function populateAssignmentHeatMapFilters(options) {
+    options = options || {};
+    var employeeSel = document.getElementById('assign-heatmap-employee');
+    var stateSel = document.getElementById('assign-heatmap-state');
+    var sourceSel = document.getElementById('assign-heatmap-source');
+    if (!employeeSel && !stateSel && !sourceSel) return;
+
+    var employees = options.employees || [];
+    var states = options.states || [];
+    var sources = options.sources || [];
+
+    if (employeeSel) {
+      var employeeVal = employeeSel.value;
+      employeeSel.innerHTML = '<option value="">All Employees</option>' + employees.map(function (item) {
+        return '<option value="' + item.employee_id + '">' + escapeHtml(item.name) + '</option>';
+      }).join('');
+      if (employeeVal) employeeSel.value = employeeVal;
+    }
+
+    if (stateSel) {
+      var stateVal = stateSel.value;
+      stateSel.innerHTML = '<option value="">All States</option>' + states.map(function (item) {
+        return '<option value="' + item.state_id + '">' + escapeHtml(item.state_name) + '</option>';
+      }).join('');
+      if (stateVal) stateSel.value = stateVal;
+    }
+
+    if (sourceSel) {
+      var sourceVal = sourceSel.value;
+      sourceSel.innerHTML = '<option value="">All Sources</option>' + sources.map(function (item) {
+        return '<option value="' + item.source_id + '">' + escapeHtml(item.source_name) + '</option>';
+      }).join('');
+      if (sourceVal) sourceSel.value = sourceVal;
+    }
+  }
+
+  function assignmentHeatMapQueryParams() {
+    var period = (document.getElementById('assign-heatmap-period') || {}).value || 'today';
+    var params = {
+      period: period,
+      sort: (document.getElementById('assign-heatmap-sort') || {}).value || 'highest',
+    };
+    var employeeId = (document.getElementById('assign-heatmap-employee') || {}).value;
+    var stateId = (document.getElementById('assign-heatmap-state') || {}).value;
+    var sourceId = (document.getElementById('assign-heatmap-source') || {}).value;
+    if (employeeId) params.employee_id = employeeId;
+    if (stateId) params.state_id = stateId;
+    if (sourceId) params.source_id = sourceId;
+    if (period === 'custom') {
+      params.from = (document.getElementById('assign-heatmap-from') || {}).value || '';
+      params.to = (document.getElementById('assign-heatmap-to') || {}).value || '';
+    }
+    return params;
+  }
+
+  function renderAssignmentHeatMapWidget(data) {
+    var listEl = document.getElementById('assign-heatmap-list');
+    var summaryEl = document.getElementById('assign-heatmap-summary');
+    if (!listEl) return;
+
+    data = data || {};
+    var cities = data.cities || [];
+    var maxTotal = cities.reduce(function (max, row) {
+      return Math.max(max, row.total_assigned || 0);
+    }, 0);
+
+    if (summaryEl) {
+      var range = data.date_range || {};
+      summaryEl.textContent = (range.label || 'Today') + ' · ' + (data.total_assignments || 0) + ' total assignments';
+    }
+
+    if (!cities.length) {
+      listEl.innerHTML = '<p class="assign-widget__empty">No assignments found for the selected filters.</p>';
+      return;
+    }
+
+    listEl.innerHTML = cities.map(function (row) {
+      var total = row.total_assigned || 0;
+      var pct = row.percentage != null ? row.percentage : 0;
+      var barWidth = maxTotal > 0 ? Math.max(4, Math.round((total / maxTotal) * 100)) : 0;
+      var barClass = total >= maxTotal * 0.9 ? 'assign-heatmap-bar__fill--red'
+        : total >= maxTotal * 0.7 ? 'assign-heatmap-bar__fill--yellow'
+        : 'assign-heatmap-bar__fill--green';
+      var cityId = row.city_id || 0;
+      return '<div class="assign-heatmap-row">' +
+        '<button type="button" class="assign-heatmap-row__city" data-heatmap-city-id="' + cityId + '" data-heatmap-city-name="' + escapeHtml(row.city || 'Unknown') + '">' +
+          escapeHtml(row.city || 'Unknown') +
+        '</button>' +
+        '<div class="assign-heatmap-bar" aria-hidden="true">' +
+          '<div class="assign-heatmap-bar__fill ' + barClass + '" style="width:' + barWidth + '%"></div>' +
+        '</div>' +
+        '<span class="assign-heatmap-row__meta">' + total + ' Leads · ' + pct + '%</span>' +
+      '</div>';
+    }).join('');
+  }
+
+  function openMasterDataForHeatMapCity(cityId) {
+    if (!cityId) return;
+    if (window.CA_LISTING_SEARCH) {
+      CA_LISTING_SEARCH.setState('ca_masters', {
+        page: 1,
+        search: '',
+        filters: { city_id: String(cityId) },
+      });
+    }
+    if (typeof navigateTo === 'function') navigateTo('ca-master');
+  }
+
+  function loadAssignmentCapacityWidget() {
+    if (!canViewAssignmentDashboardWidgets()) return Promise.resolve();
+    var root = document.getElementById('assign-capacity-widget');
+    if (!root) return Promise.resolve();
+    return apiFetch('/assignment-dashboard/capacity')
+      .then(function (body) {
+        renderAssignmentCapacityWidget(body.data || {});
+      })
+      .catch(function () {
+        var listEl = document.getElementById('assign-capacity-list');
+        if (listEl) listEl.innerHTML = '<p class="assign-widget__empty">Unable to load assignment capacity.</p>';
+      });
+  }
+
+  function saveAssignmentCapacity() {
+    var input = document.getElementById('assign-capacity-max-input');
+    var btn = document.getElementById('assign-capacity-save-btn');
+    if (!input) return;
+    var value = parseInt(input.value, 10);
+    if (!value || value < 1 || value > 500) {
+      toast('Enter a daily capacity between 1 and 500.', 'error');
+      return;
+    }
+    if (btn) btn.disabled = true;
+    apiFetch('/assignment-dashboard/capacity', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ daily_max_capacity: value }),
+    })
+      .then(function (body) {
+        renderAssignmentCapacityWidget(body.data || {});
+        toast('Assignment capacity updated', 'success');
+      })
+      .catch(function (err) {
+        toast(err.message || 'Unable to update assignment capacity', 'error');
+      })
+      .finally(function () {
+        if (btn) btn.disabled = false;
+      });
+  }
+
+  function loadAssignmentHeatMapWidget() {
+    if (!canViewAssignmentDashboardWidgets()) return Promise.resolve();
+    var root = document.getElementById('assign-heatmap-widget');
+    if (!root) return Promise.resolve();
+    var params = assignmentHeatMapQueryParams();
+    var qs = Object.keys(params).filter(function (key) { return params[key]; }).map(function (key) {
+      return encodeURIComponent(key) + '=' + encodeURIComponent(params[key]);
+    }).join('&');
+    return apiFetch('/assignment-dashboard/heat-map' + (qs ? ('?' + qs) : ''))
+      .then(function (body) {
+        var data = body.data || {};
+        populateAssignmentHeatMapFilters(data.filter_options || {});
+        renderAssignmentHeatMapWidget(data);
+      })
+      .catch(function (error) {
+        var listEl = document.getElementById('assign-heatmap-list');
+        if (listEl) {
+          listEl.innerHTML = '<p class="assign-widget__empty">' + escapeHtml(error.message || 'Unable to load heat map.') + '</p>';
+        }
+      });
+  }
+
+  function refreshAssignmentDashboardWidgets() {
+    if (!canViewAssignmentDashboardWidgets()) return Promise.resolve();
+    return Promise.all([
+      loadAssignmentHeatMapWidget(),
+      refreshYearlyEmployeeTargets(),
+    ]);
+  }
+
+  var yearlyEmployeeTargetsState = { items: [], summary: null, holidays: [], loading: false };
+
+  function canEditYearlyEmployeeTargets() {
+    var role = (window.__CRM_USER__ || {}).role || 'employee';
+    return role === 'super_admin' || role === 'manager';
+  }
+
+  function canManageYearlyEmployeeTargets() {
+    return canEditYearlyEmployeeTargets();
+  }
+
+  function yearlyTargetQueryParams() {
+    var yearEl = document.getElementById('assign-yearly-target-year');
+    var employee = document.getElementById('assign-yearly-target-employee-filter');
+    var params = { year: yearEl ? yearEl.value : new Date().getFullYear() };
+    if (employee && employee.value) params.employee_id = employee.value;
+    return params;
+  }
+
+  function renderYearlyEmployeeTargetsSummary(cards) {
+    var el = document.getElementById('assign-yearly-targets-summary');
+    if (!el) return;
+    cards = cards || {};
+    var defs = [
+      { key: 'employees_with_target', label: 'With Target' },
+      { key: 'target_completed', label: 'Completed' },
+      { key: 'target_in_progress', label: 'In Progress' },
+      { key: 'target_missed', label: 'Missed' },
+      { key: 'no_target_assigned', label: 'No Target' },
+    ];
+    el.innerHTML = defs.map(function (def) {
+      return '<span class="assign-daily-targets-kpi">' + escapeHtml(def.label) + ' <span class="assign-daily-targets-kpi__value">' + escapeHtml(String(cards[def.key] ?? 0)) + '</span></span>';
+    }).join('');
+  }
+
+  function renderYearlyEmployeeTargetsTable(items) {
+    var tbody = document.getElementById('assign-yearly-targets-table');
+    if (!tbody) return;
+    items = items || yearlyEmployeeTargetsState.items || [];
+    var statusFilter = (document.getElementById('assign-yearly-target-status-filter') || {}).value || '';
+    if (statusFilter) items = items.filter(function (row) { return (row.status || '') === statusFilter; });
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="10" class="text-center text-slate-500 py-4 text-sm">No yearly targets found.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items.map(function (row) {
+      var hasTarget = !!row.has_target_record;
+      var pct = Math.min(100, Number(row.overall_pct || 0));
+      var actions = '';
+      if (canEditYearlyEmployeeTargets()) {
+        if (hasTarget) {
+          actions = '<button type="button" class="ca-icon-btn" data-yearly-target-edit="' + row.id + '" title="Edit"><i data-lucide="pencil" class="h-3.5 w-3.5"></i></button>' +
+            '<button type="button" class="ca-icon-btn" data-yearly-target-delete="' + row.id + '" title="Delete"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i></button>';
+        } else {
+          actions = '<button type="button" class="ca-icon-btn" data-yearly-target-assign="' + row.employee_id + '" title="Assign"><i data-lucide="target" class="h-3.5 w-3.5"></i></button>';
+        }
+      }
+      return '<tr>' +
+        '<td>' + escapeHtml(row.employee_name || '—') + '</td>' +
+        '<td>' + escapeHtml(String(row.target_year || '—')) + '</td>' +
+        '<td>' + (hasTarget ? escapeHtml(String(row.working_days_elapsed || 0) + ' / ' + String(row.working_days_total || 0)) : '—') + '</td>' +
+        '<td>' + (hasTarget ? escapeHtml(String(row.lead_target || 0)) : '—') + '</td>' +
+        '<td>' + (hasTarget ? escapeHtml(String(row.call_target || 0)) : '—') + '</td>' +
+        '<td>' + (hasTarget ? escapeHtml(String(row.demo_target || 0)) : '—') + '</td>' +
+        '<td>' + (hasTarget ? escapeHtml(String(row.followup_target || 0)) : '—') + '</td>' +
+        '<td>' + dailyTargetProgressCell(row) + '</td>' +
+        '<td>' + (hasTarget ? '<span class="' + dailyTargetStatusClass(row.status) + '">' + escapeHtml(row.status_label || row.status || '') + '</span>' : '<span class="assign-daily-target-status assign-daily-target-status--no_target">No Target</span>') + '</td>' +
+        '<td class="whitespace-nowrap">' + actions + '</td>' +
+      '</tr>';
+    }).join('');
+    icons();
+  }
+
+  function renderCompanyHolidaysList(holidays) {
+    var el = document.getElementById('assign-company-holidays-list');
+    if (!el) return;
+    holidays = holidays || [];
+    var canEdit = canEditYearlyEmployeeTargets();
+    el.innerHTML = '<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">' + holidays.map(function (h, idx) {
+      return '<div class="rounded-lg border border-slate-200 p-3">' +
+        (canEdit
+          ? '<input class="input-field input-field-sm mb-2" data-holiday-name="' + idx + '" value="' + escapeHtml(h.name || '') + '" placeholder="Holiday name" />' +
+            '<div class="flex gap-2"><input type="number" min="1" max="12" class="input-field input-field-sm w-16" data-holiday-month="' + idx + '" value="' + (h.month || 1) + '" /><input type="number" min="1" max="31" class="input-field input-field-sm w-16" data-holiday-day="' + idx + '" value="' + (h.day || 1) + '" /></div>'
+          : '<p class="font-medium">' + escapeHtml(h.name || '') + '</p><p class="text-caption text-slate-500">' + escapeHtml(h.display_date || '') + '</p>') +
+      '</div>';
+    }).join('') + '</div>';
+  }
+
+  function loadCompanyHolidays() {
+    return apiFetch('/yearly-employee-targets/holidays').then(function (body) {
+      yearlyEmployeeTargetsState.holidays = (body.data || {}).items || [];
+      renderCompanyHolidaysList(yearlyEmployeeTargetsState.holidays);
+      var panel = document.getElementById('assign-company-holidays-panel');
+      var actions = document.getElementById('assign-company-holidays-actions');
+      if (panel && canEditYearlyEmployeeTargets()) panel.classList.remove('hidden');
+      if (actions) actions.classList.toggle('hidden', !canEditYearlyEmployeeTargets());
+    }).catch(function () {});
+  }
+
+  function saveCompanyHolidays() {
+    var holidays = (yearlyEmployeeTargetsState.holidays || []).map(function (h, idx) {
+      var nameEl = document.querySelector('[data-holiday-name="' + idx + '"]');
+      var monthEl = document.querySelector('[data-holiday-month="' + idx + '"]');
+      var dayEl = document.querySelector('[data-holiday-day="' + idx + '"]');
+      return {
+        id: h.id,
+        name: nameEl ? nameEl.value : h.name,
+        month: monthEl ? parseInt(monthEl.value, 10) : h.month,
+        day: dayEl ? parseInt(dayEl.value, 10) : h.day,
+        is_active: true,
+      };
+    });
+    apiFetch('/yearly-employee-targets/holidays', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ holidays: holidays }),
+    }).then(function () {
+      toast('Company holidays saved', 'success');
+      loadCompanyHolidays();
+      refreshYearlyEmployeeTargets(true);
+    }).catch(function (err) {
+      toast(err.message || 'Unable to save holidays', 'error');
+    });
+  }
+
+  function openYearlyTargetModal(row, employeeId) {
+    if (!canEditYearlyEmployeeTargets()) return;
+    ensureFormSelectData(function () {
+      populateSelects();
+      var modal = document.getElementById('modal-assign-yearly-target');
+      if (!modal) return;
+      document.getElementById('assign-yearly-target-id').value = row && row.id ? row.id : '';
+      var yearInput = document.getElementById('assign-yearly-target-year-input');
+      var yearFilter = document.getElementById('assign-yearly-target-year');
+      if (yearInput) yearInput.value = (row && row.target_year) || (yearFilter ? yearFilter.value : new Date().getFullYear());
+      resetYearlyTargetEmployeeField(row, employeeId);
+      if (row && row.id) {
+        document.getElementById('assign-yearly-target-leads').value = row.lead_target || 0;
+        document.getElementById('assign-yearly-target-calls').value = row.call_target || 0;
+        document.getElementById('assign-yearly-target-demos').value = row.demo_target || 0;
+        document.getElementById('assign-yearly-target-followups').value = row.followup_target || 0;
+        document.getElementById('assign-yearly-target-email').value = row.email_target || 0;
+        document.getElementById('assign-yearly-target-sms').value = row.sms_target || 0;
+        document.getElementById('assign-yearly-target-notes').value = row.notes || '';
+        document.getElementById('assign-yearly-target-title').textContent = 'Edit Yearly Target';
+      } else {
+        ['leads', 'calls', 'demos', 'followups', 'email', 'sms'].forEach(function (k) {
+          var el = document.getElementById('assign-yearly-target-' + k);
+          if (el) el.value = 0;
+        });
+        document.getElementById('assign-yearly-target-notes').value = '';
+        document.getElementById('assign-yearly-target-title').textContent = 'Assign Yearly Target';
+      }
+      openModal(modal);
+      icons();
+    });
+  }
+
+  function submitYearlyTargetForm(e) {
+    if (e) e.preventDefault();
+    if (!canEditYearlyEmployeeTargets()) return;
+    var id = document.getElementById('assign-yearly-target-id').value;
+    var select = document.getElementById('assign-yearly-target-employee');
+    var hidden = document.getElementById('assign-yearly-target-employee-id');
+    if (select && hidden && window.CrmEntityLookup) {
+      var record = window.CrmEntityLookup.get(select) ? window.CrmEntityLookup.get(select).getSelectedRecord() : null;
+      if (record && record.employee_id) hidden.value = String(record.employee_id);
+      else if (select.value) hidden.value = String(select.value);
+    }
+    var employeeId = (hidden && hidden.value) || (select && select.value);
+    var payload = {
+      employee_id: parseInt(employeeId, 10),
+      target_year: parseInt(document.getElementById('assign-yearly-target-year-input').value, 10),
+      lead_target: parseInt(document.getElementById('assign-yearly-target-leads').value, 10) || 0,
+      call_target: parseInt(document.getElementById('assign-yearly-target-calls').value, 10) || 0,
+      demo_target: parseInt(document.getElementById('assign-yearly-target-demos').value, 10) || 0,
+      followup_target: parseInt(document.getElementById('assign-yearly-target-followups').value, 10) || 0,
+      email_target: parseInt(document.getElementById('assign-yearly-target-email').value, 10) || 0,
+      sms_target: parseInt(document.getElementById('assign-yearly-target-sms').value, 10) || 0,
+      notes: document.getElementById('assign-yearly-target-notes').value || '',
+    };
+    var url = id ? '/yearly-employee-targets/' + encodeURIComponent(id) : '/yearly-employee-targets';
+    apiFetch(url, {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(function () {
+      toast('Yearly target saved', 'success');
+      closeModal(document.getElementById('modal-assign-yearly-target'));
+      refreshYearlyEmployeeTargets(true);
+    }).catch(function (err) {
+      toast(err.message || 'Unable to save yearly target', 'error');
+    });
+  }
+
+  function deleteYearlyTarget(id) {
+    if (!canEditYearlyEmployeeTargets() || !id) return;
+    if (!confirm('Delete this yearly target and its generated calendar?')) return;
+    apiFetch('/yearly-employee-targets/' + encodeURIComponent(id), { method: 'DELETE' })
+      .then(function () {
+        toast('Yearly target deleted', 'success');
+        refreshYearlyEmployeeTargets(true);
+      })
+      .catch(function (err) { toast(err.message || 'Delete failed', 'error'); });
+  }
+
+  function populateYearlyTargetEmployeeFilter() {
+    var select = document.getElementById('assign-yearly-target-employee-filter');
+    if (!select || select.dataset.populated === '1') return;
+    var employees = (window.realEmployees || []).slice().sort(function (a, b) {
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+    select.innerHTML = '<option value="">All Employees</option>' + employees.map(function (emp) {
+      return '<option value="' + emp.employee_id + '">' + escapeHtml(emp.name || ('Employee #' + emp.employee_id)) + '</option>';
+    }).join('');
+    select.dataset.populated = '1';
+  }
+
+  function resetYearlyTargetEmployeeField(row, employeeId) {
+    var select = document.getElementById('assign-yearly-target-employee');
+    var hidden = document.getElementById('assign-yearly-target-employee-id');
+    var empId = (row && row.employee_id) || employeeId || '';
+    if (select && window.CrmEntityLookup) {
+      if (empId) window.CrmEntityLookup.setValue(select, String(empId));
+      else window.CrmEntityLookup.setValue(select, '', null);
+    } else if (select) {
+      select.value = empId ? String(empId) : '';
+    }
+    if (hidden) hidden.value = empId ? String(empId) : '';
+  }
+
+  function loadYearlyEmployeeTargets() {
+    var params = yearlyTargetQueryParams();
+    var qs = Object.keys(params).map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); }).join('&');
+    return Promise.all([
+      apiFetch('/yearly-employee-targets/summary?' + qs),
+      apiFetch('/yearly-employee-targets?' + qs),
+    ]).then(function (results) {
+      var summaryData = results[0].data || {};
+      var listData = results[1].data || {};
+      yearlyEmployeeTargetsState.summary = summaryData;
+      yearlyEmployeeTargetsState.items = listData.items || summaryData.items || [];
+      populateYearlyTargetEmployeeFilter();
+      renderYearlyEmployeeTargetsSummary(summaryData.cards || {});
+      renderYearlyEmployeeTargetsTable(yearlyEmployeeTargetsState.items);
+    }).catch(function () {
+      var tbody = document.getElementById('assign-yearly-targets-table');
+      if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="text-center text-slate-500 py-4 text-sm">Unable to load yearly targets.</td></tr>';
+    });
+  }
+
+  function refreshYearlyEmployeeTargets(force) {
+    var section = document.getElementById('assign-yearly-targets-section');
+    if (!section) return Promise.resolve();
+    if (!canViewAssignmentDashboardWidgets()) {
+      section.classList.add('hidden');
+      return Promise.resolve();
+    }
+    section.classList.remove('hidden');
+    bindYearlyEmployeeTargetsUi();
+    var actions = document.getElementById('assign-yearly-targets-actions');
+    if (actions) {
+      actions.querySelectorAll('button').forEach(function (btn) {
+        btn.classList.toggle('hidden', !canEditYearlyEmployeeTargets());
+      });
+    }
+    return Promise.all([loadYearlyEmployeeTargets(), loadCompanyHolidays()]);
+  }
+
+  function bindYearlyEmployeeTargetsUi() {
+    var section = document.getElementById('assign-yearly-targets-section');
+    if (!section || section._yearlyBound) return;
+    section._yearlyBound = true;
+    var form = document.getElementById('form-assign-yearly-target');
+    if (form) form.addEventListener('submit', submitYearlyTargetForm);
+    ['assign-yearly-target-year', 'assign-yearly-target-employee-filter', 'assign-yearly-target-status-filter'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('change', function () {
+        if (id === 'assign-yearly-target-status-filter') renderYearlyEmployeeTargetsTable(yearlyEmployeeTargetsState.items);
+        else refreshYearlyEmployeeTargets(true);
+      });
+    });
+    section.addEventListener('click', function (e) {
+      if (e.target.closest('#assign-yearly-target-open-modal')) {
+        e.preventDefault();
+        openYearlyTargetModal(null);
+        return;
+      }
+      if (e.target.closest('#assign-holidays-open-btn')) {
+        e.preventDefault();
+        var panel = document.getElementById('assign-company-holidays-panel');
+        if (panel) panel.open = true;
+        return;
+      }
+      if (e.target.closest('#assign-company-holidays-save')) {
+        e.preventDefault();
+        saveCompanyHolidays();
+        return;
+      }
+      var editBtn = e.target.closest('[data-yearly-target-edit]');
+      if (editBtn) {
+        var editId = editBtn.getAttribute('data-yearly-target-edit');
+        var row = yearlyEmployeeTargetsState.items.find(function (r) { return String(r.id) === String(editId); });
+        openYearlyTargetModal(row);
+        return;
+      }
+      var delBtn = e.target.closest('[data-yearly-target-delete]');
+      if (delBtn) deleteYearlyTarget(delBtn.getAttribute('data-yearly-target-delete'));
+      var assignBtn = e.target.closest('[data-yearly-target-assign]');
+      if (assignBtn) openYearlyTargetModal(null, assignBtn.getAttribute('data-yearly-target-assign'));
+    });
+  }
+
+  var dailyEmployeeTargetsState = {
+    items: [],
+    summary: null,
+    history: [],
+    loading: false,
+  };
+
+  function canManageDailyEmployeeTargets() {
+    return crmCanAction('assignment', 'assign');
+  }
+
+  function dailyTargetStatusClass(status) {
+    return 'assign-daily-target-status assign-daily-target-status--' + String(status || 'not_started').replace(/[^a-z_]/g, '_');
+  }
+
+  function dailyTargetMetricCompact(metric, hasTarget) {
+    if (!hasTarget) return '<span class="assign-daily-target-metric-compact assign-daily-target-metric-compact--empty">—</span>';
+    metric = metric || {};
+    return '<span class="assign-daily-target-metric-compact">' + (metric.completed || 0) + '/' + (metric.target || 0) + '</span>';
+  }
+
+  function dailyTargetProgressCell(row) {
+    if (!row.has_target_record) return '<span class="assign-daily-target-metric-compact assign-daily-target-metric-compact--empty">—</span>';
+    var pct = Math.min(100, Number(row.overall_pct || 0));
+    return '<div class="assign-daily-target-progress">' +
+      '<div class="assign-daily-target-progress__pct">' + pct + '%</div>' +
+      '<div class="assign-daily-target-bar"><div class="assign-daily-target-bar__fill" style="width:' + pct + '%"></div></div>' +
+    '</div>';
+  }
+
+  function formatDailyTargetDate(value) {
+    if (!value) return '—';
+    var d = new Date(String(value).slice(0, 10) + 'T12:00:00');
+    if (isNaN(d.getTime())) return String(value);
+    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  function dailyTargetMetricSummary(metrics, key) {
+    var metric = (metrics || []).find(function (row) { return row.key === key; }) || {};
+    return (metric.completed || 0) + ' / ' + (metric.target || 0);
+  }
+
+  function dailyTargetQueryParams() {
+    var preset = document.getElementById('assign-target-preset');
+    var customDate = document.getElementById('assign-target-custom-date');
+    var employee = document.getElementById('assign-target-employee-filter');
+    var params = {
+      preset: preset ? preset.value : 'today',
+    };
+    if (params.preset === 'custom' && customDate && customDate.value) {
+      params.from = customDate.value;
+      params.to = customDate.value;
+    }
+    if (employee && employee.value) params.employee_id = employee.value;
+    return params;
+  }
+
+  function renderDailyEmployeeTargetsSummary(cards) {
+    var el = document.getElementById('assign-daily-targets-summary');
+    if (!el) return;
+    cards = cards || {};
+    var defs = [
+      { key: 'employees_with_target', label: 'With Target' },
+      { key: 'target_completed', label: 'Completed' },
+      { key: 'target_in_progress', label: 'In Progress' },
+      { key: 'target_missed', label: 'Missed' },
+      { key: 'no_target_assigned', label: 'No Target' },
+    ];
+    el.innerHTML = defs.map(function (def) {
+      return '<span class="assign-daily-targets-kpi">' + escapeHtml(def.label) + ' <span class="assign-daily-targets-kpi__value">' + escapeHtml(String(cards[def.key] ?? 0)) + '</span></span>';
+    }).join('');
+  }
+
+  function renderDailyEmployeeTargetsInsights() {
+    /* Insights removed from compact card layout */
+  }
+
+  function renderDailyEmployeeTargetsTable(items) {
+    var tbody = document.getElementById('assign-daily-targets-table');
+    if (!tbody) return;
+    var statusFilter = document.getElementById('assign-target-status-filter');
+    var filterStatus = statusFilter ? statusFilter.value : '';
+    var rows = (items || []).filter(function (row) {
+      if (!filterStatus) return true;
+      return String(row.status || '') === filterStatus;
+    });
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="9" class="text-center text-slate-500 py-6">No targets found for the selected filters.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(function (row) {
+      var metrics = row.metrics || [];
+      var hasTarget = !!row.has_target_record;
+      var actions = '';
+      if (canManageDailyEmployeeTargets() && hasTarget) {
+        actions = '<button type="button" class="ca-icon-btn" data-daily-target-edit="' + row.id + '" title="Edit"><i data-lucide="pencil" class="h-3.5 w-3.5"></i></button>' +
+          '<button type="button" class="ca-icon-btn" data-daily-target-delete="' + row.id + '" title="Delete"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i></button>';
+      } else if (canManageDailyEmployeeTargets() && !hasTarget) {
+        actions = '<button type="button" class="ca-icon-btn" data-daily-target-assign-employee="' + row.employee_id + '" title="Assign"><i data-lucide="target" class="h-3.5 w-3.5"></i></button>';
+      }
+      return '<tr data-daily-target-row="' + (row.id || '') + '">' +
+        '<td><strong>' + escapeHtml(row.employee_name || '—') + '</strong></td>' +
+        '<td>' + escapeHtml(formatDailyTargetDate(row.target_date_label || row.target_date)) + '</td>' +
+        '<td>' + dailyTargetMetricCompact(metrics.find(function (m) { return m.key === 'lead'; }), hasTarget) + '</td>' +
+        '<td>' + dailyTargetMetricCompact(metrics.find(function (m) { return m.key === 'call'; }), hasTarget) + '</td>' +
+        '<td>' + dailyTargetMetricCompact(metrics.find(function (m) { return m.key === 'demo'; }), hasTarget) + '</td>' +
+        '<td>' + dailyTargetMetricCompact(metrics.find(function (m) { return m.key === 'followup'; }), hasTarget) + '</td>' +
+        '<td>' + dailyTargetProgressCell(row) + '</td>' +
+        '<td><span class="' + dailyTargetStatusClass(row.status) + '">' + escapeHtml(row.status_label || '—') + '</span></td>' +
+        '<td class="whitespace-nowrap">' + (actions || '') + '</td>' +
+      '</tr>';
+    }).join('');
+    iconsIn(tbody);
+  }
+
+  function renderDailyEmployeeTargetsHistory(items) {
+    var tbody = document.getElementById('assign-daily-targets-history');
+    if (!tbody) return;
+    if (!items || !items.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-slate-500 py-4 text-sm">No history found.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items.map(function (row) {
+      return '<tr>' +
+        '<td>' + escapeHtml(formatDailyTargetDate(row.target_date_label || row.target_date)) + '</td>' +
+        '<td>' + escapeHtml(row.employee_name || '—') + '</td>' +
+        '<td>' + dailyTargetMetricSummary(row.metrics, 'lead') + '</td>' +
+        '<td>' + dailyTargetMetricSummary(row.metrics, 'call') + '</td>' +
+        '<td>' + dailyTargetMetricSummary(row.metrics, 'demo') + '</td>' +
+        '<td>' + dailyTargetMetricSummary(row.metrics, 'followup') + '</td>' +
+        '<td>' + (row.overall_pct || 0) + '%</td>' +
+        '<td><span class="' + dailyTargetStatusClass(row.status) + '">' + escapeHtml(row.status_label || '—') + '</span></td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  function populateDailyTargetEmployeeFilter(items) {
+    var select = document.getElementById('assign-target-employee-filter');
+    if (!select || select.dataset.populated === '1') return;
+    var employees = (window.realEmployees || []).slice().sort(function (a, b) {
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+    select.innerHTML = '<option value="">All Employees</option>' + employees.map(function (emp) {
+      return '<option value="' + emp.employee_id + '">' + escapeHtml(emp.name || ('Employee #' + emp.employee_id)) + '</option>';
+    }).join('');
+    select.dataset.populated = '1';
+  }
+
+  function resolveEntityLookupValue(select) {
+    if (!select) return '';
+    var value = String(select.value || '').trim();
+    if (value) return value;
+    var api = window.CrmEntityLookup ? window.CrmEntityLookup.get(select) : null;
+    if (!api) return '';
+    var record = api.getSelectedRecord ? api.getSelectedRecord() : null;
+    if (!record) return '';
+    var resolved = record.employee_id || record.ca_id || record.id || '';
+    if (resolved) {
+      select.value = String(resolved);
+      var hidden = document.getElementById('assign-daily-target-employee-id');
+      if (hidden && select.id === 'assign-daily-target-employee') hidden.value = String(resolved);
+      return String(resolved);
+    }
+    return '';
+  }
+
+  function syncDailyTargetEmployeeId() {
+    var select = document.getElementById('assign-daily-target-employee');
+    var hidden = document.getElementById('assign-daily-target-employee-id');
+    if (!hidden) return '';
+    var resolved = resolveEntityLookupValue(select);
+    hidden.value = resolved;
+    return resolved;
+  }
+
+  function resetDailyTargetEmployeeField(row) {
+    var select = document.getElementById('assign-daily-target-employee');
+    var hidden = document.getElementById('assign-daily-target-employee-id');
+    if (!select) return;
+    if (window.CrmEntityLookup) {
+      if (row && row.employee_id) {
+        window.CrmEntityLookup.setValue(select, String(row.employee_id));
+      } else {
+        window.CrmEntityLookup.setValue(select, '', null);
+      }
+    } else {
+      select.value = row && row.employee_id ? String(row.employee_id) : '';
+    }
+    if (hidden) hidden.value = row && row.employee_id ? String(row.employee_id) : '';
+  }
+
+  function ensureDailyTargetFormBound() {
+    var form = document.getElementById('form-assign-daily-target');
+    if (!form || form.dataset.dailyTargetBound === '1') return;
+    form.dataset.dailyTargetBound = '1';
+    form.addEventListener('submit', submitDailyTargetForm);
+    var select = document.getElementById('assign-daily-target-employee');
+    if (select && !select.dataset.dailyTargetSyncBound) {
+      select.dataset.dailyTargetSyncBound = '1';
+      select.addEventListener('change', syncDailyTargetEmployeeId);
+    }
+  }
+
+  function resetDailyTargetForm(row) {
+    var form = document.getElementById('form-assign-daily-target');
+    if (!form) return;
+    form.reset();
+    document.getElementById('assign-daily-target-id').value = row && row.id ? row.id : '';
+    document.getElementById('assign-daily-target-date').value = (row && row.target_date) || new Date().toISOString().slice(0, 10);
+    resetDailyTargetEmployeeField(row || null);
+    if (row) {
+      document.getElementById('assign-daily-target-leads').value = row.lead_target || 0;
+      document.getElementById('assign-daily-target-calls').value = row.call_target || 0;
+      document.getElementById('assign-daily-target-demos').value = row.demo_target || 0;
+      document.getElementById('assign-daily-target-followups').value = row.followup_target || 0;
+      document.getElementById('assign-daily-target-email').value = row.email_target || 0;
+      document.getElementById('assign-daily-target-sms').value = row.sms_target || 0;
+      document.getElementById('assign-daily-target-notes').value = row.notes || '';
+      document.getElementById('assign-daily-target-title').textContent = 'Edit Daily Target';
+    } else {
+      document.getElementById('assign-daily-target-leads').value = 0;
+      document.getElementById('assign-daily-target-calls').value = 0;
+      document.getElementById('assign-daily-target-demos').value = 0;
+      document.getElementById('assign-daily-target-followups').value = 0;
+      document.getElementById('assign-daily-target-email').value = 0;
+      document.getElementById('assign-daily-target-sms').value = 0;
+      document.getElementById('assign-daily-target-notes').value = '';
+      document.getElementById('assign-daily-target-title').textContent = 'Assign Daily Target';
+    }
+    var copyTeamBtn = document.getElementById('assign-daily-target-copy-team');
+    var copyWeekdaysBtn = document.getElementById('assign-daily-target-copy-weekdays');
+    if (copyTeamBtn) copyTeamBtn.classList.toggle('hidden', !(row && row.id));
+    if (copyWeekdaysBtn) copyWeekdaysBtn.classList.toggle('hidden', !(row && row.id));
+  }
+
+  function openDailyTargetModal(row) {
+    if (!canManageDailyEmployeeTargets()) {
+      toast('You do not have permission to assign targets.', 'error');
+      return;
+    }
+    ensureDailyTargetFormBound();
+    resetDailyTargetForm(row || null);
+    ensureFormSelectData(function () {
+      populateSelects();
+      var modal = document.getElementById('modal-assign-daily-target');
+      enhanceEntityLookups(modal || document);
+      if (row && row.employee_id) {
+        resetDailyTargetEmployeeField(row);
+      }
+      syncDailyTargetEmployeeId();
+      if (modal) openExclusiveCrmModal(modal);
+      icons();
+    });
+  }
+
+  function submitDailyTargetForm(event) {
+    event.preventDefault();
+    if (!canManageDailyEmployeeTargets()) return;
+    var employeeId = parseInt(syncDailyTargetEmployeeId(), 10);
+    var employeeSelect = document.getElementById('assign-daily-target-employee');
+    if (!employeeId || employeeId <= 0) {
+      toast('Please select an employee from the search results.', 'warning');
+      if (employeeSelect) {
+        var lookupInput = employeeSelect.closest('.crm-entity-lookup')?.querySelector('.crm-entity-lookup__input');
+        if (lookupInput) lookupInput.focus();
+      }
+      return;
+    }
+    var id = document.getElementById('assign-daily-target-id').value;
+    var targetDate = document.getElementById('assign-daily-target-date').value;
+    if (!targetDate) {
+      toast('Target date is required.', 'warning');
+      return;
+    }
+    var payload = {
+      employee_id: employeeId,
+      target_date: targetDate,
+      lead_target: parseInt(document.getElementById('assign-daily-target-leads').value || '0', 10) || 0,
+      call_target: parseInt(document.getElementById('assign-daily-target-calls').value || '0', 10) || 0,
+      demo_target: parseInt(document.getElementById('assign-daily-target-demos').value || '0', 10) || 0,
+      followup_target: parseInt(document.getElementById('assign-daily-target-followups').value || '0', 10) || 0,
+      email_target: parseInt(document.getElementById('assign-daily-target-email').value || '0', 10) || 0,
+      sms_target: parseInt(document.getElementById('assign-daily-target-sms').value || '0', 10) || 0,
+      notes: document.getElementById('assign-daily-target-notes').value || null,
+    };
+    var jsonHeaders = { 'Content-Type': 'application/json' };
+    var request = id
+      ? apiFetch('/daily-employee-targets/' + id, { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(payload) })
+      : apiFetch('/daily-employee-targets', { method: 'POST', headers: jsonHeaders, body: JSON.stringify(payload) });
+    request.then(function () {
+      var modal = document.getElementById('modal-assign-daily-target');
+      if (modal) closeModal(modal);
+      toast(id ? 'Daily target updated' : 'Daily target assigned', 'success');
+      refreshDailyEmployeeTargets(true);
+    }).catch(function (err) {
+      var message = err.message || 'Unable to save daily target.';
+      if (/already exists/i.test(message) && !id) {
+        if (window.confirm(message + '\n\nOpen the existing target for editing?')) {
+          var existing = (dailyEmployeeTargetsState.items || []).find(function (row) {
+            return String(row.employee_id) === String(payload.employee_id) && String(row.target_date) === String(payload.target_date);
+          });
+          if (existing) openDailyTargetModal(existing);
+        }
+        return;
+      }
+      toast(message, 'error');
+    });
+  }
+
+  function deleteDailyTarget(id) {
+    if (!canManageDailyEmployeeTargets()) return;
+    if (!window.confirm('Delete this daily target?')) return;
+    apiFetch('/daily-employee-targets/' + id, { method: 'DELETE' })
+      .then(function () {
+        toast('Daily target deleted', 'success');
+        refreshDailyEmployeeTargets(true);
+      })
+      .catch(function (err) {
+        toast(err.message || 'Unable to delete daily target.', 'error');
+      });
+  }
+
+  function copyYesterdayDailyTargets() {
+    if (!canManageDailyEmployeeTargets()) return;
+    if (!window.confirm('Copy yesterday\'s targets to today for your team? Existing targets for today will be skipped unless you confirm overwrite.')) return;
+    apiFetch('/daily-employee-targets/copy-yesterday', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ overwrite: false }),
+    }).then(function (body) {
+      var data = body.data || {};
+      toast('Copied ' + (data.created || 0) + ' target(s). Skipped ' + (data.skipped || 0) + '.', 'success');
+      refreshDailyEmployeeTargets(true);
+    }).catch(function (err) {
+      toast(err.message || 'Unable to copy targets.', 'error');
+    });
+  }
+
+  function bindDailyEmployeeTargetsUi() {
+    var section = document.getElementById('assign-daily-targets-section');
+    if (!section || section.dataset.bound === '1') return;
+    section.dataset.bound = '1';
+    if (!canViewAssignmentDashboardWidgets()) {
+      section.classList.add('hidden');
+      return;
+    }
+    var actions = section.querySelector('.assign-daily-targets-actions');
+    if (actions && !canManageDailyEmployeeTargets()) actions.classList.add('hidden');
+
+    var preset = document.getElementById('assign-target-preset');
+    var customDate = document.getElementById('assign-target-custom-date');
+    if (preset) {
+      preset.addEventListener('change', function () {
+        if (customDate) customDate.classList.toggle('hidden', preset.value !== 'custom');
+        refreshDailyEmployeeTargets(true);
+      });
+    }
+    if (customDate) customDate.addEventListener('change', function () { refreshDailyEmployeeTargets(true); });
+    ['assign-target-employee-filter', 'assign-target-status-filter'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('change', function () {
+        if (id === 'assign-target-status-filter') renderDailyEmployeeTargetsTable(dailyEmployeeTargetsState.items);
+        else refreshDailyEmployeeTargets(true);
+      });
+    });
+
+    var openBtn = document.getElementById('assign-target-open-modal');
+    if (openBtn) openBtn.addEventListener('click', function () { openDailyTargetModal(null); });
+    var copyBtn = document.getElementById('assign-target-copy-yesterday');
+    if (copyBtn) copyBtn.addEventListener('click', copyYesterdayDailyTargets);
+    var copyTeamBtn = document.getElementById('assign-daily-target-copy-team');
+    if (copyTeamBtn) copyTeamBtn.addEventListener('click', function () {
+      var id = document.getElementById('assign-daily-target-id').value;
+      if (!id || !window.confirm('Apply this target to the entire team for the same date? Existing targets will be skipped.')) return;
+      apiFetch('/daily-employee-targets/copy-to-team', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_target_id: parseInt(id, 10), overwrite: false }),
+      }).then(function (body) {
+        toast('Applied to ' + ((body.data || {}).created || 0) + ' employee(s).', 'success');
+        refreshDailyEmployeeTargets(true);
+      }).catch(function (err) { toast(err.message || 'Copy failed.', 'error'); });
+    });
+    var copyWeekdaysBtn = document.getElementById('assign-daily-target-copy-weekdays');
+    if (copyWeekdaysBtn) copyWeekdaysBtn.addEventListener('click', function () {
+      var id = document.getElementById('assign-daily-target-id').value;
+      if (!id || !window.confirm('Repeat this target on upcoming weekdays? Existing targets will be skipped.')) return;
+      apiFetch('/daily-employee-targets/copy-weekdays', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_target_id: parseInt(id, 10), days: 5, overwrite: false }),
+      }).then(function (body) {
+        toast('Created ' + ((body.data || {}).created || 0) + ' weekday target(s).', 'success');
+        refreshDailyEmployeeTargets(true);
+      }).catch(function (err) { toast(err.message || 'Copy failed.', 'error'); });
+    });
+    ensureDailyTargetFormBound();
+
+    section.addEventListener('click', function (event) {
+      var editBtn = event.target.closest('[data-daily-target-edit]');
+      if (editBtn) {
+        var editId = editBtn.getAttribute('data-daily-target-edit');
+        var editRow = (dailyEmployeeTargetsState.items || []).find(function (row) { return String(row.id) === String(editId); });
+        openDailyTargetModal(editRow || { id: editId });
+        return;
+      }
+      var deleteBtn = event.target.closest('[data-daily-target-delete]');
+      if (deleteBtn) {
+        deleteDailyTarget(deleteBtn.getAttribute('data-daily-target-delete'));
+        return;
+      }
+      var assignBtn = event.target.closest('[data-daily-target-assign-employee]');
+      if (assignBtn) {
+        openDailyTargetModal({ employee_id: assignBtn.getAttribute('data-daily-target-assign-employee') });
+      }
+    });
+  }
+
+  function loadDailyEmployeeTargets() {
+    if (!canViewAssignmentDashboardWidgets()) return Promise.resolve();
+    var section = document.getElementById('assign-daily-targets-section');
+    if (!section) return Promise.resolve();
+    var params = dailyTargetQueryParams();
+    var qs = Object.keys(params).map(function (key) {
+      return encodeURIComponent(key) + '=' + encodeURIComponent(params[key]);
+    }).join('&');
+    return Promise.all([
+      apiFetch('/daily-employee-targets/summary?' + qs),
+      apiFetch('/daily-employee-targets/history?' + qs + '&per_page=25'),
+    ]).then(function (results) {
+      var summaryBody = results[0] || {};
+      var historyBody = results[1] || {};
+      var summaryData = summaryBody.data || {};
+      dailyEmployeeTargetsState.items = summaryData.items || [];
+      dailyEmployeeTargetsState.summary = summaryData.cards || {};
+      dailyEmployeeTargetsState.history = (historyBody.data || {}).items || [];
+      renderDailyEmployeeTargetsSummary(summaryData.cards || {});
+      renderDailyEmployeeTargetsInsights(summaryData.insights || {});
+      renderDailyEmployeeTargetsTable(dailyEmployeeTargetsState.items);
+      renderDailyEmployeeTargetsHistory(dailyEmployeeTargetsState.history);
+      populateDailyTargetEmployeeFilter(dailyEmployeeTargetsState.items);
+      iconsIn(section);
+    }).catch(function () {
+      var tbody = document.getElementById('assign-daily-targets-table');
+      if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="text-center text-slate-500 py-6">Unable to load daily targets.</td></tr>';
+    });
+  }
+
+  function refreshDailyEmployeeTargets(force) {
+    if (!canViewAssignmentDashboardWidgets()) return Promise.resolve();
+    bindDailyEmployeeTargetsUi();
+    return loadDailyEmployeeTargets();
+  }
+
+  function renderEmployeeDailyTargetCard(dailyTarget) {
+    var panel = document.getElementById('emp-daily-targets-panel');
+    if (!panel) return;
+    dailyTarget = dailyTarget || {};
+    var year = dailyTarget.target_year || new Date().getFullYear();
+    if (!dailyTarget.has_target) {
+      panel.innerHTML = '<div class="emp-daily-target-card"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="target" class="h-5 w-5 text-brand"></i> Yearly Targets (' + year + ')</h3></div><p class="text-slate-500">' + escapeHtml(dailyTarget.message || 'No yearly target has been assigned.') + '</p></div>';
+      iconsIn(panel);
+      return;
+    }
+    var target = dailyTarget.target || {};
+    var metrics = target.metrics || [];
+    var remaining = metrics.map(function (metric) {
+      if ((metric.remaining || 0) > 0) return (metric.remaining || 0) + ' ' + (metric.label || '');
+      return null;
+    }).filter(Boolean);
+    panel.innerHTML = '<div class="emp-daily-target-card">' +
+      '<div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="target" class="h-5 w-5 text-brand"></i> Yearly Targets (' + (target.target_year || year) + ')</h3><span class="' + dailyTargetStatusClass(target.status) + '">' + escapeHtml(target.status_label || '') + '</span></div>' +
+      '<p class="text-caption text-slate-500 mb-3">Working days: ' + escapeHtml(String(target.working_days_elapsed || 0) + ' / ' + String(target.working_days_total || 0)) + ' · Progress counts working days only (Sundays & holidays excluded)</p>' +
+      '<div class="emp-daily-target-grid">' + metrics.map(function (metric) {
+        var pct = Math.min(100, Number(metric.pct || 0));
+        return '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">' + escapeHtml(metric.label || '') + '</p><p class="emp-daily-target-item__value">' + (metric.completed || 0) + ' / ' + (metric.target || 0) + '</p>' +
+          '<div class="assign-daily-target-bar"><div class="assign-daily-target-bar__fill" style="width:' + pct + '%"></div></div></article>';
+      }).join('') + '</div>' +
+      '<p class="mt-3 text-sm"><strong>Overall YTD:</strong> ' + (target.overall_pct || 0) + '%</p>' +
+      (remaining.length ? '<p class="mt-2 text-sm text-slate-600"><strong>Remaining:</strong> ' + escapeHtml(remaining.join(' · ')) + '</p>' : '') +
+      (target.notes ? '<div class="emp-daily-target-notes"><strong>Manager instructions:</strong><br>' + escapeHtml(target.notes) + '</div>' : '') +
+    '</div>';
+    iconsIn(panel);
+  }
+
+  function refreshEmployeeDailyTargetsFromDashboard(force) {
+    if (!isEmployeeUser()) return Promise.resolve();
+    return loadEmployeeDashboardFromDatabase(function (data) {
+      renderEmployeeDailyTargetCard((data || {}).yearly_target || (data || {}).daily_target || {});
+    }, !!force);
+  }
+
+  function bindAssignmentDashboardWidgets() {
+    var root = document.getElementById('assign-dashboard-widgets');
+    if (!root || root._assignmentWidgetsBound || !canViewAssignmentDashboardWidgets()) {
+      if (root && !canViewAssignmentDashboardWidgets()) root.classList.add('hidden');
+      return;
+    }
+    root._assignmentWidgetsBound = true;
+
+    var periodEl = document.getElementById('assign-heatmap-period');
+    var customWrap = document.getElementById('assign-heatmap-custom-range');
+    var debounceTimer = null;
+
+    function scheduleHeatMapReload() {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(function () {
+        loadAssignmentHeatMapWidget();
+      }, 250);
+    }
+
+    if (periodEl) {
+      periodEl.addEventListener('change', function () {
+        if (customWrap) customWrap.classList.toggle('hidden', periodEl.value !== 'custom');
+        scheduleHeatMapReload();
+      });
+    }
+
+    ['assign-heatmap-sort', 'assign-heatmap-employee', 'assign-heatmap-state', 'assign-heatmap-source', 'assign-heatmap-from', 'assign-heatmap-to'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('change', scheduleHeatMapReload);
+    });
+
+    root.addEventListener('click', function (e) {
+      var cityBtn = e.target.closest('[data-heatmap-city-id]');
+      if (!cityBtn) return;
+      openMasterDataForHeatMapCity(cityBtn.getAttribute('data-heatmap-city-id'));
+    });
+  }
+
   function initAssignmentPage() {
     if (!document.getElementById('assignment-page-root')) return;
     bindAssignmentActiveSection();
@@ -7776,6 +9119,9 @@ window.CA_CRM = (function () {
     populateAssignmentExecutiveFilter();
     syncAssignmentRotationToggles();
     ensureAssignmentActionsDelegated();
+    bindAssignmentDashboardWidgets();
+    refreshAssignmentDashboardWidgets();
+    bindYearlyEmployeeTargetsUi();
     var importBtn = document.getElementById('assignment-import-btn');
     if (importBtn) importBtn.classList.toggle('hidden', !crmCanAction('ca_master', 'import'));
     var exportBtn = document.getElementById('assignment-export-btn');
@@ -8414,6 +9760,166 @@ window.CA_CRM = (function () {
     if (!window._formSelectDataReady) ensureFormSelectData();
   }
 
+  function followupActivityMeta(type) {
+    return ACTIVITY_ACTION_META[type] || { icon: 'activity', color: 'bg-slate-500' };
+  }
+
+  function unwrapTimelineItems(body) {
+    if (!body || body.data === undefined) return [];
+    if (Array.isArray(body.data)) return body.data;
+    var items = body.data.items;
+    if (Array.isArray(items)) return items;
+    if (items && Array.isArray(items.data)) return items.data;
+    return unwrapList(body);
+  }
+
+  function buildFollowupActivityTimelineItemHtml(item) {
+    var meta = followupActivityMeta(item.activity_type || item.activity_label || '');
+    var when = item.occurred_at ? formatDateTime(item.occurred_at) : ((item.date_label || '') + (item.time_label ? ' · ' + item.time_label : ''));
+    var leadParts = [];
+    if (item.firm_name) leadParts.push(item.firm_name);
+    if (item.ca_name && item.ca_name !== item.firm_name) leadParts.push(item.ca_name);
+    var statusText = item.call_status || item.status || '';
+    var notesText = item.call_notes || item.notes || '';
+    var employee = item.employee_name || item.created_by || item.performed_by || 'System';
+    var detailRows = [];
+    if (leadParts.length) detailRows.push('<span class="followup-timeline-chip">' + escapeHtml(leadParts.join(' · ')) + '</span>');
+    if (statusText) detailRows.push('<span class="followup-timeline-status">' + escapeHtml(statusText) + '</span>');
+    if (notesText) detailRows.push('<p class="followup-timeline-notes">' + escapeHtml(notesText) + '</p>');
+    if (item.next_action) detailRows.push('<p class="followup-timeline-action"><i data-lucide="corner-down-right" class="h-3 w-3"></i> ' + escapeHtml(item.next_action) + '</p>');
+    if (item.followup_date || item.next_followup_date) {
+      detailRows.push('<p class="followup-timeline-followup-date">Follow-up: ' + escapeHtml(formatDate(item.followup_date || item.next_followup_date)) + '</p>');
+    }
+    return '<div class="timeline-item followup-timeline-item" data-activity-id="' + escapeHtml(String(item.activity_id || '')) + '">' +
+      '<div class="timeline-icon ' + meta.color + '"><i data-lucide="' + meta.icon + '" class="h-3 w-3"></i></div>' +
+      '<div class="flex-1 card p-4 min-w-0 followup-timeline-card">' +
+        '<div class="flex justify-between gap-3 flex-wrap">' +
+          '<p class="text-body font-semibold text-slate-800">' + escapeHtml(item.activity_label || item.activity_type || 'Activity') + '</p>' +
+          '<span class="text-caption text-slate-400 shrink-0">' + escapeHtml(when || '—') + '</span>' +
+        '</div>' +
+        (detailRows.length ? '<div class="mt-2 space-y-1">' + detailRows.join('') + '</div>' : '') +
+        '<p class="text-caption text-slate-400 mt-2">' + escapeHtml(employee) + '</p>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function renderFollowupActivityTimelineItems(items, containerId) {
+    var container = document.getElementById(containerId || 'followup-activity-timeline');
+    if (!container) return;
+    if (!items || !items.length) {
+      container.innerHTML = '<p class="text-caption text-slate-400 py-6 text-center">No activity recorded yet.</p>';
+      return;
+    }
+    container.innerHTML = items.map(buildFollowupActivityTimelineItemHtml).join('');
+    iconsIn(container);
+  }
+
+  function renderFollowupTimelinePagination(pagination) {
+    var slot = document.getElementById('followup-timeline-pagination');
+    if (!slot || !pagination) {
+      if (slot) slot.innerHTML = '';
+      return;
+    }
+    var total = pagination.total || 0;
+    var page = pagination.current_page || 1;
+    var last = pagination.last_page || 1;
+    if (total <= (pagination.per_page || 30)) {
+      slot.innerHTML = total ? '<p class="text-caption text-slate-500">' + total + ' activit' + (total === 1 ? 'y' : 'ies') + '</p>' : '';
+      return;
+    }
+    slot.innerHTML =
+      '<div class="flex items-center justify-between gap-3 flex-wrap">' +
+        '<p class="text-caption text-slate-500">' + total + ' activities · Page ' + page + ' of ' + last + '</p>' +
+        '<div class="flex items-center gap-2">' +
+          '<button type="button" class="btn-secondary btn-sm" id="followup-timeline-prev"' + (page <= 1 ? ' disabled' : '') + '>Previous</button>' +
+          '<button type="button" class="btn-secondary btn-sm" id="followup-timeline-next"' + (page >= last ? ' disabled' : '') + '>Next</button>' +
+        '</div>' +
+      '</div>';
+    var prev = document.getElementById('followup-timeline-prev');
+    var next = document.getElementById('followup-timeline-next');
+    if (prev) {
+      prev.addEventListener('click', function () {
+        if (followupActivityPage > 1) {
+          followupActivityPage -= 1;
+          loadFollowupActivityTimeline({ page: followupActivityPage, silent: true });
+        }
+      });
+    }
+    if (next) {
+      next.addEventListener('click', function () {
+        followupActivityPage += 1;
+        loadFollowupActivityTimeline({ page: followupActivityPage, silent: true });
+      });
+    }
+  }
+
+  function loadFollowupActivityTimeline(options) {
+    options = options || {};
+    var container = document.getElementById('followup-activity-timeline');
+    if (!container) return Promise.resolve([]);
+    if (!crmCanAction('followups', 'view')) {
+      container.innerHTML = '<p class="text-caption text-slate-400 py-6 text-center">You do not have permission to view activity history.</p>';
+      return Promise.resolve([]);
+    }
+    followupActivitySort = options.sort || followupActivitySort || 'desc';
+    followupActivityPage = options.page || followupActivityPage || 1;
+    if (!options.silent) {
+      container.innerHTML = '<div class="crm-inline-loading py-8"><i data-lucide="loader-2" class="h-5 w-5 animate-spin text-brand"></i><span>Loading activity history…</span></div>';
+      iconsIn(container);
+    }
+    var qs = '?sort=' + encodeURIComponent(followupActivitySort) + '&page=' + followupActivityPage + '&per_page=30';
+    return apiFetch('/follow-ups/activity-timeline' + qs)
+      .then(function (body) {
+        var items = unwrapTimelineItems(body);
+        window._followupActivityTimeline = items;
+        renderFollowupActivityTimelineItems(items);
+        renderFollowupTimelinePagination(body && body.data ? body.data.pagination : null);
+        return items;
+      })
+      .catch(function (err) {
+        if (err.status === 403) {
+          container.innerHTML = '<p class="text-caption text-slate-400 py-6 text-center">You do not have permission to view activity history.</p>';
+          return [];
+        }
+        container.innerHTML = '<p class="text-caption text-rose-500 py-6 text-center">' + escapeHtml(err.message || 'Unable to load activity history.') + '</p>';
+        return [];
+      });
+  }
+
+  function fetchLeadActivityTimeline(caId, sort) {
+    var qs = '?sort=' + encodeURIComponent(sort || 'desc');
+    return apiFetch('/ca-masters/' + encodeURIComponent(caId) + '/follow-up-history' + qs)
+      .then(function (body) {
+        return unwrapTimelineItems(body);
+      });
+  }
+
+  function initFollowupActivityTimeline() {
+    if (!document.getElementById('followup-activity-timeline')) return;
+    var sortBtn = document.getElementById('followup-timeline-sort');
+    var refreshBtn = document.getElementById('followup-timeline-refresh');
+    if (sortBtn && !sortBtn._followupTimelineBound) {
+      sortBtn._followupTimelineBound = true;
+      sortBtn.addEventListener('click', function () {
+        followupActivitySort = followupActivitySort === 'desc' ? 'asc' : 'desc';
+        sortBtn.setAttribute('data-sort', followupActivitySort);
+        sortBtn.innerHTML = followupActivitySort === 'desc'
+          ? '<i data-lucide="arrow-down-narrow-wide" class="h-4 w-4"></i> Newest first'
+          : '<i data-lucide="arrow-up-narrow-wide" class="h-4 w-4"></i> Oldest first';
+        iconsIn(sortBtn);
+        followupActivityPage = 1;
+        loadFollowupActivityTimeline({ page: 1 });
+      });
+    }
+    if (refreshBtn && !refreshBtn._followupTimelineBound) {
+      refreshBtn._followupTimelineBound = true;
+      refreshBtn.addEventListener('click', function () {
+        loadFollowupActivityTimeline();
+      });
+    }
+    loadFollowupActivityTimeline();
+  }
+
   function refreshFollowupsPage(options) {
     options = options || {};
     if (options.metrics !== false) {
@@ -8421,12 +9927,17 @@ window.CA_CRM = (function () {
       loadDashboardMetricsFromDatabase(function () {
         renderFollowupKpis();
       });
+      refreshDailyEmployeeTargets(true);
+      refreshEmployeeDailyTargetsFromDashboard(true);
     } else {
       renderFollowupKpis();
     }
     if (options.calendar) {
       window._followupCalEvents = null;
       renderFollowupCalendarFromData();
+    }
+    if (document.getElementById('followup-activity-timeline')) {
+      loadFollowupActivityTimeline({ silent: !!options.timelineSilent });
     }
     if (options.reload && window.CA_LISTING_SEARCH) {
       return reloadListing('follow_ups');
@@ -8522,6 +10033,13 @@ window.CA_CRM = (function () {
       iconsIn(document.getElementById('detail-drawer'));
       return;
     }
+    var historyHtml = followup.ca_id
+      ? '<div class="mt-5 pt-4 border-t border-slate-100">' +
+          '<p class="text-caption font-semibold text-slate-600 mb-3">Activity History</p>' +
+          '<div id="followup-drawer-timeline" class="followup-activity-timeline followup-activity-timeline--compact">' +
+            '<div class="crm-inline-loading py-4"><i data-lucide="loader-2" class="h-4 w-4 animate-spin text-brand"></i><span>Loading history…</span></div>' +
+          '</div></div>'
+      : '';
     openDetailDrawer({
       firm: followup.firm_name || ('Follow-up #' + followup.followup_id),
       fields: [
@@ -8535,8 +10053,21 @@ window.CA_CRM = (function () {
         { label: 'Remarks', value: followup.remarks || '—' },
         { label: 'Priority', value: followup.priority || '—' },
       ],
+      extraHtml: historyHtml,
     });
     iconsIn(document.getElementById('detail-drawer'));
+    if (followup.ca_id) {
+      fetchLeadActivityTimeline(followup.ca_id, 'desc')
+        .then(function (items) {
+          renderFollowupActivityTimelineItems(items, 'followup-drawer-timeline');
+        })
+        .catch(function () {
+          var drawerTimeline = document.getElementById('followup-drawer-timeline');
+          if (drawerTimeline) {
+            drawerTimeline.innerHTML = '<p class="text-caption text-slate-400">Unable to load activity history.</p>';
+          }
+        });
+    }
   }
 
   function openFollowupDetails(followupId) {
@@ -10669,23 +12200,60 @@ window.CA_CRM = (function () {
     if (!tbody) return;
     logs = logs || window.realWaMessageLogs || [];
     if (!logs.length) {
-      tbody.innerHTML = '<tr><td colspan="9" class="text-center text-slate-400 py-8">No message logs yet.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="text-center text-slate-400 py-8">No message logs yet.</td></tr>';
       return;
     }
     tbody.innerHTML = logs.map(function (log) {
       var errorText = log.error_message || log.failed_reason || '';
+      var ts = log.sent_at || log.queued_at || log.created_at;
+      var retryBtn = log.can_retry
+        ? '<button type="button" class="btn-secondary btn-xs" data-retry-wa-log="' + log.id + '" title="Retry">Retry</button>'
+        : '';
+      var payloadBtn = log.api_payload
+        ? ' <button type="button" class="btn-secondary btn-xs" data-view-wa-payload="' + log.id + '" title="View Payload">Payload</button>'
+        : '';
+      var responseBtn = log.provider_response
+        ? ' <button type="button" class="btn-secondary btn-xs" data-view-wa-response="' + log.id + '" title="View Response">Response</button>'
+        : '';
       return '<tr>' +
-        '<td>' + escapeHtml(log.campaign_name || log.campaign_id || '—') + '</td>' +
-        '<td>' + escapeHtml(log.firm_name || log.lead_name || '—') + '</td>' +
-        '<td>' + escapeHtml(log.mobile_no || '—') + '</td>' +
-        '<td>' + escapeHtml(log.template_name || '—') + '</td>' +
+        '<td class="whitespace-nowrap">' + escapeHtml(formatActivityTimestamp(ts)) + '</td>' +
+        '<td>' + escapeHtml(log.recipient || log.mobile_no || '—') + '</td>' +
+        '<td>' + escapeHtml(log.lead_name || log.firm_name || '—') + '</td>' +
+        '<td class="max-w-[8rem] truncate" title="' + escapeHtml(log.template_name || '') + '">' + escapeHtml(log.template_name || '—') + '</td>' +
         '<td>' + waStatusBadge(log.message_status || log.status) + '</td>' +
         '<td class="max-w-[10rem] truncate font-mono text-xs" title="' + escapeHtml(log.meta_message_id || '') + '">' + escapeHtml(log.meta_message_id || '—') + '</td>' +
-        '<td class="max-w-xs truncate" title="' + escapeHtml(log.message) + '">' + escapeHtml(log.message || '—') + '</td>' +
-        '<td class="max-w-xs truncate text-red-700" title="' + escapeHtml(errorText) + '">' + escapeHtml(errorText || '—') + '</td>' +
-        '<td class="whitespace-nowrap">' + escapeHtml(formatActivityTimestamp(log.queued_at)) + '</td>' +
+        '<td>' + (log.is_delivered ? '<span class="badge-success">Yes</span>' : '<span class="text-slate-400">—</span>') + '</td>' +
+        '<td>' + (log.is_read ? '<span class="badge-success">Yes</span>' : '<span class="text-slate-400">—</span>') + '</td>' +
+        '<td class="max-w-xs truncate text-red-700" title="' + escapeHtml(errorText) + '">' + (log.is_failed ? escapeHtml(errorText || 'Failed') : '<span class="text-slate-400">—</span>') + '</td>' +
+        '<td class="whitespace-nowrap">' + retryBtn + payloadBtn + responseBtn + '</td>' +
       '</tr>';
     }).join('');
+  }
+
+  function showWaLogJsonModal(title, data) {
+    var json = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+    var overlay = document.createElement('div');
+    overlay.className = 'fixed inset-0 z-[200] flex items-center justify-center bg-black/40 p-4';
+    overlay.innerHTML = '<div class="card max-w-3xl w-full max-h-[80vh] overflow-hidden flex flex-col">' +
+      '<div class="flex items-center justify-between p-4 border-b"><h3 class="text-card-heading">' + escapeHtml(title) + '</h3>' +
+      '<button type="button" class="btn-secondary btn-sm" data-close-wa-json>Close</button></div>' +
+      '<pre class="p-4 overflow-auto text-xs font-mono bg-slate-50 flex-1">' + escapeHtml(json) + '</pre></div>';
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay || e.target.closest('[data-close-wa-json]')) overlay.remove();
+    });
+    document.body.appendChild(overlay);
+  }
+
+  function retryWaMessageLog(logId) {
+    apiFetch('/wa-message-logs/' + encodeURIComponent(logId) + '/retry', { method: 'POST' })
+      .then(function () {
+        toast('WhatsApp message retried', 'success');
+        loadWaMessageLogsFromDatabase(function (logs) { renderWaMessageLogsTable(logs); });
+      })
+      .catch(function (err) {
+        toast(err.message || 'Retry failed', 'error');
+        loadWaMessageLogsFromDatabase(function (logs) { renderWaMessageLogsTable(logs); });
+      });
   }
 
   function refreshWhatsAppPage() {
@@ -12071,6 +13639,11 @@ window.CA_CRM = (function () {
           return;
         }
 
+        if (modalKey === 'assign-daily-target') {
+          openDailyTargetModal(null);
+          return;
+        }
+
         openExclusiveCrmModal(modal);
         icons();
 
@@ -13251,6 +14824,9 @@ window.CA_CRM = (function () {
     if (pageId === 'dashboard') {
       if (isEmployeeUser()) renderEmployeeDashboard();
       else renderManagerDashboard();
+      if (window.CrmDemoCalendar && typeof window.CrmDemoCalendar.init === 'function') {
+        window.CrmDemoCalendar.init('demo-cal');
+      }
       if (window.CA_CRM && typeof CA_CRM.startNotificationPoller === 'function') {
         CA_CRM.startNotificationPoller();
       }
@@ -13312,6 +14888,7 @@ window.CA_CRM = (function () {
         icons();
       });
       loadDemoHistory();
+      initFollowupActivityTimeline();
       icons();
       return;
     }
@@ -13423,6 +15000,11 @@ window.CA_CRM = (function () {
     }
     if (pageId === 'settings-google-api') {
       initSettingsGoogleApiPage();
+      icons();
+      return;
+    }
+    if (pageId === 'settings-demo-providers') {
+      initDemoProvidersSettingsPage();
       icons();
       return;
     }
@@ -16177,11 +17759,35 @@ window.CA_CRM = (function () {
       else if (wa.has_access_token && wa.phone_number_id && wa.business_account_id) status = 'connected';
       else status = 'not_configured';
     }
-    if (status === 'integrated') return { label: 'Integrated', badge: 'badge-success' };
-    if (status === 'connected' || status === 'mapped') return { label: 'Connected', badge: 'badge-warning' };
-    if (status === 'failed') return { label: 'Failed', badge: 'badge-danger' };
-    if (status === 'disabled') return { label: 'Disabled', badge: 'badge-warning' };
-    return { label: 'Not Configured', badge: 'badge-neutral' };
+    if (status === 'integrated' || status === 'connected' || wa.connection_connected) {
+      return { label: wa.connection_status || 'Connected', badge: 'badge-success' };
+    }
+    if (status === 'failed' || status === 'disabled' || status === 'not_configured') {
+      return { label: wa.connection_status || 'Disconnected', badge: 'badge-danger' };
+    }
+    return { label: 'Disconnected', badge: 'badge-danger' };
+  }
+
+  function whatsappStatusBadgeHtml(label, ok) {
+    return '<span class="' + (ok ? 'badge-success' : 'badge-danger') + '">' + escapeHtml(label) + '</span>';
+  }
+
+  function renderWhatsAppConnectionDashboard(wa) {
+    wa = wa || {};
+    var setDash = function (id, html) {
+      var el = document.getElementById(id);
+      if (el) el.innerHTML = html;
+    };
+    var connected = !!wa.connection_connected || wa.integration_status === 'integrated' || wa.integration_status === 'connected';
+    setDash('whatsapp-dash-connection', whatsappStatusBadgeHtml(wa.connection_status || (connected ? 'Connected' : 'Disconnected'), connected));
+    setDash('whatsapp-dash-webhook', whatsappStatusBadgeHtml(wa.webhook_status === 'configured' ? 'Configured' : 'Not Configured', wa.webhook_status === 'configured'));
+    setDash('whatsapp-dash-api', whatsappStatusBadgeHtml(wa.api_status === 'configured' ? 'Configured' : 'Not Configured', wa.api_status === 'configured'));
+    var tokenOk = wa.token_status === 'configured';
+    var tokenLabel = wa.token_status === 'invalid' ? 'Invalid' : (wa.token_status === 'configured' ? 'Configured' : 'Missing');
+    setDash('whatsapp-dash-token', whatsappStatusBadgeHtml(tokenLabel, tokenOk));
+    setDash('whatsapp-dash-templates', escapeHtml(String(wa.approved_templates_count != null ? wa.approved_templates_count : '—')));
+    setDash('whatsapp-dash-last-sync', escapeHtml(wa.last_sync_at ? formatActivityTimestamp(wa.last_sync_at) : '—'));
+    setDash('whatsapp-dash-callback', escapeHtml(wa.callback_url || '—'));
   }
 
   function updateWhatsAppIntegrationStatusBadge(wa) {
@@ -16372,6 +17978,7 @@ window.CA_CRM = (function () {
       if (btn) btn.disabled = !canEdit;
     });
     updateWhatsAppIntegrationStatusBadge(wa);
+    renderWhatsAppConnectionDashboard(wa);
   }
 
   function collectWhatsAppSettingsPayload() {
@@ -16539,7 +18146,16 @@ window.CA_CRM = (function () {
       '{{scheduled_date}}': lead.scheduled_date || '',
       '{{scheduled_time}}': lead.scheduled_time || '',
       '{{1}}': lead.ca_name || '',
-      '{{2}}': 'LawSeva',
+      '{{2}}': 'GST Return',
+      '{{3}}': '24-June-2025',
+      '{{4}}': '₹10,150',
+      '{{5}}': '28-June-2025',
+    };
+    var invoiceFallbacks = {
+      service_name: 'GST Return',
+      invoice_date: '24-June-2025',
+      invoice_amount: '₹10,150',
+      due_date: '28-June-2025',
     };
     if (template && template.variable_map && typeof template.variable_map === 'object') {
       Object.keys(template.variable_map).forEach(function (placeholder) {
@@ -16548,6 +18164,8 @@ window.CA_CRM = (function () {
           variables[placeholder] = source.slice(7);
         } else if (source === 'ca_name' || source === 'client_name') {
           variables[placeholder] = lead.ca_name || '';
+        } else if (invoiceFallbacks[source]) {
+          variables[placeholder] = invoiceFallbacks[source];
         }
       });
     }
@@ -17029,6 +18647,28 @@ window.CA_CRM = (function () {
       if (e.target.closest('#whatsapp-settings-reset-btn')) {
         e.preventDefault();
         resetWhatsAppSettings();
+        return;
+      }
+      var retryWaBtn = e.target.closest('[data-retry-wa-log]');
+      if (retryWaBtn) {
+        e.preventDefault();
+        retryWaMessageLog(retryWaBtn.getAttribute('data-retry-wa-log'));
+        return;
+      }
+      var payloadBtn = e.target.closest('[data-view-wa-payload]');
+      if (payloadBtn) {
+        e.preventDefault();
+        var logId = payloadBtn.getAttribute('data-view-wa-payload');
+        var log = (window.realWaMessageLogs || []).find(function (l) { return String(l.id) === String(logId); });
+        showWaLogJsonModal('Request Payload', log && log.api_payload ? log.api_payload : {});
+        return;
+      }
+      var responseBtn = e.target.closest('[data-view-wa-response]');
+      if (responseBtn) {
+        e.preventDefault();
+        var respLogId = responseBtn.getAttribute('data-view-wa-response');
+        var respLog = (window.realWaMessageLogs || []).find(function (l) { return String(l.id) === String(respLogId); });
+        showWaLogJsonModal('Meta Response', respLog && respLog.provider_response ? respLog.provider_response : {});
       }
     });
   }
@@ -17419,6 +19059,14 @@ window.CA_CRM = (function () {
         setCheck('settings-hot-lead-priority', assignment.hot_lead_priority !== false);
         setCheck('settings-workload-balancing', assignment.workload_balancing !== false);
         setCheck('settings-city-routing', assignment.city_routing !== false);
+        var capacityInput = document.getElementById('settings-daily-max-capacity');
+        if (capacityInput) {
+          capacityInput.value = assignment.daily_max_capacity != null ? assignment.daily_max_capacity : 50;
+        }
+        var capacityWrap = document.getElementById('settings-daily-capacity-wrap');
+        if (capacityWrap) {
+          capacityWrap.classList.toggle('hidden', (window.__CRM_USER__ || {}).role !== 'super_admin');
+        }
       })
       .catch(function () {});
     var smsIntegrationCard = document.getElementById('sms-integration-card');
@@ -17465,6 +19113,10 @@ window.CA_CRM = (function () {
             city_routing: !!(document.getElementById('settings-city-routing') || {}).checked,
           },
         };
+        if ((window.__CRM_USER__ || {}).role === 'super_admin') {
+          var capacityVal = parseInt((document.getElementById('settings-daily-max-capacity') || {}).value, 10);
+          if (capacityVal > 0) payload.assignment.daily_max_capacity = capacityVal;
+        }
         apiFetch('/settings/data', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -17488,6 +19140,67 @@ window.CA_CRM = (function () {
     if (window.CrmTemplateManagement) {
       window.CrmTemplateManagement.initWhatsApp();
     }
+  }
+
+  function initDemoProvidersSettingsPage() {
+    var root = document.getElementById('settings-demo-providers-page');
+    var list = document.getElementById('demo-providers-settings-list');
+    if (!root || !list || root._demoProvidersBound) return;
+    root._demoProvidersBound = true;
+
+    function renderProviders(items) {
+      if (!items.length) {
+        list.innerHTML = '<p class="text-slate-500">No demo providers configured.</p>';
+        return;
+      }
+      list.innerHTML = items.map(function (p) {
+        return '<article class="demo-provider-settings-card" data-provider-id="' + p.id + '">' +
+          '<div class="demo-provider-settings-card__head"><h4 class="font-semibold">' + escapeHtml(p.name) + '</h4>' +
+          '<span class="badge-' + (p.is_active ? 'success' : 'neutral') + '">' + (p.is_active ? 'Active' : 'Inactive') + '</span></div>' +
+          '<div class="grid sm:grid-cols-2 gap-3 mt-3 text-sm">' +
+            '<label class="block">Work Start<input class="input-field mt-1" data-field="work_start_time" value="' + escapeHtml(String(p.work_start_time || '10:00:00').slice(0, 5)) + '" /></label>' +
+            '<label class="block">Work End<input class="input-field mt-1" data-field="work_end_time" value="' + escapeHtml(String(p.work_end_time || '18:00:00').slice(0, 5)) + '" /></label>' +
+            '<label class="block">Slot (min)<input class="input-field mt-1" data-field="slot_duration_minutes" type="number" min="15" value="' + (p.slot_duration_minutes || 60) + '" /></label>' +
+            '<label class="block">Buffer (min)<input class="input-field mt-1" data-field="buffer_minutes" type="number" min="0" value="' + (p.buffer_minutes || 15) + '" /></label>' +
+            '<label class="block">Max Demos/Day<input class="input-field mt-1" data-field="max_demos_per_day" type="number" min="1" value="' + (p.max_demos_per_day || 6) + '" /></label>' +
+            '<label class="block">Meeting Link<input class="input-field mt-1" data-field="default_meeting_link" value="' + escapeHtml(p.default_meeting_link || '') + '" /></label>' +
+            '<label class="block sm:col-span-2">Break Start<input class="input-field mt-1" data-field="break_start_time" value="' + escapeHtml(String(p.break_start_time || '13:00:00').slice(0, 5)) + '" /></label>' +
+            '<label class="block sm:col-span-2">Break End<input class="input-field mt-1" data-field="break_end_time" value="' + escapeHtml(String(p.break_end_time || '14:00:00').slice(0, 5)) + '" /></label>' +
+          '</div>' +
+          '<button type="button" class="btn-primary btn-sm mt-4" data-save-provider="' + p.id + '">Save Provider</button>' +
+        '</article>';
+      }).join('');
+    }
+
+    apiFetch('/demo-calendar/providers/settings')
+      .then(function (body) {
+        var items = body.data || [];
+        if (items.data) items = items.data;
+        renderProviders(Array.isArray(items) ? items : []);
+      })
+      .catch(function () {
+        list.innerHTML = '<p class="text-rose-500">Unable to load demo providers.</p>';
+      });
+
+    list.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-save-provider]');
+      if (!btn) return;
+      var card = btn.closest('[data-provider-id]');
+      var id = btn.getAttribute('data-save-provider');
+      var payload = { is_active: true };
+      card.querySelectorAll('[data-field]').forEach(function (input) {
+        payload[input.getAttribute('data-field')] = input.value;
+      });
+      apiFetch('/demo-calendar/providers/' + id, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).then(function () {
+        toast('Demo provider updated.', 'success');
+      }).catch(function (err) {
+        toast(err.message || 'Unable to save provider.', 'error');
+      });
+    });
   }
 
   function initSettingsGoogleApiPage() {
@@ -17991,8 +19704,8 @@ window.CA_CRM = (function () {
       var citiesEl = document.getElementById('master-cities-table');
       if (citiesEl) {
         citiesEl.innerHTML = items.length ? items.map(function (c) {
-          return '<tr class="ca-table-row">' +
-            '<td class="font-medium">' + escapeHtml(c.city_name) + '</td>' +
+          return '<tr class="ca-table-row' + (c.is_active === false ? ' opacity-70' : '') + '">' +
+            '<td class="font-medium">' + escapeHtml(c.city_name) + masterStatusBadge(c) + '</td>' +
             '<td>' + escapeHtml(c.state_name || (c.state && c.state.state_name) || '—') + '</td>' +
             '<td>—</td>' +
             '<td class="text-caption">' + formatRelativeDate(c.created_at) + '</td>' +
@@ -18528,6 +20241,7 @@ window.CA_CRM = (function () {
     initSettingsEmailTemplatesPage: initSettingsEmailTemplatesPage,
     initSettingsWhatsAppTemplatesPage: initSettingsWhatsAppTemplatesPage,
     initSettingsGoogleApiPage: initSettingsGoogleApiPage,
+    initDemoProvidersSettingsPage: initDemoProvidersSettingsPage,
     initSecurityPage: initSecurityPage,
     initQuickActions: initQuickActions,
     openEmployeeFormForEdit: openEmployeeFormForEdit,
@@ -18541,6 +20255,9 @@ window.CA_CRM = (function () {
     initSalesListPage: initSalesListPage,
     applyFollowupTypeFilter: applyFollowupTypeFilter,
     loadDemoHistory: loadDemoHistory,
+    loadFollowupActivityTimeline: loadFollowupActivityTimeline,
+    initFollowupActivityTimeline: initFollowupActivityTimeline,
+    renderFollowupActivityTimelineItems: renderFollowupActivityTimelineItems,
     loadRecycleBin: loadRecycleBin,
     loadKanbanLeads: loadKanbanLeads,
     loadLeadSegmentCounts: loadLeadSegmentCounts,

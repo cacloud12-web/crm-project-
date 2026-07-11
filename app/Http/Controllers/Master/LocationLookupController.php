@@ -24,6 +24,7 @@ class LocationLookupController extends Controller
     {
         $states = $this->cacheService->rememberMasterListing('lookup_states', function () {
             return State::query()
+                ->active()
                 ->orderBy('state_name')
                 ->get(['state_id', 'state_name'])
                 ->map(fn (State $state) => [
@@ -46,6 +47,7 @@ class LocationLookupController extends Controller
 
         $cities = $this->cacheService->rememberMasterListing('lookup_cities:'.$stateId, function () use ($stateId) {
             return City::query()
+                ->active()
                 ->where('state_id', $stateId)
                 ->orderBy('city_name')
                 ->get(['city_id', 'city_name', 'state_id'])

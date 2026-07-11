@@ -30,6 +30,15 @@ fi
 php artisan optimize:clear
 php artisan migrate --force
 
+# Ensure India state/city master data exists (required for lead forms)
+STATE_COUNT="$(php -r "require 'vendor/autoload.php'; \$app=require 'bootstrap/app.php'; \$app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); echo App\\Models\\State::query()->count();" 2>/dev/null || echo 0)"
+if [ "${STATE_COUNT}" = "0" ] || [ -z "${STATE_COUNT}" ]; then
+  echo "Seeding India states and cities..."
+  php artisan db:seed --class=IndiaStatesCitiesSeeder --force
+else
+  echo "States already present (${STATE_COUNT}); skipping IndiaStatesCitiesSeeder."
+fi
+
 if [ ! -L public/storage ]; then
   php artisan storage:link || true
 fi

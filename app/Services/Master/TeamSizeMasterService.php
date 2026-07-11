@@ -2,17 +2,20 @@
 
 namespace App\Services\Master;
 
-use App\Models\CaMaster;
 use App\Models\TeamSizeMaster;
 use App\Services\Concerns\SearchesListings;
 use App\Services\Master\Concerns\LogsMasterActivity;
 use Illuminate\Support\Collection;
-use InvalidArgumentException;
 
 class TeamSizeMasterService
 {
     use LogsMasterActivity;
     use SearchesListings;
+
+    public function __construct(
+        private readonly MasterRecordLifecycleService $lifecycleService,
+        private readonly MasterDependencyService $dependencyService,
+    ) {}
 
     public function search(array $params = []): array
     {
@@ -35,6 +38,7 @@ class TeamSizeMasterService
             'team_size_min' => $data['team_size_min'],
             'team_size_max' => $data['team_size_max'],
             'team_size_label' => trim($data['team_size_label']),
+            'is_active' => true,
         ]);
 
         $this->logMasterActivity(
@@ -66,16 +70,23 @@ class TeamSizeMasterService
         return $teamSize->fresh();
     }
 
+    public function dependencies(TeamSizeMaster $teamSize): array
+    {
+        return $this->dependencyService->analyze(MasterDependencyService::ENTITY_TEAM, $teamSize);
+    }
+
     public function delete(TeamSizeMaster $teamSize): void
     {
-        if (CaMaster::query()->where('team_size_id', $teamSize->id)->exists()) {
-            throw new InvalidArgumentException('Cannot delete a team size that is used by CA Master records.');
-        }
+        $this->lifecycleService->delete(MasterDependencyService::ENTITY_TEAM, $teamSize);
+    }
 
-        $label = $teamSize->team_size_label;
-        $id = (string) $teamSize->id;
-        $teamSize->delete();
+    public function deactivate(TeamSizeMaster $teamSize, ?int $userId = null): TeamSizeMaster
+    {
+        return $this->lifecycleService->deactivate(MasterDependencyService::ENTITY_TEAM, $teamSize, $userId);
+    }
 
-        $this->logMasterActivity('Delete Team Size', 'TEAM_SIZE_MASTER', $id, $label);
+    public function reactivate(TeamSizeMaster $teamSize): TeamSizeMaster
+    {
+        return $this->lifecycleService->reactivate(MasterDependencyService::ENTITY_TEAM, $teamSize);
     }
 }

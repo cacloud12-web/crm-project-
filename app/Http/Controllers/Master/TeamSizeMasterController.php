@@ -3,19 +3,27 @@
 namespace App\Http\Controllers\Master;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Master\Concerns\HandlesMasterRecordLifecycle;
 use App\Http\Requests\Master\StoreTeamSizeMasterRequest;
 use App\Http\Requests\Master\UpdateTeamSizeMasterRequest;
 use App\Http\Resources\TeamSizeMasterResource;
+use App\Services\Master\MasterDependencyService;
+use App\Services\Master\MasterRecordLifecycleService;
 use App\Services\Master\TeamSizeMasterService;
 use App\Support\ApiResponse;
 use App\Support\Listing\ListingResponse;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class TeamSizeMasterController extends Controller
 {
+    use HandlesMasterRecordLifecycle;
+
     public function __construct(
         private readonly TeamSizeMasterService $teamSizeMasterService,
+        private readonly MasterRecordLifecycleService $lifecycleService,
+        private readonly MasterDependencyService $dependencyService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -52,12 +60,36 @@ class TeamSizeMasterController extends Controller
 
     public function destroy(string $id): JsonResponse
     {
-        try {
-            $this->teamSizeMasterService->delete($this->teamSizeMasterService->find($id));
-        } catch (\InvalidArgumentException $exception) {
-            return ApiResponse::error($exception->getMessage(), 422);
-        }
+        return $this->destroyWithLifecycle($id);
+    }
 
-        return ApiResponse::success(null, 'Team size deleted successfully');
+    protected function masterEntityKey(): string
+    {
+        return MasterDependencyService::ENTITY_TEAM;
+    }
+
+    protected function masterLifecycleService(): MasterRecordLifecycleService
+    {
+        return $this->lifecycleService;
+    }
+
+    protected function masterDependencyService(): MasterDependencyService
+    {
+        return $this->dependencyService;
+    }
+
+    protected function masterFind(int|string $id): Model
+    {
+        return $this->teamSizeMasterService->find($id);
+    }
+
+    protected function masterResource(Model $model): mixed
+    {
+        return new TeamSizeMasterResource($model);
+    }
+
+    protected function masterEntityLabel(): string
+    {
+        return 'Team size';
     }
 }

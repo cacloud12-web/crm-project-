@@ -824,7 +824,8 @@ class CaMasterService
         }
         $employeeId = $this->employeeDataScope->scopedEmployeeId(auth()->user());
         if ($employeeId) {
-            $this->cacheService->forgetEmployeeDashboard($employeeId);
+            $this->cacheService->forgetDailyEmployeeTargets($employeeId);
+            $this->cacheService->forgetYearlyEmployeeTargets($employeeId);
         }
     }
 

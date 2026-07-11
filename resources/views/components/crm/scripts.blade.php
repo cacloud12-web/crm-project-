@@ -14,6 +14,7 @@
 <script src="{{ asset('crm-ui/src/api/crm.js') }}"></script>
 <script src="{{ asset('crm-ui/src/components/lead-picker.js') }}"></script>
 <script src="{{ asset('crm-ui/src/components/entity-lookup.js') }}"></script>
+<script src="{{ asset('crm-ui/src/components/demo-calendar.js') }}"></script>
 <script src="{{ asset('crm-ui/src/api/campaigns-hub.js') }}"></script>
 <script src="{{ asset('crm-ui/src/components/state-city-dropdown.js') }}"></script>
 <script src="{{ asset('crm-ui/src/components/guide-cards.js') }}"></script>

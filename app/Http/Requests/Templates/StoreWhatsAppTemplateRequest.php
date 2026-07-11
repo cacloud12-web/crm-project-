@@ -26,6 +26,8 @@ class StoreWhatsAppTemplateRequest extends FormRequest
             'language_code' => ['nullable', 'string', 'max:12'],
             'publish_status' => ['nullable', 'string', Rule::in(config('template_variables.publish_statuses', []))],
             'meta_api_name' => ['nullable', 'string', 'max:120', 'regex:/^[a-z0-9_]*$/'],
+            'mark_meta_approved' => ['nullable', 'boolean'],
+            'meta_template_id' => ['nullable', 'string', 'max:64'],
         ];
     }
 }

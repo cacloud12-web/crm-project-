@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\CaMaster;
+use App\Models\City;
 use App\Models\SourceLead;
 use App\Models\State;
 use App\Models\User;
@@ -52,6 +53,28 @@ class MasterDataCrudTest extends TestCase
             ->assertJsonPath('success', true);
     }
 
+    public function test_state_dependencies_endpoint(): void
+    {
+        $this->actingAsAdmin();
+        $ca = CaMaster::query()->whereNotNull('state_id')->first();
+        if (! $ca) {
+            $this->markTestSkipped('No CA Master records with state in seed data.');
+        }
+
+        $this->getJson('/states/'.$ca->state_id.'/dependencies')
+            ->assertOk()
+            ->assertJsonPath('data.can_delete', false)
+            ->assertJsonStructure([
+                'data' => [
+                    'can_delete',
+                    'total_dependencies',
+                    'dependencies',
+                    'recommended_action',
+                    'record_name',
+                ],
+            ]);
+    }
+
     public function test_state_delete_blocked_when_used_by_ca_master(): void
     {
         $this->actingAsAdmin();
@@ -61,8 +84,27 @@ class MasterDataCrudTest extends TestCase
         }
 
         $this->deleteJson('/states/'.$ca->state_id)
-            ->assertStatus(422)
-            ->assertJsonPath('success', false);
+            ->assertStatus(409)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('data.can_delete', false);
+    }
+
+    public function test_state_deactivate_when_in_use(): void
+    {
+        $this->actingAsAdmin();
+        $ca = CaMaster::query()->whereNotNull('state_id')->first();
+        if (! $ca) {
+            $this->markTestSkipped('No CA Master records with state in seed data.');
+        }
+
+        $this->patchJson('/states/'.$ca->state_id.'/deactivate')
+            ->assertOk()
+            ->assertJsonPath('data.is_active', false);
+
+        $this->assertDatabaseHas('states', [
+            'state_id' => $ca->state_id,
+            'is_active' => false,
+        ]);
     }
 
     public function test_city_crud_requires_valid_state(): void
@@ -101,7 +143,7 @@ class MasterDataCrudTest extends TestCase
         }
 
         $this->deleteJson('/cities/'.$ca->city_id)
-            ->assertStatus(422)
+            ->assertStatus(409)
             ->assertJsonPath('success', false);
     }
 
@@ -174,5 +216,15 @@ class MasterDataCrudTest extends TestCase
 
         $this->deleteJson('/source-leads/'.$source->source_id)
             ->assertForbidden();
+    }
+
+    public function test_state_delete_blocked_when_has_cities(): void
+    {
+        $this->actingAsAdmin();
+        $city = City::query()->firstOrFail();
+
+        $this->deleteJson('/states/'.$city->state_id)
+            ->assertStatus(409)
+            ->assertJsonPath('data.can_delete', false);
     }
 }

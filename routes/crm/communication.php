@@ -94,6 +94,8 @@ Route::middleware(['auth', 'rbac'])->group(function () {
         ->middleware('spa.browser:whatsapp');
     Route::get('wa-message-logs', [WhatsAppCampaignController::class, 'messageLogs'])
         ->middleware('spa.browser:whatsapp');
+    Route::post('wa-message-logs/{id}/retry', [WhatsAppCampaignController::class, 'retryMessageLog'])
+        ->middleware(['spa.browser:whatsapp', 'throttle:campaign']);
 
     Route::get('email-campaigns/{id}/payload-preview', [EmailCampaignController::class, 'payloadPreview'])
         ->middleware(['spa.browser:email', 'throttle:campaign']);

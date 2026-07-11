@@ -56,6 +56,8 @@ Route::middleware(['auth', 'rbac'])->group(function () {
         ->middleware('spa.access:settings-whatsapp-templates');
     Route::get('settings/google-api', fn () => view('crm.index', ['spaPage' => 'settings-google-api']))
         ->middleware('spa.access:settings');
+    Route::get('settings/demo-providers', fn () => view('crm.index', ['spaPage' => 'settings-demo-providers']))
+        ->middleware('spa.access:settings');
     Route::redirect('sales-list', '/settings/sales-list');
 
     Route::redirect('payments', '/dashboard');

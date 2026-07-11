@@ -2,9 +2,7 @@
 
 namespace App\Services\Master;
 
-use App\Models\CaMaster;
 use App\Models\City;
-use App\Models\Employee;
 use App\Models\State;
 use App\Services\Concerns\SearchesListings;
 use App\Services\Master\Concerns\LogsMasterActivity;
@@ -18,6 +16,8 @@ class CityService
 
     public function __construct(
         private readonly LookupResolverService $lookupResolver,
+        private readonly MasterRecordLifecycleService $lifecycleService,
+        private readonly MasterDependencyService $dependencyService,
     ) {}
 
     public function search(array $params = []): array
@@ -49,6 +49,7 @@ class CityService
         $city = City::create([
             'city_name' => trim($data['city_name']),
             'state_id' => $stateId,
+            'is_active' => true,
         ]);
 
         $this->logMasterActivity(
@@ -85,21 +86,24 @@ class CityService
         return $city->fresh()->load('state');
     }
 
+    public function dependencies(City $city): array
+    {
+        return $this->dependencyService->analyze(MasterDependencyService::ENTITY_CITY, $city);
+    }
+
     public function delete(City $city): void
     {
-        if (CaMaster::query()->where('city_id', $city->city_id)->exists()) {
-            throw new InvalidArgumentException('Cannot delete a city that is used by CA Master records.');
-        }
+        $this->lifecycleService->delete(MasterDependencyService::ENTITY_CITY, $city);
+    }
 
-        if (Employee::query()->where('city_id', $city->city_id)->exists()) {
-            throw new InvalidArgumentException('Cannot delete a city that is used by employees.');
-        }
+    public function deactivate(City $city, ?int $userId = null): City
+    {
+        return $this->lifecycleService->deactivate(MasterDependencyService::ENTITY_CITY, $city, $userId);
+    }
 
-        $name = $city->city_name;
-        $id = (string) $city->city_id;
-        $city->delete();
-
-        $this->logMasterActivity('Delete City', 'CITY_MASTER', $id, $name);
+    public function reactivate(City $city): City
+    {
+        return $this->lifecycleService->reactivate(MasterDependencyService::ENTITY_CITY, $city);
     }
 
     private function assertCityBelongsToState(City $city, int $stateId): void

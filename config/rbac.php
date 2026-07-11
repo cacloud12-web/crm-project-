@@ -174,6 +174,7 @@ return [
         'settings-whatsapp-templates' => ['module' => 'whatsapp_templates', 'permission' => 'view'],
         'roles-permissions' => ['module' => 'roles_permissions', 'permission' => 'view'],
         'email-configuration' => ['module' => 'email_configuration', 'permission' => 'view'],
+        'settings-demo-providers' => ['module' => 'settings', 'permission' => 'manage_settings'],
         'notifications' => ['module' => 'dashboard', 'permission' => 'view'],
         'analytics' => ['module' => 'reports', 'permission' => 'view_reports'],
         'audit' => ['module' => 'activity', 'permission' => 'view'],

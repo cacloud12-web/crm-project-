@@ -998,6 +998,46 @@
     </div>
   </div>
 
+  <div id="modal-master-delete-guard" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="master-delete-guard-title">
+    <div class="ca-modal-panel">
+      <div class="ca-modal-header">
+        <h3 id="master-delete-guard-title" class="ca-modal-title">
+          <span class="ca-modal-icon master-delete-guard__icon"><i data-lucide="alert-triangle" class="h-5 w-5"></i></span>
+          <span id="master-delete-guard-title-text">Cannot Delete Record</span>
+        </h3>
+        <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
+      </div>
+      <div class="ca-modal-body space-y-4">
+        <div id="master-delete-guard-loading" class="master-delete-guard__loading hidden">
+          <span class="inline-flex items-center gap-2 text-slate-500"><i data-lucide="loader-2" class="h-4 w-4 animate-spin"></i> Checking dependencies…</span>
+        </div>
+        <div id="master-delete-guard-body" class="space-y-4">
+          <p id="master-delete-guard-message" class="text-body text-slate-700"></p>
+          <div id="master-delete-guard-usage-wrap" class="hidden">
+            <p class="text-caption font-medium text-slate-600 mb-2">This record is currently in use:</p>
+            <ul id="master-delete-guard-usage-list" class="master-delete-guard__usage-list"></ul>
+          </div>
+          <div id="master-delete-guard-recommendation" class="master-delete-guard__recommendation hidden">
+            <p class="text-caption text-slate-500">Recommendation: Deactivate this record to prevent it from being selected in new entries while preserving historical data.</p>
+          </div>
+          <div id="master-delete-guard-view-usage" class="hidden space-y-2">
+            <p class="text-caption font-medium text-slate-600">Usage details</p>
+            <div id="master-delete-guard-view-usage-list" class="master-delete-guard__view-usage"></div>
+          </div>
+        </div>
+      </div>
+      <div class="ca-modal-footer">
+        <div class="ca-modal-footer-buttons master-delete-guard__actions">
+          <button type="button" class="btn-secondary" data-close-crm-modal id="master-delete-guard-cancel">Cancel</button>
+          <button type="button" class="btn-secondary hidden" id="master-delete-guard-view-btn">View Usage</button>
+          <button type="button" class="btn-secondary hidden" id="master-delete-guard-reactivate-btn">Reactivate</button>
+          <button type="button" class="btn-danger hidden" id="master-delete-guard-deactivate-btn">Deactivate</button>
+          <button type="button" class="btn-danger hidden" id="master-delete-guard-confirm-delete-btn">Delete Permanently</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="modal-campaign-detail" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="campaign-detail-title">
     <div class="ca-modal-panel ca-modal-panel-xl">
       <div class="ca-modal-header">
@@ -1102,6 +1142,110 @@
         <div class="ca-modal-footer-buttons">
           <button type="button" class="btn-secondary" data-close-crm-modal>Cancel</button>
           <button type="submit" form="form-demo-result" class="btn-primary flex-1">Save Result</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Yearly Employee Target Modal -->
+  <div id="modal-assign-yearly-target" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="assign-yearly-target-title">
+    <div class="ca-modal-panel ca-modal-panel-md">
+      <div class="ca-modal-header">
+        <h3 id="assign-yearly-target-title" class="ca-modal-title">
+          <span class="ca-modal-icon"><i data-lucide="target" class="h-5 w-5"></i></span>
+          Assign Yearly Target
+        </h3>
+        <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
+      </div>
+      <form id="form-assign-yearly-target" class="ca-modal-body space-y-4" novalidate>
+        <input type="hidden" name="target_id" id="assign-yearly-target-id" />
+        <input type="hidden" name="employee_id" id="assign-yearly-target-employee-id" value="" />
+        <div><label class="form-label">Employee *</label>
+          <select id="assign-yearly-target-employee" class="input-field" data-crm-entity-lookup="employee" data-crm-lookup-placeholder="Search employee…" aria-required="true"><option value="">Select employee…</option></select>
+        </div>
+        <div><label class="form-label">Target Year *</label><input name="target_year" id="assign-yearly-target-year-input" type="number" min="2020" max="2100" class="input-field" required /></div>
+        <p class="text-caption text-slate-500">Targets below apply to each working day. Sundays and company holidays are excluded automatically.</p>
+        <div class="grid sm:grid-cols-2 gap-4">
+          <div><label class="form-label">Lead Target / day</label><input name="lead_target" id="assign-yearly-target-leads" type="number" min="0" step="1" class="input-field" value="0" /></div>
+          <div><label class="form-label">Call Target / day</label><input name="call_target" id="assign-yearly-target-calls" type="number" min="0" step="1" class="input-field" value="0" /></div>
+          <div><label class="form-label">Demo Target / day</label><input name="demo_target" id="assign-yearly-target-demos" type="number" min="0" step="1" class="input-field" value="0" /></div>
+          <div><label class="form-label">Follow-up Target / day</label><input name="followup_target" id="assign-yearly-target-followups" type="number" min="0" step="1" class="input-field" value="0" /></div>
+          <div><label class="form-label">Email Target / day <span class="text-slate-400">(optional)</span></label><input name="email_target" id="assign-yearly-target-email" type="number" min="0" step="1" class="input-field" value="0" /></div>
+          <div><label class="form-label">SMS Target / day <span class="text-slate-400">(optional)</span></label><input name="sms_target" id="assign-yearly-target-sms" type="number" min="0" step="1" class="input-field" value="0" /></div>
+        </div>
+        <div><label class="form-label">Notes / Instructions</label><textarea name="notes" id="assign-yearly-target-notes" class="input-field" rows="3" placeholder="Instructions for the employee…"></textarea></div>
+      </form>
+      <div class="ca-modal-footer">
+        <div class="ca-modal-footer-buttons flex-wrap">
+          <button type="button" class="btn-secondary" data-close-crm-modal>Cancel</button>
+          <button type="submit" form="form-assign-yearly-target" class="btn-primary flex-1" id="assign-yearly-target-save">Save Yearly Target</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Daily Employee Target Modal (legacy — hidden) -->
+  <div id="modal-assign-daily-target" class="ca-modal hidden" role="dialog" aria-modal="true" aria-labelledby="assign-daily-target-title">
+    <div class="ca-modal-panel ca-modal-panel-md">
+      <div class="ca-modal-header">
+        <h3 id="assign-daily-target-title" class="ca-modal-title">
+          <span class="ca-modal-icon"><i data-lucide="target" class="h-5 w-5"></i></span>
+          Assign Daily Target
+        </h3>
+        <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
+      </div>
+      <form id="form-assign-daily-target" class="ca-modal-body space-y-4" novalidate>
+        <input type="hidden" name="target_id" id="assign-daily-target-id" />
+        <input type="hidden" name="employee_id" id="assign-daily-target-employee-id" value="" />
+        <div><label class="form-label">Employee *</label>
+          <select id="assign-daily-target-employee" class="input-field" data-crm-entity-lookup="employee" data-crm-lookup-placeholder="Search employee…" aria-required="true"><option value="">Select employee…</option></select>
+        </div>
+        <div><label class="form-label">Target Date *</label><input name="target_date" id="assign-daily-target-date" type="date" class="input-field" required data-crm-date-input /></div>
+        <div class="grid sm:grid-cols-2 gap-4">
+          <div><label class="form-label">Lead Target</label><input name="lead_target" id="assign-daily-target-leads" type="number" min="0" step="1" class="input-field" value="0" /></div>
+          <div><label class="form-label">Call Target</label><input name="call_target" id="assign-daily-target-calls" type="number" min="0" step="1" class="input-field" value="0" /></div>
+          <div><label class="form-label">Demo Target</label><input name="demo_target" id="assign-daily-target-demos" type="number" min="0" step="1" class="input-field" value="0" /></div>
+          <div><label class="form-label">Follow-up Target</label><input name="followup_target" id="assign-daily-target-followups" type="number" min="0" step="1" class="input-field" value="0" /></div>
+          <div><label class="form-label">Email Target <span class="text-slate-400">(optional)</span></label><input name="email_target" id="assign-daily-target-email" type="number" min="0" step="1" class="input-field" value="0" /></div>
+          <div><label class="form-label">SMS Target <span class="text-slate-400">(optional)</span></label><input name="sms_target" id="assign-daily-target-sms" type="number" min="0" step="1" class="input-field" value="0" /></div>
+        </div>
+        <div><label class="form-label">Notes / Instructions</label><textarea name="notes" id="assign-daily-target-notes" class="input-field" rows="3" placeholder="Instructions for the employee…"></textarea></div>
+      </form>
+      <div class="ca-modal-footer">
+        <div class="ca-modal-footer-buttons flex-wrap">
+          <button type="button" class="btn-secondary hidden" id="assign-daily-target-copy-team">Copy to Entire Team</button>
+          <button type="button" class="btn-secondary hidden" id="assign-daily-target-copy-weekdays">Repeat Weekdays</button>
+          <button type="button" class="btn-secondary" data-close-crm-modal>Cancel</button>
+          <button type="submit" form="form-assign-daily-target" class="btn-primary flex-1" id="assign-daily-target-save">Save Target</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-demo-calendar-schedule" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="demo-cal-schedule-title">
+    <div class="ca-modal-dialog ca-modal-dialog--wide">
+      <div class="ca-modal-header">
+        <h3 id="demo-cal-schedule-title" class="ca-modal-title"><i data-lucide="video" class="h-5 w-5 text-brand"></i> Schedule Demo</h3>
+        <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
+      </div>
+      <form id="form-demo-calendar-schedule" class="ca-modal-body space-y-4">
+        <div><label class="form-label">Lead / Firm *</label>
+          <select id="demo-cal-schedule-lead" class="input-field" data-crm-entity-lookup="lead" data-crm-lookup-placeholder="Search lead…" required><option value="">Select lead…</option></select>
+        </div>
+        <div class="grid sm:grid-cols-2 gap-4">
+          <div><label class="form-label">Demo Provider *</label><select id="demo-cal-schedule-provider" class="input-field" required></select></div>
+          <div><label class="form-label">Team Size</label><input id="demo-cal-schedule-team-size" type="number" min="1" class="input-field" /></div>
+          <div><label class="form-label">Demo Date *</label><input id="demo-cal-schedule-date" type="date" class="input-field" required data-crm-date-input /></div>
+          <div><label class="form-label">Start Time *</label><input id="demo-cal-schedule-start" type="time" class="input-field" required /></div>
+          <div><label class="form-label">End Time</label><input id="demo-cal-schedule-end" type="time" class="input-field" /></div>
+          <div><label class="form-label">Meeting Link</label><input id="demo-cal-schedule-link" type="url" class="input-field" placeholder="https://meet.google.com/..." /></div>
+        </div>
+        <div><label class="form-label">Notes</label><textarea id="demo-cal-schedule-notes" class="input-field" rows="3"></textarea></div>
+      </form>
+      <div class="ca-modal-footer">
+        <div class="ca-modal-footer-buttons">
+          <button type="button" class="btn-secondary" data-close-crm-modal>Cancel</button>
+          <button type="submit" form="form-demo-calendar-schedule" class="btn-primary">Save Demo</button>
         </div>
       </div>
     </div>

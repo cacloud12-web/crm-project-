@@ -35,9 +35,16 @@ class SettingsController extends Controller
             'assignment.hot_lead_priority' => ['sometimes', 'boolean'],
             'assignment.workload_balancing' => ['sometimes', 'boolean'],
             'assignment.city_routing' => ['sometimes', 'boolean'],
+            'assignment.daily_max_capacity' => ['sometimes', 'integer', 'min:1', 'max:500'],
         ]);
 
         $user = auth()->user();
+        if (
+            isset($validated['assignment']['daily_max_capacity'])
+            && ! in_array(app(\App\Services\Rbac\RbacService::class)->roleKey($user), ['super_admin', 'manager'], true)
+        ) {
+            unset($validated['assignment']['daily_max_capacity']);
+        }
 
         return ApiResponse::success(
             $this->crmSettingsService->save(

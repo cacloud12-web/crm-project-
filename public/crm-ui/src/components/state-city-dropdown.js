@@ -2,7 +2,7 @@
 (function (global) {
   'use strict';
 
-  var STATES_CACHE_KEY = 'crm:states:v5';
+  var STATES_CACHE_KEY = 'crm:states:v6';
   var STATES_URL = '/lookups/states';
   var CITIES_URL = '/lookups/cities';
   var statesCache = null;
@@ -604,6 +604,7 @@
       statesLoading = null;
       try {
         sessionStorage.removeItem(STATES_CACHE_KEY);
+        sessionStorage.removeItem('crm:states:v5');
         sessionStorage.removeItem('crm:states:v4');
         sessionStorage.removeItem('crm:states:v3');
       } catch (e) { /* ignore */ }

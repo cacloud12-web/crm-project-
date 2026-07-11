@@ -86,6 +86,22 @@ class LeadWorkflowTest extends TestCase
             'ca_id' => $lead->ca_id,
             'call_status' => 'Connected',
         ]);
+        $this->assertDatabaseHas('follow_up_histories', [
+            'ca_id' => $lead->ca_id,
+            'event_type' => 'Call Logged',
+            'outcome' => 'Connected',
+        ]);
+
+        $timeline = $this->getJson('/ca-masters/'.$lead->ca_id.'/follow-up-history')
+            ->assertOk()
+            ->json('data');
+
+        $this->assertIsArray($timeline);
+        $callEntries = array_values(array_filter($timeline, fn ($row) => ($row['activity_type'] ?? '') === 'Call Logged'));
+        $this->assertCount(1, $callEntries);
+        $this->assertSame('Connected', $callEntries[0]['call_status']);
+        $this->assertSame('Spoke with CA', $callEntries[0]['call_notes']);
+
         $this->assertDatabaseHas('ca_masters', [
             'ca_id' => $lead->ca_id,
             'call_status' => 'Connected',
@@ -119,6 +135,15 @@ class LeadWorkflowTest extends TestCase
 
         $response->assertOk();
         $this->assertNotNull($response->json('data.next_follow_up'));
+
+        $timeline = $this->getJson('/ca-masters/'.$lead->ca_id.'/follow-up-history?sort=desc')
+            ->assertOk()
+            ->json('data');
+
+        $types = array_column($timeline, 'activity_type');
+        $this->assertContains('Call Logged', $types);
+        $this->assertContains('Follow-up Created', $types);
+        $this->assertCount(1, array_filter($types, fn ($type) => $type === 'Call Logged'));
     }
 
     public function test_demo_schedule_requires_link_and_queues_reminders(): void

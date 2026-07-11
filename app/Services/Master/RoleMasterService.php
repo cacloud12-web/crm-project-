@@ -2,17 +2,20 @@
 
 namespace App\Services\Master;
 
-use App\Models\Employee;
 use App\Models\RoleMaster;
 use App\Services\Concerns\SearchesListings;
 use App\Services\Master\Concerns\LogsMasterActivity;
 use Illuminate\Support\Collection;
-use InvalidArgumentException;
 
 class RoleMasterService
 {
     use LogsMasterActivity;
     use SearchesListings;
+
+    public function __construct(
+        private readonly MasterRecordLifecycleService $lifecycleService,
+        private readonly MasterDependencyService $dependencyService,
+    ) {}
 
     public function search(array $params = []): array
     {
@@ -34,6 +37,7 @@ class RoleMasterService
         $role = RoleMaster::create([
             'role_name' => trim($data['role_name']),
             'description' => $data['description'] ?? null,
+            'is_active' => true,
         ]);
 
         $this->logMasterActivity(
@@ -64,16 +68,23 @@ class RoleMasterService
         return $role->fresh();
     }
 
+    public function dependencies(RoleMaster $role): array
+    {
+        return $this->dependencyService->analyze(MasterDependencyService::ENTITY_ROLE, $role);
+    }
+
     public function delete(RoleMaster $role): void
     {
-        if (Employee::query()->where('role', $role->role_name)->exists()) {
-            throw new InvalidArgumentException('Cannot delete a role that is assigned to employees.');
-        }
+        $this->lifecycleService->delete(MasterDependencyService::ENTITY_ROLE, $role);
+    }
 
-        $name = $role->role_name;
-        $id = (string) $role->id;
-        $role->delete();
+    public function deactivate(RoleMaster $role, ?int $userId = null): RoleMaster
+    {
+        return $this->lifecycleService->deactivate(MasterDependencyService::ENTITY_ROLE, $role, $userId);
+    }
 
-        $this->logMasterActivity('Delete Role', 'ROLE_MASTER', $id, $name);
+    public function reactivate(RoleMaster $role): RoleMaster
+    {
+        return $this->lifecycleService->reactivate(MasterDependencyService::ENTITY_ROLE, $role);
     }
 }

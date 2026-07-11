@@ -28,7 +28,11 @@ class ApiResponse
         ];
 
         if ($errors !== null) {
-            $payload['errors'] = $errors;
+            if (is_array($errors) && array_key_exists('can_delete', $errors)) {
+                $payload['data'] = $errors;
+            } else {
+                $payload['errors'] = $errors;
+            }
         }
 
         return response()->json($payload, $status);

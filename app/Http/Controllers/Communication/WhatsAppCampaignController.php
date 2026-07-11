@@ -6,7 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\WhatsApp\StoreWhatsAppCampaignRequest;
 use App\Http\Resources\WaMessageLogResource;
 use App\Http\Resources\WhatsAppCampaignResource;
+use App\Models\WaMessageLog;
 use App\Services\WhatsApp\WhatsAppCampaignService;
+use App\Services\WhatsApp\WhatsAppDispatchService;
+use App\Services\WhatsApp\WhatsAppLogService;
+use App\Services\WhatsApp\WhatsAppSettingsService;
 use App\Support\ApiResponse;
 use App\Support\Listing\ListingResponse;
 use Illuminate\Http\JsonResponse;
@@ -16,6 +20,9 @@ class WhatsAppCampaignController extends Controller
 {
     public function __construct(
         private readonly WhatsAppCampaignService $whatsAppCampaignService,
+        private readonly WhatsAppLogService $whatsAppLogService,
+        private readonly WhatsAppSettingsService $whatsAppSettingsService,
+        private readonly WhatsAppDispatchService $whatsAppDispatchService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -153,5 +160,39 @@ class WhatsAppCampaignController extends Controller
         }
 
         return ApiResponse::success($preview, 'WhatsApp message preview generated');
+    }
+
+    public function retryMessageLog(string $id): JsonResponse
+    {
+        try {
+            $log = WaMessageLog::query()->findOrFail($id);
+            $settings = $this->whatsAppSettingsService->current();
+            $this->whatsAppSettingsService->assertReadyForLiveDispatch($settings);
+
+            $result = $this->whatsAppLogService->retryMessageLog(
+                $log,
+                $settings,
+                $this->whatsAppDispatchService,
+            );
+        } catch (\InvalidArgumentException $exception) {
+            return ApiResponse::error($exception->getMessage(), 422);
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            return ApiResponse::error(
+                collect($exception->errors())->flatten()->first() ?? 'Validation failed.',
+                422,
+                $exception->errors(),
+            );
+        }
+
+        if (! $result['success']) {
+            return ApiResponse::error($result['message'], 422, [
+                'log' => new WaMessageLogResource($result['log']),
+            ]);
+        }
+
+        return ApiResponse::success(
+            new WaMessageLogResource($result['log']),
+            $result['message'],
+        );
     }
 }

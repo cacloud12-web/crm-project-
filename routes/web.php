@@ -13,6 +13,7 @@ $crmRoutes = [
     'assignment',
     'followups',
     'workflow',
+    'demo-calendar',
     'sales',
     'communication',
     'reports',

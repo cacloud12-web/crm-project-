@@ -15,23 +15,35 @@ class DemoSchedule extends Model
 
     public const STATUS_CANCELLED = 'cancelled';
 
+    public const STATUS_RESCHEDULED = 'rescheduled';
+
+    public const STATUS_MISSED = 'missed';
+
     protected $fillable = [
         'ca_id',
         'employee_id',
+        'demo_provider_id',
+        'manager_id',
         'followup_id',
         'call_log_id',
         'demo_at',
+        'demo_end_at',
+        'team_size',
+        'demo_provider_name',
         'meeting_link',
+        'notes',
         'status',
         'customer_name',
         'firm_name',
         'created_by_user_id',
+        'updated_by_user_id',
     ];
 
     protected function casts(): array
     {
         return [
             'demo_at' => 'datetime',
+            'demo_end_at' => 'datetime',
         ];
     }
 
@@ -43,6 +55,11 @@ class DemoSchedule extends Model
     public function employee(): BelongsTo
     {
         return $this->belongsTo(Employee::class, 'employee_id', 'employee_id');
+    }
+
+    public function provider(): BelongsTo
+    {
+        return $this->belongsTo(DemoProvider::class, 'demo_provider_id');
     }
 
     public function followUp(): BelongsTo

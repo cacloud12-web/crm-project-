@@ -11,8 +11,11 @@ return [
         'business_account_id' => env('WHATSAPP_BUSINESS_ACCOUNT_ID'),
         'access_token' => env('WHATSAPP_ACCESS_TOKEN'),
         'webhook_verify_token' => env('WHATSAPP_WEBHOOK_VERIFY_TOKEN'),
+        'app_secret' => env('WHATSAPP_APP_SECRET'),
         'test_mobile_number' => env('WHATSAPP_TEST_MOBILE_NUMBER'),
     ],
+
+    'webhook_callback_path' => '/webhooks/whatsapp',
 
     'graph_base_url' => env('WHATSAPP_GRAPH_BASE_URL', 'https://graph.facebook.com'),
 
@@ -51,6 +54,19 @@ return [
             'link' => env('WHATSAPP_TASK_DOCUMENT_URL', 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'),
             'filename' => env('WHATSAPP_TASK_DOCUMENT_FILENAME', 'task-notification.pdf'),
         ],
+        'invoice_ready' => [
+            'link' => env('WHATSAPP_INVOICE_DOCUMENT_URL', 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'),
+            'filename' => env('WHATSAPP_INVOICE_DOCUMENT_FILENAME', 'invoice.pdf'),
+        ],
+        'proforma_invoicel5ekuo0baa' => [
+            'link' => env('WHATSAPP_PROFORMA_DOCUMENT_URL', env('WHATSAPP_INVOICE_DOCUMENT_URL', 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')),
+            'filename' => env('WHATSAPP_PROFORMA_DOCUMENT_FILENAME', 'proforma-invoice.pdf'),
+        ],
+    ],
+
+    'approved_templates' => [
+        'expense_partnerjeyfg90rzl',
+        'proforma_invoicel5ekuo0baa',
     ],
 
     /*
@@ -61,11 +77,20 @@ return [
     */
     'meta_parameter_fallbacks' => [
         'ca_name' => 'Customer',
+        'client_name' => 'Customer',
         'assigned_staff' => 'Not assigned',
         'employee_name' => 'CRM Team',
         'task_name' => 'Follow-up Task',
         'task_date' => null,
         'expected_completion' => null,
+        'service_name' => 'GST Return Filing',
+        'invoice_date' => '10-July-2026',
+        'invoice_amount' => '15,000',
+        'amount' => '2,500',
+        'expense_date' => '10-July-2026',
+        'expense_category' => 'General',
+        'expense_id' => 'EXP-2026-0001',
+        'due_date' => '28-June-2025',
         'default' => 'N/A',
     ],
 

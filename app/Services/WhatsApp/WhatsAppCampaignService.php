@@ -184,7 +184,7 @@ class WhatsAppCampaignService
     public function searchMessageLogs(array $params = []): array
     {
         return $this->searchListing(
-            WaMessageLog::query()->with(['caMaster:ca_id,firm_name', 'campaign:id,campaign_name']),
+            WaMessageLog::query()->with(['caMaster:ca_id,firm_name,ca_name', 'campaign:id,campaign_name']),
             $params,
             'wa_message_logs',
         );

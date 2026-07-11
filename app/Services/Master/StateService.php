@@ -2,17 +2,20 @@
 
 namespace App\Services\Master;
 
-use App\Models\CaMaster;
 use App\Models\State;
 use App\Services\Concerns\SearchesListings;
 use App\Services\Master\Concerns\LogsMasterActivity;
 use Illuminate\Support\Collection;
-use InvalidArgumentException;
 
 class StateService
 {
     use LogsMasterActivity;
     use SearchesListings;
+
+    public function __construct(
+        private readonly MasterRecordLifecycleService $lifecycleService,
+        private readonly MasterDependencyService $dependencyService,
+    ) {}
 
     public function search(array $params = []): array
     {
@@ -41,6 +44,7 @@ class StateService
     {
         $state = State::create([
             'state_name' => trim($data['state_name']),
+            'is_active' => true,
         ]);
 
         $this->logMasterActivity('Add State', 'STATE_MASTER', (string) $state->state_id, $state->state_name);
@@ -65,20 +69,23 @@ class StateService
         return $state->fresh()->loadCount('cities');
     }
 
+    public function dependencies(State $state): array
+    {
+        return $this->dependencyService->analyze(MasterDependencyService::ENTITY_STATE, $state);
+    }
+
     public function delete(State $state): void
     {
-        if ($state->cities()->exists()) {
-            throw new InvalidArgumentException('Cannot delete a state that has cities.');
-        }
+        $this->lifecycleService->delete(MasterDependencyService::ENTITY_STATE, $state);
+    }
 
-        if (CaMaster::query()->where('state_id', $state->state_id)->exists()) {
-            throw new InvalidArgumentException('Cannot delete a state that is used by CA Master records.');
-        }
+    public function deactivate(State $state, ?int $userId = null): State
+    {
+        return $this->lifecycleService->deactivate(MasterDependencyService::ENTITY_STATE, $state, $userId);
+    }
 
-        $name = $state->state_name;
-        $id = (string) $state->state_id;
-        $state->delete();
-
-        $this->logMasterActivity('Delete State', 'STATE_MASTER', $id, $name);
+    public function reactivate(State $state): State
+    {
+        return $this->lifecycleService->reactivate(MasterDependencyService::ENTITY_STATE, $state);
     }
 }
