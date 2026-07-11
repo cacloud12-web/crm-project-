@@ -69,12 +69,27 @@ window.CA_CRM = (function () {
     document.querySelectorAll('.ca-modal.open').forEach(function (m) { m.classList.remove('open'); });
   }
 
+  function resetModalScroll(el) {
+    if (!el) return;
+    var bodies = el.querySelectorAll('.ca-modal-body');
+    bodies.forEach(function (body) {
+      body.scrollTop = 0;
+    });
+    if (el.classList.contains('ca-modal-body')) {
+      el.scrollTop = 0;
+    }
+  }
+
   function openExclusiveCrmModal(el) {
     if (!el) return;
     document.querySelectorAll('.ca-modal.open').forEach(function (m) {
       if (m !== el) m.classList.remove('open');
     });
     openModal(el);
+    resetModalScroll(el);
+    requestAnimationFrame(function () {
+      resetModalScroll(el);
+    });
     if (window.CrmDateTimePicker) {
       requestAnimationFrame(function () {
         window.CrmDateTimePicker.initAll(el, { force: true });
@@ -152,6 +167,8 @@ window.CA_CRM = (function () {
   var leadSegmentCounts = null;
   var leadSegmentCountsLoaded = false;
   var leadSegmentCountsPromise = null;
+  var kanbanStageSearch = {};
+  var kanbanStageSearchTimers = {};
   window.kanbanStageCounts = {};
   var activityLogsCache = [];
   var activityFilterOptions = { modules: [], actions: [], users: [] };
@@ -486,6 +503,9 @@ window.CA_CRM = (function () {
   }
 
   function mapStageToStatus(stage) {
+    if (isMasterDataHub()) {
+      return mapMasterPipelineStageToStatus(stage);
+    }
     var map = {
       'New Lead': 'New',
       'Details Shared': 'Pipeline',
@@ -496,6 +516,62 @@ window.CA_CRM = (function () {
       'Lost': 'Lost',
     };
     return map[stage] || 'New';
+  }
+
+  function mapStatusToMasterPipelineStage(status) {
+    var map = {
+      New: 'New Lead',
+      Cold: 'New Lead',
+      Lost: 'New Lead',
+      Inactive: 'New Lead',
+      'Not Interested': 'New Lead',
+      Contacted: 'Contacted',
+      'Details Shared': 'Contacted',
+      Pipeline: 'Contacted',
+      Warm: 'Contacted',
+      'Follow Up Scheduled': 'Contacted',
+      'Follow Up Reminder': 'Contacted',
+      'Demo Scheduled': 'Contacted',
+      Interested: 'Interested',
+      Thinking: 'Interested',
+      Hot: 'Interested',
+      Negotiation: 'Interested',
+      'Demo Completed': 'Interested',
+      Hold: 'Interested',
+      'Next Week': 'Interested',
+      'Next Month': 'Interested',
+      Purchasing: 'Interested',
+      Converted: 'Converted',
+      Active: 'Converted',
+      Purchased: 'Converted',
+    };
+    return map[status] || 'New Lead';
+  }
+
+  function mapMasterPipelineStageToStatus(stage) {
+    var map = {
+      'New Lead': 'New',
+      Contacted: 'Contacted',
+      Interested: 'Interested',
+      Converted: 'Converted',
+    };
+    return map[stage] || 'New';
+  }
+
+  function leadPipelineStage(lead) {
+    if (isMasterDataHub()) {
+      return lead.master_pipeline_stage || mapStatusToMasterPipelineStage(lead.status);
+    }
+    return lead.stage || mapStatusToStage(lead.status);
+  }
+
+  function getMasterPipelineColumns() {
+    return [
+      { name: 'New Lead', key: 'New Lead', icon: '🆕', theme: 'new-lead' },
+      { name: 'Contacted', key: 'Contacted', icon: '📞', theme: 'contacted' },
+      { name: 'Interested', key: 'Interested', icon: '🤝', theme: 'interested' },
+      { name: 'Converted', key: 'Converted', icon: '🎉', theme: 'converted' },
+    ];
   }
 
   function updateLeadStatus(caId, status) {
@@ -2384,7 +2460,7 @@ window.CA_CRM = (function () {
       state_id: l.state_id ? String(l.state_id) : null,
       city: l.city || l.city_name || '—',
       city_id: l.city_id ? String(l.city_id) : null,
-      team_size: l.team_size || 0,
+      team_size: l.team_size != null && l.team_size !== '' ? l.team_size : null,
       existing_software: l.existing_software || '—',
       website: l.website || '—',
       rating: l.rating || 1,
@@ -2393,9 +2469,24 @@ window.CA_CRM = (function () {
       source: l.source || l.source_name || '—',
       source_id: l.source_id ? String(l.source_id) : null,
       stage: l.stage || mapStatusToStage(l.status),
+      master_pipeline_stage: l.master_pipeline_stage || mapStatusToMasterPipelineStage(l.status),
       executive_id: l.executive_id ? String(l.executive_id) : null,
       executive: l.executive || l.executive_name || l.employee_name || (l.executive_id ? 'Assigned' : 'Unassigned'),
-      priority: l.rating || 1,
+      team_members: l.team_members || {
+        count: l.team_members_count != null ? l.team_members_count : (l.team_member_names && l.team_member_names.length ? l.team_member_names.length : 0),
+        names: l.team_member_names || [],
+        lead_owner_id: l.lead_owner_id != null ? l.lead_owner_id : (l.executive_id || null),
+      },
+      team_members_count: l.team_members_count != null
+        ? l.team_members_count
+        : ((l.team_members && l.team_members.count) || (l.team_member_names && l.team_member_names.length) || 0),
+      team_member_names: l.team_member_names || (l.team_members && l.team_members.names) || [],
+      lead_owner_id: l.lead_owner_id != null ? l.lead_owner_id : (l.team_members && l.team_members.lead_owner_id),
+      last_activity: l.last_activity || null,
+      last_activity_at: l.last_activity_at || (l.last_activity && l.last_activity.occurred_at) || null,
+      priority: l.priority || null,
+      lead_priority: l.priority || null,
+      rating_stars: l.rating || 1,
       created_by: l.created_by_name || l.created_by || '—',
       is_verified: !!l.is_verified,
       is_wrong_number: !!l.is_wrong_number,
@@ -2753,13 +2844,16 @@ window.CA_CRM = (function () {
     var gen = ++_kanbanLoadGeneration;
     setLeadsHubLoadingState(true);
     var extra = { per_stage: 80 };
+    if (document.getElementById('cam-hub')) {
+      extra.pipeline = 'master';
+    }
     var segment = getLeadFilter();
     if (segment && segment !== 'all') extra.segment = segment;
-    if (window.CA_LISTING_SEARCH && (document.getElementById('leads-data-table') || document.getElementById('ca-master-data-table'))) {
+    if (window.CA_LISTING_SEARCH && (document.getElementById('leads-data-table') || document.getElementById('ca-master-data-table') || document.getElementById('cam-hub'))) {
       if (document.getElementById('leads-data-table')) {
         Object.assign(extra, CA_LISTING_SEARCH.readLeadDrawerFilters());
       } else {
-        Object.assign(extra, readCaMasterFiltersFromBar(), readCaMasterColumnFilters());
+        Object.assign(extra, readCaMasterColumnFilters());
       }
     }
     var qs = new URLSearchParams(extra).toString();
@@ -2830,42 +2924,60 @@ window.CA_CRM = (function () {
   }
 
   function loadMasterDataFromDatabase(callback) {
-    var requests = [
-      apiFetch('/source-leads' + listingAllQuery('source_leads')),
-      apiFetch('/team-sizes' + listingAllQuery('team_sizes')),
-      apiFetch('/role-masters' + listingAllQuery('role_masters')),
-    ];
+    function settledList(promise) {
+      return promise.then(function (value) {
+        return { ok: true, value: value };
+      }).catch(function (error) {
+        return { ok: false, error: error };
+      });
+    }
 
+    var sourcePromise = apiFetch('/lookups/sources')
+      .then(function (body) {
+        return unwrapList(body);
+      })
+      .catch(function () {
+        return apiFetch('/source-leads' + listingAllQuery('source_leads')).then(function (body) {
+          return unwrapList(body);
+        });
+      });
+
+    var teamPromise = apiFetch('/team-sizes' + listingAllQuery('team_sizes'));
+    var rolePromise = apiFetch('/role-masters' + listingAllQuery('role_masters'));
     var statePromise = window.CA_STATE_CITY
       ? window.CA_STATE_CITY.loadStates().then(function (states) {
         window.realStates = states;
         return states;
       })
-      : apiFetch('/states' + listingAllQuery('states')).then(function (body) {
+      : apiFetch('/lookups/states').then(function (body) {
         window.realStates = unwrapList(body);
         return window.realStates;
+      }).catch(function () {
+        return apiFetch('/states' + listingAllQuery('states')).then(function (body) {
+          window.realStates = unwrapList(body);
+          return window.realStates;
+        });
       });
 
-    Promise.all(requests.concat([statePromise]))
-      .then(function (results) {
-        window.realSourceLeads = unwrapList(results[0]);
-        window.realTeamSizes = unwrapList(results[1]);
-        window.realRoleMasters = unwrapList(results[2]);
-        window.realRoles = window.realRoleMasters;
-        window.realCities = [];
-        masterDataLoaded = true;
-        if (callback) callback();
-      })
-      .catch(function () {
+    Promise.all([
+      settledList(sourcePromise),
+      settledList(teamPromise),
+      settledList(rolePromise),
+      settledList(statePromise),
+    ]).then(function (results) {
+      window.realSourceLeads = results[0].ok ? (results[0].value || []) : [];
+      window.realTeamSizes = results[1].ok ? unwrapList(results[1].value) : [];
+      window.realRoleMasters = results[2].ok ? unwrapList(results[2].value) : [];
+      window.realRoles = window.realRoleMasters;
+      if (results[3].ok && results[3].value) {
+        window.realStates = results[3].value;
+      } else {
         window.realStates = window.realStates || [];
-        window.realCities = [];
-        window.realSourceLeads = [];
-        window.realTeamSizes = [];
-        window.realRoles = [];
-        window.realRoleMasters = [];
-        masterDataLoaded = true;
-        if (callback) callback();
-      });
+      }
+      window.realCities = [];
+      masterDataLoaded = true;
+      if (callback) callback();
+    });
   }
 
   function buildMasterSelectOptions(items, valueKey, labelKey) {
@@ -2888,7 +3000,7 @@ window.CA_CRM = (function () {
       var placeholder = '<option value="">Select source</option>';
       sel.innerHTML = sources.length
         ? placeholder + buildMasterSelectOptions(sources, 'source_id', 'source_name')
-        : '<option value="">No sources available</option>';
+        : '<option value="">No sources — add in Masters</option>';
       setSelectValueIfValid(sel, current);
     });
 
@@ -6870,6 +6982,35 @@ window.CA_CRM = (function () {
     return (typeof window._leadSegmentFilter !== 'undefined' && window._leadSegmentFilter) || 'all';
   }
 
+  function getCamListingSegment() {
+    if (!window.CA_LISTING_SEARCH) return '';
+    return (CA_LISTING_SEARCH.getState('ca_masters').filters || {}).segment || '';
+  }
+
+  /** Keep Master Data chip state and listing filters aligned (single source of truth). */
+  function syncCamSegmentState() {
+    if (!document.getElementById('cam-hub')) return getLeadFilter();
+    var mem = getLeadFilter();
+    var listing = getCamListingSegment();
+    if (!listing || listing === 'mobile_missing') return mem;
+    if (mem === 'all' || !mem) {
+      if (listing === 'new' || listing === 'hot') {
+        var state = CA_LISTING_SEARCH.getState('ca_masters');
+        var filters = Object.assign({}, state.filters || {});
+        delete filters.segment;
+        CA_LISTING_SEARCH.setState('ca_masters', { filters: filters });
+      }
+      return 'all';
+    }
+    if (listing !== mem && (mem === 'new' || mem === 'hot')) {
+      var st = CA_LISTING_SEARCH.getState('ca_masters');
+      CA_LISTING_SEARCH.setState('ca_masters', {
+        filters: Object.assign({}, st.filters || {}, { segment: mem }),
+      });
+    }
+    return mem;
+  }
+
   function getRealLeadsFiltered() {
     var source = document.getElementById('kanban-board') && kanbanLeadsLoaded
       ? (window.kanbanLeads || [])
@@ -7334,8 +7475,19 @@ window.CA_CRM = (function () {
     icons();
   }
 
+  function clearKanbanStageSearches() {
+    kanbanStageSearch = {};
+    Object.keys(kanbanStageSearchTimers).forEach(function (key) {
+      window.clearTimeout(kanbanStageSearchTimers[key]);
+    });
+    kanbanStageSearchTimers = {};
+  }
+
   function setCamView(viewId) {
     showCamPrimaryViews();
+    if (viewId === 'pipeline') {
+      clearKanbanStageSearches();
+    }
     document.querySelectorAll('.ca-tab-panel[data-tab-group="cam-view"]').forEach(function (panel) {
       panel.classList.toggle('active', panel.dataset.panel === viewId);
     });
@@ -7351,7 +7503,6 @@ window.CA_CRM = (function () {
         page: 1,
         filters: Object.assign(
           {},
-          readCaMasterFiltersFromBar(),
           readCaMasterColumnFilters(),
           { segment: !segmentId || segmentId === 'all' ? '' : segmentId },
         ),
@@ -10644,6 +10795,290 @@ window.CA_CRM = (function () {
       });
   }
 
+  function teamSizeValue(lead) {
+    var raw = lead.team_size;
+    if (raw === null || raw === undefined || raw === '' || raw === 0 || raw === '0') {
+      return null;
+    }
+    var parsed = parseInt(raw, 10);
+    return isNaN(parsed) || parsed <= 0 ? null : parsed;
+  }
+
+  function renderTeamSizeCell(lead) {
+    var size = teamSizeValue(lead);
+    var tooltip;
+    var labelFull;
+    var labelCompact;
+
+    if (size == null) {
+      tooltip = 'Team Size\nNot Specified';
+      labelFull = '⚪ Not Specified';
+      labelCompact = '⚪ Not Specified';
+    } else {
+      tooltip = 'Team Size\n' + size + ' Employees';
+      labelFull = '👥 ' + size + ' Employees';
+      labelCompact = '👥 ' + size;
+    }
+
+    return '<span class="cam-team-size-cell" data-crm-tip="' + escapeHtml(tooltip) + '" aria-label="' + escapeHtml(tooltip.replace('\n', ' ')) + '">' +
+      '<span class="cam-team-size-cell__full">' + escapeHtml(labelFull) + '</span>' +
+      '<span class="cam-team-size-cell__compact">' + escapeHtml(labelCompact) + '</span>' +
+    '</span>';
+  }
+
+  function teamMembersSummary(lead) {
+    var summary = lead.team_members || {};
+    var names = summary.names || lead.team_member_names || [];
+    var count = summary.count != null ? summary.count : (lead.team_members_count != null ? lead.team_members_count : names.length);
+    if (!count && lead.executive && lead.executive !== 'Unassigned' && lead.executive !== '—' && lead.executive !== 'Assigned') {
+      count = 1;
+      names = [lead.executive];
+    }
+    return { count: count, names: names };
+  }
+
+  function renderTeamMembersCell(lead) {
+    var summary = teamMembersSummary(lead);
+    var count = summary.count;
+    var names = summary.names || [];
+    var tooltip = names.length ? names.join('\n') : 'Unassigned';
+    var label;
+    var tone = 'empty';
+
+    if (!count) {
+      label = '⚪ Unassigned';
+    } else if (count === 1) {
+      label = names[0] ? ('👤 ' + names[0]) : '1 Member';
+      tone = 'single';
+    } else {
+      label = '👥 ' + count + ' Members';
+      tone = 'multi';
+    }
+
+    return '<button type="button" class="cam-team-members-btn cam-team-members-btn--' + tone + '" data-crm-tip="' + escapeHtml(tooltip) + '" data-team-members-open="' + escapeHtml(String(lead.ca_id)) + '" aria-label="View assigned team members">' +
+      '<span class="cam-team-members-btn__label">' + escapeHtml(label) + '</span>' +
+    '</button>';
+  }
+
+  function teamMemberAvailabilityBadge(status) {
+    var normalized = String(status || 'Offline');
+    var icon = '⚪';
+    var cls = 'offline';
+    if (normalized === 'Available') {
+      icon = '🟢';
+      cls = 'available';
+    } else if (normalized === 'Busy') {
+      icon = '🟡';
+      cls = 'busy';
+    } else if (normalized === 'Leave') {
+      icon = '🔴';
+      cls = 'leave';
+    }
+    return '<span class="cam-team-avail cam-team-avail--' + cls + '">' + icon + ' ' + escapeHtml(normalized) + '</span>';
+  }
+
+  function renderLeadTeamMembersDrawerBody(payload) {
+    var members = (payload && payload.members) || [];
+    if (!members.length) {
+      return '<div class="cam-team-drawer-empty">⚪ No employees are assigned to this firm yet.</div>';
+    }
+
+    return members.map(function (member) {
+      var role = member.role ? '<span class="cam-team-member-role">' + escapeHtml(member.role) + '</span>' : '';
+      var assignedDate = member.assigned_date
+        ? '<span class="cam-team-member-date">Assigned ' + escapeHtml(formatDate(member.assigned_date)) + '</span>'
+        : '';
+      var ownerBadge = member.is_lead_owner
+        ? '<span class="cam-team-owner-badge">Lead Owner</span>'
+        : '';
+      var inactiveNote = member.is_active === false
+        ? '<span class="cam-team-member-note">Inactive / deleted employee</span>'
+        : '';
+
+      return '<article class="cam-team-member-card">' +
+        '<div class="cam-team-member-head">' +
+          '<div class="cam-team-member-name">👤 ' + escapeHtml(member.name || 'Unknown Employee') + '</div>' +
+          ownerBadge +
+        '</div>' +
+        role +
+        '<div class="cam-team-member-meta">' +
+          teamMemberAvailabilityBadge(member.availability_status) +
+          assignedDate +
+        '</div>' +
+        inactiveNote +
+      '</article>';
+    }).join('');
+  }
+
+  function openLeadTeamMembersDrawer(caId) {
+    var modal = document.getElementById('modal-lead-team-members');
+    var body = document.getElementById('lead-team-members-body');
+    var titleFirm = document.getElementById('lead-team-members-firm');
+    if (!modal || !body) return;
+
+    window._leadTeamMembersCaId = String(caId);
+    body.innerHTML = '<div class="cam-team-drawer-loading"><i data-lucide="loader-2" class="h-5 w-5 animate-spin"></i> Loading team members…</div>';
+    if (titleFirm) titleFirm.textContent = '…';
+    openExclusiveCrmModal(modal);
+    icons();
+
+    apiFetch('/ca-masters/' + encodeURIComponent(caId) + '/team-members')
+      .then(function (response) {
+        var payload = response.data || {};
+        window._leadTeamMembersPayload = payload;
+        if (titleFirm) titleFirm.textContent = payload.firm_name || 'Lead #' + caId;
+        body.innerHTML = renderLeadTeamMembersDrawerBody(payload);
+        icons();
+        if (window.CrmInstantTooltip && typeof window.CrmInstantTooltip.refresh === 'function') {
+          window.CrmInstantTooltip.refresh(modal);
+        }
+      })
+      .catch(function (error) {
+        body.innerHTML = '<div class="cam-team-drawer-empty text-rose-600">' + escapeHtml(error.message || 'Unable to load team members.') + '</div>';
+      });
+  }
+
+  function initLeadTeamMembersDrawer() {
+    if (document.body._leadTeamMembersInit) return;
+    document.body._leadTeamMembersInit = true;
+
+    document.addEventListener('click', function (event) {
+      var openBtn = event.target.closest('[data-team-members-open]');
+      if (openBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        openLeadTeamMembersDrawer(openBtn.getAttribute('data-team-members-open'));
+        return;
+      }
+
+      var viewBtn = event.target.closest('[data-team-members-view-assignment]');
+      if (viewBtn) {
+        event.preventDefault();
+        var payload = window._leadTeamMembersPayload || {};
+        var members = payload.members || [];
+        var owner = members.find(function (member) { return member.is_lead_owner; }) || members[0];
+        closeModal(document.getElementById('modal-lead-team-members'));
+        if (owner && owner.assignment_id && typeof openAssignmentFormForEdit === 'function') {
+          openAssignmentFormForEdit(owner.assignment_id);
+          return;
+        }
+        if (typeof navigateTo === 'function') navigateTo('assignment');
+        return;
+      }
+
+      var reassignBtn = event.target.closest('[data-team-members-reassign]');
+      if (reassignBtn) {
+        event.preventDefault();
+        var caId = window._leadTeamMembersCaId;
+        closeModal(document.getElementById('modal-lead-team-members'));
+        if (caId) openInboxAssign([caId]);
+      }
+    });
+  }
+
+  function lastActivityMeta(lead) {
+    return lead.last_activity || null;
+  }
+
+  function lastActivityIcon(type) {
+    var map = {
+      call: '📞',
+      whatsapp: '💬',
+      email: '📧',
+      follow_up: '📅',
+      lead_created: '✨',
+      lead_updated: '✏️',
+      assignment: '👤',
+      status_changed: '🏷️',
+      lead_action: '🔀',
+      sms: '💬',
+    };
+    return map[type] || '📝';
+  }
+
+  function renderLastActivityCell(lead) {
+    var activity = lastActivityMeta(lead);
+    if (!activity || !activity.occurred_at) {
+      return '<span class="cam-last-activity cam-last-activity--none">⚪ No Activity Yet</span>';
+    }
+
+    var tooltip = (lastActivityIcon(activity.type) + ' ' + (activity.label || 'Activity') + '\n' +
+      (activity.employee_name || 'System') + '\n' +
+      (activity.date_label || '') + '\n' +
+      (activity.time_label || '') +
+      (activity.note ? ('\n' + activity.note) : ''));
+
+    return '<button type="button" class="cam-last-activity cam-last-activity--' + escapeHtml(activity.age_bucket || 'none') + '" data-crm-tip="' + escapeHtml(tooltip) + '" data-activity-timeline-open="' + escapeHtml(String(lead.ca_id)) + '" aria-label="View activity timeline">' +
+      '<span class="cam-last-activity__badge">' + escapeHtml(activity.emoji || '⚪') + ' ' + escapeHtml(activity.relative_label || 'Activity') + '</span>' +
+      '<span class="cam-last-activity__time">' + escapeHtml(activity.time_label || '') + '</span>' +
+    '</button>';
+  }
+
+  function renderLeadActivityTimelineBody(payload) {
+    var items = (payload && payload.items) || [];
+    if (!items.length) {
+      return '<div class="cam-activity-timeline-empty">⚪ No Activity Yet</div>';
+    }
+
+    var lastGroup = '';
+    return items.map(function (item) {
+      var group = item.group_label || item.relative_label || '';
+      var groupHtml = group !== lastGroup
+        ? '<div class="cam-activity-timeline-group">' + escapeHtml(group) + '</div>'
+        : '';
+      lastGroup = group;
+      var note = item.description || item.note;
+      return groupHtml +
+        '<article class="cam-activity-timeline-item">' +
+          '<div class="cam-activity-timeline-icon">' + lastActivityIcon(item.type) + '</div>' +
+          '<div class="cam-activity-timeline-body">' +
+            '<div class="cam-activity-timeline-title">' + escapeHtml(item.label || 'Activity') + '</div>' +
+            '<div class="cam-activity-timeline-meta">' + escapeHtml(item.employee_name || 'System') + ' · ' + escapeHtml(item.time_label || '') + '</div>' +
+            (note ? '<div class="cam-activity-timeline-note truncate">' + escapeHtml(note) + '</div>' : '') +
+          '</div>' +
+        '</article>';
+    }).join('');
+  }
+
+  function openLeadActivityTimelineDrawer(caId) {
+    var modal = document.getElementById('modal-lead-activity-timeline');
+    var body = document.getElementById('lead-activity-timeline-body');
+    var titleFirm = document.getElementById('lead-activity-timeline-firm');
+    if (!modal || !body) return;
+
+    body.innerHTML = '<div class="cam-activity-timeline-loading"><i data-lucide="loader-2" class="h-5 w-5 animate-spin"></i> Loading activity…</div>';
+    if (titleFirm) titleFirm.textContent = '…';
+    openExclusiveCrmModal(modal);
+    icons();
+
+    apiFetch('/ca-masters/' + encodeURIComponent(caId) + '/activity-timeline?limit=10')
+      .then(function (response) {
+        var payload = response.data || {};
+        if (titleFirm) titleFirm.textContent = payload.firm_name || 'Lead #' + caId;
+        body.innerHTML = renderLeadActivityTimelineBody(payload);
+        icons();
+        if (window.CrmInstantTooltip && typeof window.CrmInstantTooltip.refresh === 'function') {
+          window.CrmInstantTooltip.refresh(modal);
+        }
+      })
+      .catch(function (error) {
+        body.innerHTML = '<div class="cam-activity-timeline-empty text-rose-600">' + escapeHtml(error.message || 'Unable to load activity timeline.') + '</div>';
+      });
+  }
+
+  function initLeadActivityTimelineDrawer() {
+    if (document.body._leadActivityTimelineInit) return;
+    document.body._leadActivityTimelineInit = true;
+
+    document.addEventListener('click', function (event) {
+      var openBtn = event.target.closest('[data-activity-timeline-open]');
+      if (!openBtn) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openLeadActivityTimelineDrawer(openBtn.getAttribute('data-activity-timeline-open'));
+    });
+  }
+
   function renderCaMasterTableRow(l, tableKey) {
     var data = JSON.stringify(CAData.leadToRowData(l)).replace(/'/g, '&#39;');
     var executive = l.executive && l.executive !== 'Unassigned'
@@ -10654,6 +11089,8 @@ window.CA_CRM = (function () {
       renderInboxCheckCell(tableKey, l.ca_id) +
       '<td class="sticky-left-2 crm-td-firm font-medium text-slate-900">' + firmNameCell(l.firm_name) + '</td>' +
       '<td class="crm-td-ca font-medium text-slate-900">' + caNameCell(l.ca_name) + '</td>' +
+      '<td class="cam-td-team-size">' + renderTeamSizeCell(l) + '</td>' +
+      '<td class="cam-td-last-activity">' + renderLastActivityCell(l) + '</td>' +
       '<td class="cam-td-mobile">' + camPhoneCell(l.mobile_no) + '</td>' +
       renderLeadCallLogQuickCell(l) +
       '<td class="cam-td-mobile">' + camPhoneCell(l.alternate_mobile_no) + '</td>' +
@@ -10694,76 +11131,6 @@ window.CA_CRM = (function () {
     bindCrmActionsDismiss();
   }
 
-  function readCaMasterFiltersFromBar() {
-    var filters = {};
-    var stateId = (document.getElementById('cam-filter-state') || {}).value;
-    var cityId = (document.getElementById('cam-filter-city') || {}).value;
-    var sourceId = (document.getElementById('cam-filter-source') || {}).value;
-    var status = (document.getElementById('cam-filter-status') || {}).value;
-    var rating = (document.getElementById('cam-filter-rating') || {}).value;
-    if (stateId) filters.state_id = stateId;
-    if (cityId) filters.city_id = cityId;
-    if (sourceId) filters.source_id = sourceId;
-    if (status) filters.status = status;
-    if (rating) filters.rating_min = rating;
-    return filters;
-  }
-
-  function populateCaMasterFilterDropdowns() {
-    var stateSel = document.getElementById('cam-filter-state');
-    var citySel = document.getElementById('cam-filter-city');
-    var sourceSel = document.getElementById('cam-filter-source');
-    if (stateSel && window.realStates && window.realStates.length) {
-      var stateVal = stateSel.value;
-      stateSel.innerHTML = '<option value="">All States</option>' + window.realStates.map(function (s) {
-        return '<option value="' + s.state_id + '">' + escapeHtml(s.state_name) + '</option>';
-      }).join('');
-      if (stateVal) stateSel.value = stateVal;
-    }
-    if (sourceSel && window.realSourceLeads && window.realSourceLeads.length) {
-      var sourceVal = sourceSel.value;
-      sourceSel.innerHTML = '<option value="">All Sources</option>' + window.realSourceLeads.map(function (s) {
-        return '<option value="' + s.source_id + '">' + escapeHtml(s.source_name) + '</option>';
-      }).join('');
-      if (sourceVal) sourceSel.value = sourceVal;
-    }
-    if (citySel && stateSel && stateSel.value && window.realCitiesCache) {
-      var cities = window.realCitiesCache.filter(function (c) {
-        return String(c.state_id) === String(stateSel.value);
-      });
-      var cityVal = citySel.value;
-      citySel.innerHTML = '<option value="">All Cities</option>' + cities.map(function (c) {
-        return '<option value="' + c.city_id + '">' + escapeHtml(c.city_name) + '</option>';
-      }).join('');
-      if (cityVal) citySel.value = cityVal;
-    }
-  }
-
-  function syncCaMasterFilterBarFromState() {
-    if (!window.CA_LISTING_SEARCH) return;
-    var state = CA_LISTING_SEARCH.getState('ca_masters');
-    var searchEl = document.getElementById('cam-filter-search');
-    if (searchEl) searchEl.value = state.search || '';
-    var filters = state.filters || {};
-    var fieldMap = {
-      state_id: 'cam-filter-state',
-      city_id: 'cam-filter-city',
-      source_id: 'cam-filter-source',
-      status: 'cam-filter-status',
-      rating_min: 'cam-filter-rating',
-    };
-    Object.keys(fieldMap).forEach(function (key) {
-      var el = document.getElementById(fieldMap[key]);
-      if (!el) return;
-      el.value = filters[key] || '';
-    });
-    populateCaMasterFilterDropdowns();
-    if (filters.city_id) {
-      var cityEl = document.getElementById('cam-filter-city');
-      if (cityEl) cityEl.value = filters.city_id;
-    }
-  }
-
   function setCaMasterSummaryActive(key) {
     document.querySelectorAll('[data-cam-summary]').forEach(function (card) {
       card.classList.toggle('is-active', card.getAttribute('data-cam-summary') === key);
@@ -10778,14 +11145,10 @@ window.CA_CRM = (function () {
     }
 
     var allTab = document.querySelector('.ca-tab[data-tab="all"][data-tab-group="main"]');
-    var newTab = document.querySelector('.ca-tab[data-tab="new"][data-tab-group="main"]');
 
     if (key === 'new') {
-      if (newTab) newTab.click();
-      else if (window.CA_LISTING_SEARCH) {
-        CA_LISTING_SEARCH.setState('ca_masters', { page: 1, search: '', filters: { segment: 'new' } });
-        renderCaMasterTable();
-      }
+      setCamView('all');
+      applyCamSegment('new');
       setCaMasterSummaryActive(key);
       toast('Showing New Firms', 'info');
       return;
@@ -10795,17 +11158,15 @@ window.CA_CRM = (function () {
       allTab.click();
     }
 
-    ['cam-filter-search', 'cam-filter-state', 'cam-filter-city', 'cam-filter-source', 'cam-filter-status', 'cam-filter-rating'].forEach(function (id) {
-      var el = document.getElementById(id);
-      if (el) el.value = '';
+    document.querySelectorAll('.crm-col-filter-input[data-col-filter-group="ca_masters"]').forEach(function (input) {
+      input.value = '';
     });
+    window._leadSegmentFilter = 'all';
 
     var filters = {};
     var label = 'All Firms';
     if (key === 'active') {
       filters.status = 'Active';
-      var statusEl = document.getElementById('cam-filter-status');
-      if (statusEl) statusEl.value = 'Active';
       label = 'Active Firms';
     } else if (key === 'missing-mobile') {
       filters.segment = 'mobile_missing';
@@ -10923,8 +11284,7 @@ window.CA_CRM = (function () {
   }
 
   function applyCaMasterListingFilters(extraFilters) {
-    var search = (document.getElementById('cam-filter-search') || {}).value || '';
-    var filters = Object.assign({}, readCaMasterFiltersFromBar(), readCaMasterColumnFilters(), extraFilters || {});
+    var filters = Object.assign({}, readCaMasterColumnFilters(), extraFilters || {});
     var segment = getLeadFilter();
     if (segment && segment !== 'all' && !filters.segment) {
       filters.segment = segment;
@@ -10932,7 +11292,7 @@ window.CA_CRM = (function () {
     if (window.CA_LISTING_SEARCH) {
       CA_LISTING_SEARCH.setState('ca_masters', {
         page: 1,
-        search: search.trim(),
+        search: '',
         filters: filters,
       });
     }
@@ -10945,38 +11305,6 @@ window.CA_CRM = (function () {
     if (!page) return;
     if (page._camInit) return;
     page._camInit = true;
-
-    document.getElementById('cam-filter-apply')?.addEventListener('click', function () {
-      applyCaMasterListingFilters();
-    });
-
-    document.getElementById('cam-filter-reset')?.addEventListener('click', function () {
-      ['cam-filter-search', 'cam-filter-state', 'cam-filter-city', 'cam-filter-source', 'cam-filter-status', 'cam-filter-rating'].forEach(function (id) {
-        var el = document.getElementById(id);
-        if (el) el.value = '';
-      });
-      document.querySelectorAll('.crm-col-filter-input[data-col-filter-group="ca_masters"]').forEach(function (input) {
-        input.value = '';
-      });
-      if (window.CA_LISTING_SEARCH) {
-        CA_LISTING_SEARCH.setState('ca_masters', { page: 1, search: '', filters: {} });
-      }
-      renderCaMasterTable();
-    });
-
-    document.getElementById('cam-filter-search')?.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') applyCaMasterListingFilters();
-    });
-
-    document.getElementById('cam-filter-state')?.addEventListener('change', function () {
-      populateCaMasterFilterDropdowns();
-    });
-
-    ['cam-filter-status', 'cam-filter-city', 'cam-filter-source', 'cam-filter-rating'].forEach(function (id) {
-      document.getElementById(id)?.addEventListener('change', function () {
-        applyCaMasterListingFilters();
-      });
-    });
 
     var colFilterTimer = null;
     page.addEventListener('input', function (e) {
@@ -11009,6 +11337,8 @@ window.CA_CRM = (function () {
     }
 
     bindCrmActionsDismiss();
+    initLeadTeamMembersDrawer();
+    initLeadActivityTimelineDrawer();
   }
 
   function renderCaMasterTable(pageLeads, targetTbodyId) {
@@ -11017,7 +11347,7 @@ window.CA_CRM = (function () {
     if (typeof tbodyId === 'object' && tbodyId.id) tbodyId = tbodyId.id;
     var el = document.getElementById(tbodyId);
     if (!el) return;
-    var colCount = 16;
+    var colCount = 18;
 
     if (pageLeads === undefined && window.CA_LISTING_SEARCH) {
       if (!el.querySelector('tr')) {
@@ -11100,6 +11430,258 @@ window.CA_CRM = (function () {
     }).join('');
   }
 
+  function leadMatchesKanbanSearch(lead, rawQuery) {
+    var query = String(rawQuery || '').trim().toLowerCase();
+    if (!query) return true;
+    var haystack = [
+      lead.firm_name,
+      lead.ca_name,
+      lead.mobile_no,
+      lead.alternate_mobile_no,
+      lead.email_id,
+      lead.city,
+      lead.city_name,
+      lead.state,
+      lead.state_name,
+      lead.source,
+      lead.source_name,
+      lead.executive,
+    ].map(function (value) {
+      return String(value == null || value === '—' ? '' : value).toLowerCase();
+    }).join(' ');
+    return haystack.indexOf(query) >= 0;
+  }
+
+  function formatKanbanLastActivity(lead) {
+    var activity = lead.last_activity;
+    if (activity && activity.relative_label && activity.time_label) {
+      return activity.relative_label + ' • ' + activity.time_label;
+    }
+    if (lead.last_activity_at) return formatActivityTimestamp(lead.last_activity_at);
+    if (lead.updated && lead.updated !== '—') return lead.updated;
+    return '—';
+  }
+
+  function formatKanbanLastActivityCompact(lead) {
+    var activity = lead.last_activity;
+    if (activity && activity.relative_label && activity.time_label) {
+      return activity.relative_label + ', ' + activity.time_label;
+    }
+    if (lead.last_activity_at) return formatActivityTimestamp(lead.last_activity_at);
+    if (lead.updated && lead.updated !== '—') return lead.updated;
+    return '—';
+  }
+
+  function kanbanPriorityBadge(lead, compact) {
+    var priority = String(lead.priority || lead.lead_priority || '').trim();
+    var rating = parseInt(lead.rating_stars != null ? lead.rating_stars : lead.rating, 10);
+    var label = '';
+    if (priority === 'High' || priority === 'Urgent') label = compact ? 'High' : 'High Priority';
+    else if (priority === 'Low') label = compact ? 'Low' : 'Low Priority';
+    else if (rating >= 5 || rating === 4) label = compact ? 'High' : 'High Priority';
+    if (!label) return '';
+    return '<span class="kanban-card-priority">' + escapeHtml(label) + '</span>';
+  }
+
+  function buildKanbanCardHtml(l) {
+    if (isMasterDataHub()) {
+      var employee = l.executive && l.executive !== 'Unassigned' ? l.executive : 'Unassigned';
+      var city = l.city && l.city !== '—' ? l.city : '—';
+      var priorityHtml = kanbanPriorityBadge(l, true);
+      return '<div class="kanban-card kanban-card--master" draggable="true" data-lead-id="' + l.ca_id + '">' +
+        '<div class="kanban-card-top">' +
+          '<p class="kanban-card-firm">' + escapeHtml(l.firm_name || '—') + '</p>' +
+          (priorityHtml || '') +
+        '</div>' +
+        '<p class="kanban-card-meta">' + escapeHtml(city) + ' · ' + escapeHtml(employee) + '</p>' +
+        '<p class="kanban-card-activity">' + escapeHtml(formatKanbanLastActivityCompact(l)) + '</p>' +
+      '</div>';
+    }
+    var hot = l.status === 'Hot' ? ' kanban-card-hot' : '';
+    return '<div class="kanban-card mb-2' + hot + '" draggable="true" data-lead-id="' + l.ca_id + '">' +
+      '<div class="flex justify-between gap-2"><p class="text-body font-medium">' + escapeHtml(l.firm_name || '—') + '</p>' +
+      (l.status === 'Hot' ? '<span class="badge bg-amber-50 text-amber-700 text-xs">Hot</span>' : '') + '</div>' +
+      '<p class="text-caption text-slate-400">' + escapeHtml(l.city || '—') + ' · ' + escapeHtml(l.executive || '—') + '</p></div>';
+  }
+
+  function renderKanbanStageCardsHtml(items, query, options) {
+    options = options || {};
+    var filtered = !query
+      ? items
+      : items.filter(function (l) { return leadMatchesKanbanSearch(l, query); });
+    if (!items.length) {
+      var emptyCopy = isMasterDataHub()
+        ? (options.emptyLabel || 'No leads in this stage')
+        : (options.emptyLabel || 'No Leads in this Stage');
+      var emptyCls = isMasterDataHub() ? 'kanban-empty kanban-empty--compact' : 'kanban-empty';
+      return '<div class="' + emptyCls + '">' +
+        '<i data-lucide="inbox" class="kanban-empty__icon" aria-hidden="true"></i>' +
+        '<span>' + escapeHtml(emptyCopy) + '</span>' +
+      '</div>';
+    }
+    if (!filtered.length) {
+      var searchEmptyCls = isMasterDataHub() ? 'kanban-empty kanban-empty--compact kanban-empty--search' : 'kanban-empty kanban-empty--search';
+      return '<div class="' + searchEmptyCls + '">' +
+        '<i data-lucide="search-x" class="kanban-empty__icon" aria-hidden="true"></i>' +
+        '<span>No matching leads</span>' +
+      '</div>';
+    }
+    return filtered.map(buildKanbanCardHtml).join('');
+  }
+
+  function updateKanbanStageColumn(columnEl) {
+    if (!columnEl) return;
+    var stage = columnEl.getAttribute('data-stage');
+    var query = String(kanbanStageSearch[stage] || '').trim();
+    var filtered = getRealLeadsFiltered().filter(function (l) { return leadPipelineStage(l) === stage; });
+    var stageCounts = window.kanbanStageCounts || {};
+    var totalInStage = stageCounts[stage] != null ? stageCounts[stage] : filtered.length;
+    var visible = query
+      ? filtered.filter(function (l) { return leadMatchesKanbanSearch(l, query); })
+      : filtered;
+    var countEl = columnEl.querySelector('[data-kanban-count]');
+    if (countEl) {
+      countEl.textContent = query
+        ? (visible.length + ' / ' + totalInStage)
+        : String(totalInStage);
+      countEl.title = query
+        ? (visible.length + ' matching of ' + totalInStage + ' in stage')
+        : (totalInStage + ' firms in stage');
+    }
+    var metaEl = columnEl.querySelector('[data-kanban-filter-meta]');
+    if (metaEl) {
+      if (query) {
+        metaEl.textContent = visible.length + ' of ' + filtered.length + ' shown';
+        metaEl.classList.remove('hidden');
+      } else {
+        metaEl.textContent = '';
+        metaEl.classList.add('hidden');
+      }
+    }
+    var clearBtn = columnEl.querySelector('[data-kanban-search-clear]');
+    if (clearBtn) clearBtn.classList.toggle('hidden', !query);
+    var cardsEl = columnEl.querySelector('.kanban-column-cards');
+    if (cardsEl) {
+      cardsEl.innerHTML = renderKanbanStageCardsHtml(filtered, query);
+      bindKanbanCardInteractions(cardsEl);
+    }
+  }
+
+  function bindKanbanCardInteractions(scope) {
+    var root = scope || document.getElementById('kanban-board');
+    if (!root) return;
+    root.querySelectorAll('.kanban-card').forEach(function (card) {
+      if (card._kanbanBound) return;
+      card._kanbanBound = true;
+      card.addEventListener('click', function () {
+        selectLead(card.dataset.leadId, true);
+      });
+      card.addEventListener('dragstart', function (e) {
+        e.dataTransfer.setData('text/plain', card.dataset.leadId);
+        card.classList.add('opacity-60');
+      });
+      card.addEventListener('dragend', function () {
+        card.classList.remove('opacity-60');
+      });
+    });
+  }
+
+  function bindKanbanBoardInteractions(container) {
+    if (!container || container._kanbanBoardBound) return;
+    container._kanbanBoardBound = true;
+
+    container.addEventListener('input', function (e) {
+      var input = e.target.closest('[data-kanban-stage-search]');
+      if (!input) return;
+      var stage = input.getAttribute('data-kanban-stage-search');
+      var column = input.closest('.kanban-column');
+      var value = input.value || '';
+      window.clearTimeout(kanbanStageSearchTimers[stage]);
+      kanbanStageSearchTimers[stage] = window.setTimeout(function () {
+        kanbanStageSearch[stage] = value;
+        updateKanbanStageColumn(column);
+      }, 350);
+      var clearBtn = column && column.querySelector('[data-kanban-search-clear]');
+      if (clearBtn) clearBtn.classList.toggle('hidden', !String(value).trim());
+    });
+
+    container.addEventListener('click', function (e) {
+      var clearBtn = e.target.closest('[data-kanban-search-clear]');
+      if (!clearBtn) return;
+      e.preventDefault();
+      var column = clearBtn.closest('.kanban-column');
+      var stage = clearBtn.getAttribute('data-kanban-search-clear');
+      var input = column && column.querySelector('[data-kanban-stage-search]');
+      kanbanStageSearch[stage] = '';
+      if (input) {
+        input.value = '';
+        input.focus();
+      }
+      updateKanbanStageColumn(column);
+    });
+
+    container.addEventListener('dragover', function (e) {
+      var col = e.target.closest('.kanban-column');
+      if (!col || !container.contains(col)) return;
+      e.preventDefault();
+      col.classList.add('ring-2', 'ring-brand/30');
+    });
+
+    container.addEventListener('dragleave', function (e) {
+      var col = e.target.closest('.kanban-column');
+      if (!col || !container.contains(col)) return;
+      if (col.contains(e.relatedTarget)) return;
+      col.classList.remove('ring-2', 'ring-brand/30');
+    });
+
+    container.addEventListener('drop', function (e) {
+      var col = e.target.closest('.kanban-column');
+      if (!col || !container.contains(col)) return;
+      e.preventDefault();
+      col.classList.remove('ring-2', 'ring-brand/30');
+      var leadId = e.dataTransfer.getData('text/plain');
+      var stage = col.dataset.stage;
+      if (!leadId || !stage) return;
+      var lead = (window.kanbanLeads || []).find(function (l) { return String(l.ca_id) === String(leadId); })
+        || (window._listingLeadsPage || []).find(function (l) { return String(l.ca_id) === String(leadId); });
+      var previousStage = lead ? leadPipelineStage(lead) : null;
+      var status = mapStageToStatus(stage);
+      updateLeadStatus(leadId, status)
+        .then(function (body) {
+          var mapped = mergeLeadFromApiResponse(body);
+          if (mapped) {
+            mapped.master_pipeline_stage = mapStatusToMasterPipelineStage(mapped.status);
+            mapped.stage = isMasterDataHub() ? mapped.master_pipeline_stage : mapStatusToStage(mapped.status);
+            upsertLeadInCache(mapped);
+          }
+          if (previousStage && window.kanbanStageCounts) {
+            if (window.kanbanStageCounts[previousStage] != null && previousStage !== stage) {
+              window.kanbanStageCounts[previousStage] = Math.max(0, window.kanbanStageCounts[previousStage] - 1);
+            }
+            if (previousStage !== stage) {
+              window.kanbanStageCounts[stage] = (window.kanbanStageCounts[stage] || 0) + 1;
+            }
+          }
+          if (isMasterDataHub()) {
+            var fromCol = previousStage ? container.querySelector('.kanban-column[data-stage="' + previousStage + '"]') : null;
+            updateKanbanStageColumn(fromCol);
+            updateKanbanStageColumn(col);
+            toast('Firm moved to ' + stage, 'success');
+            return;
+          }
+          invalidateDataCaches(['metrics', 'segment_counts', 'assignments']);
+          loadAssignmentsFromDatabase(function () {
+            enrichLeadsWithAssignments();
+            refreshLeadsUi({ invalidateMetrics: true });
+            toast('Lead moved to ' + stage, 'success');
+          });
+        })
+        .catch(function (err) {
+          toast(err.message || 'Unable to update lead stage', 'error');
+        });
+    });
+  }
+
   function renderKanbanFromData() {
     var container = document.getElementById('kanban-board');
     if (!container) return;
@@ -11109,15 +11691,7 @@ window.CA_CRM = (function () {
     }
     var masterHub = isMasterDataHub();
     var stages = masterHub
-      ? [
-        { name: 'New Firm', key: 'New Lead', color: 'bg-slate-400' },
-        { name: 'Contacted', key: 'Details Shared', color: 'bg-blue-400' },
-        { name: 'Documents Pending', key: 'Demo Scheduled', color: 'bg-brand' },
-        { name: 'GST Received', key: 'Demo Completed', color: 'bg-indigo-400' },
-        { name: 'Negotiation', key: 'Negotiation', color: 'bg-amber-400' },
-        { name: 'Active Client', key: 'Won', color: 'bg-emerald-500' },
-        { name: 'Inactive', key: 'Lost', color: 'bg-red-400' },
-      ]
+      ? getMasterPipelineColumns()
       : [
         { name: 'New Lead', key: 'New Lead', color: 'bg-slate-400' },
         { name: 'Details Shared', key: 'Details Shared', color: 'bg-blue-400' },
@@ -11130,70 +11704,50 @@ window.CA_CRM = (function () {
     var filtered = getRealLeadsFiltered();
     var stageCounts = window.kanbanStageCounts || {};
     container.innerHTML = stages.map(function (col) {
-      var items = filtered.filter(function (l) { return l.stage === col.key; });
+      var items = filtered.filter(function (l) { return leadPipelineStage(l) === col.key; });
       var totalInStage = stageCounts[col.key] != null ? stageCounts[col.key] : items.length;
-      return '<div class="kanban-column" data-stage="' + col.key + '"><div class="flex items-center justify-between mb-3">' +
-        '<div class="flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full ' + col.color + '"></span>' +
-        '<h4 class="text-card-heading">' + col.name + '</h4></div><span class="badge bg-white text-slate-600">' + totalInStage + '</span></div>' +
-        '<div class="kanban-column-cards min-h-[80px]">' +
-        items.map(function (l) {
-          var hot = l.status === 'Hot' ? ' kanban-card-hot' : '';
-          return '<div class="kanban-card mb-2' + hot + '" draggable="true" data-lead-id="' + l.ca_id + '">' +
-            '<div class="flex justify-between gap-2"><p class="text-body font-medium">' + l.firm_name + '</p>' +
-            (l.status === 'Hot' ? '<span class="badge bg-amber-50 text-amber-700 text-xs">Hot</span>' : '') + '</div>' +
-            '<p class="text-caption text-slate-400">' + l.city + ' · ' + l.executive + '</p></div>';
-        }).join('') + '</div></div>';
+      var query = String(kanbanStageSearch[col.key] || '');
+      var visibleCount = query
+        ? items.filter(function (l) { return leadMatchesKanbanSearch(l, query); }).length
+        : items.length;
+      var countLabel = query ? (visibleCount + ' / ' + totalInStage) : String(totalInStage);
+      var themeClass = col.theme ? (' kanban-column--' + col.theme) : '';
+      var titlePrefix = col.icon ? (col.icon + ' ') : '';
+      var searchPlaceholder = masterHub ? 'Search leads...' : 'Search in this stage…';
+      var searchMetaHtml = masterHub ? '' : (
+        '<p class="kanban-stage-search__meta' + (query.trim() ? '' : ' hidden') + '" data-kanban-filter-meta">' +
+          (query.trim() ? (visibleCount + ' of ' + items.length + ' shown') : '') +
+        '</p>'
+      );
+      return '<div class="kanban-column' + themeClass + '" data-stage="' + escapeHtml(col.key) + '">' +
+        '<div class="kanban-column-head">' +
+          '<div class="kanban-column-title-row">' +
+            '<div class="kanban-column-title">' +
+              (masterHub ? '' : '<span class="kanban-column-dot ' + (col.color || 'bg-slate-400') + '"></span>') +
+              '<h4 class="kanban-column-name">' + escapeHtml(titlePrefix + col.name) + '</h4>' +
+            '</div>' +
+            '<span class="kanban-column-count" data-kanban-count title="' + escapeHtml(String(totalInStage) + ' in stage') + '">' + escapeHtml(countLabel) + '</span>' +
+          '</div>' +
+          '<label class="kanban-stage-search">' +
+            '<span class="sr-only">Search leads in ' + escapeHtml(col.name) + '</span>' +
+            '<i data-lucide="search" class="kanban-stage-search__icon" aria-hidden="true"></i>' +
+            '<input type="search" class="input-field kanban-stage-search__input" data-kanban-stage-search="' + escapeHtml(col.key) + '"' +
+              ' placeholder="' + escapeHtml(searchPlaceholder) + '" value="' + escapeHtml(query) + '" autocomplete="off" />' +
+            '<button type="button" class="kanban-stage-search__clear' + (query.trim() ? '' : ' hidden') + '" data-kanban-search-clear="' + escapeHtml(col.key) + '" title="Clear search" aria-label="Clear stage search">' +
+              '<i data-lucide="x"></i></button>' +
+          '</label>' +
+          searchMetaHtml +
+        '</div>' +
+        '<div class="kanban-column-cards">' +
+          renderKanbanStageCardsHtml(items, query) +
+        '</div></div>';
     }).join('');
-    container.querySelectorAll('.kanban-card').forEach(function (card) {
-      card.addEventListener('click', function () {
-        selectLead(card.dataset.leadId, true);
-      });
-      card.addEventListener('dragstart', function (e) {
-        e.dataTransfer.setData('text/plain', card.dataset.leadId);
-        card.classList.add('opacity-60');
-      });
-      card.addEventListener('dragend', function () {
-        card.classList.remove('opacity-60');
-      });
-    });
-    container.querySelectorAll('.kanban-column').forEach(function (col) {
-      col.addEventListener('dragover', function (e) {
-        e.preventDefault();
-        col.classList.add('ring-2', 'ring-brand/30');
-      });
-      col.addEventListener('dragleave', function () {
-        col.classList.remove('ring-2', 'ring-brand/30');
-      });
-      col.addEventListener('drop', function (e) {
-        e.preventDefault();
-        col.classList.remove('ring-2', 'ring-brand/30');
-        var leadId = e.dataTransfer.getData('text/plain');
-        var stage = col.dataset.stage;
-        if (!leadId || !stage) return;
-        var status = mapStageToStatus(stage);
-        updateLeadStatus(leadId, status)
-          .then(function (body) {
-            var mapped = mergeLeadFromApiResponse(body);
-            if (mapped) upsertLeadInCache(mapped);
-            invalidateDataCaches(['metrics', 'segment_counts', 'assignments']);
-            loadAssignmentsFromDatabase(function () {
-              enrichLeadsWithAssignments();
-              refreshLeadsUi({ invalidateMetrics: true });
-              if (isMasterDataHub()) {
-                renderCaMasterTable();
-                toast('Firm moved to ' + stage, 'success');
-              } else {
-                toast('Lead moved to ' + stage, 'success');
-              }
-            });
-          })
-          .catch(function (err) {
-            toast(err.message || 'Unable to update lead stage', 'error');
-          });
-      });
-    });
+    container.classList.toggle('kanban-board--master', masterHub);
+    bindKanbanBoardInteractions(container);
+    bindKanbanCardInteractions(container);
     var selId = CAData.getSelectedLeadId();
     if (selId) highlightLeadSelection(selId);
+    icons();
   }
 
   function populateSelects() {
@@ -11270,6 +11824,17 @@ window.CA_CRM = (function () {
     }
   }
 
+  function applyLeadFormUiDefaults(form) {
+    if (!form) return;
+    if (form.elements.team_size) form.elements.team_size.value = '0';
+    if (form.elements.existing_software) setSelectValueIfValid(form.elements.existing_software, 'None');
+    if (form.elements.rating) form.elements.rating.value = '1';
+    if (form.elements.is_newly_established) form.elements.is_newly_established.value = '';
+    if (form.elements.status) setSelectValueIfValid(form.elements.status, 'New');
+    if (form.elements.source_id) form.elements.source_id.value = '';
+    if (form.elements.executive_id) form.elements.executive_id.value = '';
+  }
+
   function resetLeadForm() {
     var form = document.getElementById('form-add-lead');
     if (!form) return;
@@ -11277,8 +11842,7 @@ window.CA_CRM = (function () {
     form.reset();
     var caIdField = document.getElementById('form-lead-ca-id');
     if (caIdField) caIdField.value = '';
-    if (form.elements.team_size) form.elements.team_size.value = '8';
-    if (form.elements.rating) form.elements.rating.value = '3';
+    applyLeadFormUiDefaults(form);
     setLeadFormMode('add');
     applyLeadFormAccessRules(null);
     var googleSection = document.getElementById('form-lead-google-section');
@@ -11295,6 +11859,10 @@ window.CA_CRM = (function () {
     var form = document.getElementById('form-add-lead');
     if (!form || !lead) return;
 
+    function isEmptyLeadValue(value) {
+      return value == null || value === '' || value === '—';
+    }
+
     form.elements.firm_name.value = lead.firm_name || '';
     form.elements.ca_name.value = lead.ca_name || '';
     form.elements.mobile_no.value = lead.mobile_no && lead.mobile_no !== '—' ? lead.mobile_no : '';
@@ -11309,18 +11877,40 @@ window.CA_CRM = (function () {
       if (form.elements.state_id) setSelectValueIfValid(form.elements.state_id, lead.state_id || lead.state);
       if (form.elements.city_id) setSelectValueIfValid(form.elements.city_id, lead.city_id || lead.city);
     }
-    form.elements.team_size.value = lead.team_size || 8;
-    form.elements.existing_software.value = lead.existing_software || 'Tally';
+    form.elements.team_size.value = isEmptyLeadValue(lead.team_size) ? 0 : lead.team_size;
+    if (form.elements.existing_software) {
+      var software = isEmptyLeadValue(lead.existing_software) ? 'None' : String(lead.existing_software);
+      var softwareSelect = form.elements.existing_software;
+      var hasSoftwareOption = Array.prototype.some.call(softwareSelect.options, function (opt) {
+        return opt.value === software || opt.text === software;
+      });
+      if (!hasSoftwareOption) {
+        var softwareOpt = document.createElement('option');
+        softwareOpt.value = software;
+        softwareOpt.textContent = software;
+        softwareSelect.appendChild(softwareOpt);
+      }
+      setSelectValueIfValid(softwareSelect, software);
+    }
     form.elements.website.value = lead.website && lead.website !== '—' ? lead.website : '';
-    form.elements.rating.value = String(lead.rating || 3);
-    form.elements.is_newly_established.value = lead.is_newly_established ? 'yes' : 'no';
+    form.elements.rating.value = isEmptyLeadValue(lead.rating) ? '1' : String(lead.rating);
+    var newFirm = lead.is_newly_established;
+    if (newFirm === true || newFirm === 1 || newFirm === 'yes' || newFirm === 'Yes') {
+      form.elements.is_newly_established.value = 'yes';
+    } else if (newFirm === false || newFirm === 0 || newFirm === 'no' || newFirm === 'No') {
+      form.elements.is_newly_established.value = 'no';
+    } else {
+      form.elements.is_newly_established.value = 'no';
+    }
     if (form.elements.source_id) {
       setSelectValueIfValid(
         form.elements.source_id,
         lead.source_id || lead.source_name || (lead.source && lead.source !== '—' ? lead.source : ''),
       );
     }
-    form.elements.status.value = lead.status || 'New';
+    var statusValue = lead.status || lead.demo_status;
+    if (isEmptyLeadValue(statusValue)) statusValue = 'New';
+    setSelectValueIfValid(form.elements.status, statusValue);
     if (form.elements.executive_id) form.elements.executive_id.value = lead.executive_id || '';
 
     var caIdField = document.getElementById('form-lead-ca-id');
@@ -11334,11 +11924,19 @@ window.CA_CRM = (function () {
 
   function openLeadFormForAdd() {
     resetLeadForm();
+    var modal = document.getElementById('modal-add-lead');
+    resetModalScroll(modal);
     ensureFormSelectData(function () {
       if (window.CA_STATE_CITY) {
         window.CA_STATE_CITY.prepareForm('form-add-lead');
       }
+      applyLeadFormUiDefaults(document.getElementById('form-add-lead'));
       applyLeadFormAccessRules(null);
+      resetModalScroll(modal);
+      var firmInput = document.querySelector('#form-add-lead [name="firm_name"]');
+      if (firmInput && typeof firmInput.focus === 'function') {
+        try { firmInput.focus({ preventScroll: true }); } catch (e) { firmInput.focus(); }
+      }
     });
   }
 
@@ -14899,8 +15497,6 @@ window.CA_CRM = (function () {
       ensureMasterData(function () {
         function finishCaMasterPage() {
           initCaMasterPage();
-          populateCaMasterFilterDropdowns();
-          syncCaMasterFilterBarFromState();
           renderCamKpis();
           renderMasterTables();
           applyMasterDataRbac();
@@ -19642,7 +20238,7 @@ window.CA_CRM = (function () {
         CA_LISTING_SEARCH.bindSortableHeaders(key, 'leads-table', { 1: 'firm_name', 2: 'ca_name', 7: 'status' });
       }
       if (document.getElementById(camCtx.tableId)) {
-        CA_LISTING_SEARCH.bindSortableHeaders(key, camCtx.tableId, { 0: 'firm_name', 1: 'ca_name', 8: 'status', 11: 'updated_at' });
+        CA_LISTING_SEARCH.bindSortableHeaders(key, camCtx.tableId, { 1: 'firm_name', 2: 'ca_name', 3: 'team_size', 4: 'last_activity_at', 12: 'status', 15: 'updated_at' });
       }
     } else if (key === 'employees') {
       var employees = items.map(mapEmployeeRecord);
@@ -19727,16 +20323,16 @@ window.CA_CRM = (function () {
     var extra = {};
     if (key === 'ca_masters') {
       var onLeadsHub = !!(document.getElementById('leads-data-table') || document.getElementById('leads-kpi-strip'));
-      var onCaMaster = !!document.querySelector('.cam-page');
       if (onLeadsHub && window._leadSegmentFilter && window._leadSegmentFilter !== 'all') {
         extra.segment = window._leadSegmentFilter;
       }
       if (onLeadsHub) {
         Object.assign(extra, CA_LISTING_SEARCH.readLeadDrawerFilters());
       }
-      if (onCaMaster) {
-        var newPanel = document.querySelector('.ca-tab-panel[data-panel="new"].active');
-        if (newPanel) extra.segment = 'new';
+      if (isMasterDataHub()) {
+        syncCamSegmentState();
+        var camSeg = getLeadFilter();
+        if (camSeg && camSeg !== 'all') extra.segment = camSeg;
       }
     }
     if (key === 'activity_logs') Object.assign(extra, readActivityFiltersFromForm());

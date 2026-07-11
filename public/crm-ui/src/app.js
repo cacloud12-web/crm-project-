@@ -182,10 +182,15 @@
     setCrmScrollLock(false);
   }
 
-  function openModal(el) {
+    function openModal(el) {
     el?.classList.add('open');
     overlay?.classList.add('active');
     setCrmScrollLock(true);
+    if (el) {
+      el.querySelectorAll('.ca-modal-body').forEach(function (body) {
+        body.scrollTop = 0;
+      });
+    }
     icons();
     if (window.CA_STATE_CITY && el) {
       window.CA_STATE_CITY.prepareModal(el);

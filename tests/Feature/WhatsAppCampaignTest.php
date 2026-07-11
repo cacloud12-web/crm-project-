@@ -314,7 +314,7 @@ class WhatsAppCampaignTest extends TestCase
             [
                 'channel' => MessageTemplate::CHANNEL_WHATSAPP,
                 'template_name' => 'task_customermp2et391nk',
-                'language_code' => 'en_US',
+                'language_code' => 'en',
             ],
             [
                 'meta_api_name' => 'task_customermp2et391nk',

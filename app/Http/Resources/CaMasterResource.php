@@ -2,7 +2,9 @@
 
 namespace App\Http\Resources;
 
+use App\Services\Leads\LeadActivityTimelineService;
 use App\Services\Leads\LeadOwnershipService;
+use App\Services\Leads\LeadTeamMemberService;
 use App\Services\Rbac\EmployeeLeadFieldGuard;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -45,6 +47,11 @@ class CaMasterResource extends JsonResource
     private static array $executiveByCaId = [];
 
     /**
+     * @var array<int, array<string, mixed>>
+     */
+    private static array $lastActivityByCaId = [];
+
+    /**
      * @param  Collection<int, mixed>|array<int, mixed>  $leads
      */
     public static function prepareCollection(Collection|array $leads): void
@@ -52,13 +59,7 @@ class CaMasterResource extends JsonResource
         $collection = $leads instanceof Collection ? $leads : collect($leads);
         if ($collection->isEmpty()) {
             self::$executiveByCaId = [];
-
-            return;
-        }
-
-        $first = $collection->first();
-        if (is_object($first) && method_exists($first, 'relationLoaded') && $first->relationLoaded('activeAssignment')) {
-            self::$executiveByCaId = [];
+            self::$lastActivityByCaId = [];
 
             return;
         }
@@ -72,29 +73,39 @@ class CaMasterResource extends JsonResource
 
         if ($caIds === []) {
             self::$executiveByCaId = [];
+            self::$lastActivityByCaId = [];
 
             return;
         }
 
-        self::$executiveByCaId = \App\Models\LeadAssignmentEngine::query()
-            ->with('employee:employee_id,name')
-            ->whereIn('ca_id', $caIds)
-            ->where('status', 'Active')
-            ->orderByDesc('assignment_id')
-            ->get()
-            ->unique('ca_id')
-            ->mapWithKeys(fn ($assignment) => [
-                (int) $assignment->ca_id => [
-                    'id' => $assignment->employee_id ? (int) $assignment->employee_id : null,
-                    'name' => $assignment->employee?->name,
-                ],
-            ])
-            ->all();
+        $first = $collection->first();
+        if (is_object($first) && method_exists($first, 'relationLoaded') && $first->relationLoaded('activeAssignment')) {
+            self::$executiveByCaId = [];
+        } else {
+            self::$executiveByCaId = \App\Models\LeadAssignmentEngine::query()
+                ->with('employee:employee_id,name')
+                ->whereIn('ca_id', $caIds)
+                ->where('status', 'Active')
+                ->orderByDesc('assignment_id')
+                ->get()
+                ->unique('ca_id')
+                ->mapWithKeys(fn ($assignment) => [
+                    (int) $assignment->ca_id => [
+                        'id' => $assignment->employee_id ? (int) $assignment->employee_id : null,
+                        'name' => $assignment->employee?->name,
+                    ],
+                ])
+                ->all();
+        }
+
+        self::$lastActivityByCaId = app(LeadActivityTimelineService::class)->summariesForCaIds($caIds);
     }
 
     public function toArray(Request $request): array
     {
         $executive = $this->resolveExecutive();
+        $teamMembers = $this->resolveTeamMembersSummary();
+        $lastActivity = $this->resolveLastActivity();
 
         return [
             'ca_id' => $this->ca_id,
@@ -135,6 +146,7 @@ class CaMasterResource extends JsonResource
             'is_newly_established' => (bool) $this->is_newly_established,
             'status' => $this->status,
             'stage' => self::STATUS_TO_STAGE[$this->status] ?? 'New Lead',
+            'master_pipeline_stage' => self::resolveMasterPipelineStage($this->status),
             'lead_tags' => $this->lead_tags ?? [],
             'priority' => $this->priority ?? 'Medium',
             'research_status' => $this->research_status,
@@ -151,6 +163,15 @@ class CaMasterResource extends JsonResource
             'executive' => $this->when($request->user() !== null, fn () => $executive['name']),
             'executive_name' => $this->when($request->user() !== null, fn () => $executive['name']),
             'employee_name' => $this->when($request->user() !== null, fn () => $executive['name']),
+            'team_members' => $this->when($request->user() !== null, fn () => $teamMembers),
+            'team_members_count' => $this->when($request->user() !== null, fn () => $teamMembers['count']),
+            'team_member_names' => $this->when($request->user() !== null, fn () => $teamMembers['names']),
+            'lead_owner_id' => $this->when($request->user() !== null, fn () => $teamMembers['lead_owner_id']),
+            'last_activity' => $this->when($request->user() !== null, fn () => $lastActivity),
+            'last_activity_at' => $this->when(
+                $request->user() !== null,
+                fn () => $lastActivity ? ($lastActivity['occurred_at'] ?? null) : null,
+            ),
             'mobile' => $this->mobile_no,
             'employee_cannot_edit_mobile' => $request->user()
                 ? app(EmployeeLeadFieldGuard::class)
@@ -176,6 +197,15 @@ class CaMasterResource extends JsonResource
      */
     private function resolveExecutive(): array
     {
+        if ($this->relationLoaded('activeTeamAssignments')) {
+            $assignment = $this->activeTeamAssignments->first();
+
+            return [
+                'id' => $assignment?->employee_id ? (int) $assignment->employee_id : null,
+                'name' => $assignment?->employee?->name,
+            ];
+        }
+
         if ($this->relationLoaded('activeAssignment')) {
             $assignment = $this->activeAssignment;
 
@@ -191,5 +221,56 @@ class CaMasterResource extends JsonResource
         }
 
         return ['id' => null, 'name' => null];
+    }
+
+    /**
+     * @return array{count: int, names: list<string>, lead_owner_id: int|null}
+     */
+    private function resolveTeamMembersSummary(): array
+    {
+        if ($this->relationLoaded('activeTeamAssignments')) {
+            return app(LeadTeamMemberService::class)->summarize($this->activeTeamAssignments);
+        }
+
+        $executive = $this->resolveExecutive();
+        if ($executive['id'] === null || $executive['name'] === null) {
+            return ['count' => 0, 'names' => [], 'lead_owner_id' => null];
+        }
+
+        return [
+            'count' => 1,
+            'names' => [(string) $executive['name']],
+            'lead_owner_id' => $executive['id'],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function resolveLastActivity(): ?array
+    {
+        $cached = self::$lastActivityByCaId[(int) $this->ca_id] ?? null;
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $summaries = app(LeadActivityTimelineService::class)->summariesForCaIds([(int) $this->ca_id]);
+
+        return $summaries[(int) $this->ca_id] ?? null;
+    }
+
+    private static function resolveMasterPipelineStage(?string $status): string
+    {
+        if ($status === null || $status === '') {
+            return 'New Lead';
+        }
+
+        foreach (config('crm_master_pipeline.stage_statuses', []) as $stage => $statuses) {
+            if (in_array($status, $statuses, true)) {
+                return $stage;
+            }
+        }
+
+        return 'New Lead';
     }
 }

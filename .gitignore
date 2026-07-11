@@ -27,6 +27,8 @@
 /storage/framework/views/
 /storage/backups/
 /vendor
+/.tools/
+/.env.mysql.bak
 _ide_helper.php
 Homestead.json
 Homestead.yaml

@@ -6,9 +6,14 @@ use Illuminate\Support\Facades\DB;
 
 class SqlDate
 {
+    private static function driver(): string
+    {
+        return DB::getDriverName();
+    }
+
     public static function dateCast(string $column): string
     {
-        if (DB::getDriverName() === 'pgsql') {
+        if (self::driver() === 'pgsql') {
             return "{$column}::date";
         }
 
@@ -17,8 +22,12 @@ class SqlDate
 
     public static function monthLabel(string $column, string $alias = 'month'): string
     {
-        if (DB::getDriverName() === 'pgsql') {
+        if (self::driver() === 'pgsql') {
             return "TO_CHAR(DATE_TRUNC('month', {$column}), 'YYYY-MM') as {$alias}";
+        }
+
+        if (self::driver() === 'sqlite') {
+            return "strftime('%Y-%m', {$column}) as {$alias}";
         }
 
         return "DATE_FORMAT({$column}, '%Y-%m') as {$alias}";
@@ -26,8 +35,12 @@ class SqlDate
 
     public static function monthBucket(string $column): string
     {
-        if (DB::getDriverName() === 'pgsql') {
+        if (self::driver() === 'pgsql') {
             return "DATE_TRUNC('month', {$column})";
+        }
+
+        if (self::driver() === 'sqlite') {
+            return "strftime('%Y-%m', {$column})";
         }
 
         return "DATE_FORMAT({$column}, '%Y-%m')";
@@ -35,8 +48,14 @@ class SqlDate
 
     public static function weekLabel(string $column, string $alias = 'label'): string
     {
-        if (DB::getDriverName() === 'pgsql') {
+        if (self::driver() === 'pgsql') {
             return "TO_CHAR(DATE_TRUNC('week', {$column}), 'YYYY-MM-DD') as {$alias}";
+        }
+
+        if (self::driver() === 'sqlite') {
+            $start = self::sqliteWeekStart($column);
+
+            return "strftime('%Y-%m-%d', {$start}) as {$alias}";
         }
 
         $monday = self::mysqlWeekStart($column);
@@ -46,8 +65,12 @@ class SqlDate
 
     public static function weekBucket(string $column): string
     {
-        if (DB::getDriverName() === 'pgsql') {
+        if (self::driver() === 'pgsql') {
             return "DATE_TRUNC('week', {$column})";
+        }
+
+        if (self::driver() === 'sqlite') {
+            return self::sqliteWeekStart($column);
         }
 
         return self::mysqlWeekStart($column);
@@ -55,24 +78,22 @@ class SqlDate
 
     public static function yearMonthLabel(string $column, string $alias = 'month'): string
     {
-        if (DB::getDriverName() === 'pgsql') {
-            return "TO_CHAR({$column}, 'YYYY-MM') as {$alias}";
-        }
-
-        return "DATE_FORMAT({$column}, '%Y-%m') as {$alias}";
+        return self::monthLabel($column, $alias);
     }
 
     public static function yearMonthBucket(string $column): string
     {
-        if (DB::getDriverName() === 'pgsql') {
-            return "TO_CHAR({$column}, 'YYYY-MM')";
-        }
-
-        return "DATE_FORMAT({$column}, '%Y-%m')";
+        return self::monthBucket($column);
     }
 
     private static function mysqlWeekStart(string $column): string
     {
         return "DATE_SUB(DATE({$column}), INTERVAL WEEKDAY({$column}) DAY)";
+    }
+
+    /** Monday-start week bucket for SQLite (local dev). */
+    private static function sqliteWeekStart(string $column): string
+    {
+        return "date({$column}, '-' || ((cast(strftime('%w', {$column}) as integer) + 6) % 7) || ' days')";
     }
 }

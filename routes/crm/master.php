@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Route;
 Route::middleware(['auth', 'rbac'])->group(function () {
     Route::get('lookups/states', [LocationLookupController::class, 'states']);
     Route::get('lookups/cities', [LocationLookupController::class, 'cities']);
+    Route::get('lookups/sources', [LocationLookupController::class, 'sources']);
     Route::get('lookups/executives', [EmployeeLookupController::class, 'executives']);
 
     $registerMasterLifecycle = function (string $prefix, string $controller, string $parameter): void {

@@ -725,30 +725,6 @@ window.CAPages = (function () {
       }).join('');
   }
 
-  function caMasterFilterBar() {
-    var statusOptions = caMasterStatusFilterOptionsHtml('All Status');
-    return '<div class="cam-filter-bar card hidden" id="cam-filter-bar">' +
-      '<div class="cam-filter-row">' +
-        '<div class="cam-search-wrap">' +
-          '<i data-lucide="search" class="cam-search-icon"></i>' +
-          '<input type="search" id="cam-filter-search" class="input-field cam-search-input" placeholder="Search firm, CA name, mobile, GST…" autocomplete="off" />' +
-        '</div>' +
-        '<select id="cam-filter-state" class="input-field cam-filter-select" aria-label="State"><option value="">All States</option></select>' +
-        '<select id="cam-filter-city" class="input-field cam-filter-select" aria-label="City"><option value="">All Cities</option></select>' +
-        '<select id="cam-filter-source" class="input-field cam-filter-select" aria-label="Source"><option value="">All Sources</option></select>' +
-        '<select id="cam-filter-status" class="input-field cam-filter-select" aria-label="Status">' +
-          statusOptions +
-        '</select>' +
-        '<select id="cam-filter-rating" class="input-field cam-filter-select" aria-label="Rating">' +
-          '<option value="">Any Rating</option><option value="5">5 Stars</option><option value="4">4+ Stars</option><option value="3">3+ Stars</option>' +
-        '</select>' +
-        '<div class="cam-filter-actions">' +
-          actSecondary('Reset', 'id="cam-filter-reset"', 'rotate-ccw') +
-          actPrimary('Apply Filters', 'id="cam-filter-apply"', 'filter') +
-        '</div>' +
-      '</div></div>';
-  }
-
   function caMasterFirmsTable(tbodyId, tableId, paginationId) {
     tbodyId = tbodyId || 'ca-master-data-table';
     tableId = tableId || 'ca-master-table';
@@ -756,6 +732,8 @@ window.CAPages = (function () {
     return enterpriseTable([
       { label: 'Firm Name', colCls: 'crm-col-firm col-firm', thCls: 'crm-th-firm col-firm', sticky: 'left', filterKey: 'firm_name', filterPlaceholder: 'search' },
       { label: 'CA Name', colCls: 'crm-col-ca col-ca', thCls: 'crm-th-ca col-ca', filterKey: 'ca_name', filterPlaceholder: 'search' },
+      { label: 'Team Size', colCls: 'crm-col-team-size', thCls: 'crm-th-team-size', sortField: 'team_size', filterKey: 'team_size', filterPlaceholder: 'search' },
+      { label: 'Last Activity', colCls: 'crm-col-last-activity', thCls: 'crm-th-last-activity', sortField: 'last_activity_at' },
       { label: 'Mobile', colCls: 'crm-col-mobile', thCls: 'crm-th-mobile', filterKey: 'mobile_no', filterPlaceholder: 'search' },
       { label: 'Call Log', colCls: 'crm-col-call-log', thCls: 'crm-th-call-log' },
       { label: 'Alt Mobile', colCls: 'crm-col-mobile', thCls: 'crm-th-mobile', filterKey: 'alternate_mobile_no', filterPlaceholder: 'search' },
@@ -850,13 +828,14 @@ window.CAPages = (function () {
       '</div>' +
       '<div class="cam-primary-views' + (showSecondary ? ' hidden' : '') + '" id="cam-primary-views">' +
         '<div class="ca-tab-panel' + (primaryTab === 'pipeline' ? ' active' : '') + '" data-panel="pipeline" data-tab-group="cam-view">' +
-          '<div class="card cam-pipeline-card overflow-x-auto scrollbar-thin"><div id="kanban-board" class="flex gap-3 min-w-max pb-2"></div></div>' +
+          '<div class="card cam-pipeline-card cam-pipeline-card--master">' +
+            '<div class="cam-pipeline-scroll">' +
+              '<div id="kanban-board" class="kanban-board kanban-board--master"></div>' +
+            '</div>' +
+          '</div>' +
         '</div>' +
         '<div class="ca-tab-panel' + (primaryTab === 'all' ? ' active' : '') + '" data-panel="all" data-tab-group="cam-view">' +
-          '<div class="cam-firms-stack">' +
-            caMasterFilterBar() +
-            caMasterFirmsTable('ca-master-data-table') +
-          '</div>' +
+          caMasterFirmsTable('ca-master-data-table') +
         '</div>' +
       '</div>' +
       '<div class="cam-secondary-views' + (showSecondary ? '' : ' hidden') + '" id="cam-secondary-views">' +

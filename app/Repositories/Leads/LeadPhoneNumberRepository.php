@@ -10,15 +10,34 @@ class LeadPhoneNumberRepository
 {
     public function findLeadByNormalizedNumber(string $normalizedNumber, ?int $excludeCaId = null): ?CaMaster
     {
-        $query = LeadPhoneNumber::query()
-            ->where('normalized_number', $normalizedNumber)
-            ->with(['caMaster.state', 'caMaster.city', 'caMaster.sourceLead']);
+        $lead = CaMaster::query()
+            ->where(function ($query) use ($normalizedNumber) {
+                $query->where('normalized_mobile', $normalizedNumber)
+                    ->orWhere('normalized_alternate_mobile', $normalizedNumber);
+            })
+            ->when($excludeCaId, fn ($query) => $query->where('ca_id', '!=', $excludeCaId))
+            ->first();
 
-        if ($excludeCaId) {
-            $query->where('ca_id', '!=', $excludeCaId);
+        if ($lead) {
+            return $lead;
         }
 
-        return $query->first()?->caMaster;
+        $registryRows = LeadPhoneNumber::query()
+            ->where('normalized_number', $normalizedNumber)
+            ->when($excludeCaId, fn ($query) => $query->where('ca_id', '!=', $excludeCaId))
+            ->get();
+
+        foreach ($registryRows as $row) {
+            $owner = CaMaster::withTrashed()->find($row->ca_id);
+
+            if ($owner && ! $owner->trashed()) {
+                return $owner;
+            }
+
+            $row->delete();
+        }
+
+        return null;
     }
 
     public function numberExists(string $normalizedNumber, ?int $excludeCaId = null): bool
@@ -44,6 +63,8 @@ class LeadPhoneNumberRepository
             }
 
             foreach ($unique as $number => $type) {
+                $this->purgeStaleRegistryRows($number, $caId);
+
                 LeadPhoneNumber::query()->create([
                     'ca_id' => $caId,
                     'normalized_number' => $number,
@@ -51,5 +72,14 @@ class LeadPhoneNumberRepository
                 ]);
             }
         });
+    }
+
+    private function purgeStaleRegistryRows(string $normalizedNumber, int $caId): void
+    {
+        LeadPhoneNumber::query()
+            ->where('normalized_number', $normalizedNumber)
+            ->where('ca_id', '!=', $caId)
+            ->whereNotIn('ca_id', CaMaster::query()->select('ca_id'))
+            ->delete();
     }
 }

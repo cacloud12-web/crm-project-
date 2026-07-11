@@ -186,6 +186,7 @@ class ListingQueryApplier
                 'state_name' => $query->whereHas('state', fn (Builder $q) => $q->where('state_name', 'ilike', '%'.addcslashes((string) $value, '%_\\').'%')),
                 'source_name' => $query->whereHas('sourceLead', fn (Builder $q) => $q->where('source_name', 'ilike', '%'.addcslashes((string) $value, '%_\\').'%')),
                 'executive_name' => $query->whereHas('activeAssignment.employee', fn (Builder $q) => $q->where('name', 'ilike', '%'.addcslashes((string) $value, '%_\\').'%')),
+                'team_size_search' => self::applyTeamSizeSearch($query, $value),
                 'employee_name' => $query->whereHas('employee', fn (Builder $q) => $q->where('name', 'ilike', '%'.addcslashes((string) $value, '%_\\').'%')),
                 'employee_name_exact' => $query->whereHas('employee', fn (Builder $q) => $q->where('name', $value)),
                 'manager_name_exact' => $query->whereHas('manager', fn (Builder $q) => $q->where('name', $value)),
@@ -200,6 +201,41 @@ class ListingQueryApplier
     private static function applyLeadTag(Builder $query, string $tag): void
     {
         $query->whereJsonContains('lead_tags', $tag);
+    }
+
+    private static function applyTeamSizeSearch(Builder $query, mixed $value): void
+    {
+        $term = trim((string) $value);
+        if ($term === '') {
+            return;
+        }
+
+        $normalized = strtolower($term);
+        if (in_array($normalized, ['not specified', 'not', 'unspecified', 'empty', 'null', 'none', 'n/a', 'na'], true)) {
+            $query->where(function (Builder $inner) {
+                $inner->whereNull('team_size')->orWhere('team_size', '<=', 0);
+            });
+
+            return;
+        }
+
+        if (is_numeric($term)) {
+            $query->where('team_size', (int) $term);
+
+            return;
+        }
+
+        $escaped = '%'.addcslashes($term, '%_\\').'%';
+        $table = $query->getModel()->getTable();
+        $driver = $query->getConnection()->getDriverName();
+        $castExpression = match ($driver) {
+            'sqlite' => "CAST({$table}.team_size AS TEXT)",
+            'mysql' => "CAST({$table}.team_size AS CHAR)",
+            default => "CAST({$table}.team_size AS VARCHAR)",
+        };
+        $operator = $driver === 'pgsql' ? 'ILIKE' : 'LIKE';
+
+        $query->whereRaw("{$castExpression} {$operator} ?", [$escaped]);
     }
 
     private static function applySegment(Builder $query, string $segment): void
@@ -254,6 +290,36 @@ class ListingQueryApplier
         $sortBy = (string) ($params['sort_by'] ?? $config['default_sort'] ?? 'created_at');
         $sortDir = (string) ($params['sort_dir'] ?? $config['default_sort_dir'] ?? 'desc');
         $table = $query->getModel()->getTable();
+
+        if ($sortBy === 'last_activity_at') {
+            $query->orderByRaw(
+                '(SELECT MAX(v) FROM (
+                    SELECT called_at AS v FROM call_logs WHERE call_logs.ca_id = '.$table.'.ca_id
+                    UNION ALL SELECT created_at FROM follow_up_histories WHERE follow_up_histories.ca_id = '.$table.'.ca_id
+                    UNION ALL SELECT updated_at FROM follow_ups WHERE follow_ups.ca_id = '.$table.'.ca_id AND follow_ups.deleted_at IS NULL
+                    UNION ALL SELECT action_at FROM lead_actions WHERE lead_actions.ca_id = '.$table.'.ca_id
+                    UNION ALL SELECT assigned_at FROM assignment_histories WHERE assignment_histories.ca_id = '.$table.'.ca_id
+                    UNION ALL SELECT COALESCE(reply_received_at, sent_at, created_at) FROM email_logs WHERE email_logs.ca_id = '.$table.'.ca_id
+                    UNION ALL SELECT COALESCE(received_at, created_at) FROM email_inbound_messages WHERE email_inbound_messages.ca_id = '.$table.'.ca_id
+                    UNION ALL SELECT COALESCE(sent_at, delivered_at, created_at) FROM wa_message_logs WHERE wa_message_logs.ca_id = '.$table.'.ca_id
+                    UNION ALL SELECT COALESCE(sent_at, delivered_at, created_at) FROM sms_logs WHERE sms_logs.ca_id = '.$table.'.ca_id
+                    UNION ALL SELECT recorded_at FROM lead_quality_histories WHERE lead_quality_histories.ca_id = '.$table.'.ca_id
+                    UNION ALL SELECT created_at FROM ca_masters AS cm WHERE cm.ca_id = '.$table.'.ca_id
+                    UNION ALL SELECT updated_at FROM ca_masters AS cm2 WHERE cm2.ca_id = '.$table.'.ca_id
+                )) '.$sortDir
+            );
+
+            return;
+        }
+
+        if ($sortBy === 'team_members_count') {
+            $query->orderByRaw(
+                '(select count(*) from lead_assignment_engines where lead_assignment_engines.ca_id = '.$table.'.ca_id and lead_assignment_engines.status = ? and lead_assignment_engines.deleted_at is null) '.$sortDir,
+                ['Active'],
+            );
+
+            return;
+        }
 
         if (! str_contains($sortBy, '.')) {
             $sortBy = $table.'.'.$sortBy;

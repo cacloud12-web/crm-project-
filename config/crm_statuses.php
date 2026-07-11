@@ -15,6 +15,7 @@ return [
     'allowed' => [
         'New',
         'Cold',
+        'Contacted',
         'Hot',
         'Warm',
         'Pipeline',
@@ -33,6 +34,7 @@ return [
         'Follow Up Scheduled',
         'Follow Up Reminder',
         'Active',
+        'Converted',
         'Inactive',
         'Lost',
         'Wrong Number',

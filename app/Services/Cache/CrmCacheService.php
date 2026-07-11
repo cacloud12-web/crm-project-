@@ -135,7 +135,7 @@ class CrmCacheService
 
     public function forgetMasterListings(): void
     {
-        foreach (['states', 'cities', 'source_leads', 'team_sizes', 'role_masters', 'lookup_states'] as $key) {
+        foreach (['states', 'cities', 'source_leads', 'team_sizes', 'role_masters', 'lookup_states', 'lookup_sources'] as $key) {
             Cache::forget('crm:master:'.$key);
         }
     }

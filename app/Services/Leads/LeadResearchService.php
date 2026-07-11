@@ -7,6 +7,7 @@ use App\Models\LeadResearchLog;
 use App\Models\User;
 use App\Services\Activity\ActivityLogService;
 use App\Services\Leads\LeadOwnershipService;
+use App\Services\Master\LookupResolverService;
 use App\Services\Rbac\RbacService;
 use Illuminate\Auth\Access\AuthorizationException;
 use InvalidArgumentException;
@@ -18,6 +19,7 @@ class LeadResearchService
         private readonly ActivityLogService $activityLogService,
         private readonly GooglePlacesApiService $googlePlacesApi,
         private readonly RbacService $rbacService,
+        private readonly LookupResolverService $lookupResolver,
     ) {}
 
     public function isApiConfigured(): bool
@@ -209,6 +211,10 @@ class LeadResearchService
             'mobile_no',
             'latitude',
             'longitude',
+            'state_id',
+            'city_id',
+            'state_name',
+            'city_name',
         ];
 
         $fields = array_values(array_intersect($fields, $allowed));
@@ -223,7 +229,14 @@ class LeadResearchService
             'verified_from_google' => true,
         ];
 
+        $wantsState = in_array('state_id', $fields, true) || in_array('state_name', $fields, true);
+        $wantsCity = in_array('city_id', $fields, true) || in_array('city_name', $fields, true);
+        $fields = array_values(array_diff($fields, ['state_name', 'city_name']));
+
         foreach ($fields as $field) {
+            if (in_array($field, ['state_id', 'city_id'], true)) {
+                continue;
+            }
             $value = $place[$field] ?? null;
             if ($field === 'google_place_id') {
                 $value = $place['google_place_id'] ?? $place['place_id'] ?? null;
@@ -238,6 +251,30 @@ class LeadResearchService
             }
 
             $update[$field] = $value;
+        }
+
+        if ($wantsState || $wantsCity) {
+            $stateName = $place['state_name'] ?? $place['state'] ?? null;
+            $cityName = $place['city_name'] ?? $place['city'] ?? null;
+            $stateId = $this->lookupResolver->resolveStateId($stateName);
+            $cityId = $this->lookupResolver->resolveCityId($cityName, $stateId);
+
+            if ($wantsState && $stateId) {
+                $currentState = $lead->state_id;
+                if ($canOverwrite || blank($currentState)) {
+                    $update['state_id'] = $stateId;
+                }
+            }
+
+            if ($wantsCity && $cityId) {
+                $currentCity = $lead->city_id;
+                if ($canOverwrite || blank($currentCity)) {
+                    $update['city_id'] = $cityId;
+                    if (! isset($update['state_id']) && $stateId && ($canOverwrite || blank($lead->state_id))) {
+                        $update['state_id'] = $stateId;
+                    }
+                }
+            }
         }
 
         if (isset($update['verified_address']) && ! isset($update['address'])) {

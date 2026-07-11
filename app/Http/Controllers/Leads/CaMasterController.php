@@ -12,6 +12,8 @@ use App\Http\Requests\CaMaster\UpdateCaMasterStatusRequest;
 use App\Http\Resources\CaMasterResource;
 use App\Services\Leads\CaMasterService;
 use App\Services\Leads\LeadLockService;
+use App\Services\Leads\LeadActivityTimelineService;
+use App\Services\Leads\LeadTeamMemberService;
 use App\Services\Leads\LeadViewService;
 use App\Services\Rbac\EmployeeLeadFieldGuard;
 use App\Support\ApiResponse;
@@ -26,6 +28,8 @@ class CaMasterController extends Controller
         private readonly LeadViewService $leadViewService,
         private readonly EmployeeLeadFieldGuard $employeeLeadFieldGuard,
         private readonly LeadLockService $leadLockService,
+        private readonly LeadTeamMemberService $leadTeamMemberService,
+        private readonly LeadActivityTimelineService $leadActivityTimelineService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -82,9 +86,30 @@ class CaMasterController extends Controller
         $this->leadLockService->expireIfStale($lead);
         $this->leadViewService->recordView($lead);
 
-        $fresh = $lead->fresh(['city', 'state', 'sourceLead', 'lockedByEmployee']);
+        $fresh = $lead->fresh(['city', 'state', 'sourceLead', 'lockedByEmployee', 'activeTeamAssignments.employee']);
 
         return ApiResponse::success(new CaMasterResource($fresh));
+    }
+
+    public function teamMembers(string $id): JsonResponse
+    {
+        $lead = $this->caMasterService->find($id);
+
+        return ApiResponse::success(
+            $this->leadTeamMemberService->detailsForLead($lead),
+            'Team members loaded',
+        );
+    }
+
+    public function activityTimeline(string $id): JsonResponse
+    {
+        $lead = $this->caMasterService->find($id);
+        $limit = min(20, max(1, (int) request()->query('limit', 10)));
+
+        return ApiResponse::success(
+            $this->leadActivityTimelineService->timelineForLead($lead, $limit),
+            'Activity timeline loaded',
+        );
     }
 
     public function edit(string $id)

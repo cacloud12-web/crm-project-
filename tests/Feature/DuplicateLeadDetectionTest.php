@@ -109,4 +109,74 @@ class DuplicateLeadDetectionTest extends TestCase
             'status' => 'New',
         ])->assertStatus(409);
     }
+
+    public function test_lead_can_be_created_when_previous_owner_was_soft_deleted(): void
+    {
+        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $this->actingAs($admin);
+
+        $stateId = CaMaster::query()->whereNotNull('state_id')->value('state_id');
+        $mobile = '9'.(string) random_int(100000000, 999999999);
+
+        $deleted = CaMaster::query()->create([
+            'ca_name' => 'Deleted CA',
+            'firm_name' => 'Deleted Firm',
+            'mobile_no' => $mobile,
+            'normalized_mobile' => $mobile,
+            'state_id' => $stateId,
+            'status' => 'Active',
+        ]);
+        LeadPhoneNumber::query()->create([
+            'ca_id' => $deleted->ca_id,
+            'normalized_number' => $mobile,
+            'phone_type' => 'primary',
+        ]);
+        $deleted->delete();
+
+        $this->postJson('/ca-masters', [
+            'ca_name' => 'Reused CA',
+            'firm_name' => 'Reused Firm',
+            'mobile_no' => $mobile,
+            'state_id' => $stateId,
+            'status' => 'New',
+        ])->assertCreated()
+            ->assertJsonPath('data.ca_name', 'Reused CA');
+
+        $this->assertDatabaseHas('lead_phone_numbers', [
+            'normalized_number' => $mobile,
+        ]);
+        $this->assertDatabaseHas('ca_masters', [
+            'ca_name' => 'Reused CA',
+            'normalized_mobile' => $mobile,
+        ]);
+    }
+
+    public function test_soft_delete_removes_lead_phone_registry(): void
+    {
+        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $this->actingAs($admin);
+
+        $stateId = CaMaster::query()->whereNotNull('state_id')->value('state_id');
+        $mobile = '9'.(string) random_int(100000000, 999999999);
+
+        $existing = CaMaster::query()->create([
+            'ca_name' => 'Delete Me CA',
+            'firm_name' => 'Delete Me Firm',
+            'mobile_no' => $mobile,
+            'normalized_mobile' => $mobile,
+            'state_id' => $stateId,
+            'status' => 'Active',
+        ]);
+        LeadPhoneNumber::query()->create([
+            'ca_id' => $existing->ca_id,
+            'normalized_number' => $mobile,
+            'phone_type' => 'primary',
+        ]);
+
+        $this->deleteJson('/ca-masters/'.$existing->ca_id)->assertOk();
+
+        $this->assertDatabaseMissing('lead_phone_numbers', [
+            'ca_id' => $existing->ca_id,
+        ]);
+    }
 }

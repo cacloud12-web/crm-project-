@@ -11,12 +11,13 @@ return [
         'employee_scope' => 'assigned_active_leads',
         'default_sort' => 'created_at',
         'default_sort_dir' => 'desc',
-        'sortable' => ['ca_id', 'firm_name', 'ca_name', 'status', 'rating', 'team_size', 'created_at', 'updated_at'],
+        'sortable' => ['ca_id', 'firm_name', 'ca_name', 'status', 'rating', 'team_size', 'created_at', 'updated_at', 'team_members_count', 'last_activity_at'],
         'search_columns' => ['firm_name', 'ca_name', 'mobile_no', 'alternate_mobile_no', 'email_id', 'gst_no'],
         'search_relations' => [
             'city' => ['city_name'],
             'state' => ['state_name'],
             'sourceLead' => ['source_name'],
+            'activeTeamAssignments.employee' => ['name'],
         ],
         'filters' => [
             'status' => 'exact',
@@ -33,6 +34,7 @@ return [
             'gst_no' => 'ilike',
             'source' => 'source_name',
             'executive' => 'executive_name',
+            'team_size' => 'team_size_search',
             'existing_software' => 'exact',
             'is_newly_established' => 'boolean',
             'is_verified' => 'boolean',

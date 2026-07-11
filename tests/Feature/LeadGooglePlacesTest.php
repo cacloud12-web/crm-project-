@@ -182,6 +182,53 @@ class LeadGooglePlacesTest extends TestCase
         $this->assertSame(22.58, (float) $lead->latitude);
     }
 
+    public function test_save_google_data_maps_city_state_and_phone(): void
+    {
+        $this->actingAsAdmin();
+        $this->seed(\Database\Seeders\IndiaStatesCitiesSeeder::class);
+
+        $lead = $this->sampleLead();
+        $place = [
+            'place_id' => 'places/chij-geo-1',
+            'google_place_id' => 'places/chij-geo-1',
+            'mobile_no' => '+91 98765 43210',
+            'city_name' => 'Mumbai',
+            'state_name' => 'Maharashtra',
+            'verified_address' => 'Andheri, Mumbai, Maharashtra 400053, India',
+        ];
+
+        $response = $this->postJson('/ca-masters/'.$lead->ca_id.'/research/save', [
+            'fields' => ['mobile_no', 'city_name', 'state_name', 'google_place_id'],
+            'place' => $place,
+        ]);
+
+        $response->assertOk();
+        $lead->refresh()->load(['city', 'state']);
+        $this->assertSame('+91 98765 43210', $lead->mobile_no);
+        $this->assertSame('Maharashtra', $lead->state?->state_name);
+        $this->assertSame('Mumbai', $lead->city?->city_name);
+    }
+
+    public function test_normalize_place_extracts_city_state_from_address_components(): void
+    {
+        $service = app(\App\Services\Leads\GooglePlacesApiService::class);
+        $normalized = $service->normalizeNewPlace([
+            'id' => 'places/chij-components',
+            'displayName' => ['text' => 'Test CA'],
+            'formattedAddress' => 'Pune, Maharashtra, India',
+            'internationalPhoneNumber' => '+91 91234 56789',
+            'addressComponents' => [
+                ['longText' => 'Pune', 'types' => ['locality']],
+                ['longText' => 'Maharashtra', 'types' => ['administrative_area_level_1']],
+                ['longText' => 'India', 'types' => ['country']],
+            ],
+        ]);
+
+        $this->assertSame('Pune', $normalized['city_name']);
+        $this->assertSame('Maharashtra', $normalized['state_name']);
+        $this->assertSame('+91 91234 56789', $normalized['mobile_no']);
+    }
+
     public function test_manager_can_refresh_google_data(): void
     {
         $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();

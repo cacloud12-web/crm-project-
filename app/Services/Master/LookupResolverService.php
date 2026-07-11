@@ -18,7 +18,13 @@ class LookupResolverService
             return State::where('state_id', (int) $value)->value('state_id');
         }
 
-        return State::where('state_name', trim((string) $value))->value('state_id');
+        $name = trim((string) $value);
+        $exact = State::where('state_name', $name)->value('state_id');
+        if ($exact) {
+            return $exact;
+        }
+
+        return State::whereRaw('LOWER(state_name) = ?', [mb_strtolower($name)])->value('state_id');
     }
 
     public function resolveCityId(mixed $value, ?int $stateId = null): ?int
@@ -36,7 +42,30 @@ class LookupResolverService
             return $query->value('city_id');
         }
 
-        $query = City::where('city_name', trim((string) $value));
+        $name = trim((string) $value);
+        $aliases = [
+            'bangalore' => 'Bengaluru',
+            'bengaluru' => 'Bengaluru',
+            'bombay' => 'Mumbai',
+            'madras' => 'Chennai',
+            'calcutta' => 'Kolkata',
+            'gurgaon' => 'Gurugram',
+            'mysore' => 'Mysuru',
+            'mangalore' => 'Mangaluru',
+            'hubli' => 'Hubballi',
+            'belgaum' => 'Belagavi',
+            'trichy' => 'Tiruchirappalli',
+            'trivandrum' => 'Thiruvananthapuram',
+            'pondicherry' => 'Puducherry',
+        ];
+        $normalized = $aliases[mb_strtolower($name)] ?? $name;
+
+        $query = City::query()->where(function ($inner) use ($name, $normalized) {
+            $inner->where('city_name', $name)
+                ->orWhere('city_name', $normalized)
+                ->orWhereRaw('LOWER(city_name) = ?', [mb_strtolower($name)])
+                ->orWhereRaw('LOWER(city_name) = ?', [mb_strtolower($normalized)]);
+        });
 
         if ($stateId) {
             $query->where('state_id', $stateId);

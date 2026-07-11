@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+source "$PROJECT_ROOT/scripts/lib/resolve-php.sh"
+
+if ! resolve_project_php; then
+  echo "PHP not found. Run: bash scripts/setup-local-dev.sh" >&2
+  exit 1
+fi
+
+cd "$PROJECT_ROOT"
+exec "$PHP_BIN" artisan "$@"

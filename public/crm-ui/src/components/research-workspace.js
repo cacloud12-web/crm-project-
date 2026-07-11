@@ -163,6 +163,8 @@
       verified_address: 'Address',
       address: 'Address',
       mobile_no: 'Phone',
+      city_name: 'City',
+      state_name: 'State',
       website: 'Website',
       google_rating: 'Google rating',
       google_review_count: 'Reviews',
@@ -263,6 +265,9 @@
         '<div class="rw-result-card__meta">' +
           (place.google_rating != null ? '<span>★ ' + esc(String(place.google_rating)) + '</span>' : '') +
           (place.mobile_no ? '<span>' + esc(place.mobile_no) + '</span>' : '') +
+          (place.city_name || place.state_name
+            ? '<span>' + esc([place.city_name, place.state_name].filter(Boolean).join(', ')) + '</span>'
+            : '') +
         '</div>' +
         '<button type="button" class="btn-secondary btn-sm" data-rw-action="select-place" data-place-id="' + esc(placeId) + '">' +
           (selected ? 'Selected' : 'Use this result') +
@@ -287,6 +292,9 @@
         (place.google_review_count != null ? ' (' + place.google_review_count + ' reviews)' : '');
     }
     if (key === 'open_status') return place.open_status || place.google_business_status || '';
+    if (key === 'city_name') return place.city_name || place.city || '';
+    if (key === 'state_name') return place.state_name || place.state || '';
+    if (key === 'mobile_no') return place.mobile_no || place.phone || '';
     return place[key] == null ? '' : String(place[key]);
   }
 
@@ -297,6 +305,8 @@
       address: current.address || current.verified_address,
       website: current.website,
       mobile_no: current.mobile_no,
+      city_name: current.city || current.city_name,
+      state_name: current.state || current.state_name,
       google_place_id: current.google_place_id,
       google_rating: current.google_rating,
       google_review_count: current.google_review_count,
@@ -306,7 +316,7 @@
       longitude: current.longitude,
     };
     var value = map[key];
-    return value == null || String(value).trim() === '';
+    return value == null || String(value).trim() === '' || String(value).trim() === '—';
   }
 
   function saveFieldKeys() {
@@ -314,6 +324,8 @@
       { display: 'google_place_id', save: 'google_place_id', from: 'google_place_id' },
       { display: 'verified_address', save: 'address', from: 'verified_address' },
       { display: 'mobile_no', save: 'mobile_no', from: 'mobile_no' },
+      { display: 'state_name', save: 'state_name', from: 'state_name' },
+      { display: 'city_name', save: 'city_name', from: 'city_name' },
       { display: 'website', save: 'website', from: 'website' },
       { display: 'google_rating', save: 'google_rating', from: 'google_rating' },
       { display: 'google_maps_url', save: 'google_maps_url', from: 'google_maps_url' },

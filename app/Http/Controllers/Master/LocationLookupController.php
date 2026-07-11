@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Master;
 
 use App\Http\Controllers\Controller;
 use App\Models\City;
+use App\Models\SourceLead;
 use App\Models\State;
 use App\Services\Cache\CrmCacheService;
 use App\Support\ApiResponse;
@@ -11,8 +12,9 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 /**
- * Lightweight state/city master data for forms and filters across the CRM.
+ * Lightweight state/city/source master data for forms and filters across the CRM.
  * Returns a flat array in data — not the paginated listing envelope.
+ * Available to any authenticated role that can view the dashboard (lead forms included).
  */
 class LocationLookupController extends Controller
 {
@@ -60,5 +62,21 @@ class LocationLookupController extends Controller
         });
 
         return ApiResponse::success($cities, 'Cities loaded');
+    }
+
+    public function sources(): JsonResponse
+    {
+        $sources = $this->cacheService->rememberMasterListing('lookup_sources', function () {
+            return SourceLead::query()
+                ->orderBy('source_name')
+                ->get(['source_id', 'source_name'])
+                ->map(fn (SourceLead $source) => [
+                    'source_id' => $source->source_id,
+                    'source_name' => $source->source_name,
+                ])
+                ->all();
+        });
+
+        return ApiResponse::success($sources, 'Sources loaded');
     }
 }

@@ -3,7 +3,9 @@
 namespace App\Services\Leads;
 
 use App\Events\LeadSaved;
+use App\Exceptions\DuplicateLeadException;
 use App\Models\CaMaster;
+use App\Models\LeadPhoneNumber;
 use App\Services\Activity\ActivityLogService;
 use App\Services\Assignment\AssignmentRecorder;
 use App\Services\Cache\CrmCacheService;
@@ -18,6 +20,7 @@ use App\Support\Listing\ListingQueryApplier;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Database\QueryException;
 
 class CaMasterService
 {
@@ -126,25 +129,17 @@ class CaMasterService
                 ->groupBy('status')
                 ->pluck('total', 'status');
 
-            $stageCounts = [];
-            foreach (self::KANBAN_STAGE_STATUSES as $stage => $statuses) {
-                $stageCounts[$stage] = collect($statuses)
-                    ->sum(fn (string $status) => (int) ($statusCounts[$status] ?? 0));
-            }
-
-            return $stageCounts;
+            return $this->aggregateStageCounts($statusCounts, self::KANBAN_STAGE_STATUSES);
         });
     }
 
-    /**
-     * @return array{stage_counts: array<string, int>, items: Collection<int, CaMaster>, per_stage: int}
-     */
     public function kanbanBoard(array $params = []): array
     {
         $perStage = min(max((int) ($params['per_stage'] ?? 80), 1), 200);
         $config = ListingQueryApplier::config('ca_masters');
         $params = $this->employeeDataScope->stripScopedParams($params, $config);
         $employeeId = $this->employeeDataScope->scopedEmployeeId(auth()->user());
+        $stageMap = $this->resolveKanbanStageMap($params);
 
         $baseQuery = CaMaster::query();
         $this->employeeDataScope->scopeCaMasterQuery($baseQuery, $employeeId);
@@ -157,14 +152,10 @@ class CaMasterService
             ->groupBy('status')
             ->pluck('total', 'status');
 
-        $stageCounts = [];
-        foreach (self::KANBAN_STAGE_STATUSES as $stage => $statuses) {
-            $stageCounts[$stage] = collect($statuses)
-                ->sum(fn (string $status) => (int) ($statusCounts[$status] ?? 0));
-        }
+        $stageCounts = $this->aggregateStageCounts($statusCounts, $stageMap);
 
         $items = collect();
-        foreach (self::KANBAN_STAGE_STATUSES as $stage => $statuses) {
+        foreach ($stageMap as $stage => $statuses) {
             $stageQuery = (clone $baseQuery)
                 ->with($this->listingRelations())
                 ->whereIn('status', $statuses);
@@ -182,7 +173,36 @@ class CaMasterService
             'stage_counts' => $stageCounts,
             'items' => $items->unique('ca_id')->values(),
             'per_stage' => $perStage,
+            'pipeline' => ($params['pipeline'] ?? '') === 'master' ? 'master' : 'sales',
         ];
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<string, int|string>|array<string, int|string>  $statusCounts
+     * @param  array<string, list<string>>  $stageMap
+     * @return array<string, int>
+     */
+    private function aggregateStageCounts($statusCounts, array $stageMap): array
+    {
+        $stageCounts = [];
+        foreach ($stageMap as $stage => $statuses) {
+            $stageCounts[$stage] = collect($statuses)
+                ->sum(fn (string $status) => (int) ($statusCounts[$status] ?? 0));
+        }
+
+        return $stageCounts;
+    }
+
+    /**
+     * @return array<string, list<string>>
+     */
+    private function resolveKanbanStageMap(array $params): array
+    {
+        if (($params['pipeline'] ?? '') === 'master') {
+            return config('crm_master_pipeline.stage_statuses', self::KANBAN_STAGE_STATUSES);
+        }
+
+        return self::KANBAN_STAGE_STATUSES;
     }
 
     private const KANBAN_STAGE_STATUSES = [
@@ -206,6 +226,7 @@ class CaMasterService
             'sourceLead:source_id,source_name',
             'createdByEmployee:employee_id,name',
             'activeAssignment.employee:employee_id,name',
+            'activeTeamAssignments.employee:employee_id,name,role,status',
         ];
     }
 
@@ -229,11 +250,19 @@ class CaMasterService
         $payload = $this->normalize($data);
         $payload['created_by_employee_id'] = $this->employeeDataScope->resolveEmployeeId($user);
 
-        $lead = DB::transaction(function () use ($payload) {
-            $lead = CaMaster::create($payload);
-            $this->duplicateLeadDetection->syncLeadPhones($lead);
+        $lead = DB::transaction(function () use ($payload, $data) {
+            try {
+                $lead = CaMaster::create($payload);
+                $this->duplicateLeadDetection->syncLeadPhones($lead);
 
-            return $lead;
+                return $lead;
+            } catch (QueryException $exception) {
+                if ($this->isDuplicatePhoneRegistryViolation($exception)) {
+                    throw $this->duplicatePhoneExceptionFromPayload($data);
+                }
+
+                throw $exception;
+            }
         });
 
         if ($executiveId) {
@@ -444,6 +473,7 @@ class CaMasterService
             beforeValue: $before,
         );
 
+        LeadPhoneNumber::query()->where('ca_id', $caMaster->ca_id)->delete();
         $caMaster->delete();
         $this->invalidateDashboardCache();
     }
@@ -855,5 +885,31 @@ class CaMasterService
         if (! empty($data['is_verified']) && ! $lead->is_verified) {
             $this->leadQualityHistory->markVerified($lead, $user);
         }
+    }
+
+    private function isDuplicatePhoneRegistryViolation(QueryException $exception): bool
+    {
+        $driverCode = (int) ($exception->errorInfo[1] ?? 0);
+        $message = strtolower($exception->getMessage());
+
+        return ($driverCode === 1062 || ($exception->errorInfo[0] ?? '') === '23000')
+            && str_contains($message, 'lead_phone_numbers');
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function duplicatePhoneExceptionFromPayload(array $data): DuplicateLeadException
+    {
+        $mobile = $data['mobile_no'] ?? $data['alternate_mobile_no'] ?? null;
+        $duplicateInfo = $this->duplicateLeadDetection->checkMobile($mobile);
+
+        return new DuplicateLeadException(
+            config('crm_duplicates.messages.phone'),
+            $duplicateInfo ?? [
+                'attempted_mobile' => $this->duplicateLeadDetection->normalize($mobile),
+                'message' => config('crm_duplicates.messages.phone'),
+            ],
+        );
     }
 }

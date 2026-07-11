@@ -20,9 +20,9 @@ return [
 
     'places_new_details_url' => 'https://places.googleapis.com/v1',
 
-    'places_new_search_field_mask' => 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.businessStatus,places.googleMapsUri,places.location,places.nationalPhoneNumber,places.internationalPhoneNumber,places.websiteUri',
+    'places_new_search_field_mask' => 'places.id,places.displayName,places.formattedAddress,places.addressComponents,places.rating,places.userRatingCount,places.businessStatus,places.googleMapsUri,places.location,places.nationalPhoneNumber,places.internationalPhoneNumber,places.websiteUri',
 
-    'places_new_details_field_mask' => 'id,displayName,formattedAddress,rating,userRatingCount,businessStatus,googleMapsUri,location,nationalPhoneNumber,internationalPhoneNumber,websiteUri',
+    'places_new_details_field_mask' => 'id,displayName,formattedAddress,addressComponents,rating,userRatingCount,businessStatus,googleMapsUri,location,nationalPhoneNumber,internationalPhoneNumber,websiteUri',
 
     'max_search_results' => 10,
 

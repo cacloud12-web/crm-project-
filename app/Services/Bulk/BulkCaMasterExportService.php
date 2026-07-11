@@ -5,6 +5,7 @@ namespace App\Services\Bulk;
 use App\Models\BulkAction;
 use App\Models\CaMaster;
 use App\Services\Activity\ActivityLogService;
+use App\Services\Leads\LeadActivityTimelineService;
 use App\Services\Notifications\NotificationService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -18,6 +19,7 @@ class BulkCaMasterExportService
         private readonly ActivityLogService $activityLogService,
         private readonly BulkExportPermissionService $permissionService,
         private readonly NotificationService $notificationService,
+        private readonly LeadActivityTimelineService $leadActivityTimelineService,
     ) {}
 
     public function availableColumns(): array
@@ -135,8 +137,11 @@ class BulkCaMasterExportService
             fputcsv($handle, $this->fileWriter->headers($columns));
 
             $query->orderBy('ca_id')->chunkById($chunkSize, function ($records) use (&$exported, $handle, $columns, $bulkAction) {
+                $activitySummaries = $this->leadActivityTimelineService->summariesForCaIds(
+                    $records->pluck('ca_id')->map(fn ($id) => (int) $id)->all(),
+                );
                 foreach ($records as $record) {
-                    $row = $this->mapRecord($record);
+                    $row = $this->mapRecord($record, $activitySummaries);
                     $line = [];
                     foreach ($columns as $column) {
                         $line[] = $row[$column] ?? '';
@@ -217,7 +222,7 @@ class BulkCaMasterExportService
 
     public function buildQuery(array $payload): Builder
     {
-        $query = CaMaster::query()->with(['city', 'state', 'sourceLead']);
+        $query = CaMaster::query()->with(['city', 'state', 'sourceLead', 'activeTeamAssignments.employee:employee_id,name']);
 
         return match ($payload['scope'] ?? 'all') {
             'selected' => $this->applySelectedScope($query, $payload['ca_ids'] ?? []),
@@ -278,18 +283,40 @@ class BulkCaMasterExportService
     private function mapChunkedRows(Builder $query, int $chunkSize, callable $onProgress): \Generator
     {
         $processed = 0;
+        $buffer = [];
         foreach ($query->orderBy('ca_id')->lazyById($chunkSize, 'ca_id') as $record) {
-            yield $this->mapRecord($record);
-            $processed++;
-            if ($processed % $chunkSize === 0) {
+            $buffer[] = $record;
+            if (count($buffer) >= $chunkSize) {
+                $activitySummaries = $this->leadActivityTimelineService->summariesForCaIds(
+                    collect($buffer)->pluck('ca_id')->map(fn ($id) => (int) $id)->all(),
+                );
+                foreach ($buffer as $bufferedRecord) {
+                    yield $this->mapRecord($bufferedRecord, $activitySummaries);
+                    $processed++;
+                }
+                $buffer = [];
                 $onProgress($processed);
+            }
+        }
+        if ($buffer !== []) {
+            $activitySummaries = $this->leadActivityTimelineService->summariesForCaIds(
+                collect($buffer)->pluck('ca_id')->map(fn ($id) => (int) $id)->all(),
+            );
+            foreach ($buffer as $bufferedRecord) {
+                yield $this->mapRecord($bufferedRecord, $activitySummaries);
+                $processed++;
             }
         }
         $onProgress($processed);
     }
 
-    private function mapRecord(CaMaster $record): array
+    /**
+     * @param  array<int, array<string, mixed>>  $activitySummaries
+     */
+    private function mapRecord(CaMaster $record, array $activitySummaries = []): array
     {
+        $activity = $activitySummaries[(int) $record->ca_id] ?? null;
+
         return [
             'ca_id' => (string) $record->ca_id,
             'ca_name' => $record->ca_name,
@@ -301,11 +328,16 @@ class BulkCaMasterExportService
             'state' => $record->state?->state_name,
             'city' => $record->city?->city_name,
             'source' => $record->sourceLead?->source_name,
-            'team_size' => $record->team_size,
+            'team_size' => ($record->team_size !== null && (int) $record->team_size > 0)
+                ? (int) $record->team_size
+                : 'Not Specified',
             'existing_software' => $record->existing_software,
             'website' => $record->website,
             'rating' => $record->rating,
             'status' => $record->status,
+            'last_activity' => $activity
+                ? trim(($activity['label'] ?? 'Activity').' · '.($activity['relative_label'] ?? '').' '.($activity['time_label'] ?? ''))
+                : 'No Activity Yet',
             'is_newly_established' => $record->is_newly_established ? 'Yes' : 'No',
             'created_at' => $record->created_at?->toDateTimeString(),
             'updated_at' => $record->updated_at?->toDateTimeString(),

@@ -44,6 +44,11 @@ class SqlAggregate
         $condition = (string) preg_replace('/\s=\s*true\b/i', ' = 1', $condition);
         $condition = (string) preg_replace('/\s=\s*false\b/i', ' = 0', $condition);
 
+        if (DB::getDriverName() === 'sqlite') {
+            $condition = (string) preg_replace('/\btrue\b/i', '1', $condition);
+            $condition = (string) preg_replace('/\bfalse\b/i', '0', $condition);
+        }
+
         return $condition;
     }
 }

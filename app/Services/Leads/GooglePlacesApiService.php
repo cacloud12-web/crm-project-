@@ -2,6 +2,8 @@
 
 namespace App\Services\Leads;
 
+use App\Models\City;
+use App\Models\State;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -149,13 +151,21 @@ class GooglePlacesApiService
             ?? $place['url']
             ?? ($placeId ? 'https://www.google.com/maps/place/?q=place_id:'.urlencode((string) $placeId) : null);
 
+        $address = $place['formattedAddress'] ?? $place['formatted_address'] ?? null;
+        $locationParts = $this->extractLocationParts($place, is_string($address) ? $address : null);
+
         return [
             'place_id' => $placeId,
             'google_place_id' => $placeId,
             'business_name' => $displayName,
-            'verified_address' => $place['formattedAddress'] ?? $place['formatted_address'] ?? null,
-            'address' => $place['formattedAddress'] ?? $place['formatted_address'] ?? null,
+            'verified_address' => $address,
+            'address' => $address,
             'mobile_no' => $phone,
+            'phone' => $phone,
+            'city_name' => $locationParts['city_name'],
+            'state_name' => $locationParts['state_name'],
+            'city' => $locationParts['city_name'],
+            'state' => $locationParts['state_name'],
             'website' => $place['websiteUri'] ?? $place['website'] ?? null,
             'google_rating' => isset($place['rating']) ? (float) $place['rating'] : null,
             'google_review_count' => isset($place['userRatingCount'])
@@ -166,6 +176,98 @@ class GooglePlacesApiService
             'latitude' => $lat !== null ? (float) $lat : null,
             'longitude' => $lng !== null ? (float) $lng : null,
             'open_status' => $this->formatBusinessStatus($place['businessStatus'] ?? $place['business_status'] ?? null),
+        ];
+    }
+
+    /**
+     * @return array{city_name: ?string, state_name: ?string}
+     */
+    private function extractLocationParts(array $place, ?string $formattedAddress): array
+    {
+        $city = null;
+        $state = null;
+        $components = $place['addressComponents'] ?? $place['address_components'] ?? [];
+
+        if (is_array($components)) {
+            foreach ($components as $component) {
+                if (! is_array($component)) {
+                    continue;
+                }
+                $types = $component['types'] ?? [];
+                if (! is_array($types)) {
+                    continue;
+                }
+                $name = $component['longText']
+                    ?? $component['long_name']
+                    ?? $component['shortText']
+                    ?? $component['short_name']
+                    ?? null;
+                if (! is_string($name) || trim($name) === '') {
+                    continue;
+                }
+                $name = trim($name);
+
+                if ($city === null && (in_array('locality', $types, true) || in_array('postal_town', $types, true))) {
+                    $city = $name;
+                }
+                if ($city === null && in_array('administrative_area_level_3', $types, true)) {
+                    $city = $name;
+                }
+                if ($state === null && in_array('administrative_area_level_1', $types, true)) {
+                    $state = $name;
+                }
+            }
+        }
+
+        if (($city === null || $state === null) && filled($formattedAddress)) {
+            $parsed = $this->parseIndianAddressFallback($formattedAddress);
+            $city = $city ?? $parsed['city_name'];
+            $state = $state ?? $parsed['state_name'];
+        }
+
+        return [
+            'city_name' => $city,
+            'state_name' => $state,
+        ];
+    }
+
+    /**
+     * @return array{city_name: ?string, state_name: ?string}
+     */
+    private function parseIndianAddressFallback(string $address): array
+    {
+        $parts = array_values(array_filter(array_map('trim', explode(',', $address))));
+        $state = null;
+        $city = null;
+
+        foreach ($parts as $part) {
+            $clean = trim(preg_replace('/\b\d{6}\b/', '', $part) ?? $part);
+            $clean = trim(preg_replace('/\s+/', ' ', $clean) ?? $clean);
+            if ($clean === '' || strcasecmp($clean, 'India') === 0) {
+                continue;
+            }
+            if ($state === null && State::query()->whereRaw('LOWER(state_name) = ?', [mb_strtolower($clean)])->exists()) {
+                $state = State::query()->whereRaw('LOWER(state_name) = ?', [mb_strtolower($clean)])->value('state_name');
+            }
+        }
+
+        if ($state !== null) {
+            foreach ($parts as $part) {
+                $clean = trim(preg_replace('/\b\d{6}\b/', '', $part) ?? $part);
+                $clean = trim(preg_replace('/\s+/', ' ', $clean) ?? $clean);
+                if ($clean === '' || strcasecmp($clean, 'India') === 0 || strcasecmp($clean, $state) === 0) {
+                    continue;
+                }
+                if (City::query()->whereRaw('LOWER(city_name) = ?', [mb_strtolower($clean)])->exists()) {
+                    $city = City::query()->whereRaw('LOWER(city_name) = ?', [mb_strtolower($clean)])->value('city_name');
+                    break;
+                }
+            }
+        }
+
+        return [
+            'city_name' => $city,
+            'state_name' => $state,
         ];
     }
 

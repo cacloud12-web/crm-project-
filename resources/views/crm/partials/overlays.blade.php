@@ -164,37 +164,39 @@
         </h3>
         <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
       </div>
-      <form id="form-add-lead" class="ca-modal-body" method="POST" action="{{ route('ca-masters.store') }}" data-form-purpose="lead" novalidate>
-    @csrf
+      <form id="form-add-lead" method="POST" action="{{ route('ca-masters.store') }}" data-form-purpose="lead" novalidate>
+        @csrf
         <input type="hidden" name="ca_id" id="form-lead-ca-id" value="" />
-        <div class="grid sm:grid-cols-2 gap-4">
-          <div><label class="form-label">Firm Name</label><input name="firm_name" class="input-field" required placeholder="Sharma & Associates" /></div>
-          <div><label class="form-label">CA Name</label><input name="ca_name" class="input-field" required placeholder="R. Sharma" /></div>
-          <div><label class="form-label">Mobile</label><input name="mobile_no" id="form-lead-mobile-no" class="input-field" placeholder="9876543210" autocomplete="off" /><p id="form-lead-mobile-hint" class="hidden text-caption text-slate-500 mt-1">Primary mobile cannot be changed once saved.</p><div id="form-lead-duplicate-warning" class="hidden mt-2 rounded-xl border border-red-200 bg-red-50 p-3 text-caption text-red-800"></div></div>
-          <div><label class="form-label">Alternate Mobile</label><input name="alternate_mobile_no" class="input-field" placeholder="9123456789" /></div>
-          <div><label class="form-label">Email</label><input name="email_id" type="email" class="input-field" placeholder="ca@firm.com" /></div>
-          <div><label class="form-label">GST No.</label><input name="gst_no" class="input-field" placeholder="27AABCS1234L1Z5" /></div>
-          <div class="sc-location-pair sm:col-span-2 grid sm:grid-cols-2 gap-4">
-            <div><label class="form-label">State</label><select name="state_id" class="input-field" required><option value="">Select state</option></select></div>
-            <div><label class="form-label">City</label><select name="city_id" class="input-field" disabled><option value="">Select city</option></select></div>
-          </div>
-          <div><label class="form-label">Team Size</label><input name="team_size" type="number" class="input-field" value="8" min="1" /></div>
-          <div><label class="form-label">Software</label><select name="existing_software" class="input-field"><option>Tally</option><option>Zoho</option><option>Busy</option><option>None</option></select></div>
-          <div><label class="form-label">Website</label><input name="website" class="input-field" placeholder="firm.in" /></div>
-          <div><label class="form-label">Rating (1–5)</label><select name="rating" class="input-field"><option value="5">5</option><option value="4">4</option><option value="3" selected>3</option><option value="2">2</option><option value="1">1</option></select></div>
-          <div><label class="form-label">New Firm?</label><select name="is_newly_established" class="input-field"><option value="no">No</option><option value="yes">Yes</option></select></div>
-          <div><label class="form-label">Source</label><select name="source_id" class="input-field" id="form-lead-source-id"><option value="">Select source</option></select></div>
-          <div><label class="form-label">Status</label><select name="status" class="input-field"><option>New</option><option>Hot</option><option>Warm</option><option>Pipeline</option><option>Demo Scheduled</option><option>Active</option><option>Inactive</option><option>Lost</option></select></div>
-          <div><label class="form-label">Assign Employee</label><select name="executive_id" class="input-field" id="form-executive-select" data-crm-entity-lookup="employee" data-crm-lookup-empty-label="Auto assign later" data-crm-lookup-placeholder="Search employee…"><option value="">Auto assign later</option></select></div>
-          <div id="form-lead-google-section" class="hidden sm:col-span-2 border border-slate-200 rounded-xl p-4 bg-slate-50">
-            <p class="text-card-heading text-sm mb-3">Saved Google Places Data</p>
-            <div class="grid sm:grid-cols-2 gap-3 text-caption" id="form-lead-google-fields"></div>
+        <div class="ca-modal-body">
+          <div class="grid sm:grid-cols-2 gap-4">
+            <div><label class="form-label">Firm Name <span class="text-rose-500">*</span></label><input name="firm_name" class="input-field" required placeholder="Sharma & Associates" autocomplete="organization" /></div>
+            <div><label class="form-label">CA Name <span class="text-rose-500">*</span></label><input name="ca_name" class="input-field" required placeholder="R. Sharma" autocomplete="name" /></div>
+            <div><label class="form-label">Phone / Mobile</label><input name="mobile_no" id="form-lead-mobile-no" class="input-field" type="tel" inputmode="numeric" placeholder="9876543210" autocomplete="tel" /><p id="form-lead-mobile-hint" class="hidden text-caption text-slate-500 mt-1">Primary mobile cannot be changed once saved.</p><div id="form-lead-duplicate-warning" class="hidden mt-2 rounded-xl border border-red-200 bg-red-50 p-3 text-caption text-red-800"></div></div>
+            <div><label class="form-label">Alternate Mobile</label><input name="alternate_mobile_no" class="input-field" type="tel" inputmode="numeric" placeholder="9123456789" autocomplete="tel" /></div>
+            <div class="sc-location-pair sm:col-span-2 grid sm:grid-cols-2 gap-4">
+              <div><label class="form-label">State <span class="text-rose-500">*</span></label><select name="state_id" class="input-field" required><option value="">Select state</option></select></div>
+              <div><label class="form-label">City</label><select name="city_id" class="input-field" disabled><option value="">Select city</option></select></div>
+            </div>
+            <div><label class="form-label">Email</label><input name="email_id" type="email" class="input-field" placeholder="ca@firm.com" autocomplete="email" /></div>
+            <div><label class="form-label">GST No.</label><input name="gst_no" class="input-field" placeholder="27AABCS1234L1Z5" /></div>
+            <div><label class="form-label">Team Size</label><input name="team_size" type="number" class="input-field" value="0" min="0" step="1" /></div>
+            <div><label class="form-label">Software</label><select name="existing_software" class="input-field"><option value="None" selected>None</option><option value="Tally">Tally</option><option value="Zoho">Zoho</option><option value="Busy">Busy</option><option value="Marg">Marg</option></select></div>
+            <div><label class="form-label">Website</label><input name="website" class="input-field" placeholder="firm.in" /></div>
+            <div><label class="form-label">Rating (1–5)</label><select name="rating" class="input-field"><option value="5">5</option><option value="4">4</option><option value="3">3</option><option value="2">2</option><option value="1" selected>1</option></select></div>
+            <div><label class="form-label">New Firm?</label><select name="is_newly_established" class="input-field"><option value="" selected>—</option><option value="no">No</option><option value="yes">Yes</option></select></div>
+            <div><label class="form-label">Source</label><select name="source_id" class="input-field" id="form-lead-source-id"><option value="">Select source</option></select></div>
+            <div><label class="form-label">Status</label><select name="status" class="input-field"><option>New</option><option>Hot</option><option>Warm</option><option>Pipeline</option><option>Demo Scheduled</option><option>Active</option><option>Inactive</option><option>Lost</option></select></div>
+            <div><label class="form-label">Assign Employee</label><select name="executive_id" class="input-field" id="form-executive-select" data-crm-entity-lookup="employee" data-crm-lookup-empty-label="Auto assign later" data-crm-lookup-placeholder="Search employee…"><option value="">Auto assign later</option></select></div>
+            <div id="form-lead-google-section" class="hidden sm:col-span-2 border border-slate-200 rounded-xl p-4 bg-slate-50">
+              <p class="text-card-heading text-sm mb-3">Saved Google Places Data</p>
+              <div class="grid sm:grid-cols-2 gap-3 text-caption" id="form-lead-google-fields"></div>
+            </div>
           </div>
         </div>
-        <div class="ca-modal-footer border-t border-slate-100 pt-4 mt-2">
+        <div class="ca-modal-footer">
           <div class="ca-modal-footer-buttons">
-          <button type="button" class="btn-secondary" data-close-crm-modal>Cancel</button>
-          <button type="button" id="add-lead-submit-btn" class="btn-primary flex-1"><i data-lucide="save" class="h-4 w-4"></i> Save Lead</button>
+            <button type="button" class="btn-secondary" data-close-crm-modal>Cancel</button>
+            <button type="button" id="add-lead-submit-btn" class="btn-primary flex-1"><i data-lucide="save" class="h-4 w-4"></i> Save Lead</button>
           </div>
         </div>
       </form>
@@ -612,6 +614,49 @@
     </div>
   </div>
 
+  </div>
+
+  <div id="modal-lead-activity-timeline" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="lead-activity-timeline-title">
+    <div class="ca-modal-panel ca-modal-panel-sm">
+      <div class="ca-modal-header">
+        <h3 id="lead-activity-timeline-title" class="ca-modal-title">
+          <span class="ca-modal-icon"><i data-lucide="history" class="h-5 w-5"></i></span>
+          <span>Activity Timeline — <span id="lead-activity-timeline-firm" class="text-slate-600 font-normal"></span></span>
+        </h3>
+        <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
+      </div>
+      <div class="ca-modal-body">
+        <div id="lead-activity-timeline-body" class="cam-activity-timeline-list"></div>
+      </div>
+      <div class="ca-modal-footer">
+        <div class="ca-modal-footer-buttons">
+          <button type="button" class="btn-secondary flex-1" data-close-crm-modal>Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-lead-team-members" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="lead-team-members-title">
+    <div class="ca-modal-panel ca-modal-panel-sm">
+      <div class="ca-modal-header">
+        <h3 id="lead-team-members-title" class="ca-modal-title">
+          <span class="ca-modal-icon"><i data-lucide="users" class="h-5 w-5"></i></span>
+          <span>Assigned Team Members — <span id="lead-team-members-firm" class="text-slate-600 font-normal"></span></span>
+        </h3>
+        <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
+      </div>
+      <div class="ca-modal-body">
+        <div id="lead-team-members-body" class="cam-team-drawer-list space-y-3"></div>
+      </div>
+      <div class="ca-modal-footer">
+        <div class="ca-modal-footer-buttons">
+          <button type="button" class="btn-secondary" data-close-crm-modal>Close</button>
+          <button type="button" class="btn-secondary" data-team-members-view-assignment>View Assignment</button>
+          <button type="button" class="btn-primary flex-1" data-team-members-reassign>Reassign</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div id="modal-assign-lead" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="assign-lead-title">
     <div class="ca-modal-panel">

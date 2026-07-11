@@ -22,6 +22,7 @@ class BulkExportFileWriter
         'website' => 'Website',
         'rating' => 'Rating',
         'status' => 'Status',
+        'last_activity' => 'Last Activity',
         'is_newly_established' => 'New Firm',
         'created_at' => 'Created At',
         'updated_at' => 'Updated At',

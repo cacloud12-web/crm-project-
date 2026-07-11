@@ -91,6 +91,25 @@ class IndiaStateCityTest extends TestCase
         $this->assertArrayHasKey('name', $items[0]);
     }
 
+    public function test_lookup_sources_api_returns_flat_array_for_employee(): void
+    {
+        \App\Models\SourceLead::query()->firstOrCreate(['source_name' => 'Website']);
+
+        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+
+        $response = $this->actingAs($employee)->getJson('/lookups/sources', [
+            'X-Requested-With' => 'XMLHttpRequest',
+            'Accept' => 'application/json',
+        ]);
+
+        $response->assertOk()->assertJsonPath('success', true);
+        $items = $response->json('data');
+        $this->assertIsArray($items);
+        $this->assertNotEmpty($items);
+        $this->assertArrayHasKey('source_id', $items[0]);
+        $this->assertArrayHasKey('source_name', $items[0]);
+    }
+
     public function test_cities_api_filters_by_state_and_includes_major_cities(): void
     {
         $maharashtra = State::query()->where('state_name', 'Maharashtra')->firstOrFail();

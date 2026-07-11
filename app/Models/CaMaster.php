@@ -140,6 +140,13 @@ class CaMaster extends Model
             ->orderByDesc('assignment_id');
     }
 
+    public function activeTeamAssignments(): HasMany
+    {
+        return $this->hasMany(LeadAssignmentEngine::class, 'ca_id', 'ca_id')
+            ->where('status', 'Active')
+            ->orderByDesc('assignment_id');
+    }
+
     public function lockedByEmployee(): BelongsTo
     {
         return $this->belongsTo(Employee::class, 'locked_by', 'employee_id');

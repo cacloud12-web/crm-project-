@@ -97,6 +97,10 @@ class LeadResearchController extends Controller
             'place.latitude' => 'nullable|numeric',
             'place.longitude' => 'nullable|numeric',
             'place.business_name' => 'nullable|string|max:255',
+            'place.city_name' => 'nullable|string|max:255',
+            'place.state_name' => 'nullable|string|max:255',
+            'place.city' => 'nullable|string|max:255',
+            'place.state' => 'nullable|string|max:255',
         ]);
 
         try {
