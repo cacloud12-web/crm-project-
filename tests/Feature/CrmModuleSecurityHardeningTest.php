@@ -87,4 +87,53 @@ class CrmModuleSecurityHardeningTest extends TestCase
         ])->assertUnprocessable()
             ->assertJsonValidationErrors(['followup_type']);
     }
+
+    public function test_employee_cannot_list_another_employees_tasks(): void
+    {
+        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $this->actingAs($employeeUser);
+
+        $employeeId = Employee::query()->where('user_id', $employeeUser->id)->value('employee_id');
+        $otherEmployeeId = Employee::query()
+            ->when($employeeId, fn ($q) => $q->where('employee_id', '!=', $employeeId))
+            ->value('employee_id');
+
+        if (! $otherEmployeeId) {
+            $this->markTestSkipped('No second employee fixture');
+        }
+
+        $response = $this->getJson('/follow-ups/tasks?employee_id='.$otherEmployeeId);
+        $response->assertOk();
+
+        $taskEmployeeIds = collect($response->json('data'))
+            ->pluck('employee_id')
+            ->filter()
+            ->unique()
+            ->all();
+
+        $this->assertNotContains((int) $otherEmployeeId, $taskEmployeeIds);
+        if ($taskEmployeeIds !== []) {
+            $this->assertSame([(int) $employeeId], $taskEmployeeIds);
+        }
+    }
+
+    public function test_employee_cannot_reassign_follow_up_to_another_employee(): void
+    {
+        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $this->actingAs($employeeUser);
+
+        $employeeId = Employee::query()->where('user_id', $employeeUser->id)->value('employee_id');
+        $otherEmployeeId = Employee::query()
+            ->when($employeeId, fn ($q) => $q->where('employee_id', '!=', $employeeId))
+            ->value('employee_id');
+        $ownFollowUp = FollowUp::query()->where('employee_id', $employeeId)->first();
+
+        if (! $ownFollowUp || ! $otherEmployeeId) {
+            $this->markTestSkipped('Missing employee follow-up or second employee fixture');
+        }
+
+        $this->patchJson('/follow-ups/'.$ownFollowUp->followup_id, [
+            'employee_id' => $otherEmployeeId,
+        ])->assertForbidden();
+    }
 }

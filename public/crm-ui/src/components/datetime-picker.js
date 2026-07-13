@@ -133,30 +133,35 @@
       if (!options.allowPast && options.mode === 'datetime' && isPast(today)) {
         today.setMinutes(today.getMinutes() + 5 - (today.getMinutes() % 5), 0, 0);
       }
-      instance.setDate(today, true);
+      instance.setDate(today, false);
+      restoreConfirmedInputValue(instance);
       updateCalendarPreview(instance, options);
-      if (options.mode === 'date') instance.close();
+      if (instance._crmSyncAmpm) instance._crmSyncAmpm();
+      notifyDraftChange(instance);
+      if (options.mode === 'date') {
+        instance._crmDidCommit = true;
+        var enhToday = getPickerEnhancement(instance);
+        commitPickerSelection(instance, options, enhToday ? enhToday.preview : null, instance.input);
+      }
     });
 
     footer.querySelector('[data-fp-clear]').addEventListener('click', function (e) {
       e.preventDefault();
       e.stopPropagation();
-      instance.clear();
-      updateCalendarPreview(instance, options);
-      instance.close();
+      clearPickerDraft(instance, options);
     });
 
     footer.querySelector('[data-fp-cancel]').addEventListener('click', function (e) {
       e.preventDefault();
       e.stopPropagation();
-      revertPickerSnapshot(instance);
-      instance.close();
+      dismissPicker(instance, { commit: false });
     });
 
     footer.querySelector('[data-fp-done]').addEventListener('click', function (e) {
       e.preventDefault();
       e.stopPropagation();
-      instance.close();
+      var enhancement = getPickerEnhancement(instance);
+      commitPickerSelection(instance, options, enhancement ? enhancement.preview : null, instance.input);
     });
   }
 
@@ -173,6 +178,189 @@
     timeEl.parentNode.insertBefore(wrap, timeEl);
     wrap.appendChild(label);
     wrap.appendChild(timeEl);
+    decorateAmpmSegment(instance, timeEl);
+  }
+
+  function decorateAmpmSegment(instance, timeEl) {
+    if (!timeEl || timeEl.dataset.crmAmpmDecorated === '1') return;
+    var nativeAmpm = timeEl.querySelector('.flatpickr-am-pm');
+    if (!nativeAmpm) return;
+    timeEl.dataset.crmAmpmDecorated = '1';
+    nativeAmpm.classList.add('crm-fp-ampm-native');
+    nativeAmpm.setAttribute('aria-hidden', 'true');
+    nativeAmpm.tabIndex = -1;
+
+    var seg = document.createElement('div');
+    seg.className = 'crm-fp-ampm-segment';
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', 'AM or PM');
+    seg.setAttribute('tabindex', '0');
+
+    var amBtn = document.createElement('button');
+    amBtn.type = 'button';
+    amBtn.className = 'crm-fp-ampm-btn';
+    amBtn.textContent = 'AM';
+    amBtn.dataset.ampm = 'AM';
+    amBtn.setAttribute('aria-pressed', 'false');
+
+    var pmBtn = document.createElement('button');
+    pmBtn.type = 'button';
+    pmBtn.className = 'crm-fp-ampm-btn';
+    pmBtn.textContent = 'PM';
+    pmBtn.dataset.ampm = 'PM';
+    pmBtn.setAttribute('aria-pressed', 'false');
+
+    seg.appendChild(amBtn);
+    seg.appendChild(pmBtn);
+    timeEl.appendChild(seg);
+
+    function syncAmpmUI() {
+      var d = instance.selectedDates[0];
+      if (!d) {
+        amBtn.classList.remove('is-active');
+        pmBtn.classList.remove('is-active');
+        amBtn.setAttribute('aria-pressed', 'false');
+        pmBtn.setAttribute('aria-pressed', 'false');
+        return;
+      }
+      var isPM = d.getHours() >= 12;
+      amBtn.classList.toggle('is-active', !isPM);
+      pmBtn.classList.toggle('is-active', isPM);
+      amBtn.setAttribute('aria-pressed', isPM ? 'false' : 'true');
+      pmBtn.setAttribute('aria-pressed', isPM ? 'true' : 'false');
+      nativeAmpm.textContent = isPM ? 'PM' : 'AM';
+    }
+
+    function setAmpm(ampm) {
+      var base = instance.selectedDates[0]
+        ? new Date(instance.selectedDates[0])
+        : (parseInputValue(instance._crmConfirmedValue || '', 'datetime') || new Date());
+      var hour12 = base.getHours() % 12;
+      if (hour12 === 0) hour12 = 12;
+      var nextHour = ampm === 'PM'
+        ? (hour12 === 12 ? 12 : hour12 + 12)
+        : (hour12 === 12 ? 0 : hour12);
+      base.setHours(nextHour, base.getMinutes(), 0, 0);
+      instance.setDate(base, false);
+      syncAmpmUI();
+      restoreConfirmedInputValue(instance);
+    }
+
+    amBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      setAmpm('AM');
+      notifyDraftChange(instance);
+    });
+    pmBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      setAmpm('PM');
+      notifyDraftChange(instance);
+    });
+
+    seg.addEventListener('keydown', function (e) {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      setAmpm(e.key === 'ArrowRight' ? 'PM' : 'AM');
+      notifyDraftChange(instance);
+    });
+
+    instance._crmSyncAmpm = syncAmpmUI;
+    syncAmpmUI();
+  }
+
+  function getPickerEnhancement(instance) {
+    if (!instance || !instance.input) return null;
+    return instances.get(instance.input) || null;
+  }
+
+  function restoreConfirmedInputValue(instance) {
+    if (!instance || !instance.input) return;
+    var confirmed = instance._crmConfirmedValue || '';
+    if (instance.input.value !== confirmed) instance.input.value = confirmed;
+  }
+
+  function notifyDraftChange(instance) {
+    var enhancement = getPickerEnhancement(instance);
+    if (!enhancement) return;
+    var options = enhancement.options || readEnhanceOptions(instance.input);
+    updateCalendarPreview(instance, options);
+    updatePreviewRow(instance, options, enhancement.preview, true);
+    restoreConfirmedInputValue(instance);
+  }
+
+  function commitPickerSelection(instance, options, preview, input) {
+    if (!instance.selectedDates.length) {
+      if (!options.optional) {
+        if (preview) {
+          preview.classList.add('hidden');
+        }
+        var enhancement = getPickerEnhancement(instance);
+        if (enhancement) enhancement.showError();
+        return false;
+      }
+      instance._crmCommitting = true;
+      input.value = '';
+      instance._crmConfirmedValue = '';
+      if (instance.altInput) instance.altInput.value = '';
+      updatePreviewRow(instance, options, preview, false);
+      instance._crmCommitting = false;
+      instance._crmDidCommit = true;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      instance.close();
+      return true;
+    }
+
+    var selected = instance.selectedDates[0];
+    if (options.requireFuture && isPast(selected)) {
+      var enh = getPickerEnhancement(instance);
+      if (enh) enh.showError('Please select a future date and time.');
+      return false;
+    }
+
+    instance._crmCommitting = true;
+    var newValue = toLocalInputValue(selected, options.mode);
+    input.value = newValue;
+    instance._crmConfirmedValue = newValue;
+    if (instance.altInput) {
+      instance.altInput.value = formatDisplay(selected, options.mode).replace(' • ', ' ').replace(' •', '');
+      try {
+        instance.altInput.value = instance.formatDate(selected, instance.config.altFormat);
+      } catch (err) {
+        instance.altInput.value = formatDisplay(selected, options.mode);
+      }
+    }
+    updatePreviewRow(instance, options, preview, false);
+    instance._crmCommitting = false;
+    instance._crmDidCommit = true;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    instance.close();
+    return true;
+  }
+
+  function dismissPicker(instance, opts) {
+    opts = opts || {};
+    if (!opts.commit) {
+      revertPickerSnapshot(instance);
+      var enhancement = getPickerEnhancement(instance);
+      if (enhancement) {
+        updatePreviewRow(instance, enhancement.options, enhancement.preview, false);
+      }
+    }
+    instance._crmDidCommit = true;
+    instance.close();
+  }
+
+  function clearPickerDraft(instance, options) {
+    instance.clear(false);
+    restoreConfirmedInputValue(instance);
+    updateCalendarPreview(instance, options);
+    var enhancement = getPickerEnhancement(instance);
+    if (enhancement) updatePreviewRow(instance, options, enhancement.preview, true);
+    if (instance._crmSyncAmpm) instance._crmSyncAmpm();
   }
 
   function updateCalendarPreview(instance, options) {
@@ -306,8 +494,7 @@
     if (!trigger) return;
     var rect = trigger.getBoundingClientRect();
     if (rect.bottom < 0 || rect.top > window.innerHeight) {
-      revertPickerSnapshot(instance);
-      instance.close();
+      dismissPicker(instance, { commit: false });
       return;
     }
     positionPickerCalendar(instance);
@@ -371,9 +558,11 @@
         e.preventDefault();
         e.stopPropagation();
       }
-      if (!fp.isOpen) {
-        fp.open();
+      if (fp.isOpen) {
+        dismissPicker(fp, { commit: false });
+        return;
       }
+      fp.open();
     }
 
     alt.classList.add('crm-datetime-field__trigger', 'input-field');
@@ -422,7 +611,7 @@
     if (typeof lucide !== 'undefined') lucide.createIcons();
   }
 
-  function updatePreviewRow(instance, options, previewEl) {
+  function updatePreviewRow(instance, options, previewEl, draft) {
     if (!previewEl || options.hidePreview) {
       if (previewEl) {
         previewEl.classList.add('hidden');
@@ -430,13 +619,21 @@
       }
       return;
     }
-    if (!instance.selectedDates.length) {
+    var date = null;
+    if (draft && instance.isOpen) {
+      date = instance.selectedDates[0] || null;
+    } else if (instance.input.value) {
+      date = parseInputValue(instance.input.value, options.mode);
+    } else if (instance.selectedDates[0]) {
+      date = instance.selectedDates[0];
+    }
+    if (!date) {
       previewEl.classList.add('hidden');
       previewEl.textContent = '';
       return;
     }
     previewEl.classList.remove('hidden');
-    previewEl.textContent = options.previewPrefix + ' ' + formatPreview(instance.selectedDates[0], options.mode);
+    previewEl.textContent = options.previewPrefix + ' ' + formatPreview(date, options.mode);
   }
 
   function buildFlatpickrPlugins() {
@@ -518,7 +715,7 @@
       altFormat: isDateOnly ? 'j M Y' : 'j M Y • h:i K',
       altInputClass: 'crm-datetime-field__trigger input-field',
       allowInput: true,
-      clickOpens: true,
+      clickOpens: false,
       closeOnSelect: isDateOnly,
       minuteIncrement: options.minuteIncrement || 5,
       time_24hr: false,
@@ -540,28 +737,45 @@
       },
       onOpen: function (selectedDates, dateStr, instance) {
         activeFlatpickr = instance;
+        instance._crmDidCommit = false;
+        instance._crmConfirmedValue = input.value || '';
         capturePickerSnapshot(instance);
         error.classList.add('hidden');
         if (instance.altInput) instance.altInput.classList.remove('crm-datetime-field__trigger--error');
         requestAnimationFrame(function () {
           positionPickerCalendar(instance);
           enhanceCalendarA11y(instance, options);
+          if (instance._crmSyncAmpm) instance._crmSyncAmpm();
         });
       },
       onClose: function (selectedDates, dateStr, instance) {
+        if (!instance._crmDidCommit) {
+          revertPickerSnapshot(instance);
+          updatePreviewRow(instance, options, preview, false);
+        }
         if (activeFlatpickr && activeFlatpickr.input === input) activeFlatpickr = null;
         if (instance.altInput) {
           try { instance.altInput.focus(); } catch (err) { /* ignore */ }
         }
       },
       onChange: function (selectedDates, dateStr, instance) {
-        updatePreviewRow(instance, options, preview);
+        if (instance.isOpen && !instance._crmCommitting && !isDateOnly) {
+          restoreConfirmedInputValue(instance);
+          updatePreviewRow(instance, options, preview, true);
+          updateCalendarPreview(instance, options);
+          if (instance._crmSyncAmpm) instance._crmSyncAmpm();
+          return;
+        }
+        updatePreviewRow(instance, options, preview, false);
         updateCalendarPreview(instance, options);
         error.classList.add('hidden');
         if (instance.altInput) instance.altInput.classList.remove('crm-datetime-field__trigger--error');
         input.dispatchEvent(new Event('change', { bubbles: true }));
         input.dispatchEvent(new Event('input', { bubbles: true }));
-        if (isDateOnly && selectedDates.length) instance.close();
+        if (isDateOnly && selectedDates.length) {
+          instance._crmDidCommit = true;
+          instance.close();
+        }
       },
       onMonthChange: function (selectedDates, dateStr, instance) {
         requestAnimationFrame(function () { positionPickerCalendar(instance); });
@@ -639,11 +853,11 @@
 
   function closePopup(opts) {
     opts = opts || {};
-    if (activeFlatpickr) {
-      activeFlatpickr.close();
-      if (opts.focus !== false && activeFlatpickr.altInput) {
-        try { activeFlatpickr.altInput.focus(); } catch (e) { /* ignore */ }
-      }
+    if (!activeFlatpickr) return;
+    var fp = activeFlatpickr;
+    dismissPicker(fp, { commit: false });
+    if (opts.focus !== false && fp.altInput) {
+      try { fp.altInput.focus(); } catch (e) { /* ignore */ }
     }
   }
 
@@ -682,8 +896,13 @@
   document.addEventListener('mousedown', function (e) {
     if (!activeFlatpickr) return;
     if (e.target.closest && e.target.closest('.flatpickr-calendar')) return;
-    if (e.target.closest && e.target.closest('.crm-datetime-field')) return;
-    activeFlatpickr.close();
+    var field = e.target.closest('.crm-datetime-field');
+    if (field) {
+      var source = field.querySelector('[data-crm-datetime-input], [data-crm-date-input]');
+      var enhancement = source ? instances.get(source) : null;
+      if (enhancement && enhancement.flatpickr === activeFlatpickr) return;
+    }
+    dismissPicker(activeFlatpickr, { commit: false });
   }, true);
 
   document.addEventListener('click', function (e) {
@@ -710,8 +929,7 @@
 
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape' || !activeFlatpickr) return;
-    revertPickerSnapshot(activeFlatpickr);
-    activeFlatpickr.close();
+    dismissPicker(activeFlatpickr, { commit: false });
   }, true);
 
   window.addEventListener('resize', function () {

@@ -55,7 +55,7 @@ class GoogleIntegrationController extends Controller
                 'place' => null,
                 'multiple_results' => false,
                 'api_configured' => $this->leadResearchService->isApiConfigured(),
-                'api_error' => 'Firm Name and CA Name are required before running a Google lookup.',
+                'api_error' => LeadResearchService::INSUFFICIENT_LOOKUP_MESSAGE,
                 'api_recommendation' => null,
                 'api_google_reason' => null,
             ], 'Search query is incomplete');
@@ -153,15 +153,14 @@ class GoogleIntegrationController extends Controller
             return trim((string) $data['q']);
         }
 
-        $parts = array_filter([
-            trim((string) ($data['firm_name'] ?? '')),
-            trim((string) ($data['ca_name'] ?? '')),
-            trim((string) ($data['city'] ?? '')),
-            trim((string) ($data['state'] ?? '')),
-            'Chartered Accountant',
-        ], fn ($value) => $value !== '');
-
-        return trim(implode(' ', $parts));
+        return $this->leadResearchService->buildQueryFromFields([
+            'firm_name' => $data['firm_name'] ?? null,
+            'ca_name' => $data['ca_name'] ?? null,
+            'city' => $data['city'] ?? null,
+            'state' => $data['state'] ?? null,
+            'mobile_no' => $data['mobile_no'] ?? null,
+            'alternate_mobile_no' => $data['alternate_mobile_no'] ?? null,
+        ]);
     }
 
     /**

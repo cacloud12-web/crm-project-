@@ -20,12 +20,12 @@ return [
     |--------------------------------------------------------------------------
     |
     | When true, imports above import_sync_row_limit run in the HTTP request
-    | instead of waiting for a queue worker. Defaults to true in local env.
+    | instead of waiting for a queue worker. Keep this false for responsive UI.
     |
     */
 
     'import_process_inline' => filter_var(
-        env('CRM_IMPORT_PROCESS_INLINE', env('APP_ENV', 'production') === 'local'),
+        env('CRM_IMPORT_PROCESS_INLINE', false),
         FILTER_VALIDATE_BOOL,
     ),
 

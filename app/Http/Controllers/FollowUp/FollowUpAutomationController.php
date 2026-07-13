@@ -84,7 +84,9 @@ class FollowUpAutomationController extends Controller
             ]);
 
             return ApiResponse::success([
-                'completed_follow_up' => null,
+                'completed_follow_up' => isset($result['completed_follow_up']) && $result['completed_follow_up']
+                    ? new FollowUpResource($result['completed_follow_up'])
+                    : null,
                 'next_follow_up' => $result['next_follow_up']
                     ? new FollowUpResource($result['next_follow_up'])
                     : null,
@@ -132,10 +134,15 @@ class FollowUpAutomationController extends Controller
 
     public function tasks(Request $request): JsonResponse
     {
-        $employeeId = $request->integer('employee_id') ?: null;
         $user = auth()->user();
-        if ($employeeId === null && $user) {
-            $employeeId = app(EmployeeDataScopeService::class)->scopedEmployeeId($user);
+        $scopedEmployeeId = $this->employeeDataScope->scopedEmployeeId($user);
+        if ($scopedEmployeeId !== null) {
+            if ($scopedEmployeeId <= 0) {
+                abort(403, 'You do not have access to tasks.');
+            }
+            $employeeId = $scopedEmployeeId;
+        } else {
+            $employeeId = $request->integer('employee_id') ?: null;
         }
 
         $tasks = $this->taskService->listForEmployee($employeeId, $request->query());

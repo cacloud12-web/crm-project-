@@ -1044,7 +1044,6 @@
     var googleQuery = options.googleQuery || '';
     var mapsQuery = options.mapsQuery || googleQuery;
     if (!googleQuery && !mapsQuery) {
-      toast('Insufficient lead data for research', 'warning');
       return;
     }
 

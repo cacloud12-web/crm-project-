@@ -43,6 +43,29 @@ class BulkCaMasterImportService
 
     private const FORCE_ACTIONS = ['import_anyway', 'merge', 'replace'];
 
+    /**
+     * Request-scoped duplicate lookup built once for validation. Keeping this
+     * null outside validation preserves live duplicate checks during import.
+     *
+     * @var array<string, array<string, array<string, mixed>>>|null
+     */
+    private ?array $validationDuplicateIndex = null;
+
+    /** @var array<int, true>|null */
+    private ?array $teamSizeIds = null;
+
+    /** @var list<array<string, mixed>> */
+    private array $pendingBulkActionLogs = [];
+
+    /** @var list<array<string, mixed>> */
+    private array $pendingImportDuplicateLogs = [];
+
+    /** @var list<array<string, mixed>> */
+    private array $pendingDuplicateAttemptLogs = [];
+
+    /** @var list<array<string, mixed>> */
+    private array $pendingDuplicateAttempts = [];
+
     public function __construct(
         private readonly BulkImportFileParser $fileParser,
         private readonly BulkImportMappingService $mappingService,
@@ -177,13 +200,35 @@ class BulkCaMasterImportService
             'status' => $bulkAction->status,
             'file_name' => $bulkAction->file_name,
             'total_rows' => (int) $bulkAction->total_records,
+            'processed_rows' => $processed,
             'processed_records' => $processed,
             'inserted_rows' => (int) $bulkAction->success_records,
             'duplicate_rows' => (int) $bulkAction->duplicate_records,
             'failed_rows' => (int) $bulkAction->failed_records,
             'skipped_rows' => (int) $bulkAction->skipped_records,
             'progress_percent' => $percent,
+            'progress_message' => $this->importProgressMessage($bulkAction, $processed, $total),
             'completed' => in_array($bulkAction->status, ['Completed', 'Completed with errors', 'Failed'], true),
+        ];
+    }
+
+    private function importSummaryFromBulkAction(BulkAction $bulkAction): array
+    {
+        $total = max(1, (int) $bulkAction->total_records);
+        $processed = (int) $bulkAction->processed_records;
+
+        return [
+            'bulk_action_id' => $bulkAction->bulk_action_id,
+            'file_name' => $bulkAction->file_name,
+            'total_rows' => (int) $bulkAction->total_records,
+            'inserted_rows' => (int) $bulkAction->success_records,
+            'duplicate_rows' => (int) $bulkAction->duplicate_records,
+            'failed_rows' => (int) $bulkAction->failed_records,
+            'skipped_rows' => (int) $bulkAction->skipped_records,
+            'progress_percent' => 100,
+            'processed_rows' => $processed,
+            'error_row_count' => (int) $bulkAction->failed_records + (int) $bulkAction->duplicate_records,
+            'errors' => [],
         ];
     }
 
@@ -272,10 +317,12 @@ class BulkCaMasterImportService
             $this->saveMappingTemplate($templateName, $mapping);
         }
 
+        $rowsToProcess = count($evaluation['rows']);
+
         $bulkAction = BulkAction::create([
             'action_type' => 'ca_master_import',
             'file_name' => $session['file_name'],
-            'total_records' => $session['total_rows'],
+            'total_records' => $rowsToProcess > 0 ? $rowsToProcess : (int) $session['total_rows'],
             'processed_records' => 0,
             'success_records' => 0,
             'duplicate_records' => 0,
@@ -286,33 +333,17 @@ class BulkCaMasterImportService
             'started_at' => now(),
         ]);
 
-        $importableCount = $evaluation['ready_to_import_rows']
-            + ($evaluation['landline_rows'] ?? 0)
-            + ($evaluation['missing_mobile_rows'] ?? 0)
-            + ($evaluation['force_import_rows'] ?? 0);
-
         $syncLimit = (int) config('crm_queue.import_sync_row_limit', 100);
-        if ($importableCount > $syncLimit) {
+        if ($rowsToProcess > $syncLimit) {
             Cache::put($this->queuedImportKey($bulkAction->bulk_action_id), [
                 'session_id' => $sessionId,
-                'mapping' => $mapping,
-                'evaluation' => $evaluation,
-                'session' => [
-                    'file_name' => $session['file_name'],
-                    'file_hash' => $session['file_hash'] ?? null,
-                    'total_rows' => $session['total_rows'],
-                    'uploaded_by' => $session['uploaded_by'] ?? Auth::id(),
-                    'row_actions' => $session['row_actions'] ?? [],
-                ],
             ], now()->addMinutes(self::SESSION_TTL_MINUTES));
 
-            if ($this->shouldProcessImportInline()) {
-                @set_time_limit(0);
-
-                return $this->processQueuedImport($bulkAction->bulk_action_id);
+            if (config('queue.default') === 'sync') {
+                ProcessBulkCaMasterImportJob::dispatchAfterResponse($bulkAction->bulk_action_id);
+            } else {
+                ProcessBulkCaMasterImportJob::dispatch($bulkAction->bulk_action_id);
             }
-
-            ProcessBulkCaMasterImportJob::dispatch($bulkAction->bulk_action_id);
 
             return [
                 'bulk_action_id' => $bulkAction->bulk_action_id,
@@ -333,7 +364,9 @@ class BulkCaMasterImportService
                 'imported_by' => $bulkAction->imported_by,
                 'error_row_count' => $evaluation['invalid_rows'] + $evaluation['duplicate_rows'],
                 'errors' => [],
-                'queue_notice' => 'Import queued. Start a queue worker or set CRM_IMPORT_PROCESS_INLINE=true to import immediately.',
+                'queue_notice' => config('queue.default') === 'sync'
+                    ? 'Import started in the background.'
+                    : 'Import queued for background processing.',
             ];
         }
 
@@ -342,51 +375,56 @@ class BulkCaMasterImportService
 
     public function processQueuedImport(int $bulkActionId): array
     {
+        $bulkAction = BulkAction::query()->findOrFail($bulkActionId);
+
+        if (in_array($bulkAction->status, ['Completed', 'Completed with errors', 'Failed'], true)) {
+            return array_merge($this->importSummaryFromBulkAction($bulkAction), [
+                'uses_background' => false,
+                'status' => $bulkAction->status,
+            ]);
+        }
+
         $payload = Cache::get($this->queuedImportKey($bulkActionId));
 
-        if (! $payload) {
+        if (! $payload || empty($payload['session_id'])) {
             BulkAction::query()
                 ->where('bulk_action_id', $bulkActionId)
                 ->update(['status' => 'Failed', 'completed_at' => now()]);
 
             throw new RuntimeException('Queued import payload expired or was not found.');
         }
+        $sessionId = (string) $payload['session_id'];
+        $session = $this->getSession($sessionId);
+        $evaluation = $session['validation'] ?? null;
 
-        $bulkAction = BulkAction::query()->findOrFail($bulkActionId);
-        $session = array_merge(
-            $payload['session'],
-            [
-                'total_rows' => $payload['session']['total_rows'] ?? $bulkAction->total_records,
-                'file_hash' => $payload['session']['file_hash'] ?? null,
-                'uploaded_by' => $payload['session']['uploaded_by'] ?? null,
-                'row_actions' => $payload['session']['row_actions'] ?? [],
-            ],
-        );
+        if (! $evaluation || empty($evaluation['rows'])) {
+            BulkAction::query()
+                ->where('bulk_action_id', $bulkActionId)
+                ->update(['status' => 'Failed', 'completed_at' => now()]);
 
-        $evaluation = $payload['evaluation'];
+            throw new RuntimeException('Import session validation data is missing or expired.');
+        }
+
+        $session = array_merge($session, [
+            'total_rows' => $session['total_rows'] ?? $bulkAction->total_records,
+            'file_hash' => $session['file_hash'] ?? null,
+            'uploaded_by' => $session['uploaded_by'] ?? null,
+            'row_actions' => $session['row_actions'] ?? [],
+        ]);
+
         $evaluation['rows'] = $this->applyStoredActionsToRows(
             $evaluation['rows'] ?? [],
             $session['row_actions'] ?? [],
         );
         $evaluation = $this->recountEvaluation($evaluation);
 
-        $result = $this->completeImport($bulkAction, $session, $evaluation, $payload['session_id']);
+        $result = $this->completeImport($bulkAction, $session, $evaluation, $sessionId);
         Cache::forget($this->queuedImportKey($bulkActionId));
-        Cache::forget($this->sessionKey($payload['session_id']));
 
         return array_merge($result, [
             'uses_background' => false,
             'status' => $bulkAction->fresh()->status ?? 'Completed',
         ]);
-    }
-
-    private function shouldProcessImportInline(): bool
-    {
-        if (config('queue.default') === 'sync') {
-            return true;
-        }
-
-        return (bool) config('crm_queue.import_process_inline', false);
     }
 
     private function completeImport(BulkAction $bulkAction, array $session, array $evaluation, ?string $sessionId = null): array
@@ -401,6 +439,8 @@ class BulkCaMasterImportService
         $processed = 0;
         $isSuperAdmin = $this->actorIsSuperAdmin();
         $uploadedBy = (int) ($session['uploaded_by'] ?? Auth::id());
+
+        $this->touchProgress($bulkAction, 0, 0, 0, 0, 0);
 
         foreach (array_chunk($evaluation['rows'], self::CHUNK_SIZE) as $chunk) {
             foreach ($chunk as $result) {
@@ -428,7 +468,6 @@ class BulkCaMasterImportService
                             'message' => $message,
                         ];
                         $this->logRow($bulkAction->bulk_action_id, $rowNumber, 'Duplicate', $message, $result['data'] ?? null);
-                        $this->touchProgress($bulkAction, $processed, $inserted, $duplicate, $failed, $skipped);
 
                         continue;
                     }
@@ -443,7 +482,6 @@ class BulkCaMasterImportService
                             'message' => $message,
                         ];
                         $this->logRow($bulkAction->bulk_action_id, $rowNumber, 'Duplicate', $message, $result['data'] ?? null);
-                        $this->touchProgress($bulkAction, $processed, $inserted, $duplicate, $failed, $skipped);
 
                         continue;
                     }
@@ -455,7 +493,6 @@ class BulkCaMasterImportService
                             $landlineImported++;
                         }
                         $this->logRow($bulkAction->bulk_action_id, $rowNumber, 'Success', 'Duplicate '.$action);
-                        $this->touchProgress($bulkAction, $processed, $inserted, $duplicate, $failed, $skipped);
 
                         continue;
                     }
@@ -466,14 +503,13 @@ class BulkCaMasterImportService
                 }
 
                 if (in_array($status, self::IMPORTABLE_STATUSES, true)) {
-                    $insertResult = $this->insertValidatedRow($result['data'], $bulkAction->bulk_action_id, false);
+                    $insertResult = $this->insertValidatedRow($result['data'], $bulkAction->bulk_action_id, true);
                     if ($insertResult['status'] === 'inserted') {
                         $inserted++;
                         if ($status === 'landline' || ($result['phone_category'] ?? '') === 'landline') {
                             $landlineImported++;
                         }
                         $this->logRow($bulkAction->bulk_action_id, $rowNumber, 'Success', null);
-                        $this->touchProgress($bulkAction, $processed, $inserted, $duplicate, $failed, $skipped);
 
                         continue;
                     }
@@ -504,8 +540,10 @@ class BulkCaMasterImportService
                     $message ?: null,
                     $result['data'] ?? null,
                 );
-                $this->touchProgress($bulkAction, $processed, $inserted, $duplicate, $failed, $skipped);
             }
+            $this->flushBulkActionLogs();
+            $this->flushDuplicateDetectionLogs();
+            $this->touchProgress($bulkAction, $processed, $inserted, $duplicate, $failed, $skipped);
         }
 
         $bulkAction->update([
@@ -621,34 +659,41 @@ class BulkCaMasterImportService
         $seenPrimaryKeys = [];
         $rows = [];
 
-        foreach (array_chunk($mappedRows, self::CHUNK_SIZE, true) as $chunk) {
-            foreach ($chunk as $index => $row) {
-                $rowNumber = $index + 2;
-                $result = $this->validateMappedRow(
-                    $row,
-                    $seenMobiles,
-                    $seenEmails,
-                    $seenGst,
-                    $seenPrimaryKeys,
-                    $validateMobile,
-                    $validateAlternateMobile,
-                );
-                $result['row_number'] = $rowNumber;
-                $result['data'] = $row;
-                $result['action'] = $result['status'] === 'duplicate' ? 'skip' : 'import';
+        $this->validationDuplicateIndex = $this->buildValidationDuplicateIndex($mappedRows);
 
-                if ($result['status'] === 'duplicate') {
-                    $this->logImportDuplicateDetection(
-                        $result,
-                        $fileName,
-                        $uploadedBy,
-                        null,
-                        'detected',
+        try {
+            foreach (array_chunk($mappedRows, self::CHUNK_SIZE, true) as $chunk) {
+                foreach ($chunk as $index => $row) {
+                    $rowNumber = $index + 2;
+                    $result = $this->validateMappedRow(
+                        $row,
+                        $seenMobiles,
+                        $seenEmails,
+                        $seenGst,
+                        $seenPrimaryKeys,
+                        $validateMobile,
+                        $validateAlternateMobile,
                     );
-                }
+                    $result['row_number'] = $rowNumber;
+                    $result['data'] = $row;
+                    $result['action'] = $result['status'] === 'duplicate' ? 'skip' : 'import';
 
-                $rows[] = $result;
+                    if ($result['status'] === 'duplicate') {
+                        $this->logImportDuplicateDetection(
+                            $result,
+                            $fileName,
+                            $uploadedBy,
+                            null,
+                            'detected',
+                        );
+                    }
+
+                    $rows[] = $result;
+                }
             }
+        } finally {
+            $this->flushDuplicateDetectionLogs();
+            $this->validationDuplicateIndex = null;
         }
 
         return $this->recountEvaluation(['rows' => $rows]);
@@ -763,16 +808,6 @@ class BulkCaMasterImportService
             return $this->duplicateRowResult($dbDuplicate, $phoneCategory);
         }
 
-        $resolved = $this->resolveLookups($data);
-        if ($resolved['code']) {
-            return [
-                'status' => 'invalid',
-                'errors' => [$resolved['message']],
-                'error_codes' => [$resolved['code']],
-                'field_errors' => $this->lookupFieldErrors($resolved['code']),
-            ];
-        }
-
         if ($mobile !== '') {
             $seenMobiles[$mobile] = true;
         }
@@ -803,7 +838,6 @@ class BulkCaMasterImportService
             'errors' => [],
             'error_codes' => [],
             'field_errors' => [],
-            'resolved' => $resolved['payload'],
         ];
     }
 
@@ -857,6 +891,7 @@ class BulkCaMasterImportService
                 $payload['created_by_employee_id'] = $this->employeeDataScope->resolveEmployeeId(Auth::user());
                 $payload['normalized_mobile'] = $this->phoneNormalization->normalize($payload['mobile_no'] ?? null);
                 $payload['normalized_alternate_mobile'] = $this->phoneNormalization->normalize($payload['alternate_mobile_no'] ?? null);
+                $payload['normalized_email'] = $this->normalizeEmail($payload['email_id'] ?? null);
                 $lead = CaMaster::create($payload);
                 $this->duplicateLeadDetection->syncLeadPhones($lead);
             });
@@ -909,17 +944,6 @@ class BulkCaMasterImportService
             str_contains($code, 'frn') => ['frn' => 'Duplicate FRN'],
             str_contains($code, 'membership') => ['membership_no' => 'Duplicate membership number'],
             str_contains($code, 'identity') => ['firm_name' => 'Duplicate firm, CA name, and city'],
-            default => [],
-        };
-    }
-
-    private function lookupFieldErrors(string $code): array
-    {
-        return match (true) {
-            str_contains($code, 'state') => ['state_id' => 'Invalid state'],
-            str_contains($code, 'city') => ['city_id' => 'Invalid city'],
-            str_contains($code, 'source') => ['source_id' => 'Invalid source'],
-            str_contains($code, 'team_size') => ['team_size_id' => 'Invalid team size'],
             default => [],
         };
     }
@@ -1036,11 +1060,235 @@ class BulkCaMasterImportService
     }
 
     /**
+     * Build a bounded, request-local lookup so validation performs a small
+     * number of indexed queries instead of querying once per row and field.
+     *
+     * @param  array<int, array<string, mixed>>  $mappedRows
+     * @return array<string, array<string, array<string, mixed>>>
+     */
+    private function buildValidationDuplicateIndex(array $mappedRows): array
+    {
+        $candidates = [
+            'phone' => [],
+            'email' => [],
+            'gst' => [],
+            'frn' => [],
+            'membership_no' => [],
+            'firm' => [],
+        ];
+
+        foreach ($mappedRows as $row) {
+            $row = $this->normalizeRow($row);
+            foreach (['mobile_no', 'alternate_mobile_no'] as $field) {
+                $phone = (string) ($this->storeablePhone($row[$field] ?? null) ?? '');
+                if ($phone !== '') {
+                    $candidates['phone'][$phone] = true;
+                }
+            }
+
+            $email = $this->normalizeEmail($row['email_id'] ?? null);
+            $gst = $this->normalizeGst($row['gst_no'] ?? null);
+            $frn = $this->normalizeOptionalCode($row['frn'] ?? null);
+            $membershipNo = $this->normalizeOptionalCode($row['membership_no'] ?? null);
+            $firm = $this->normalizeNameKey($row['firm_name'] ?? null);
+            $caName = $this->normalizeNameKey($row['ca_name'] ?? null);
+
+            if ($email) {
+                $candidates['email'][$email] = true;
+            }
+            if ($gst) {
+                $candidates['gst'][$gst] = true;
+            }
+            if ($frn) {
+                $candidates['frn'][$frn] = true;
+            }
+            if ($membershipNo) {
+                $candidates['membership_no'][$membershipNo] = true;
+            }
+            if ($firm && $caName) {
+                $candidates['firm'][$firm] = true;
+            }
+        }
+
+        $index = [
+            'phone' => [],
+            'email' => [],
+            'gst' => [],
+            'frn' => [],
+            'membership_no' => [],
+            'identity' => [],
+        ];
+        $leads = [];
+        $columns = [
+            'ca_id', 'ca_name', 'firm_name', 'city_id', 'mobile_no',
+            'alternate_mobile_no', 'normalized_mobile', 'normalized_alternate_mobile',
+            'email_id', 'normalized_email', 'gst_no', 'frn', 'membership_no', 'status',
+        ];
+
+        $collect = function ($rows) use (&$leads): void {
+            foreach ($rows as $lead) {
+                $leads[(int) $lead->ca_id] = $lead;
+            }
+        };
+
+        foreach (array_chunk(array_keys($candidates['phone']), self::CHUNK_SIZE) as $values) {
+            $collect(CaMaster::query()
+                ->where(function ($query) use ($values) {
+                    $query->whereIn('normalized_mobile', $values)
+                        ->orWhereIn('normalized_alternate_mobile', $values)
+                        ->orWhereIn('mobile_no', $values)
+                        ->orWhereIn('alternate_mobile_no', $values);
+                })
+                ->with('city:city_id,city_name')
+                ->get($columns));
+        }
+
+        foreach ([
+            ['email', 'normalized_email'],
+            ['gst', 'gst_no'],
+            ['frn', 'frn'],
+            ['membership_no', 'membership_no'],
+        ] as [$candidateKey, $column]) {
+            foreach (array_chunk(array_keys($candidates[$candidateKey]), self::CHUNK_SIZE) as $values) {
+                if ($candidateKey === 'email') {
+                    $query = CaMaster::query()->where(function ($inner) use ($column, $values) {
+                        $inner->whereIn($column, $values)->orWhereIn('email_id', $values);
+                    });
+                } else {
+                    $query = CaMaster::query()->whereIn($column, $values);
+                }
+                $collect($query->with('city:city_id,city_name')->get($columns));
+            }
+        }
+
+        foreach (array_chunk(array_keys($candidates['firm']), self::CHUNK_SIZE) as $values) {
+            $placeholders = implode(',', array_fill(0, count($values), '?'));
+            $collect(CaMaster::query()
+                ->whereRaw('LOWER(TRIM(firm_name)) IN ('.$placeholders.')', $values)
+                ->with('city:city_id,city_name')
+                ->get($columns));
+        }
+
+        foreach ($leads as $lead) {
+            $summary = $this->leadSummary($lead);
+            foreach ([
+                $lead->normalized_mobile,
+                $lead->normalized_alternate_mobile,
+                $this->storeablePhone($lead->mobile_no),
+                $this->storeablePhone($lead->alternate_mobile_no),
+            ] as $phone) {
+                if ($phone) {
+                    $index['phone'][(string) $phone] ??= $summary;
+                }
+            }
+
+            $email = $this->normalizeEmail($lead->normalized_email ?: $lead->email_id);
+            $gst = $this->normalizeGst($lead->gst_no);
+            $frn = $this->normalizeOptionalCode($lead->frn);
+            $membershipNo = $this->normalizeOptionalCode($lead->membership_no);
+            $identityKey = $this->identityCompositeKey(
+                $this->normalizeNameKey($lead->firm_name),
+                $this->normalizeNameKey($lead->ca_name),
+                $this->normalizeNameKey($lead->city?->city_name),
+            );
+
+            if ($email) {
+                $index['email'][$email] ??= $summary;
+            }
+            if ($gst) {
+                $index['gst'][$gst] ??= $summary;
+            }
+            if ($frn) {
+                $index['frn'][$frn] ??= $summary;
+            }
+            if ($membershipNo) {
+                $index['membership_no'][$membershipNo] ??= $summary;
+            }
+            if ($identityKey) {
+                $index['identity'][$identityKey] ??= $summary;
+            }
+        }
+
+        return $index;
+    }
+
+    /**
+     * @param  array<string, mixed>  $identity
+     * @return array<string, mixed>|null
+     */
+    private function findPrefetchedDatabaseDuplicateReason(array $identity): ?array
+    {
+        $primaryKey = $this->primaryDuplicateKey($identity);
+        if ($primaryKey) {
+            $matched = $this->validationDuplicateIndex[$primaryKey['type']][$primaryKey['value']] ?? null;
+            if ($matched) {
+                return $this->duplicateMatch(
+                    'duplicate_'.$primaryKey['type'],
+                    'duplicate_'.$primaryKey['type'].': '.$this->duplicateTypeLabel($primaryKey['type']).' already exists in database',
+                    $primaryKey['type'],
+                    $primaryKey['value'],
+                    'database',
+                    $matched,
+                );
+            }
+        }
+
+        $mobile = (string) ($identity['mobile'] ?? '');
+        $alternateMobile = (string) ($identity['alternate_mobile'] ?? '');
+        if ($mobile !== '' && $alternateMobile !== '' && $mobile === $alternateMobile) {
+            return $this->duplicateMatch(
+                'duplicate_mobile_no',
+                'duplicate_mobile_no: primary and alternate mobile cannot be the same',
+                'mobile',
+                $mobile,
+                'database',
+            );
+        }
+
+        foreach ([['mobile', $mobile], ['alternate_mobile', $alternateMobile]] as [$field, $number]) {
+            $matched = $number !== '' ? ($this->validationDuplicateIndex['phone'][$number] ?? null) : null;
+            if ($matched) {
+                return $this->duplicateMatch(
+                    'duplicate_'.$field,
+                    'duplicate_'.$field.': '.$number.' already exists in database',
+                    $field,
+                    $number,
+                    'database',
+                    $matched,
+                );
+            }
+        }
+
+        foreach ([
+            ['email', $identity['email'] ?? null, 'email_id'],
+            ['gst', $identity['gst'] ?? null, 'gst_no'],
+        ] as [$type, $value, $codeType]) {
+            $matched = $value ? ($this->validationDuplicateIndex[$type][(string) $value] ?? null) : null;
+            if ($matched) {
+                return $this->duplicateMatch(
+                    'duplicate_'.$codeType,
+                    'duplicate_'.$codeType.': '.$type.' '.$value.' already exists in database',
+                    $type,
+                    (string) $value,
+                    'database',
+                    $matched,
+                );
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * @param  array<string, mixed>  $identity
      * @return array<string, mixed>|null
      */
     private function findDatabaseDuplicateReason(array $identity): ?array
     {
+        if ($this->validationDuplicateIndex !== null) {
+            return $this->findPrefetchedDatabaseDuplicateReason($identity);
+        }
+
         $mobile = (string) ($identity['mobile'] ?? '');
         $alternateMobile = (string) ($identity['alternate_mobile'] ?? '');
         $email = $identity['email'] ?? null;
@@ -1265,7 +1513,14 @@ class BulkCaMasterImportService
 
         $teamSizeId = null;
         if ($this->hasValue($data['team_size_id'] ?? null)) {
-            $teamSizeId = TeamSizeMaster::where('id', (int) $data['team_size_id'])->value('id');
+            $candidateTeamSizeId = (int) $data['team_size_id'];
+            $this->teamSizeIds ??= TeamSizeMaster::query()
+                ->pluck('id')
+                ->mapWithKeys(fn ($id) => [(int) $id => true])
+                ->all();
+            $teamSizeId = isset($this->teamSizeIds[$candidateTeamSizeId])
+                ? $candidateTeamSizeId
+                : null;
         }
 
         return [
@@ -1358,13 +1613,30 @@ class BulkCaMasterImportService
 
     private function logRow(int $bulkActionId, int $rowNumber, string $status, ?string $message, ?array $originalData = null): void
     {
-        BulkActionLog::create([
+        $now = now();
+        $this->pendingBulkActionLogs[] = [
             'bulk_action_id' => $bulkActionId,
             'row_number' => $rowNumber,
             'status' => $status,
             'error_message' => $message,
-            'original_data' => $originalData,
-        ]);
+            'original_data' => $originalData !== null
+                ? json_encode($originalData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+                : null,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ];
+    }
+
+    private function flushBulkActionLogs(): void
+    {
+        if ($this->pendingBulkActionLogs === []) {
+            return;
+        }
+
+        foreach (array_chunk($this->pendingBulkActionLogs, self::CHUNK_SIZE) as $logs) {
+            BulkActionLog::query()->insert($logs);
+        }
+        $this->pendingBulkActionLogs = [];
     }
 
     private function getSession(string $sessionId): array
@@ -1372,6 +1644,14 @@ class BulkCaMasterImportService
         $session = Cache::get($this->sessionKey($sessionId));
         if (! $session) {
             throw new RuntimeException('Import session expired. Please upload the file again.');
+        }
+
+        if (! $this->actorIsSuperAdmin()) {
+            $userId = Auth::id();
+            $ownerId = (int) ($session['uploaded_by'] ?? 0);
+            if ($userId && $ownerId > 0 && $ownerId !== (int) $userId) {
+                throw new RuntimeException('You do not have access to this import session.');
+            }
         }
 
         return $session;
@@ -1814,8 +2094,9 @@ class BulkCaMasterImportService
         $matchedLeadId = $result['matched_lead_id'] ?? ($result['matched_lead']['ca_id'] ?? null);
         $duplicateValue = (string) ($result['duplicate_value'] ?? '');
         $duplicateType = (string) ($result['duplicate_type'] ?? 'unknown');
+        $now = now();
 
-        ImportDuplicateLog::query()->create([
+        $this->pendingImportDuplicateLogs[] = [
             'bulk_action_id' => $bulkActionId,
             'uploaded_by' => $uploadedBy,
             'file_name' => $fileName,
@@ -1829,7 +2110,9 @@ class BulkCaMasterImportService
             'mobile_no' => $data['mobile_no'] ?? null,
             'email_id' => $data['email_id'] ?? null,
             'source' => $result['duplicate_source'] ?? 'file',
-        ]);
+            'created_at' => $now,
+            'updated_at' => $now,
+        ];
 
         if (! $matchedLeadId) {
             return;
@@ -1838,18 +2121,20 @@ class BulkCaMasterImportService
         $employeeId = $this->employeeDataScope->resolveEmployeeId(Auth::user());
         $isPhone = in_array($duplicateType, ['mobile', 'alternate_mobile'], true);
 
-        DuplicateAttemptLog::query()->create([
+        $this->pendingDuplicateAttemptLogs[] = [
             'employee_id' => $employeeId,
             'lead_id' => $matchedLeadId,
             'attempted_mobile' => $isPhone ? ($duplicateValue ?: 'n/a') : 'n/a',
             'attempted_email' => $duplicateType === 'email' ? $duplicateValue : null,
-            'attempted_at' => now(),
+            'attempted_at' => $now,
             'reason' => 'import_duplicate_'.$duplicateType,
             'ip_address' => Request::ip(),
-        ]);
+            'created_at' => $now,
+            'updated_at' => $now,
+        ];
 
         if ($isPhone && $duplicateValue !== '') {
-            DuplicateAttempt::query()->create([
+            $this->pendingDuplicateAttempts[] = [
                 'employee_id' => $employeeId,
                 'lead_id' => $matchedLeadId,
                 'duplicate_number' => $duplicateValue,
@@ -1859,7 +2144,10 @@ class BulkCaMasterImportService
                 'field_name' => $duplicateType === 'alternate_mobile' ? 'alternate_mobile_no' : 'mobile_no',
                 'ip' => Request::ip(),
                 'browser' => Request::userAgent() ? substr((string) Request::userAgent(), 0, 255) : null,
-            ]);
+                'number_changed' => false,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
         }
     }
 
@@ -1873,7 +2161,8 @@ class BulkCaMasterImportService
         ?string $fileName,
         ?int $uploadedBy,
     ): void {
-        ImportDuplicateLog::query()->create([
+        $now = now();
+        $this->pendingImportDuplicateLogs[] = [
             'bulk_action_id' => $bulkActionId,
             'uploaded_by' => $uploadedBy,
             'file_name' => $fileName,
@@ -1887,7 +2176,26 @@ class BulkCaMasterImportService
             'mobile_no' => $result['data']['mobile_no'] ?? null,
             'email_id' => $result['data']['email_id'] ?? null,
             'source' => $result['duplicate_source'] ?? 'file',
-        ]);
+            'created_at' => $now,
+            'updated_at' => $now,
+        ];
+    }
+
+    private function flushDuplicateDetectionLogs(): void
+    {
+        foreach ([
+            [ImportDuplicateLog::query(), $this->pendingImportDuplicateLogs],
+            [DuplicateAttemptLog::query(), $this->pendingDuplicateAttemptLogs],
+            [DuplicateAttempt::query(), $this->pendingDuplicateAttempts],
+        ] as [$query, $rows]) {
+            foreach (array_chunk($rows, self::CHUNK_SIZE) as $chunk) {
+                $query->insert($chunk);
+            }
+        }
+
+        $this->pendingImportDuplicateLogs = [];
+        $this->pendingDuplicateAttemptLogs = [];
+        $this->pendingDuplicateAttempts = [];
     }
 
     private function touchProgress(
@@ -1898,10 +2206,6 @@ class BulkCaMasterImportService
         int $failed,
         int $skipped,
     ): void {
-        if ($processed % 25 !== 0 && $processed !== (int) $bulkAction->total_records) {
-            return;
-        }
-
         $bulkAction->update([
             'processed_records' => $processed,
             'success_records' => $inserted,
@@ -1909,6 +2213,20 @@ class BulkCaMasterImportService
             'failed_records' => $failed,
             'skipped_records' => $skipped,
         ]);
+    }
+
+    private function importProgressMessage(BulkAction $bulkAction, int $processed, int $total): string
+    {
+        return match ($bulkAction->status) {
+            'Failed' => 'Import failed',
+            'Completed' => 'Import completed',
+            'Completed with errors' => 'Import completed with errors',
+            default => $processed <= 0
+                ? 'Preparing file...'
+                : ($processed >= $total
+                    ? 'Finalizing import...'
+                    : sprintf('Processing %d of %d rows...', $processed, $total)),
+        };
     }
 
     private function assertFileNotAlreadyImported(array $session): void

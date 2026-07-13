@@ -181,7 +181,9 @@ class DashboardService
             'assigned_leads' => $assignedLeads,
             'unassigned_leads' => $employeeId ? 0 : max(0, $totalLeads - $assignedLeads),
             'followups_due_today' => $followUpCounts['due_today'],
+            'pending_followups' => $followUpCounts['pending'],
             'overdue_followups' => $followUpCounts['overdue'],
+            'completed_followups' => $followUpCounts['completed'],
             'bulk_import_total' => $employeeId ? 0 : BulkAction::query()
                 ->where('action_type', 'ca_master_import')
                 ->count(),
@@ -277,22 +279,30 @@ class DashboardService
 
     private function followUpCounts(?int $employeeId, Carbon $from, Carbon $to): array
     {
-        $query = FollowUp::query()->whereIn('status', self::OPEN_FOLLOWUP_STATUSES);
-        $this->employeeDataScope->scopeFollowUpQuery($query, $employeeId);
-        $this->applyDateRange($query, 'scheduled_date', $from, $to);
+        $dueTodayQuery = FollowUp::query()
+            ->whereIn('status', ['Pending', 'Scheduled', 'Open'])
+            ->whereDate('scheduled_date', $from->toDateString());
+        $this->employeeDataScope->scopeFollowUpQuery($dueTodayQuery, $employeeId);
 
-        $row = $query
-            ->selectRaw('COUNT(*) as due_today')
-            ->first();
+        $pendingQuery = FollowUp::query()
+            ->whereIn('status', ['Pending', 'Scheduled', 'Open']);
+        $this->employeeDataScope->scopeFollowUpQuery($pendingQuery, $employeeId);
 
         $overdueQuery = FollowUp::query()
             ->whereIn('status', self::OPEN_FOLLOWUP_STATUSES)
-            ->where('scheduled_date', '<', $from);
+            ->where('scheduled_date', '<', $from->copy()->startOfDay());
         $this->employeeDataScope->scopeFollowUpQuery($overdueQuery, $employeeId);
 
+        $completedQuery = FollowUp::query()
+            ->whereIn('status', ['Completed', 'Closed']);
+        $this->employeeDataScope->scopeFollowUpQuery($completedQuery, $employeeId);
+        $this->applyDateRange($completedQuery, 'scheduled_date', $from, $to);
+
         return [
-            'due_today' => (int) ($row->due_today ?? 0),
+            'due_today' => (int) $dueTodayQuery->count(),
+            'pending' => (int) $pendingQuery->count(),
             'overdue' => (int) $overdueQuery->count(),
+            'completed' => (int) $completedQuery->count(),
         ];
     }
 

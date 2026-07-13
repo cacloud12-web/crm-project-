@@ -14,6 +14,8 @@ use InvalidArgumentException;
 
 class LeadResearchService
 {
+    public const INSUFFICIENT_LOOKUP_MESSAGE = 'Insufficient lead information for Google Lookup. Add a Firm Name, CA Name, or Mobile Number first.';
+
     public function __construct(
         private readonly LeadOwnershipService $leadOwnership,
         private readonly ActivityLogService $activityLogService,
@@ -29,15 +31,83 @@ class LeadResearchService
 
     public function buildQuery(CaMaster $lead): string
     {
-        $parts = array_filter([
-            trim((string) $lead->firm_name),
-            trim((string) $lead->ca_name),
-            trim((string) ($lead->city?->city_name ?? '')),
-            trim((string) ($lead->state?->state_name ?? '')),
-            'Chartered Accountant',
-        ], fn ($value) => $value !== '');
+        $lead->loadMissing(['city', 'state']);
 
-        return trim(implode(' ', $parts));
+        return $this->buildQueryFromFields([
+            'firm_name' => $lead->firm_name,
+            'ca_name' => $lead->ca_name,
+            'city' => $lead->city?->city_name,
+            'state' => $lead->state?->state_name,
+            'mobile_no' => $lead->mobile_no,
+            'alternate_mobile_no' => $lead->alternate_mobile_no,
+        ]);
+    }
+
+    public function hasSearchableLeadData(CaMaster $lead): bool
+    {
+        return $this->buildQuery($lead) !== '';
+    }
+
+    /**
+     * @param  array<string, mixed>  $fields
+     */
+    public function buildQueryFromFields(array $fields): string
+    {
+        $firm = $this->cleanSearchPart($fields['firm_name'] ?? null);
+        $ca = $this->cleanSearchPart($fields['ca_name'] ?? null);
+        $city = $this->cleanSearchPart($fields['city'] ?? null);
+        $state = $this->cleanSearchPart($fields['state'] ?? null);
+        $mobile = $this->normalizeSearchPhone($fields['mobile_no'] ?? null)
+            ?: $this->normalizeSearchPhone($fields['alternate_mobile_no'] ?? null);
+
+        if ($firm !== '' && $ca !== '') {
+            return trim(implode(' ', array_filter([$firm, $ca, $city, $state, 'Chartered Accountant'])));
+        }
+
+        if ($firm !== '' && ($city !== '' || $state !== '')) {
+            return trim(implode(' ', array_filter([$firm, $city, $state, 'Chartered Accountant'])));
+        }
+
+        if ($ca !== '' && ($city !== '' || $state !== '')) {
+            return trim(implode(' ', array_filter([$ca, $city, $state, 'Chartered Accountant'])));
+        }
+
+        if ($firm !== '') {
+            return trim($firm.' Chartered Accountant');
+        }
+
+        if ($ca !== '') {
+            return trim($ca.' Chartered Accountant');
+        }
+
+        if ($mobile !== '') {
+            return $mobile;
+        }
+
+        if ($city !== '' || $state !== '') {
+            return trim(implode(' ', array_filter([$city, $state])));
+        }
+
+        return '';
+    }
+
+    private function cleanSearchPart(mixed $value): string
+    {
+        $text = trim((string) ($value ?? ''));
+
+        return $text === '' || $text === '—' ? '' : $text;
+    }
+
+    private function normalizeSearchPhone(mixed $value): string
+    {
+        $text = $this->cleanSearchPart($value);
+        if ($text === '') {
+            return '';
+        }
+
+        $digits = preg_replace('/\D+/', '', $text) ?? '';
+
+        return strlen($digits) >= 10 ? $digits : '';
     }
 
     public function canRefreshGoogleData(?User $user): bool
@@ -79,7 +149,7 @@ class LeadResearchService
         ];
 
         if ($query === '') {
-            $payload['api_error'] = 'Firm Name and CA Name are required before running a Google lookup.';
+            $payload['api_error'] = self::INSUFFICIENT_LOOKUP_MESSAGE;
 
             return $payload;
         }

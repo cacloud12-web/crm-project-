@@ -552,13 +552,6 @@
     }
     if (SETTINGS_PAGES.indexOf(pageId) >= 0) initSettingsHubNav();
     if (pageId === 'leads' || pageId === 'leads-segments') initLeadsHub();
-    if (pageId === 'followups') {
-      if (window.CA_CRM && typeof CA_CRM.renderFollowupCalendarFromData === 'function') {
-        CA_CRM.renderFollowupCalendarFromData();
-      } else {
-        renderFollowupCalendar();
-      }
-    }
     if (pageId === 'activity') {
       if (window.CA_CRM && CA_CRM.initActivityLogsPage) CA_CRM.initActivityLogsPage();
       else renderActivityTimeline();

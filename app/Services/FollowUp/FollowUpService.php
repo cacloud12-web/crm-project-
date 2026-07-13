@@ -233,6 +233,16 @@ class FollowUpService
             $this->employeeDataScope->ensureCanAccessCaMaster($nextCaId);
         }
 
+        if (array_key_exists('employee_id', $data)) {
+            $nextEmployeeId = $data['employee_id'] !== null && $data['employee_id'] !== ''
+                ? (int) $data['employee_id']
+                : null;
+            $scopedEmployeeId = $this->employeeDataScope->scopedEmployeeId(auth()->user());
+            if ($scopedEmployeeId !== null && $nextEmployeeId !== null && $nextEmployeeId !== $scopedEmployeeId) {
+                abort(403, 'You cannot reassign this follow-up to another employee.');
+            }
+        }
+
         $followUp->update(array_merge([
             'ca_id' => $nextCaId,
             'employee_id' => $data['employee_id'] ?? $followUp->employee_id,

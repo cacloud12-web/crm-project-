@@ -268,7 +268,67 @@
   align-self: center;
 }
 
-.flatpickr-calendar.crm-fp-theme .flatpickr-time .flatpickr-am-pm {
+.flatpickr-calendar.crm-fp-theme .flatpickr-time .flatpickr-am-pm.crm-fp-ampm-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.crm-fp-ampm-segment {
+  display: inline-flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.crm-fp-ampm-btn {
+  appearance: none;
+  border: none;
+  background: #fff;
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  min-width: 2.5rem;
+  height: 34px;
+  padding: 0 0.55rem;
+  cursor: pointer;
+  line-height: 1;
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.crm-fp-ampm-btn + .crm-fp-ampm-btn {
+  border-left: 1px solid #e2e8f0;
+}
+
+.crm-fp-ampm-btn:hover:not(.is-active) {
+  background: #f8fafc;
+  color: #334155;
+}
+
+.crm-fp-ampm-btn:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px rgba(37, 183, 167, 0.45);
+  z-index: 1;
+}
+
+.crm-fp-ampm-btn.is-active {
+  background: #25b7a7;
+  color: #fff;
+}
+
+.flatpickr-calendar.crm-fp-theme .flatpickr-time .flatpickr-am-pm:not(.crm-fp-ampm-native) {
   color: #0f172a;
   font-weight: 700;
   background: #fff;

@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\CaMaster;
 use App\Models\User;
+use App\Services\Leads\LeadResearchService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
@@ -49,6 +50,63 @@ class LeadGooglePlacesTest extends TestCase
         $this->assertStringContainsString('AK Bhardwaj & Co', $query);
         $this->assertStringContainsString('Ajay Kumar Bhardwaj', $query);
         $this->assertStringContainsString('Chartered Accountant', $query);
+    }
+
+    public function test_google_lookup_builds_firm_only_query(): void
+    {
+        $lead = $this->sampleLead(['ca_name' => '']);
+
+        $query = app(LeadResearchService::class)->buildQuery($lead);
+
+        $this->assertSame('AK Bhardwaj & Co Chartered Accountant', $query);
+    }
+
+    public function test_google_lookup_builds_mobile_only_query(): void
+    {
+        $lead = $this->sampleLead([
+            'firm_name' => '',
+            'ca_name' => '',
+            'mobile_no' => '+91 98765 43210',
+        ]);
+
+        $query = app(LeadResearchService::class)->buildQuery($lead);
+
+        $this->assertSame('919876543210', $query);
+    }
+
+    public function test_google_lookup_builds_firm_city_query(): void
+    {
+        $this->seed(\Database\Seeders\IndiaStatesCitiesSeeder::class);
+        $lead = $this->sampleLead([
+            'ca_name' => '',
+            'city_id' => \App\Models\City::query()->where('city_name', 'Mumbai')->value('city_id'),
+            'state_id' => \App\Models\State::query()->where('state_name', 'Maharashtra')->value('state_id'),
+        ]);
+        $lead->load(['city', 'state']);
+
+        $query = app(LeadResearchService::class)->buildQuery($lead);
+
+        $this->assertStringContainsString('AK Bhardwaj & Co', $query);
+        $this->assertStringContainsString('Mumbai', $query);
+        $this->assertStringContainsString('Maharashtra', $query);
+        $this->assertStringContainsString('Chartered Accountant', $query);
+    }
+
+    public function test_google_lookup_rejects_leads_without_searchable_data(): void
+    {
+        $this->actingAsAdmin();
+        $lead = $this->sampleLead([
+            'firm_name' => '',
+            'ca_name' => '',
+            'mobile_no' => null,
+            'alternate_mobile_no' => null,
+        ]);
+
+        $response = $this->postJson('/ca-masters/'.$lead->ca_id.'/research');
+
+        $response->assertOk()
+            ->assertJsonPath('data.api_error', LeadResearchService::INSUFFICIENT_LOOKUP_MESSAGE)
+            ->assertJsonPath('data.query', '');
     }
 
     public function test_google_lookup_returns_cached_data_when_place_id_exists(): void

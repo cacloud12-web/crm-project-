@@ -2,9 +2,15 @@
 
 namespace Tests\Feature;
 
+use App\Models\CaMaster;
+use App\Models\DuplicateAttempt;
+use App\Models\DuplicateAttemptLog;
+use App\Models\ImportDuplicateLog;
 use App\Models\User;
+use App\Services\Bulk\BulkCaMasterImportService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class BulkCaMasterImportTest extends TestCase
@@ -361,5 +367,136 @@ class BulkCaMasterImportTest extends TestCase
             'mobile_no' => $mobile,
             'ca_name' => '',
         ]);
+    }
+
+    public function test_bulk_validation_uses_batched_duplicate_queries(): void
+    {
+        $this->actingAsAdmin();
+        $suffix = str_replace('.', '', (string) microtime(true));
+        $csv = "CA Name,Firm Name\n";
+        for ($i = 0; $i < 200; $i++) {
+            $csv .= '"Batch CA '.$suffix.' '.$i.'","Batch Firm '.$suffix.' '.$i.'"'."\n";
+        }
+
+        $parse = $this->post('/ca-masters/bulk-import/parse', [
+            'file' => UploadedFile::fake()->createWithContent('batched-validation.csv', $csv),
+        ], ['Accept' => 'application/json'])->assertOk();
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $validate = $this->postJson('/ca-masters/bulk-import/validate', [
+            'session_id' => $parse->json('data.session_id'),
+            'mapping' => [
+                'ca_name' => 'CA Name',
+                'firm_name' => 'Firm Name',
+            ],
+        ]);
+        $queryCount = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        $validate->assertOk()
+            ->assertJsonPath('data.valid_rows', 200)
+            ->assertJsonPath('data.invalid_rows', 0);
+        $this->assertLessThan(
+            40,
+            $queryCount,
+            'Validation query count should stay bounded instead of growing per row.',
+        );
+    }
+
+    public function test_batched_duplicate_detection_preserves_audit_logs(): void
+    {
+        $this->actingAsAdmin();
+        $existing = CaMaster::query()
+            ->whereNotNull('normalized_mobile')
+            ->where('normalized_mobile', '!=', '')
+            ->first();
+        if (! $existing) {
+            $this->markTestSkipped('No lead with a normalized mobile fixture');
+        }
+
+        $before = [
+            ImportDuplicateLog::query()->count(),
+            DuplicateAttemptLog::query()->count(),
+            DuplicateAttempt::query()->count(),
+        ];
+        $csv = "Firm Name,Mobile\n";
+        $csv .= '"Duplicate Audit '.microtime(true).'","'.$existing->normalized_mobile.'"'."\n";
+        $parse = $this->post('/ca-masters/bulk-import/parse', [
+            'file' => UploadedFile::fake()->createWithContent('duplicate-audit.csv', $csv),
+        ], ['Accept' => 'application/json'])->assertOk();
+
+        $this->postJson('/ca-masters/bulk-import/validate', [
+            'session_id' => $parse->json('data.session_id'),
+            'mapping' => [
+                'firm_name' => 'Firm Name',
+                'mobile_no' => 'Mobile',
+            ],
+        ])->assertOk()
+            ->assertJsonPath('data.duplicate_rows', 1);
+
+        $this->assertSame($before[0] + 1, ImportDuplicateLog::query()->count());
+        $this->assertSame($before[1] + 1, DuplicateAttemptLog::query()->count());
+        $this->assertSame($before[2] + 1, DuplicateAttempt::query()->count());
+    }
+
+    public function test_large_import_queues_for_background_processing(): void
+    {
+        $this->actingAsAdmin();
+        $suffix = str_replace('.', '', (string) microtime(true));
+        $csv = "CA Name,Firm Name\n";
+        for ($i = 0; $i < 150; $i++) {
+            $csv .= '"Queue CA '.$suffix.' '.$i.'","Queue Firm '.$suffix.' '.$i.'"'."\n";
+        }
+
+        $parse = $this->post('/ca-masters/bulk-import/parse', [
+            'file' => UploadedFile::fake()->createWithContent('queue-import.csv', $csv),
+        ], ['Accept' => 'application/json'])->assertOk();
+
+        $sessionId = $parse->json('data.session_id');
+        $mapping = [
+            'ca_name' => 'CA Name',
+            'firm_name' => 'Firm Name',
+        ];
+
+        $this->postJson('/ca-masters/bulk-import/validate', [
+            'session_id' => $sessionId,
+            'mapping' => $mapping,
+        ])->assertOk()
+            ->assertJsonPath('data.valid_rows', 150);
+
+        $started = microtime(true);
+        $import = $this->postJson('/ca-masters/bulk-import', [
+            'session_id' => $sessionId,
+            'mapping' => $mapping,
+        ]);
+        $elapsed = microtime(true) - $started;
+
+        $import->assertOk()
+            ->assertJsonPath('data.uses_background', true)
+            ->assertJsonPath('data.status', 'Processing')
+            ->assertJsonPath('data.inserted_rows', 0)
+            ->assertJsonPath('data.progress_percent', 0);
+
+        $this->assertLessThan(
+            2.0,
+            $elapsed,
+            'Import start should return immediately without blocking on row processing.',
+        );
+
+        $bulkActionId = $import->json('data.bulk_action_id');
+        app(BulkCaMasterImportService::class)->processQueuedImport($bulkActionId);
+
+        $this->getJson('/ca-masters/bulk-import/history/'.$bulkActionId.'/status')
+            ->assertOk()
+            ->assertJsonStructure([
+                'data' => [
+                    'progress_percent',
+                    'progress_message',
+                    'processed_rows',
+                    'total_rows',
+                    'completed',
+                ],
+            ]);
     }
 }

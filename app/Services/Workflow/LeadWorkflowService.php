@@ -60,6 +60,9 @@ class LeadWorkflowService
         }
 
         $this->employeeDataScope->ensureCanAccessCaMaster($caId);
+        if ($followUpId) {
+            $this->employeeDataScope->ensureCanAccessFollowUp($followUpId);
+        }
 
         $employeeId = $this->resolveEmployeeId($data, $actor, $caId, $current);
         $status = (string) ($data['call_status'] ?? $data['outcome'] ?? '');
@@ -86,10 +89,12 @@ class LeadWorkflowService
             'created_by_user_id' => $actor?->id,
         ]);
 
+        $completedFollowUp = null;
         $nextFollowUp = null;
         if ($current) {
             $this->automationService->completeFollowUp($current, $status, $note);
-            $nextFollowUp = $this->automationService->createSequenceFollowUp($status, $current->fresh(), $note);
+            $completedFollowUp = $current->fresh(['caMaster', 'employee']);
+            $nextFollowUp = $this->automationService->createSequenceFollowUp($status, $completedFollowUp, $note);
         }
 
         $this->historyService->record(
@@ -153,6 +158,7 @@ class LeadWorkflowService
 
         return [
             'call_log' => $callLog->fresh(['employee']),
+            'completed_follow_up' => $completedFollowUp,
             'next_follow_up' => $nextFollowUp,
             'outcome' => $status,
         ];

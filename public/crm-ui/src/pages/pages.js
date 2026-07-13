@@ -758,22 +758,6 @@ window.CAPages = (function () {
       }).join('');
   }
 
-  function caMasterStageFilterBar() {
-    return '<div class="cam-filter-bar card cam-stage-filter-bar hidden" id="cam-stage-filter-bar" aria-label="Firm status filters">' +
-      '<div class="cam-filter-row">' +
-        '<select id="cam-filter-pipeline-stage" class="input-field cam-filter-select cam-filter-pipeline-stage" aria-label="Status">' +
-          '<option value="">All Leads</option>' +
-          '<option value="New Lead">New Lead</option>' +
-          '<option value="Contacted">Contacted</option>' +
-          '<option value="Interested">Interested</option>' +
-          '<option value="Converted">Converted</option>' +
-        '</select>' +
-        '<button type="button" class="crm-toolbar-icon-btn cam-filter-reset-btn" id="cam-filter-reset" title="Reset Filters" data-crm-tip="Reset Filters" aria-label="Reset Filters">' +
-          '<i data-lucide="rotate-ccw" class="h-4 w-4" aria-hidden="true"></i>' +
-        '</button>' +
-      '</div></div>';
-  }
-
   function caMasterFirmsTable(tbodyId, tableId, paginationId) {
     tbodyId = tbodyId || 'ca-master-data-table';
     tableId = tableId || 'ca-master-table';
@@ -794,7 +778,7 @@ window.CAPages = (function () {
       { label: 'Employee', colCls: 'crm-col-person', thCls: 'crm-th-person', filterKey: 'executive', filterPlaceholder: 'search' },
       { label: 'Created By', colCls: 'crm-col-person', thCls: 'crm-th-person' },
       { label: 'Updated', colCls: 'crm-col-date', thCls: 'crm-th-date' },
-      { label: 'Google Lookup', colCls: 'crm-col-research', thCls: 'crm-th-research' },
+      { label: 'Google', colCls: 'crm-col-research cam-col-google', thCls: 'crm-th-research crm-th-google cam-col-google' },
       { label: 'Actions', colCls: 'crm-col-actions col-actions', thCls: 'crm-th-actions col-actions', sticky: 'right' },
     ], {
       tbodyId: tbodyId,
@@ -885,7 +869,6 @@ window.CAPages = (function () {
         '</div>' +
         '<div class="ca-tab-panel' + (primaryTab === 'all' ? ' active' : '') + '" data-panel="all" data-tab-group="cam-view">' +
           '<div class="cam-firms-stack">' +
-            caMasterStageFilterBar() +
             caMasterFirmsTable('ca-master-data-table') +
           '</div>' +
         '</div>' +
@@ -947,6 +930,11 @@ window.CAPages = (function () {
           '<div class="overflow-x-auto scrollbar-thin"><table class="ca-table w-full"><thead><tr><th>CRM Field</th><th>Required</th><th>Excel Column</th></tr></thead><tbody id="bulk-mapping-table"></tbody></table></div>' +
         '</div>' +
         '<div id="bulk-wizard-panel-3" class="bulk-wizard-panel hidden">' +
+          '<div id="bulk-validation-progress" class="hidden mb-4" role="status" aria-live="polite">' +
+            '<div class="flex items-center justify-between mb-1"><span class="text-caption text-slate-500">Validation progress</span><span id="bulk-validation-progress-label" class="text-caption text-slate-600">Preparing…</span></div>' +
+            '<div class="ca-progress"><div id="bulk-validation-progress-bar" class="ca-progress-bar" style="width:0%"></div></div>' +
+            '<div id="bulk-validation-progress-steps" class="text-caption text-slate-500 mt-2">Upload received</div>' +
+          '</div>' +
           '<div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="bulk-preview-summary">' +
             '<div class="card p-4"><p class="text-caption text-slate-500">Total Rows</p><p id="bulk-total-count" class="text-2xl font-semibold text-slate-900">0</p></div>' +
             '<div class="card p-4"><p class="text-caption text-slate-500">Valid Rows</p><p id="bulk-valid-count" class="text-2xl font-semibold text-emerald-600">0</p></div>' +
@@ -1155,7 +1143,7 @@ window.CAPages = (function () {
             '<button type="button" class="btn-primary" id="bulk-status-confirm-btn"><i data-lucide="check" class="h-4 w-4"></i> Confirm Update</button>' +
             '</div>' +
           '</div></div></div>' +
-      '<div id="modal-bulk-import-detail" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="bulk-import-detail-title">' +
+      '<div id="modal-bulk-import-detail" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="bulk-import-detail-title" data-close-on-backdrop="true">' +
         '<div class="ca-modal-panel ca-modal-panel-lg">' +
           '<div class="ca-modal-header">' +
             '<h3 id="bulk-import-detail-title" class="ca-modal-title"><span class="ca-modal-icon"><i data-lucide="file-text" class="h-5 w-5"></i></span> Import Details</h3>' +
