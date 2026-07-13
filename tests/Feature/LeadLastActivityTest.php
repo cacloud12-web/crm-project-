@@ -94,7 +94,7 @@ class LeadLastActivityTest extends TestCase
             'ca_name' => 'Timeline CA '.$ts,
             'firm_name' => 'Timeline Firm '.$ts,
             'mobile_no' => '9'.substr(str_replace('.', '', $ts), -9),
-            'state_id' => CaMaster::query()->value('state_id'),
+            'state_id' => CaMaster::query()->whereNotNull('state_id')->value('state_id'),
             'status' => 'New',
         ]);
         $employee = Employee::query()->where('status', 'Active')->firstOrFail();

@@ -117,6 +117,35 @@ class ReportsFeatureTest extends TestCase
         );
     }
 
+    public function test_admin_can_export_report_pdf(): void
+    {
+        $this->actingAs($this->admin());
+
+        $response = $this->withHeaders([
+            'Accept' => 'application/pdf, application/json',
+            'X-Requested-With' => 'XMLHttpRequest',
+        ])->get('/reports/lead_conversion/export?format=pdf');
+
+        $response->assertOk();
+        $contentType = (string) $response->headers->get('content-type');
+        $this->assertStringContainsString('application/pdf', $contentType);
+        $this->assertNotSame('', trim((string) $response->getContent()));
+    }
+
+    public function test_admin_can_export_report_summary_pdf(): void
+    {
+        $this->actingAs($this->admin());
+
+        $response = $this->withHeaders([
+            'Accept' => 'application/pdf, application/json',
+            'X-Requested-With' => 'XMLHttpRequest',
+        ])->get('/reports/export/summary?format=pdf&from='.now()->subDays(30)->toDateString().'&to='.now()->toDateString());
+
+        $response->assertOk();
+        $contentType = (string) $response->headers->get('content-type');
+        $this->assertStringContainsString('application/pdf', $contentType);
+    }
+
     public function test_employee_cannot_access_reports(): void
     {
         $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();

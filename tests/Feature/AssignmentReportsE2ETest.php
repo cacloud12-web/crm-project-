@@ -332,6 +332,13 @@ class AssignmentReportsE2ETest extends TestCase
                 'X-Requested-With' => 'XMLHttpRequest',
             ]);
             $export->assertOk();
+
+            $pdf = $this->get('/reports/'.$slug.'/export?format=pdf&'.http_build_query($filters), [
+                'Accept' => 'application/pdf, application/json',
+                'X-Requested-With' => 'XMLHttpRequest',
+            ]);
+            $pdf->assertOk();
+            $this->assertStringContainsString('application/pdf', (string) $pdf->headers->get('content-type'));
         }
     }
 
@@ -386,6 +393,7 @@ class AssignmentReportsE2ETest extends TestCase
             ->count();
 
         $this->assertSame($dbTotal, (int) $metrics['total_leads']);
+        $this->assertGreaterThanOrEqual(1, (int) ($metrics['new_status_leads'] ?? 0));
         $this->assertGreaterThanOrEqual(1, (int) ($metrics['assigned_leads'] ?? 0));
     }
 

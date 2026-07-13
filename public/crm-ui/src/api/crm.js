@@ -4337,6 +4337,7 @@ window.CA_CRM = (function () {
         ? conversion.conversion_rate_pct + '%'
         : (totalLeads ? Math.round((assignedLeads / totalLeads) * 100) + '%' : '0%'),
       hot_leads: metrics ? metrics.hot_leads : 0,
+      new_status_leads: metrics ? metrics.new_status_leads : 0,
       pipeline: metrics ? metrics.pipeline_leads : 0,
       lost_leads: metrics ? metrics.lost_leads : 0,
       warm_leads: metrics ? metrics.warm_leads : 0,
@@ -5169,6 +5170,7 @@ window.CA_CRM = (function () {
       title: 'Leads',
       cards: [
         { icon: 'users', label: 'Total Leads', key: 'total_leads', nav: 'ca-master', leadFilter: 'all', desc: 'All firms in master data' },
+        { icon: 'sparkles', label: 'New Leads', key: 'new_status_leads', nav: 'ca-master', leadFilter: 'new', desc: 'Leads with New status' },
         { icon: 'flame', label: 'Hot Leads', key: 'hot_leads', nav: 'ca-master', leadFilter: 'hot', desc: 'High-intent prospects' },
         { icon: 'thermometer', label: 'Warm Leads', key: 'warm_leads', nav: 'ca-master', leadFilter: 'pipeline', desc: 'In active pipeline' },
         { icon: 'snowflake', label: 'Cold Leads', key: 'cold_leads', nav: 'ca-master', leadFilter: 'cold', desc: 'Low engagement leads' },

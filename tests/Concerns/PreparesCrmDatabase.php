@@ -2,6 +2,7 @@
 
 namespace Tests\Concerns;
 
+use App\Models\CaMaster;
 use App\Models\Employee;
 use App\Models\User;
 use App\Services\Cache\CrmCacheService;
@@ -9,8 +10,10 @@ use App\Services\Rbac\RbacMatrixService;
 use App\Services\Rbac\RbacService;
 use Database\Seeders\CrmUserSeeder;
 use Database\Seeders\DatabaseSeeder;
+use Database\Seeders\ManagerDemoSeeder;
 use Database\Seeders\RbacPermissionSeeder;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Schema;
 
 trait PreparesCrmDatabase
 {
@@ -19,7 +22,7 @@ trait PreparesCrmDatabase
     protected function prepareCrmDatabaseForTesting(): void
     {
         if (! static::$crmDatabasePrepared) {
-            if (! \Illuminate\Support\Facades\Schema::hasTable('migrations')) {
+            if (! Schema::hasTable('migrations')) {
                 Artisan::call('migrate', ['--force' => true]);
             } else {
                 Artisan::call('migrate', ['--force' => true]);
@@ -27,19 +30,27 @@ trait PreparesCrmDatabase
             $this->seed(DatabaseSeeder::class);
             $this->ensureRbacPermissions();
             static::$crmDatabasePrepared = true;
-
-            return;
-        }
-
-        if (! User::query()->where('email', 'admin@ca.local')->exists()) {
-            if (! \Illuminate\Support\Facades\Schema::hasTable('users')) {
+        } elseif (! User::query()->where('email', 'admin@ca.local')->exists()) {
+            if (! Schema::hasTable('users')) {
                 Artisan::call('migrate', ['--force' => true]);
             }
             $this->seed(DatabaseSeeder::class);
             $this->ensureRbacPermissions();
         }
 
+        $this->ensureMinimalTestFixtures();
+    }
+
+    /**
+     * Restore minimal leads/employees when production cleanup removed transactional rows.
+     */
+    protected function ensureMinimalTestFixtures(): void
+    {
         $this->ensureTestUserEmployees();
+
+        if (Schema::hasTable('ca_masters') && CaMaster::query()->count() === 0) {
+            $this->seed(ManagerDemoSeeder::class);
+        }
     }
 
     /**

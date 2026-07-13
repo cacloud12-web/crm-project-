@@ -170,6 +170,7 @@ class DashboardService
             'hot_leads' => (int) ($leadCounts['hot'] ?? 0),
             'warm_leads' => (int) ($leadCounts['warm'] ?? 0),
             'cold_leads' => (int) ($leadCounts['cold'] ?? 0),
+            'new_status_leads' => (int) ($leadCounts['status_new'] ?? 0),
             'pipeline_leads' => (int) ($leadCounts['pipeline'] ?? 0),
             'lost_leads' => (int) ($leadCounts['lost'] ?? 0),
             'calls_total' => $this->callsTotal($employeeId, $from, $to),
@@ -245,6 +246,7 @@ class DashboardService
             ->selectRaw(SqlAggregate::countFilter('*', "status = 'Hot'").' as hot')
             ->selectRaw(SqlAggregate::countFilter('*', "status = 'Warm'").' as warm')
             ->selectRaw(SqlAggregate::countFilter('*', "status = 'Cold'").' as cold')
+            ->selectRaw(SqlAggregate::countFilter('*', "status = 'New'").' as status_new')
             ->selectRaw(SqlAggregate::countFilter('*', 'status IN ('.$this->quotedList(self::PIPELINE_STATUSES).')').' as pipeline')
             ->selectRaw(SqlAggregate::countFilter('*', "status IN ('Lost', 'Inactive')").' as lost')
             ->selectRaw(SqlAggregate::countFilter('*', 'is_newly_established = true').' as new_established')
@@ -255,6 +257,7 @@ class DashboardService
             'hot' => (int) ($row->hot ?? 0),
             'warm' => (int) ($row->warm ?? 0),
             'cold' => (int) ($row->cold ?? 0),
+            'status_new' => (int) ($row->status_new ?? 0),
             'pipeline' => (int) ($row->pipeline ?? 0),
             'lost' => (int) ($row->lost ?? 0),
             'new_established' => (int) ($row->new_established ?? 0),
