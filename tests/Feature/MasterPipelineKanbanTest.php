@@ -120,4 +120,40 @@ class MasterPipelineKanbanTest extends TestCase
         $this->assertArrayHasKey('Won', $stageCounts);
         $this->assertArrayNotHasKey('Converted', $stageCounts);
     }
+
+    public function test_listing_filters_by_master_pipeline_stage(): void
+    {
+        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $this->actingAs($admin);
+
+        $newLead = $this->createLead('New');
+        $contacted = $this->createLead('Contacted');
+        $interested = $this->createLead('Interested');
+        $converted = $this->createLead('Converted');
+
+        $extractIds = function ($response) {
+            $payload = $response->json('data');
+            $items = is_array($payload) && array_key_exists('items', $payload)
+                ? ($payload['items'] ?? [])
+                : ($payload ?? []);
+
+            return collect($items)->pluck('ca_id')->map(fn ($id) => (int) $id);
+        };
+
+        $newIds = $extractIds($this->getJson('/ca-masters?master_pipeline_stage=New+Lead&per_page=100')->assertOk());
+        $this->assertTrue($newIds->contains((int) $newLead->ca_id));
+        $this->assertFalse($newIds->contains((int) $contacted->ca_id));
+
+        $contactedIds = $extractIds($this->getJson('/ca-masters?master_pipeline_stage=Contacted&per_page=100')->assertOk());
+        $this->assertTrue($contactedIds->contains((int) $contacted->ca_id));
+        $this->assertFalse($contactedIds->contains((int) $newLead->ca_id));
+
+        $interestedIds = $extractIds($this->getJson('/ca-masters?master_pipeline_stage=Interested&per_page=100')->assertOk());
+        $this->assertTrue($interestedIds->contains((int) $interested->ca_id));
+        $this->assertFalse($interestedIds->contains((int) $newLead->ca_id));
+
+        $convertedIds = $extractIds($this->getJson('/ca-masters?master_pipeline_stage=Converted&per_page=100')->assertOk());
+        $this->assertTrue($convertedIds->contains((int) $converted->ca_id));
+        $this->assertFalse($convertedIds->contains((int) $newLead->ca_id));
+    }
 }

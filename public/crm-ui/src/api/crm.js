@@ -567,10 +567,10 @@ window.CA_CRM = (function () {
 
   function getMasterPipelineColumns() {
     return [
-      { name: 'New Lead', key: 'New Lead', icon: '🆕', theme: 'new-lead' },
-      { name: 'Contacted', key: 'Contacted', icon: '📞', theme: 'contacted' },
-      { name: 'Interested', key: 'Interested', icon: '🤝', theme: 'interested' },
-      { name: 'Converted', key: 'Converted', icon: '🎉', theme: 'converted' },
+      { name: 'New Lead', key: 'New Lead', icon: 'sparkles', theme: 'new-lead' },
+      { name: 'Contacted', key: 'Contacted', icon: 'phone-call', theme: 'contacted' },
+      { name: 'Interested', key: 'Interested', icon: 'handshake', theme: 'interested' },
+      { name: 'Converted', key: 'Converted', icon: 'circle-check', theme: 'converted' },
     ];
   }
 
@@ -7492,8 +7492,66 @@ window.CA_CRM = (function () {
       panel.classList.toggle('active', panel.dataset.panel === viewId);
     });
     renderCamKpis();
+    syncCamStageFilterBarVisibility();
+    if (viewId === 'all') syncCamStageFilterFromState();
     if (viewId === 'pipeline') loadKanbanLeads();
     else renderCaMasterTable();
+  }
+
+  function readCaMasterStageFilter() {
+    var el = document.getElementById('cam-filter-pipeline-stage');
+    return el ? String(el.value || '').trim() : '';
+  }
+
+  function syncCamStageFilterBarVisibility() {
+    var bar = document.getElementById('cam-stage-filter-bar');
+    var tableCard = document.querySelector('#cam-hub .cam-table-card.leads-table-card');
+    if (!bar) return;
+    var show = isCamAllFirmsTabActive();
+    var primary = document.getElementById('cam-primary-views');
+    if (primary && primary.classList.contains('hidden')) show = false;
+    bar.classList.toggle('hidden', !show);
+    if (tableCard) tableCard.classList.toggle('cam-table-card--filter-attached', show);
+    var stage = readCaMasterStageFilter();
+    bar.classList.toggle('cam-filter-bar--stage-active', !!stage);
+  }
+
+  function syncCamStageFilterFromState() {
+    if (!window.CA_LISTING_SEARCH) return;
+    var el = document.getElementById('cam-filter-pipeline-stage');
+    if (!el) return;
+    var filters = CA_LISTING_SEARCH.getState('ca_masters').filters || {};
+    el.value = filters.master_pipeline_stage || '';
+    syncCamStageFilterBarVisibility();
+  }
+
+  function buildCaMasterListingFilters(extraFilters) {
+    var filters = Object.assign({}, readCaMasterColumnFilters(), extraFilters || {});
+    var stage = readCaMasterStageFilter();
+    if (stage) {
+      filters.master_pipeline_stage = stage;
+    } else {
+      delete filters.master_pipeline_stage;
+    }
+    var listing = window.CA_LISTING_SEARCH ? (CA_LISTING_SEARCH.getState('ca_masters').filters || {}) : {};
+    if (listing.segment && !Object.prototype.hasOwnProperty.call(extraFilters || {}, 'segment')) {
+      filters.segment = listing.segment;
+    }
+    return filters;
+  }
+
+  function resetCaMasterTableFilters() {
+    var stageEl = document.getElementById('cam-filter-pipeline-stage');
+    if (stageEl) stageEl.value = '';
+    document.querySelectorAll('.crm-col-filter-input[data-col-filter-group="ca_masters"]').forEach(function (input) {
+      input.value = '';
+    });
+    window._leadSegmentFilter = 'all';
+    if (window.CA_LISTING_SEARCH) {
+      CA_LISTING_SEARCH.setState('ca_masters', { page: 1, search: '', filters: {} });
+    }
+    syncCamStageFilterBarVisibility();
+    renderCaMasterTable();
   }
 
   function applyCamSegment(segmentId) {
@@ -7549,18 +7607,12 @@ window.CA_CRM = (function () {
     var items = [
       { kind: 'view', id: 'pipeline', label: 'Master Pipeline', icon: 'git-branch' },
       { kind: 'view', id: 'all', label: 'All Firms', icon: 'list' },
-      { kind: 'segment', id: 'new', label: 'New', icon: 'sparkles' },
     ];
     var chipsHtml = items.map(function (item) {
-      var isActive = item.kind === 'view'
-        ? activeView === item.id
-        : activeSegment === item.id;
-      var attrs = item.kind === 'view'
-        ? 'data-cam-view="' + item.id + '"'
-        : 'data-cam-segment="' + item.id + '"';
-      return '<button type="button" class="leads-kpi-chip cam-control-chip' + (isActive ? ' active' : '') + '" ' + attrs +
-        ' title="' + item.label + '" aria-label="' + item.label + '">' +
-        '<i data-lucide="' + item.icon + '" class="h-4 w-4"></i>' +
+      var isActive = activeView === item.id;
+      return '<button type="button" role="tab" class="leads-kpi-chip cam-control-chip' + (isActive ? ' active' : '') + '" data-cam-view="' + item.id + '"' +
+        ' aria-label="' + item.label + '" aria-selected="' + (isActive ? 'true' : 'false') + '">' +
+        '<i data-lucide="' + item.icon + '" class="h-4 w-4" aria-hidden="true"></i>' +
         '<span class="leads-kpi-label">' + item.label + '</span></button>';
     }).join('');
     var addFirmBtn = crmCanAction('ca_master', 'create')
@@ -7586,17 +7638,12 @@ window.CA_CRM = (function () {
         var viewBtn = e.target.closest('[data-cam-view]');
         if (viewBtn) {
           setCamView(viewBtn.getAttribute('data-cam-view'));
-          return;
         }
-        var segmentBtn = e.target.closest('[data-cam-segment]');
-        if (!segmentBtn) return;
-        var segmentId = segmentBtn.getAttribute('data-cam-segment');
-        applyCamSegment(segmentId);
-        toast('Showing ' + segmentBtn.querySelector('.leads-kpi-label').textContent, 'info');
       });
     }
     bindModalTriggers(el);
     applyMasterDataRbac();
+    syncCamStageFilterBarVisibility();
     icons();
   }
 
@@ -11251,7 +11298,17 @@ window.CA_CRM = (function () {
 
     if (key === 'new') {
       setCamView('all');
-      applyCamSegment('new');
+      window._leadSegmentFilter = 'all';
+      var stageEl = document.getElementById('cam-filter-pipeline-stage');
+      if (stageEl) stageEl.value = '';
+      if (window.CA_LISTING_SEARCH) {
+        CA_LISTING_SEARCH.setState('ca_masters', {
+          page: 1,
+          filters: Object.assign({}, readCaMasterColumnFilters(), { segment: 'new' }),
+        });
+      }
+      syncCamStageFilterBarVisibility();
+      renderCaMasterTable();
       setCaMasterSummaryActive(key);
       toast('Showing New Firms', 'info');
       return;
@@ -11264,6 +11321,8 @@ window.CA_CRM = (function () {
     document.querySelectorAll('.crm-col-filter-input[data-col-filter-group="ca_masters"]').forEach(function (input) {
       input.value = '';
     });
+    var stageEl = document.getElementById('cam-filter-pipeline-stage');
+    if (stageEl) stageEl.value = '';
     window._leadSegmentFilter = 'all';
 
     var filters = {};
@@ -11387,11 +11446,7 @@ window.CA_CRM = (function () {
   }
 
   function applyCaMasterListingFilters(extraFilters) {
-    var filters = Object.assign({}, readCaMasterColumnFilters(), extraFilters || {});
-    var segment = getLeadFilter();
-    if (segment && segment !== 'all' && !filters.segment) {
-      filters.segment = segment;
-    }
+    var filters = buildCaMasterListingFilters(extraFilters);
     if (window.CA_LISTING_SEARCH) {
       CA_LISTING_SEARCH.setState('ca_masters', {
         page: 1,
@@ -11399,6 +11454,7 @@ window.CA_CRM = (function () {
         filters: filters,
       });
     }
+    syncCamStageFilterBarVisibility();
     if (isCamPipelineTabActive()) loadKanbanLeads();
     else renderCaMasterTable();
   }
@@ -11409,22 +11465,43 @@ window.CA_CRM = (function () {
     if (page._camInit) return;
     page._camInit = true;
 
+    document.getElementById('cam-filter-pipeline-stage')?.addEventListener('change', function () {
+      var filters = buildCaMasterListingFilters();
+      if (this.value) {
+        delete filters.segment;
+        window._leadSegmentFilter = 'all';
+      }
+      if (window.CA_LISTING_SEARCH) {
+        CA_LISTING_SEARCH.setState('ca_masters', { page: 1, filters: filters });
+      }
+      syncCamStageFilterBarVisibility();
+      renderCaMasterTable();
+    });
+
+    document.getElementById('cam-filter-reset')?.addEventListener('click', function () {
+      resetCaMasterTableFilters();
+    });
+
+    document.getElementById('cam-filter-pipeline-stage')?.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        this.blur();
+      }
+    });
+
     var colFilterTimer = null;
     page.addEventListener('input', function (e) {
       var input = e.target.closest('.crm-col-filter-input[data-col-filter-group="ca_masters"]');
       if (!input || input.tagName === 'SELECT') return;
       window.clearTimeout(colFilterTimer);
       colFilterTimer = window.setTimeout(function () {
-        var segment = getLeadFilter();
-        applyCaMasterListingFilters(segment && segment !== 'all' ? { segment: segment } : {});
+        applyCaMasterListingFilters();
       }, 320);
     });
 
     page.addEventListener('change', function (e) {
       var select = e.target.closest('select.crm-col-filter-input[data-col-filter-group="ca_masters"]');
       if (!select) return;
-      var segment = getLeadFilter();
-      applyCaMasterListingFilters(segment && segment !== 'all' ? { segment: segment } : {});
+      applyCaMasterListingFilters();
     });
 
     page.addEventListener('click', function (e) {
@@ -11442,6 +11519,7 @@ window.CA_CRM = (function () {
     bindCrmActionsDismiss();
     initLeadTeamMembersDrawer();
     initLeadActivityTimelineDrawer();
+    syncCamStageFilterFromState();
   }
 
   function renderCaMasterTable(pageLeads, targetTbodyId) {
@@ -11815,19 +11893,21 @@ window.CA_CRM = (function () {
         : items.length;
       var countLabel = query ? (visibleCount + ' / ' + totalInStage) : String(totalInStage);
       var themeClass = col.theme ? (' kanban-column--' + col.theme) : '';
-      var titlePrefix = col.icon ? (col.icon + ' ') : '';
       var searchPlaceholder = masterHub ? 'Search leads...' : 'Search in this stage…';
       var searchMetaHtml = masterHub ? '' : (
         '<p class="kanban-stage-search__meta' + (query.trim() ? '' : ' hidden') + '" data-kanban-filter-meta">' +
           (query.trim() ? (visibleCount + ' of ' + items.length + ' shown') : '') +
         '</p>'
       );
+      var titleIconHtml = masterHub && col.icon
+        ? '<i data-lucide="' + col.icon + '" class="kanban-column-icon kanban-column-icon--' + col.theme + '" aria-hidden="true"></i>'
+        : (masterHub ? '' : '<span class="kanban-column-dot ' + (col.color || 'bg-slate-400') + '"></span>');
       return '<div class="kanban-column' + themeClass + '" data-stage="' + escapeHtml(col.key) + '">' +
         '<div class="kanban-column-head">' +
           '<div class="kanban-column-title-row">' +
             '<div class="kanban-column-title">' +
-              (masterHub ? '' : '<span class="kanban-column-dot ' + (col.color || 'bg-slate-400') + '"></span>') +
-              '<h4 class="kanban-column-name">' + escapeHtml(titlePrefix + col.name) + '</h4>' +
+              titleIconHtml +
+              '<h4 class="kanban-column-name">' + escapeHtml(col.name) + '</h4>' +
             '</div>' +
             '<span class="kanban-column-count" data-kanban-count title="' + escapeHtml(String(totalInStage) + ' in stage') + '">' + escapeHtml(countLabel) + '</span>' +
           '</div>' +
@@ -11837,7 +11917,7 @@ window.CA_CRM = (function () {
             '<input type="search" class="input-field kanban-stage-search__input" data-kanban-stage-search="' + escapeHtml(col.key) + '"' +
               ' placeholder="' + escapeHtml(searchPlaceholder) + '" value="' + escapeHtml(query) + '" autocomplete="off" />' +
             '<button type="button" class="kanban-stage-search__clear' + (query.trim() ? '' : ' hidden') + '" data-kanban-search-clear="' + escapeHtml(col.key) + '" title="Clear search" aria-label="Clear stage search">' +
-              '<i data-lucide="x"></i></button>' +
+              '<i data-lucide="x" aria-hidden="true"></i></button>' +
           '</label>' +
           searchMetaHtml +
         '</div>' +
@@ -15620,12 +15700,8 @@ window.CA_CRM = (function () {
           } else if (isCamPipelineTabActive()) {
             loadKanbanLeads();
           } else {
-            var segment = getLeadFilter();
-            if (segment && segment !== 'all') {
-              applyCamSegment(segment);
-            } else {
-              renderCaMasterTable();
-            }
+            syncCamStageFilterFromState();
+            renderCaMasterTable();
           }
           icons();
         }

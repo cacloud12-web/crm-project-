@@ -43,6 +43,7 @@ return [
             'rating_min' => 'rating_min',
             'rating_max' => 'rating_max',
             'segment' => 'segment',
+            'master_pipeline_stage' => 'master_pipeline_stage',
             'priority' => 'exact',
             'research_status' => 'exact',
             'lead_tag' => 'lead_tag',

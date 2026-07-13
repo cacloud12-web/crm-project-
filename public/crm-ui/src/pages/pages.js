@@ -777,6 +777,24 @@ window.CAPages = (function () {
       }).join('');
   }
 
+  function caMasterStageFilterBar() {
+    return '<div class="cam-filter-bar card cam-stage-filter-bar hidden" id="cam-stage-filter-bar" aria-label="Firm status filters">' +
+      '<div class="cam-filter-row">' +
+        '<label class="cam-stage-filter-label" for="cam-filter-pipeline-stage">Status</label>' +
+        '<select id="cam-filter-pipeline-stage" class="input-field cam-filter-select cam-filter-pipeline-stage" aria-label="Filter by pipeline stage">' +
+          '<option value="">All Leads</option>' +
+          '<option value="New Lead">New Lead</option>' +
+          '<option value="Contacted">Contacted</option>' +
+          '<option value="Interested">Interested</option>' +
+          '<option value="Converted">Converted</option>' +
+        '</select>' +
+        '<button type="button" class="btn btn-sm btn-secondary cam-filter-reset-btn" id="cam-filter-reset" aria-label="Reset filters">' +
+          '<i data-lucide="rotate-ccw" class="h-3.5 w-3.5" aria-hidden="true"></i>' +
+          '<span>Reset Filters</span>' +
+        '</button>' +
+      '</div></div>';
+  }
+
   function caMasterFirmsTable(tbodyId, tableId, paginationId) {
     tbodyId = tbodyId || 'ca-master-data-table';
     tableId = tableId || 'ca-master-table';
@@ -887,7 +905,10 @@ window.CAPages = (function () {
           '</div>' +
         '</div>' +
         '<div class="ca-tab-panel' + (primaryTab === 'all' ? ' active' : '') + '" data-panel="all" data-tab-group="cam-view">' +
-          caMasterFirmsTable('ca-master-data-table') +
+          '<div class="cam-firms-stack">' +
+            caMasterStageFilterBar() +
+            caMasterFirmsTable('ca-master-data-table') +
+          '</div>' +
         '</div>' +
       '</div>' +
       '<div class="cam-secondary-views' + (showSecondary ? '' : ' hidden') + '" id="cam-secondary-views">' +

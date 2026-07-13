@@ -191,6 +191,7 @@ class ListingQueryApplier
                 'employee_name_exact' => $query->whereHas('employee', fn (Builder $q) => $q->where('name', $value)),
                 'manager_name_exact' => $query->whereHas('manager', fn (Builder $q) => $q->where('name', $value)),
                 'segment' => self::applySegment($query, (string) $value),
+                'master_pipeline_stage' => self::applyMasterPipelineStage($query, (string) $value),
                 'lead_tag' => self::applyLeadTag($query, (string) $value),
                 'followup_due' => self::applyFollowupDue($query, (string) $value, $config),
                 default => null,
@@ -236,6 +237,15 @@ class ListingQueryApplier
         $operator = $driver === 'pgsql' ? 'ILIKE' : 'LIKE';
 
         $query->whereRaw("{$castExpression} {$operator} ?", [$escaped]);
+    }
+
+    private static function applyMasterPipelineStage(Builder $query, string $stage): void
+    {
+        $statuses = config('crm_master_pipeline.stage_statuses.'.$stage);
+
+        if (is_array($statuses) && $statuses !== []) {
+            $query->whereIn('status', $statuses);
+        }
     }
 
     private static function applySegment(Builder $query, string $segment): void

@@ -50,9 +50,9 @@ return [
     ],
 
     'columns' => [
-        ['key' => 'New Lead', 'label' => 'New Lead', 'icon' => '🆕', 'theme' => 'new-lead'],
-        ['key' => 'Contacted', 'label' => 'Contacted', 'icon' => '📞', 'theme' => 'contacted'],
-        ['key' => 'Interested', 'label' => 'Interested', 'icon' => '🤝', 'theme' => 'interested'],
-        ['key' => 'Converted', 'label' => 'Converted', 'icon' => '🎉', 'theme' => 'converted'],
+        ['key' => 'New Lead', 'label' => 'New Lead', 'icon' => 'sparkles', 'theme' => 'new-lead'],
+        ['key' => 'Contacted', 'label' => 'Contacted', 'icon' => 'phone-call', 'theme' => 'contacted'],
+        ['key' => 'Interested', 'label' => 'Interested', 'icon' => 'handshake', 'theme' => 'interested'],
+        ['key' => 'Converted', 'label' => 'Converted', 'icon' => 'circle-check', 'theme' => 'converted'],
     ],
 ];
