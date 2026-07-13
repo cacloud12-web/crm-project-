@@ -2,9 +2,12 @@
 
 namespace Tests\Concerns;
 
+use App\Models\Employee;
 use App\Models\User;
+use App\Services\Cache\CrmCacheService;
 use App\Services\Rbac\RbacMatrixService;
 use App\Services\Rbac\RbacService;
+use Database\Seeders\CrmUserSeeder;
 use Database\Seeders\DatabaseSeeder;
 use Database\Seeders\RbacPermissionSeeder;
 use Illuminate\Support\Facades\Artisan;
@@ -35,6 +38,35 @@ trait PreparesCrmDatabase
             $this->seed(DatabaseSeeder::class);
             $this->ensureRbacPermissions();
         }
+
+        $this->ensureTestUserEmployees();
+    }
+
+    /**
+     * Re-create seeded employee profiles when users exist but rows were removed
+     * (e.g. after production transactional cleanup).
+     */
+    protected function ensureTestUserEmployees(): void
+    {
+        $needsEmployee = User::query()->where('email', 'employee@ca.local')->exists()
+            && ! Employee::query()->where('email_id', 'employee@ca.local')->exists();
+
+        if ($needsEmployee) {
+            $this->seed(CrmUserSeeder::class);
+        }
+    }
+
+    protected function flushCrmCachesForTesting(): void
+    {
+        $cache = app(CrmCacheService::class);
+        $cache->forgetDashboardMetrics();
+        $cache->forgetMasterListings();
+        $cache->forgetLeadSegmentCounts();
+        $cache->forgetPipelineStageCounts();
+        $cache->forgetEmployeeRankings();
+        $cache->forgetActivityFeed();
+        $cache->forgetAssignmentWidgets();
+        $cache->bumpReportCacheVersion();
     }
 
     protected function ensureRbacPermissions(): void

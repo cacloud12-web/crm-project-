@@ -120,12 +120,15 @@ class EmployeeDashboardTest extends TestCase
             'preview' => false,
         ])->assertOk();
 
-        $expected = LeadAssignmentEngine::query()
-            ->where('employee_id', $employee->employee_id)
-            ->where('status', 'Active')
+        $expected = CaMaster::query()
+            ->countableInStatistics()
+            ->whereHas('leadAssignments', fn ($q) => $q
+                ->where('employee_id', $employee->employee_id)
+                ->where('status', 'Active'))
             ->count();
 
         $this->actingAs($user);
+        app(\App\Services\Cache\CrmCacheService::class)->forgetEmployeeDashboard((int) $employee->employee_id);
         $response = $this->getJson('/dashboard/employee')->assertOk();
         $this->assertSame($expected, (int) $response->json('data.summary.my_leads'));
     }

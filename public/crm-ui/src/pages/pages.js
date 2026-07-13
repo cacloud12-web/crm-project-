@@ -272,18 +272,6 @@ window.CAPages = (function () {
     return '<div class="ca-tab-panel' + (active ? ' active' : '') + '" data-panel="' + id + '" data-tab-group="' + group + '">' + html + '</div>';
   }
 
-  function demoCalendarDashboardCard() {
-    return '<section class="mgr-panel card dash-section demo-calendar-dash-entry" aria-label="Demo Management Calendar">' +
-      '<button type="button" class="demo-calendar-dash-entry__btn" data-nav-page="demo-calendar">' +
-        '<span class="demo-calendar-dash-entry__icon" aria-hidden="true"><i data-lucide="presentation" class="h-6 w-6 text-brand"></i></span>' +
-        '<span class="demo-calendar-dash-entry__body">' +
-          '<span class="demo-calendar-dash-entry__title">Demo Management Calendar</span>' +
-          '<span class="demo-calendar-dash-entry__desc">Track scheduled demos, follow-ups, and executive assignments</span>' +
-        '</span>' +
-        '<span class="demo-calendar-dash-entry__arrow" aria-hidden="true"><i data-lucide="arrow-right" class="h-5 w-5"></i></span>' +
-      '</button></section>';
-  }
-
   function demoCalendarPage() {
     return '<div class="dcp-page card mgr-panel" id="dcp-root">' +
       '<header class="dcp-header">' +
@@ -305,11 +293,6 @@ window.CAPages = (function () {
       '<div class="dcp-search-bar">' +
         '<div class="dcp-search-row">' +
           '<input type="search" id="dcp-search-q" class="input-field input-field-sm dcp-search-input" placeholder="Search firm, CA, executive…" aria-label="Search demos" />' +
-          '<select id="dcp-search-status" class="input-field input-field-sm dcp-search-select" aria-label="Filter by status">' +
-            '<option value="">All Statuses</option><option value="scheduled">Scheduled</option><option value="completed">Completed</option>' +
-            '<option value="pending">Pending</option><option value="cancelled">Cancelled</option><option value="rescheduled">Rescheduled</option><option value="follow_up">Follow-up Required</option>' +
-            '<option value="invalid_schedule">Invalid Schedule</option>' +
-          '</select>' +
           '<select id="dcp-search-priority" class="input-field input-field-sm dcp-search-select" aria-label="Filter by priority">' +
             '<option value="">All Priorities</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>' +
           '</select>' +
@@ -360,7 +343,6 @@ window.CAPages = (function () {
       '<section class="dash-section" aria-label="Key metrics"><div class="dash-kpi-sections" id="emp-kpi-sections"></div></section>' +
       '<section class="mgr-panel card dash-section" id="emp-daily-targets-panel"></section>' +
       '<div id="emp-productivity-panel" class="mgr-panel card dash-productivity-panel"></div>' +
-      demoCalendarDashboardCard() +
       '<div class="dash-toolbar-row">' +
         '<section class="mgr-panel card dash-quick-actions-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="zap" class="h-5 w-5 text-brand"></i> Quick Actions</h3></div><div class="emp-quick-actions dash-quick-actions" id="emp-quick-actions"></div></section>' +
         '<section class="mgr-panel card dash-activity-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="activity" class="h-5 w-5 text-brand"></i> Recent Activity</h3></div><div id="emp-activity-list" class="mgr-activity-feed dash-activity-feed"></div></section>' +
@@ -378,7 +360,6 @@ window.CAPages = (function () {
       '<header class="mgr-top card" id="mgr-top-header"></header>' +
       '<div id="mgr-employee-productivity-panel" class="mgr-panel card dash-productivity-panel hidden"></div>' +
       '<section class="dash-section" aria-label="Key metrics"><div class="dash-kpi-sections" id="mgr-kpi-sections"></div></section>' +
-      demoCalendarDashboardCard() +
       '<div class="dash-toolbar-row">' +
         '<section class="mgr-panel card dash-quick-actions-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="zap" class="h-5 w-5 text-brand"></i> Quick Actions</h3></div><div id="dash-quick-actions" class="dash-quick-actions"></div></section>' +
         '<section class="mgr-panel card dash-activity-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="activity" class="h-5 w-5 text-brand"></i> Recent Activity</h3><button type="button" class="mgr-link-btn" data-nav-page="activity">View all</button></div><div id="recent-activity-list" class="mgr-activity-feed dash-activity-feed"></div></section>' +
@@ -960,7 +941,7 @@ window.CAPages = (function () {
           '</div>' +
         '</div>' +
         '<div id="bulk-wizard-panel-2" class="bulk-wizard-panel hidden">' +
-          '<p class="text-caption text-slate-500 mb-3">Map Excel columns to CRM fields. Only Firm Name and CA Name are required. Mobile and Email are optional.</p>' +
+          '<p class="text-caption text-slate-500 mb-3">Map Excel columns to CRM fields. Only Firm Name is required. CA Name, Mobile Number, and Email are optional.</p>' +
           '<div class="flex flex-wrap gap-3 items-end mb-4">' +
             '<div class="min-w-[12rem]"><label class="form-label">Saved Mapping Template</label><select id="bulk-mapping-template-select" class="input-field"><option value="">Auto-detect mapping</option></select></div>' +
             '<div class="min-w-[12rem]"><label class="form-label">Save As Template</label><input type="text" id="bulk-mapping-template-name" class="input-field" placeholder="e.g. Master Data Default" /></div>' +
@@ -1971,7 +1952,7 @@ window.CAPages = (function () {
     var reportDefs = [
       { card: 'Daily Lead Report', slug: 'lead_conversion', icon: 'calendar-days' },
       { card: 'Weekly Demo Report', slug: 'followup_performance', icon: 'presentation' },
-      { card: 'Monthly Revenue', slug: 'monthly_trends', icon: 'indian-rupee' },
+      { card: 'Monthly Trends', slug: 'monthly_trends', icon: 'line-chart' },
       { card: 'City-wise Analysis', slug: 'city_analysis', icon: 'map-pin' },
       { card: 'Employee Performance', slug: 'employee_performance', icon: 'trophy' },
       { card: 'Duplicate Productivity', slug: 'duplicate_productivity', icon: 'copy' },
@@ -1983,7 +1964,7 @@ window.CAPages = (function () {
         var navAttr = r.nav ? ' data-nav-page="' + r.nav + '"' : ' data-report="' + r.card + '" data-report-slug="' + r.slug + '"';
         return '<div class="card-interactive p-4 flex items-center gap-3 report-card"' + navAttr + '>' +
           '<div class="report-card__icon flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand"><i data-lucide="' + (r.icon || 'file-text') + '" class="h-5 w-5"></i></div>' +
-          '<div><p class="text-card-heading report-card__title">' + r.card + '</p><p class="text-caption text-slate-500 report-card-meta" data-report-slug="' + r.slug + '">Live data</p></div></div>';
+          '<div><p class="text-card-heading report-card__title">' + r.card + '</p><p class="text-caption text-slate-500 report-card-meta" data-report-slug="' + r.slug + '">Open report</p></div></div>';
       }).join('') + '</div>';
     var analyticsCharts = [
       { label: 'Daily Calls', key: 'daily_calls' },
@@ -2005,13 +1986,8 @@ window.CAPages = (function () {
           { id: 'analytics', label: 'Analytics', icon: 'bar-chart-3' },
           { id: 'activity', label: 'Activity', icon: 'activity' },
           { id: 'audit', label: 'Audit', icon: 'history' },
-        ], activeTab, 'reports-hub') +
-        actPrimary('Apply', 'data-action="apply-reports-filter"', 'filter')
+        ], activeTab, 'reports-hub')
       )) +
-      listingFilterBar([
-        { label: 'From', id: 'reports-filter-from', type: 'date', attrs: 'data-crm-date-input data-allow-past data-hide-preview' },
-        { label: 'To', id: 'reports-filter-to', type: 'date', attrs: 'data-crm-date-input data-allow-past data-hide-preview' },
-      ], '', { id: 'reports-filter-bar' }) +
       panel('reports', activeTab === 'reports', reportCards, 'reports-hub') +
       panel('analytics', activeTab === 'analytics', charts(analyticsCharts), 'reports-hub') +
       panel('activity', activeTab === 'activity', activityBody(), 'reports-hub') +

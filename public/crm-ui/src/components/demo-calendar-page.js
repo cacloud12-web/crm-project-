@@ -226,8 +226,6 @@ window.CrmDemoCalendarPage = (function () {
     }
     var q = $('dcp-search-q');
     if (q) q.value = state.search.q || '';
-    var st = $('dcp-search-status');
-    if (st) st.value = state.search.status || '';
     var pr = $('dcp-search-priority');
     if (pr) pr.value = state.search.priority || '';
     var dt = $('dcp-search-date');
@@ -449,15 +447,24 @@ window.CrmDemoCalendarPage = (function () {
   }
 
   function renderAll() {
-    renderSummary();
-    renderFilters();
-    renderSearchFilters();
-    renderQueue();
-    renderTitle();
-    syncMonthPicker();
-    renderBody();
-    document.querySelectorAll('[data-dcp-view]').forEach(function (btn) {
-      btn.classList.toggle('active', btn.getAttribute('data-dcp-view') === state.view);
+    var body = $('dcp-body');
+    if (body) {
+      body.innerHTML = '<div class="crm-inline-loading py-8"><i data-lucide="loader-2" class="h-5 w-5 animate-spin text-brand"></i><span>Loading demo calendar…</span></div>';
+      iconsIn(body);
+    }
+
+    var apiView = state.view === 'agenda' ? 'agenda' : state.view;
+    Data.loadFromApi({ view: apiView, date: toDateStr(state.anchor) }).then(function () {
+      renderSummary();
+      renderFilters();
+      renderSearchFilters();
+      renderQueue();
+      renderTitle();
+      syncMonthPicker();
+      renderBody();
+      document.querySelectorAll('[data-dcp-view]').forEach(function (btn) {
+        btn.classList.toggle('active', btn.getAttribute('data-dcp-view') === state.view);
+      });
     });
   }
 
@@ -680,13 +687,12 @@ window.CrmDemoCalendarPage = (function () {
     });
     $('dcp-reset-demo')?.addEventListener('click', function () {
       Data.resetDemoData();
-      toast('Demo calendar data reset.', 'success');
       renderAll();
+      toast('Demo calendar refreshed.', 'success');
     });
 
     function applySearch() {
       state.search.q = ($('dcp-search-q')?.value || '').trim();
-      state.search.status = $('dcp-search-status')?.value || '';
       state.search.priority = $('dcp-search-priority')?.value || '';
       state.search.date = $('dcp-search-date')?.value || '';
       state.search.executive = $('dcp-search-executive')?.value || '';
@@ -695,7 +701,7 @@ window.CrmDemoCalendarPage = (function () {
 
     $('dcp-search-btn')?.addEventListener('click', applySearch);
     $('dcp-search-q')?.addEventListener('keydown', function (e) { if (e.key === 'Enter') applySearch(); });
-    ['dcp-search-status', 'dcp-search-priority', 'dcp-search-date', 'dcp-search-executive'].forEach(function (id) {
+    ['dcp-search-priority', 'dcp-search-date', 'dcp-search-executive'].forEach(function (id) {
       $(id)?.addEventListener('change', applySearch);
     });
     $('dcp-search-clear')?.addEventListener('click', function () {

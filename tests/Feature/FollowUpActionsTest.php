@@ -63,9 +63,15 @@ class FollowUpActionsTest extends TestCase
         $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
         $this->actingAs($manager);
 
-        $followUp = FollowUp::query()->whereNotIn('status', ['Completed', 'Closed', 'Done'])->first();
+        $followUp = FollowUp::query()
+            ->whereNotIn('status', ['Completed', 'Closed', 'Done'])
+            ->where(function ($q) {
+                $q->whereNull('followup_type')
+                    ->orWhere('followup_type', '!=', 'Demo Scheduled');
+            })
+            ->first();
         if (! $followUp) {
-            $this->markTestSkipped('No open follow-ups in database');
+            $this->markTestSkipped('No open non-demo follow-ups in database');
         }
 
         $this->patchJson('/follow-ups/'.$followUp->followup_id, [

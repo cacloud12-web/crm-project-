@@ -20,17 +20,26 @@
   --crm-font-size-button: 14px;
   --crm-font-size-badge: 12px;
   --crm-font-size-tooltip: 12px;
+  --crm-font-size-table-cell: 13px;
+  --crm-font-size-table-header: 13px;
   --crm-font-size-stat-number: 32px;
   --crm-font-size-stat-label: 14px;
   --crm-font-size-kpi-value: 22px;
+
+  /* Compact data-table layout (Salesforce / HubSpot density) */
+  --crm-table-head-row-h: 32px;
+  --crm-table-row-h: 30px;
+  --crm-table-cell-py: 5px;
+  --crm-table-cell-px: 10px;
+  --crm-sticky-check-width: 36px;
 
   /* Semantic aliases */
   --font-page-title: var(--crm-font-size-page-title);
   --font-section-title: var(--crm-font-size-section);
   --font-card-title: var(--crm-font-size-card-title);
   --font-subheading: var(--crm-font-size-subheading);
-  --font-table-header: var(--crm-font-size-body);
-  --font-table-cell: var(--crm-font-size-body);
+  --font-table-header: var(--crm-font-size-table-header);
+  --font-table-cell: var(--crm-font-size-table-cell);
   --font-label: var(--crm-font-size-body);
   --font-input: var(--crm-font-size-body);
   --font-button: var(--crm-font-size-button);

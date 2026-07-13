@@ -17,28 +17,40 @@ class BulkImportMappingServiceTest extends TestCase
     }
 
     #[Test]
-    public function test_crm_fields_exclude_mobile_when_file_has_no_mobile_column(): void
+    public function test_crm_fields_always_include_mobile_number_mapping_row(): void
     {
         $headers = ['CA Name', 'Firm Name', 'City', 'Email'];
 
         $fields = $this->service->crmFieldsForHeaders($headers);
 
         $this->assertFalse($this->service->fileHasMobileColumn($headers));
-        $this->assertNotContains('mobile_no', array_column($fields, 'key'));
-        $this->assertTrue(collect($fields)->firstWhere('key', 'ca_name')['required'] ?? false);
+        $this->assertContains('mobile_no', array_column($fields, 'key'));
+        $this->assertSame('Mobile Number', collect($fields)->firstWhere('key', 'mobile_no')['label']);
+        $this->assertFalse(collect($fields)->firstWhere('key', 'ca_name')['required'] ?? true);
         $this->assertTrue(collect($fields)->firstWhere('key', 'firm_name')['required'] ?? false);
     }
 
     #[Test]
-    public function test_crm_fields_include_mobile_when_file_has_mobile_column(): void
+    public function test_crm_fields_detect_number_column_as_mobile_header(): void
     {
-        $headers = ['CA Name', 'Firm Name', 'Mobile No', 'Email'];
-
-        $fields = $this->service->crmFieldsForHeaders($headers);
+        $headers = ['ca name', 'firm name', 'number', 'City'];
 
         $this->assertTrue($this->service->fileHasMobileColumn($headers));
-        $this->assertContains('mobile_no', array_column($fields, 'key'));
-        $this->assertFalse(collect($fields)->firstWhere('key', 'mobile_no')['required'] ?? true);
+        $this->assertContains('mobile_no', array_column($this->service->crmFieldsForHeaders($headers), 'key'));
+    }
+
+    #[Test]
+    public function test_suggest_mapping_maps_number_column_to_mobile_no(): void
+    {
+        $headers = ['ca name', 'firm name', 'number', 'Alternate Mobile No', 'City'];
+
+        $mapping = $this->service->suggestMapping($headers);
+
+        $this->assertSame('ca name', $mapping['ca_name']);
+        $this->assertSame('firm name', $mapping['firm_name']);
+        $this->assertSame('number', $mapping['mobile_no']);
+        $this->assertSame('Alternate Mobile No', $mapping['alternate_mobile_no']);
+        $this->assertSame('City', $mapping['city_id']);
     }
 
     #[Test]
@@ -68,5 +80,21 @@ class BulkImportMappingServiceTest extends TestCase
         ];
 
         $this->assertTrue($this->service->mobileMappingIsActive($headers, $mapping));
+    }
+
+    #[Test]
+    public function test_apply_mapping_preserves_phone_values_as_strings(): void
+    {
+        $rows = [
+            ['number' => 9876543210],
+        ];
+        $mapping = ['mobile_no' => 'number'];
+
+        $mapped = $this->service->applyMapping($rows, array_merge(
+            array_fill_keys(array_column(BulkImportMappingService::CRM_FIELDS, 'key'), null),
+            $mapping,
+        ));
+
+        $this->assertSame('9876543210', $mapped[0]['mobile_no']);
     }
 }

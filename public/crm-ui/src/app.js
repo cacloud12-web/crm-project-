@@ -352,7 +352,8 @@
     if (fabWrap) {
       var hideFab = pageId === 'dashboard' || pageId === 'settings' || pageId === 'demo-calendar'
         || pageId === 'sales-list' || pageId === 'email-configuration'
-        || pageId === 'ca-master' || pageId === 'bulk' || pageId === 'leads';
+        || pageId === 'ca-master' || pageId === 'bulk' || pageId === 'leads'
+        || pageId === 'reports' || pageId === 'analytics' || pageId === 'activity' || pageId === 'audit';
       fabWrap.classList.toggle('hidden', hideFab);
     }
   }
@@ -666,6 +667,42 @@
       return;
     }
 
+    if (kind === 'export-report-pdf') {
+      if (window.CA_CRM && typeof CA_CRM.exportReportsSummary === 'function') {
+        CA_CRM.exportReportsSummary('pdf');
+        return;
+      }
+      showToast('PDF export unavailable', 'warning');
+      return;
+    }
+
+    if (kind === 'export-report' || kind === 'report') {
+      if (window.CA_CRM && typeof CA_CRM.exportReportsSummary === 'function') {
+        CA_CRM.exportReportsSummary();
+        return;
+      }
+      showToast('Report export unavailable — reload the page and try again', 'warning');
+      return;
+    }
+
+    if ((kind === 'export-logs' || kind === 'logs') && window.CA_CRM && typeof CA_CRM.getActivityLogsForExport === 'function') {
+      var logColumns = [
+        { key: 'id', label: 'id' },
+        { key: 'performed_by', label: 'performed_by' },
+        { key: 'module_name', label: 'module_name' },
+        { key: 'record_id', label: 'record_id' },
+        { key: 'action', label: 'action' },
+        { key: 'description', label: 'description' },
+        { key: 'timestamp', label: 'timestamp' },
+      ];
+      var logRows = CA_CRM.getActivityLogsForExport();
+      if (logRows.length) {
+        downloadCsv('activity-logs.csv', logColumns, logRows);
+        showToast('Exported ' + logRows.length + ' activity log row(s)', 'success');
+        return;
+      }
+    }
+
     if (!window.CAData || !USE_DEMO_FALLBACKS) {
       showToast('Export unavailable for this view', 'warning');
       return;
@@ -721,32 +758,9 @@
       ];
       rows = CAData.getActivityLog();
       filename = 'audit-logs.csv';
-    } else if (kind === 'export-report-pdf') {
-      if (window.CA_CRM && typeof CA_CRM.exportReportsSummary === 'function') {
-        CA_CRM.exportReportsSummary('pdf');
-        return;
-      }
-      showToast('PDF export unavailable', 'warning');
+    } else if (kind === 'export-report-pdf' || kind === 'export-report' || kind === 'report') {
+      showToast('Report export unavailable', 'warning');
       return;
-    } else if (kind === 'export-report' || kind === 'report') {
-      if (window.CA_CRM && typeof CA_CRM.exportReportsSummary === 'function') {
-        CA_CRM.exportReportsSummary();
-        return;
-      }
-      var metrics = CAData.getMetrics();
-      var counts = CAData.getLeadCounts();
-      columns = [{ key: 'metric', label: 'metric' }, { key: 'value', label: 'value' }];
-      rows = [
-        { metric: 'total_leads', value: metrics.total_leads },
-        { metric: 'hot_leads', value: counts.hot },
-        { metric: 'pipeline_leads', value: counts.pipeline },
-        { metric: 'lost_leads', value: counts.lost },
-        { metric: 'total_calls', value: metrics.total_calls },
-        { metric: 'demo_count', value: metrics.demo_count },
-        { metric: 'conversion', value: metrics.conversion },
-        { metric: 'target_achievement', value: metrics.target_achievement },
-      ];
-      filename = 'reports-summary.csv';
     } else if (kind === 'export-transactions' || kind === 'transactions') {
       columns = [
         { key: 'firm_name', label: 'firm_name' },
@@ -963,18 +977,6 @@
           return;
         }
         showToast('Generating: ' + card.dataset.report, 'info');
-      });
-    });
-
-    document.querySelectorAll('[data-action="apply-reports-filter"]').forEach(function (btn) {
-      if (btn._reportsFilterBound) return;
-      btn._reportsFilterBound = true;
-      btn.addEventListener('click', function () {
-        if (window.CA_CRM && typeof CA_CRM.refreshReportsHub === 'function') {
-          CA_CRM.refreshReportsHub();
-        } else {
-          renderCharts();
-        }
       });
     });
 
@@ -1240,7 +1242,7 @@
 
   function initHeaderActions() {
     document.getElementById('calendar-btn')?.addEventListener('click', function () {
-      navigateTo(this.dataset.page || 'followups');
+      navigateTo(this.dataset.page || 'demo-calendar');
     });
     initSettingsMenu();
     initProfileMenu();

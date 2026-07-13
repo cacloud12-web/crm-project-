@@ -49,7 +49,19 @@ class ReportsFeatureTest extends TestCase
     {
         $this->actingAs($this->admin());
 
-        foreach (['lead_conversion', 'employee_performance', 'followup_performance', 'duplicate_productivity'] as $slug) {
+        $slugs = [
+            'lead_conversion',
+            'employee_performance',
+            'followup_performance',
+            'duplicate_productivity',
+            'monthly_trends',
+            'city_analysis',
+            'lost_lead_analysis',
+            'assignment_statistics',
+            'campaign_analytics',
+        ];
+
+        foreach ($slugs as $slug) {
             $this->getJson('/reports/'.$slug)
                 ->assertOk()
                 ->assertJsonPath('data.slug', $slug)
@@ -79,6 +91,23 @@ class ReportsFeatureTest extends TestCase
             'Accept' => 'application/json',
             'X-Requested-With' => 'XMLHttpRequest',
         ])->get('/reports/lead_conversion/export?format=csv');
+
+        $response->assertOk();
+        $contentType = (string) $response->headers->get('content-type');
+        $this->assertTrue(
+            str_contains($contentType, 'text/csv') || str_contains($contentType, 'application/octet-stream'),
+            'Expected CSV export content type, got: '.$contentType,
+        );
+    }
+
+    public function test_admin_can_export_report_summary_csv(): void
+    {
+        $this->actingAs($this->admin());
+
+        $response = $this->withHeaders([
+            'Accept' => 'application/json',
+            'X-Requested-With' => 'XMLHttpRequest',
+        ])->get('/reports/export/summary?from='.now()->subDays(30)->toDateString().'&to='.now()->toDateString());
 
         $response->assertOk();
         $contentType = (string) $response->headers->get('content-type');

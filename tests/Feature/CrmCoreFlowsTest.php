@@ -235,8 +235,13 @@ class CrmCoreFlowsTest extends TestCase
     {
         $this->actingAsAdmin();
 
+        $this->flushCrmCachesForTesting();
         $metrics = app(DashboardService::class)->metrics();
-        $dbTotal = CaMaster::query()->count();
+        $today = now()->toDateString();
+        $dbTotal = CaMaster::query()
+            ->countableInStatistics()
+            ->whereDate('created_at', $today)
+            ->count();
 
         $this->assertSame($dbTotal, (int) $metrics['total_leads']);
     }

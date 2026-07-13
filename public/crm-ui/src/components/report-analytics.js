@@ -10,18 +10,33 @@ window.CrmReportAnalytics = (function () {
     sortKey: null,
     sortDir: 'desc',
     bound: false,
+    drillDown: null,
   };
 
+  var CHART_EMPTY = 'No data is available for the selected filters.';
+
   var SLUG_META = {
-    lead_conversion: { title: 'Lead Conversion Report', icon: 'git-merge' },
-    followup_performance: { title: 'Weekly Demo Report', icon: 'presentation' },
-    monthly_trends: { title: 'Monthly Trend Report', icon: 'line-chart' },
-    city_analysis: { title: 'City Analysis Report', icon: 'map-pin' },
-    employee_performance: { title: 'Employee Performance Report', icon: 'trophy' },
-    lost_lead_analysis: { title: 'Lost Lead Analysis', icon: 'trending-down' },
-    duplicate_productivity: { title: 'Duplicate Productivity Report', icon: 'copy' },
+    lead_conversion: { title: 'Daily Lead Report', icon: 'calendar-days', hub: 'Daily Lead Report' },
+    followup_performance: { title: 'Weekly Demo Report', icon: 'presentation', hub: 'Weekly Demo Report' },
+    monthly_trends: { title: 'Monthly Trends', icon: 'line-chart', hub: 'Monthly Trends', notice: 'Revenue is not tracked in this CRM. Metrics show lead and conversion trends only.' },
+    city_analysis: { title: 'City-wise Analysis', icon: 'map-pin', hub: 'City-wise Analysis' },
+    employee_performance: { title: 'Employee Performance', icon: 'trophy', hub: 'Employee Performance' },
+    lost_lead_analysis: { title: 'Lost Lead Analysis', icon: 'trending-down', hub: 'Lost Lead Analysis' },
+    duplicate_productivity: { title: 'Duplicate Productivity', icon: 'copy', hub: 'Duplicate Productivity' },
     assignment_statistics: { title: 'Assignment Statistics', icon: 'users' },
     campaign_analytics: { title: 'Campaign Analytics', icon: 'megaphone' },
+  };
+
+  var FILTER_PRESETS = {
+    lead_conversion: ['date', 'employee', 'status', 'search'],
+    followup_performance: ['date', 'employee', 'search'],
+    monthly_trends: ['date', 'employee'],
+    city_analysis: ['date', 'employee', 'search'],
+    employee_performance: ['date', 'employee', 'search'],
+    lost_lead_analysis: ['date', 'employee', 'search'],
+    duplicate_productivity: ['date', 'employee', 'search'],
+    assignment_statistics: ['date', 'employee'],
+    campaign_analytics: ['date'],
   };
 
   function $(id) { return document.getElementById(id); }
@@ -64,39 +79,63 @@ window.CrmReportAnalytics = (function () {
 
   function trendFromSeries(values) {
     values = (values || []).filter(function (v) { return isFinite(Number(v)); }).map(Number);
-    if (values.length < 4) return { text: 'Live', cls: 'ra-trend--neutral', icon: 'minus' };
+    if (values.length < 4) return null;
     var mid = Math.floor(values.length / 2);
     var first = values.slice(0, mid);
     var second = values.slice(mid);
     var avg = function (arr) { return arr.reduce(function (a, b) { return a + b; }, 0) / (arr.length || 1); };
     var a = avg(first);
     var b = avg(second);
-    if (!a && !b) return { text: 'Live', cls: 'ra-trend--neutral', icon: 'minus' };
-    if (!a) return { text: '▲ New', cls: 'ra-trend--up', icon: 'trending-up' };
+    if (!a && !b) return null;
+    if (!a) return { text: '↑ New', cls: 'ra-trend--up', icon: 'trending-up' };
     var pct = Math.round(((b - a) / a) * 100);
-    if (pct > 0) return { text: '▲ +' + pct + '%', cls: 'ra-trend--up', icon: 'trending-up' };
-    if (pct < 0) return { text: '▼ ' + pct + '%', cls: 'ra-trend--down', icon: 'trending-down' };
-    return { text: '— Flat', cls: 'ra-trend--neutral', icon: 'minus' };
+    if (pct > 0) return { text: '↑ +' + pct + '%', cls: 'ra-trend--up', icon: 'trending-up' };
+    if (pct < 0) return { text: '↓ ' + pct + '%', cls: 'ra-trend--down', icon: 'trending-down' };
+    return null;
+  }
+
+  function compactTrend(values) {
+    var t = trendFromSeries(values);
+    return t || { cls: 'ra-trend--neutral', icon: 'minus', text: '' };
+  }
+
+  function defaultDateRange() {
+    var end = new Date();
+    var start = new Date();
+    start.setDate(start.getDate() - 30);
+    return {
+      from: start.toISOString().slice(0, 10),
+      to: end.toISOString().slice(0, 10),
+    };
   }
 
   function getFilterQuery() {
     var parts = [];
-    var from = $('ra-filter-from') || $('reports-filter-from');
-    var to = $('ra-filter-to') || $('reports-filter-to');
+    var from = $('ra-filter-from');
+    var to = $('ra-filter-to');
     var emp = $('ra-filter-employee');
-    if (from && from.value) parts.push('from=' + encodeURIComponent(from.value));
-    if (to && to.value) parts.push('to=' + encodeURIComponent(to.value));
+    var range = defaultDateRange();
+    var fromVal = (from && from.value) || range.from;
+    var toVal = (to && to.value) || range.to;
+    parts.push('from=' + encodeURIComponent(fromVal));
+    parts.push('to=' + encodeURIComponent(toVal));
     if (emp && emp.value) parts.push('employee_id=' + encodeURIComponent(emp.value));
-    return parts.length ? '?' + parts.join('&') : '';
+    return '?' + parts.join('&');
   }
 
   function syncHubFilters() {
-    var from = $('ra-filter-from');
-    var to = $('ra-filter-to');
-    var hubFrom = $('reports-filter-from');
-    var hubTo = $('reports-filter-to');
-    if (from && hubFrom && from.value) hubFrom.value = from.value;
-    if (to && hubTo && to.value) hubTo.value = to.value;
+    /* Hub-level date filters removed from Reports page. */
+  }
+
+  function validateDateRange() {
+    var fromEl = $('ra-filter-from');
+    var toEl = $('ra-filter-to');
+    if (!fromEl || !toEl || !fromEl.value || !toEl.value) return true;
+    if (fromEl.value > toEl.value) {
+      toast('Date From cannot be after Date To.', 'error');
+      return false;
+    }
+    return true;
   }
 
   function apiFetch(url) {
@@ -105,15 +144,24 @@ window.CrmReportAnalytics = (function () {
     }
     return fetch(url, {
       credentials: 'same-origin',
-      headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
     }).then(function (r) { return r.json(); });
+  }
+
+  function breakdownCount(breakdown, statuses) {
+    var list = Array.isArray(statuses) ? statuses : [statuses];
+    return (breakdown || []).reduce(function (sum, row) {
+      return list.indexOf(row.status) >= 0 ? sum + (Number(row.lead_count) || 0) : sum;
+    }, 0);
+  }
+
+  function sumRows(rows, key) {
+    return (rows || []).reduce(function (a, r) { return a + (Number(r[key]) || 0); }, 0);
   }
 
   function paintColumnChart(series, opts) {
     opts = opts || {};
-    if (!series || !series.length) {
-      return '<p class="ra-chart-empty">No data for selected range</p>';
-    }
+    if (!series || !series.length) return '<p class="ra-chart-empty">' + CHART_EMPTY + '</p>';
     var max = Math.max.apply(null, series.map(function (p) { return Number(p.value) || 0; }).concat([1]));
     return '<div class="dash-column-chart__inner ra-bar-chart">' +
       series.map(function (point, i) {
@@ -132,7 +180,7 @@ window.CrmReportAnalytics = (function () {
     rows = (rows || []).slice().sort(function (a, b) {
       return (Number(b[valueKey]) || 0) - (Number(a[valueKey]) || 0);
     }).slice(0, limit || 8);
-    if (!rows.length) return '<p class="ra-chart-empty">No data</p>';
+    if (!rows.length) return '<p class="ra-chart-empty">' + CHART_EMPTY + '</p>';
     var max = Math.max.apply(null, rows.map(function (r) { return Number(r[valueKey]) || 0; }).concat([1]));
     return '<div class="ra-hbar-list">' + rows.map(function (row) {
       var val = Number(row[valueKey]) || 0;
@@ -152,9 +200,11 @@ window.CrmReportAnalytics = (function () {
   }
 
   function paintFunnel(stages) {
-    if (!stages || !stages.length) return '<p class="ra-chart-empty">No funnel data</p>';
+    if (!stages || !stages.length || !stages.some(function (s) { return (Number(s.value) || 0) > 0; })) {
+      return '<p class="ra-chart-empty">' + CHART_EMPTY + '</p>';
+    }
     var top = Math.max.apply(null, stages.map(function (s) { return Number(s.value) || 0; }).concat([1]));
-    return '<div class="ra-funnel">' + stages.map(function (stage, i) {
+    return '<div class="ra-funnel ra-lc-funnel">' + stages.map(function (stage, i) {
       var val = Number(stage.value) || 0;
       var width = Math.max(18, Math.round((val / top) * 100));
       var drop = stage.drop != null ? '<span class="ra-funnel__drop">' + stage.drop + '</span>' : '';
@@ -168,15 +218,15 @@ window.CrmReportAnalytics = (function () {
   }
 
   function paintLineChart(rows, xKey, seriesKeys) {
-    if (!rows || !rows.length) return '<p class="ra-chart-empty">No trend data</p>';
+    if (!rows || !rows.length) return '<p class="ra-chart-empty">' + CHART_EMPTY + '</p>';
     var keys = seriesKeys || [{ key: 'value', color: '#4CB4D4' }];
     var allVals = [];
     rows.forEach(function (row) {
       keys.forEach(function (s) { allVals.push(Number(row[s.key]) || 0); });
     });
+    if (!allVals.some(function (v) { return v > 0; })) return '<p class="ra-chart-empty">' + CHART_EMPTY + '</p>';
     var max = Math.max.apply(null, allVals.concat([1]));
     var w = Math.max(rows.length - 1, 1);
-    var height = 120;
     var paths = keys.map(function (s) {
       var points = rows.map(function (row, i) {
         var x = (i / w) * 100;
@@ -191,132 +241,50 @@ window.CrmReportAnalytics = (function () {
       rows.map(function (row, i) {
         if (rows.length > 12 && i % Math.ceil(rows.length / 6) !== 0 && i !== rows.length - 1) return '';
         var lbl = String(row[xKey] || '').slice(5);
-        return '<span>' + escapeHtml(lbl || '—') + '</span>';
+        return '<span>' + escapeHtml(lbl || row[xKey] || '—') + '</span>';
       }).join('') + '</div></div>';
   }
 
-  function buildKpis(report) {
-    var s = report.summary || {};
-    var slug = report.slug || state.slug;
-    var rows = report.rows || [];
-    var items = [];
-
-    if (slug === 'lead_conversion') {
-      items = [
-        { icon: 'users', label: 'Total Leads', value: s.total_leads, trend: trendFromSeries(rows.map(function (r) { return r.new_leads; })) },
-        { icon: 'check-circle', label: 'Converted', value: s.won_leads, trend: trendFromSeries(rows.map(function (r) { return r.converted_leads; })) },
-        { icon: 'percent', label: 'Conversion %', value: fmtPct(s.conversion_rate_pct), trend: { text: 'Live', cls: 'ra-trend--neutral', icon: 'activity' } },
-        { icon: 'presentation', label: 'Demo Scheduled', value: s.demo_scheduled, trend: { text: fmtPct(s.demo_ratio_pct) + ' of leads', cls: 'ra-trend--neutral', icon: 'calendar' } },
-        { icon: 'trophy', label: 'Won Leads', value: s.won_leads, trend: { text: 'Pipeline ' + fmtNum(s.pipeline_leads), cls: 'ra-trend--neutral', icon: 'git-branch' } },
-        { icon: 'x-circle', label: 'Lost Leads', value: s.lost_leads, trend: { text: 'Hot ' + fmtNum(s.hot_leads), cls: 'ra-trend--neutral', icon: 'flame' } },
-      ];
-    } else if (slug === 'employee_performance') {
-      items = [
-        { icon: 'users', label: 'Active Employees', value: s.active_employees, trend: { text: 'Team', cls: 'ra-trend--neutral', icon: 'users' } },
-        { icon: 'target', label: 'Assigned Leads', value: s.total_assigned_leads, trend: trendFromSeries(rows.map(function (r) { return r.assigned_leads; })) },
-        { icon: 'percent', label: 'Avg Achievement', value: fmtPct(s.avg_achievement_pct), trend: { text: 'Target vs achieved', cls: 'ra-trend--neutral', icon: 'bar-chart-2' } },
-        { icon: 'phone', label: 'Overdue Follow-ups', value: s.total_overdue_followups, trend: { text: 'Needs attention', cls: 'ra-trend--down', icon: 'alert-circle' } },
-      ];
-    } else if (slug === 'monthly_trends') {
-      items = [
-        { icon: 'users', label: 'New Leads', value: s.total_new_leads, trend: trendFromSeries(rows.map(function (r) { return r.new_leads; })) },
-        { icon: 'trophy', label: 'Won Leads', value: s.total_won_leads, trend: trendFromSeries(rows.map(function (r) { return r.won_leads; })) },
-        { icon: 'calendar', label: 'Months', value: s.months || rows.length, trend: { text: 'Rolling view', cls: 'ra-trend--neutral', icon: 'calendar-range' } },
-        { icon: 'presentation', label: 'Demo Leads', value: rows.reduce(function (a, r) { return a + (Number(r.demo_leads) || 0); }, 0), trend: trendFromSeries(rows.map(function (r) { return r.demo_leads; })) },
-      ];
-    } else if (slug === 'city_analysis') {
-      items = [
-        { icon: 'map-pin', label: 'Cities', value: s.cities, trend: { text: 'Coverage', cls: 'ra-trend--neutral', icon: 'globe' } },
-        { icon: 'users', label: 'Total Leads', value: s.total_leads, trend: trendFromSeries(rows.map(function (r) { return r.total_leads; })) },
-        { icon: 'trophy', label: 'Top City', value: rows[0] ? rows[0].city : '—', trend: { text: rows[0] ? fmtNum(rows[0].total_leads) + ' leads' : '—', cls: 'ra-trend--up', icon: 'trending-up' } },
-        { icon: 'percent', label: 'Best Conversion', value: rows.length ? fmtPct(rows.slice().sort(function (a, b) { return (b.conversion_rate_pct || 0) - (a.conversion_rate_pct || 0); })[0].conversion_rate_pct) : '—', trend: { text: 'City benchmark', cls: 'ra-trend--neutral', icon: 'sparkles' } },
-      ];
-    } else {
-      Object.keys(s).slice(0, 6).forEach(function (key) {
-        var val = s[key];
-        items.push({
-          icon: 'bar-chart-2',
-          label: fmtLabel(key),
-          value: typeof val === 'number' ? fmtNum(val) : String(val),
-          trend: { text: 'Live data', cls: 'ra-trend--neutral', icon: 'activity' },
-        });
-      });
-    }
-
-    return '<div class="ra-kpi-grid">' + items.map(function (kpi) {
-      var t = kpi.trend || {};
-      return '<article class="ra-kpi-card">' +
-        '<span class="ra-kpi-card__icon"><i data-lucide="' + kpi.icon + '" class="h-5 w-5"></i></span>' +
-        '<p class="ra-kpi-card__label">' + escapeHtml(kpi.label) + '</p>' +
-        '<p class="ra-kpi-card__value">' + (typeof kpi.value === 'number' ? fmtNum(kpi.value) : escapeHtml(String(kpi.value))) + '</p>' +
-        '<p class="ra-kpi-card__trend ' + (t.cls || '') + '"><i data-lucide="' + (t.icon || 'minus') + '" class="h-3 w-3"></i> ' + escapeHtml(t.text || '') + '</p>' +
-      '</article>';
-    }).join('') + '</div>';
+  function paintMultiDonut(segments, centerLabel) {
+    segments = (segments || []).filter(function (s) { return (Number(s.value) || 0) > 0; });
+    if (!segments.length) return '<p class="ra-chart-empty">' + CHART_EMPTY + '</p>';
+    var total = segments.reduce(function (a, s) { return a + (Number(s.value) || 0); }, 0) || 1;
+    var cum = 0;
+    var gradient = segments.map(function (seg) {
+      var pct = ((Number(seg.value) || 0) / total) * 100;
+      var start = cum;
+      cum += pct;
+      return (seg.color || '#4CB4D4') + ' ' + start + '% ' + cum + '%';
+    }).join(', ');
+    return '<div class="ra-lc-donut-block">' +
+      '<div class="ra-lc-donut" style="background:conic-gradient(' + gradient + ')" aria-hidden="true">' +
+        '<div class="ra-lc-donut__hole"><strong>' + fmtNum(total) + '</strong><span>' + escapeHtml(centerLabel || 'Total') + '</span></div>' +
+      '</div>' +
+      '<ul class="ra-lc-donut-legend">' + segments.map(function (seg) {
+        var pct = Math.round(((Number(seg.value) || 0) / total) * 100);
+        return '<li><span class="ra-lc-dot" style="background:' + (seg.color || '#4CB4D4') + '"></span>' +
+          escapeHtml(seg.label) + ' <strong>' + fmtNum(seg.value) + '</strong> <em>(' + pct + '%)</em></li>';
+      }).join('') + '</ul></div>';
   }
 
-  function buildCharts(report) {
-    var slug = report.slug || state.slug;
-    var s = report.summary || {};
-    var rows = report.rows || [];
-    var breakdown = report.breakdown || [];
-    var html = '<div class="ra-charts-grid">';
-
-    if (slug === 'lead_conversion') {
-      html += chartCard('Daily Lead Growth', 'line-chart', paintLineChart(rows, 'report_date', [
-        { key: 'new_leads', color: '#4CB4D4' },
-        { key: 'converted_leads', color: '#10b981' },
-      ]));
-      html += chartCard('Lead Status Distribution', 'pie-chart', paintColumnChart(breakdown.map(function (b) {
-        return { label: b.status, value: b.lead_count };
-      })));
-      html += chartCard('Conversion Rate', 'donut', paintDonut(s.conversion_rate_pct, 'Overall Conversion'));
-      var total = Number(s.total_leads) || 1;
-      var funnelStages = [
-        { label: 'Total Leads', value: s.total_leads, pct: '100%' },
-        { label: 'Hot & Warm', value: (Number(s.hot_leads) || 0) + (Number(s.warm_leads) || 0), pct: fmtPct((((Number(s.hot_leads) || 0) + (Number(s.warm_leads) || 0)) / total) * 100) },
-        { label: 'Demo Scheduled', value: s.demo_scheduled, pct: fmtPct((Number(s.demo_scheduled) / total) * 100), drop: 'Stage drop-off' },
-        { label: 'Pipeline', value: s.pipeline_leads, pct: fmtPct((Number(s.pipeline_leads) / total) * 100) },
-        { label: 'Converted', value: s.won_leads, pct: fmtPct((Number(s.won_leads) / total) * 100) },
-      ];
-      html += '<section class="ra-chart-card ra-chart-card--wide"><header class="ra-chart-card__head"><i data-lucide="filter" class="h-4 w-4 text-brand"></i><h4>Conversion Funnel</h4></header><div class="ra-chart-card__body">' + paintFunnel(funnelStages) + '</div></section>';
-    } else if (slug === 'monthly_trends') {
-      html += chartCard('Monthly Lead Trend', 'bar-chart-3', paintColumnChart(rows.map(function (r) { return { label: r.month, value: r.new_leads }; })));
-      html += chartCard('Conversion Trend', 'line-chart', paintLineChart(rows, 'month', [{ key: 'conversion_rate_pct', color: '#8b5cf6' }]));
-      html += chartCard('Demo Trend', 'presentation', paintColumnChart(rows.map(function (r) { return { label: r.month, value: r.demo_leads }; }), { color: 'linear-gradient(to top,#f59e0bcc,#f59e0b44)' }));
-      html += chartCard('Won vs Lost', 'bar-chart-2', paintColumnChart(rows.map(function (r) { return { label: r.month, value: r.won_leads }; })));
-      html += '<section class="ra-chart-card ra-chart-card--wide"><header class="ra-chart-card__head"><i data-lucide="grid-3x3" class="h-4 w-4 text-brand"></i><h4>Monthly Performance Heatmap</h4></header><div class="ra-chart-card__body">' + paintHeatmap(rows) + '</div></section>';
-    } else if (slug === 'employee_performance') {
-      html += chartCard('Top Performers', 'trophy', paintHorizontalBars(rows, 'employee_name', 'achievement_pct', 8));
-      html += chartCard('Assigned Leads', 'users', paintHorizontalBars(rows, 'employee_name', 'assigned_leads', 8));
-      html += chartCard('Demo Follow-ups', 'presentation', paintHorizontalBars(rows, 'employee_name', 'demo_followups', 8));
-      html += chartCard('Overdue Items', 'alert-circle', paintHorizontalBars(rows, 'employee_name', 'overdue_followups', 8));
-    } else if (slug === 'city_analysis') {
-      html += chartCard('Top Cities by Leads', 'map-pin', paintHorizontalBars(rows, 'city', 'total_leads', 10));
-      html += chartCard('Conversion by City', 'percent', paintHorizontalBars(rows.slice().sort(function (a, b) { return (b.conversion_rate_pct || 0) - (a.conversion_rate_pct || 0); }), 'city', 'conversion_rate_pct', 10));
-      html += chartCard('Lead Distribution', 'pie-chart', paintColumnChart(rows.slice(0, 10).map(function (r) { return { label: r.city, value: r.total_leads }; })));
-      html += chartCard('Lost Leads by City', 'trending-down', paintHorizontalBars(rows, 'city', 'lost_leads', 8));
-    } else if (slug === 'followup_performance') {
-      html += chartCard('Follow-up Volume', 'phone', paintColumnChart(rows.map(function (r) { return { label: r.followup_type, value: r.total_followups }; })));
-      html += chartCard('Completion Rate', 'check-circle', paintHorizontalBars(rows, 'followup_type', 'completion_rate_pct', 10));
-    } else {
-      html += chartCard('Report Overview', 'bar-chart-3', paintColumnChart(rows.slice(0, 12).map(function (r, i) {
-        var keys = Object.keys(r);
-        var numKey = keys.find(function (k) { return typeof r[k] === 'number'; }) || keys[0];
-        var labelKey = keys.find(function (k) { return typeof r[k] === 'string'; }) || ('Row ' + (i + 1));
-        return { label: r[labelKey] || ('Row ' + (i + 1)), value: Number(r[numKey]) || 0 };
-      })));
-    }
-
-    html += '</div>';
-    return html;
-  }
-
-  function chartCard(title, icon, bodyHtml) {
-    return '<section class="ra-chart-card"><header class="ra-chart-card__head"><i data-lucide="' + icon + '" class="h-4 w-4 text-brand"></i><h4>' + escapeHtml(title) + '</h4></header><div class="ra-chart-card__body">' + bodyHtml + '</div></section>';
+  function paintStackedBar(segments) {
+    segments = (segments || []).filter(function (s) { return (Number(s.value) || 0) > 0; });
+    var total = segments.reduce(function (a, s) { return a + (Number(s.value) || 0); }, 0);
+    if (!total) return '<p class="ra-chart-empty">' + CHART_EMPTY + '</p>';
+    return '<div class="ra-lc-stacked">' +
+      '<div class="ra-lc-stacked__bar">' + segments.map(function (seg) {
+        var w = Math.max(2, Math.round(((Number(seg.value) || 0) / total) * 100));
+        return '<div class="ra-lc-stacked__seg" style="width:' + w + '%;background:' + (seg.color || '#4CB4D4') + '" title="' +
+          escapeHtml(seg.label) + ': ' + fmtNum(seg.value) + '"></div>';
+      }).join('') + '</div>' +
+      '<ul class="ra-lc-stacked-legend">' + segments.map(function (seg) {
+        return '<li><span class="ra-lc-dot" style="background:' + (seg.color || '#4CB4D4') + '"></span>' +
+          escapeHtml(seg.label) + ' <strong>' + fmtNum(seg.value) + '</strong></li>';
+      }).join('') + '</ul></div>';
   }
 
   function paintHeatmap(rows) {
-    if (!rows || !rows.length) return '<p class="ra-chart-empty">No monthly data</p>';
+    if (!rows || !rows.length) return '<p class="ra-chart-empty">' + CHART_EMPTY + '</p>';
     var metrics = ['new_leads', 'won_leads', 'demo_leads', 'conversion_rate_pct'];
     var labels = { new_leads: 'New', won_leads: 'Won', demo_leads: 'Demo', conversion_rate_pct: 'Conv %' };
     return '<div class="ra-heatmap"><table><thead><tr><th>Month</th>' +
@@ -332,6 +300,229 @@ window.CrmReportAnalytics = (function () {
       }).join('') + '</tbody></table></div>';
   }
 
+  function chartSection(title, icon, bodyHtml, span) {
+    var cls = 'ra-lc-chart' + (span === 2 ? ' ra-lc-chart--span2' : span === 'full' ? ' ra-lc-chart--full' : '');
+    return '<section class="' + cls + '">' +
+      '<header class="ra-lc-chart__head"><i data-lucide="' + icon + '" class="h-4 w-4"></i><h4>' + escapeHtml(title) + '</h4></header>' +
+      '<div class="ra-lc-chart__body' + (title.indexOf('Funnel') >= 0 ? ' ra-lc-chart__body--funnel' : '') + '">' + bodyHtml + '</div></section>';
+  }
+
+  function buildKpiCard(card) {
+    var t = card.trend || {};
+    var trendHtml = t.text ? '<span class="ra-lc-kpi-card__trend ' + (t.cls || '') + '" title="' + escapeHtml(t.text) + '">' + escapeHtml(t.text) + '</span>' : '';
+    var tip = card.tooltip ? ' title="' + escapeHtml(card.tooltip) + '"' : '';
+    return '<article class="ra-lc-kpi-card ra-lc-kpi-card--' + (card.tone || 'blue') + '"' + tip + '>' +
+      '<span class="ra-lc-kpi-card__icon"><i data-lucide="' + card.icon + '" class="h-4 w-4"></i></span>' +
+      '<p class="ra-lc-kpi-card__value">' + escapeHtml(String(card.value)) + '</p>' +
+      '<p class="ra-lc-kpi-card__label">' + escapeHtml(card.label) + '</p>' +
+      trendHtml +
+    '</article>';
+  }
+
+  function buildKpis(report) {
+    var slug = report.slug || state.slug;
+    var s = report.summary || {};
+    var rows = report.rows || [];
+    var breakdown = report.breakdown || [];
+    var cards = [];
+
+    if (slug === 'lead_conversion') {
+      var contacted = (Number(s.hot_leads) || 0) + (Number(s.warm_leads) || 0) + (Number(s.pipeline_leads) || 0);
+      cards = [
+        { icon: 'users', tone: 'blue', label: 'Leads Created', value: fmtNum(s.total_leads), tooltip: 'Total leads created in the selected date range.', trend: compactTrend(rows.map(function (r) { return r.new_leads; })) },
+        { icon: 'phone', tone: 'blue', label: 'Leads Contacted', value: fmtNum(contacted), tooltip: 'Hot, warm, and pipeline status leads.', trend: null },
+        { icon: 'calendar-check', tone: 'blue', label: 'Demos Scheduled', value: fmtNum(s.demo_scheduled), tooltip: 'Leads with Demo Scheduled status.', trend: null },
+        { icon: 'trophy', tone: 'green', label: 'Leads Converted', value: fmtNum(s.won_leads), tooltip: 'Leads marked as purchased (software_purchased).', trend: compactTrend(rows.map(function (r) { return r.converted_leads; })) },
+        { icon: 'user-x', tone: 'gray', label: 'New / Unassigned', value: fmtNum(s.new_leads || breakdownCount(breakdown, 'New')), tooltip: 'Leads still in New status.', trend: null },
+        { icon: 'x-circle', tone: 'red', label: 'Lost Leads', value: fmtNum(s.lost_leads), tooltip: 'Leads in Lost or Inactive status.', trend: null },
+      ];
+    } else if (slug === 'followup_performance') {
+      var completionPct = Number(s.total_followups) ? fmtPct((Number(s.completed) / Number(s.total_followups)) * 100) : '—';
+      cards = [
+        { icon: 'presentation', tone: 'blue', label: 'Total Follow-ups', value: fmtNum(s.total_followups), tooltip: 'All follow-ups scheduled in range.' },
+        { icon: 'check-circle', tone: 'green', label: 'Completed', value: fmtNum(s.completed), tooltip: 'Follow-ups marked completed.' },
+        { icon: 'alert-circle', tone: 'red', label: 'Overdue', value: fmtNum(s.overdue), tooltip: 'Open follow-ups past scheduled date.' },
+        { icon: 'calendar', tone: 'blue', label: 'Demo Related', value: fmtNum(s.demo_followups), tooltip: 'Follow-ups with Demo in the type.' },
+        { icon: 'percent', tone: 'orange', label: 'Completion Rate', value: completionPct, tooltip: 'Completed ÷ total follow-ups × 100.' },
+      ];
+    } else if (slug === 'monthly_trends') {
+      var lostTotal = sumRows(rows, 'lost_leads');
+      var demoTotal = sumRows(rows, 'demo_leads');
+      var convAvg = rows.length ? fmtPct(rows.reduce(function (a, r) { return a + (Number(r.conversion_rate_pct) || 0); }, 0) / rows.length) : '—';
+      cards = [
+        { icon: 'users', tone: 'blue', label: 'New Leads', value: fmtNum(s.total_new_leads), tooltip: 'Sum of monthly new leads.', trend: compactTrend(rows.map(function (r) { return r.new_leads; })) },
+        { icon: 'presentation', tone: 'blue', label: 'Demos', value: fmtNum(demoTotal), tooltip: 'Demo Scheduled leads per month.' },
+        { icon: 'trophy', tone: 'green', label: 'Converted', value: fmtNum(s.total_won_leads), tooltip: 'Purchased leads per month (won_leads).' },
+        { icon: 'x-circle', tone: 'red', label: 'Lost', value: fmtNum(lostTotal), tooltip: 'Lost/Inactive leads per month.' },
+        { icon: 'percent', tone: 'orange', label: 'Avg Conversion', value: convAvg, tooltip: 'Average monthly conversion rate (won ÷ new × 100).' },
+        { icon: 'indian-rupee', tone: 'gray', label: 'Revenue', value: 'N/A', tooltip: 'Revenue is not stored in this CRM.' },
+      ];
+    } else if (slug === 'city_analysis') {
+      var top = rows[0];
+      var bestConv = rows.length ? rows.slice().sort(function (a, b) { return (b.conversion_rate_pct || 0) - (a.conversion_rate_pct || 0); })[0] : null;
+      cards = [
+        { icon: 'map-pin', tone: 'blue', label: 'Total Cities', value: fmtNum(s.cities), tooltip: 'Cities with at least one lead.' },
+        { icon: 'building-2', tone: 'blue', label: 'Top City', value: top ? top.city : '—', tooltip: 'City with the most leads.' },
+        { icon: 'users', tone: 'blue', label: 'Leads in Top City', value: top ? fmtNum(top.total_leads) : '—', tooltip: 'Lead count in the top city.' },
+        { icon: 'percent', tone: 'green', label: 'Best Conversion', value: bestConv ? fmtPct(bestConv.conversion_rate_pct) : '—', tooltip: 'Highest city conversion (won ÷ total × 100).' },
+        { icon: 'users', tone: 'blue', label: 'Total Leads', value: fmtNum(s.total_leads), tooltip: 'All leads across listed cities.' },
+      ];
+    } else if (slug === 'employee_performance') {
+      var topEmp = rows[0];
+      cards = [
+        { icon: 'users', tone: 'blue', label: 'Employees', value: fmtNum(s.active_employees), tooltip: 'Active employees in report.' },
+        { icon: 'trophy', tone: 'green', label: 'Top Performer', value: topEmp ? topEmp.employee_name : '—', tooltip: 'Highest achieved leads.' },
+        { icon: 'target', tone: 'blue', label: 'Total Assigned', value: fmtNum(s.total_assigned_leads), tooltip: 'Active assignment count.' },
+        { icon: 'check-circle', tone: 'green', label: 'Total Achieved', value: fmtNum(sumRows(rows, 'achieved_leads')), tooltip: 'Sum of achieved leads vs target.' },
+        { icon: 'percent', tone: 'orange', label: 'Avg Conversion', value: fmtPct(s.avg_achievement_pct), tooltip: 'Average achievement % (achieved ÷ target × 100).' },
+        { icon: 'alert-circle', tone: 'red', label: 'Overdue Follow-ups', value: fmtNum(s.total_overdue_followups), tooltip: 'Overdue open follow-ups team-wide.' },
+      ];
+    } else if (slug === 'duplicate_productivity') {
+      cards = [
+        { icon: 'copy', tone: 'blue', label: 'Unique Leads', value: fmtNum(s.total_unique_leads), tooltip: 'Distinct leads worked by the team.' },
+        { icon: 'shield-alert', tone: 'red', label: 'Duplicate Attempts', value: fmtNum(s.total_duplicate_attempts), tooltip: 'Duplicate entry attempts logged.' },
+        { icon: 'trophy', tone: 'green', label: 'Top Collector', value: s.top_collector || '—', tooltip: 'Employee with most unique leads.' },
+        { icon: 'star', tone: 'green', label: 'Top Quality', value: s.top_quality_score || '—', tooltip: 'Highest quality score employee.' },
+        { icon: 'alert-triangle', tone: 'orange', label: 'Least Accurate', value: s.least_accurate || '—', tooltip: 'Employee with lowest accuracy signals.' },
+      ];
+    } else if (slug === 'lost_lead_analysis') {
+      cards = [
+        { icon: 'x-circle', tone: 'red', label: 'Lost Leads', value: fmtNum(s.lost_leads), tooltip: 'Total lost/inactive leads in range.' },
+        { icon: 'list', tone: 'blue', label: 'Listed Rows', value: fmtNum(s.listed_rows), tooltip: 'Detail rows shown (max 500).' },
+      ];
+    } else if (slug === 'assignment_statistics') {
+      cards = [
+        { icon: 'users', tone: 'blue', label: 'Active Assignments', value: fmtNum(s.active_assignments), tooltip: 'Currently active lead assignments.' },
+        { icon: 'git-branch', tone: 'blue', label: 'Total Assignments', value: fmtNum(s.total_assignments), tooltip: 'Assignments in selected period.' },
+        { icon: 'repeat', tone: 'purple', label: 'Reassignments', value: fmtNum(s.reassignments), tooltip: 'Assignments with a previous owner.' },
+        { icon: 'layers', tone: 'blue', label: 'Assignment Types', value: fmtNum(s.assignment_types), tooltip: 'Distinct assignment type buckets.' },
+      ];
+    } else if (slug === 'campaign_analytics') {
+      cards = [
+        { icon: 'megaphone', tone: 'blue', label: 'Campaigns', value: fmtNum(s.campaigns_total), tooltip: 'WhatsApp, email, and SMS campaigns.' },
+        { icon: 'send', tone: 'blue', label: 'Messages Sent', value: fmtNum(s.messages_total), tooltip: 'Total outbound messages.' },
+        { icon: 'check-circle', tone: 'green', label: 'Delivered', value: fmtNum(s.delivered_total), tooltip: 'Successfully delivered messages.' },
+        { icon: 'x-circle', tone: 'red', label: 'Failed', value: fmtNum(s.failed_total), tooltip: 'Failed delivery attempts.' },
+        { icon: 'percent', tone: 'orange', label: 'Delivery Rate', value: fmtPct(s.delivery_rate_pct), tooltip: 'Delivered ÷ sent × 100.' },
+      ];
+    } else {
+      Object.keys(s).slice(0, 6).forEach(function (key) {
+        var val = s[key];
+        cards.push({
+          icon: 'bar-chart-2',
+          tone: 'blue',
+          label: fmtLabel(key),
+          value: typeof val === 'number' ? fmtNum(val) : String(val == null ? '—' : val),
+        });
+      });
+    }
+
+    return '<div class="ra-lc-kpi-grid">' + cards.map(buildKpiCard).join('') + '</div>';
+  }
+
+  function buildCharts(report) {
+    var slug = report.slug || state.slug;
+    var s = report.summary || {};
+    var rows = report.rows || [];
+    var breakdown = report.breakdown || [];
+    var html = '<div class="ra-lc-charts">';
+
+    if (slug === 'lead_conversion') {
+      html += chartSection('Daily Lead Growth', 'line-chart', paintLineChart(rows, 'report_date', [
+        { key: 'new_leads', color: '#3b82f6' },
+        { key: 'converted_leads', color: '#10b981' },
+      ]), 2);
+      html += chartSection('Status Distribution', 'pie-chart', paintMultiDonut(
+        breakdown.map(function (b, i) {
+          var colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#64748b'];
+          return { label: b.status, value: b.lead_count, color: colors[i % colors.length] };
+        }), 'Leads'
+      ));
+      html += chartSection('Overall Conversion', 'donut', paintDonut(s.conversion_rate_pct, 'Won ÷ Total'));
+      var total = Number(s.total_leads) || 1;
+      html += chartSection('Conversion Funnel', 'filter', paintFunnel([
+        { label: 'Total Leads', value: s.total_leads, pct: '100%' },
+        { label: 'Hot & Warm', value: (Number(s.hot_leads) || 0) + (Number(s.warm_leads) || 0), pct: fmtPct((((Number(s.hot_leads) || 0) + (Number(s.warm_leads) || 0)) / total) * 100) },
+        { label: 'Demo Scheduled', value: s.demo_scheduled, pct: fmtPct((Number(s.demo_scheduled) / total) * 100) },
+        { label: 'Pipeline', value: s.pipeline_leads, pct: fmtPct((Number(s.pipeline_leads) / total) * 100) },
+        { label: 'Converted', value: s.won_leads, pct: fmtPct((Number(s.won_leads) / total) * 100) },
+      ]), 'full');
+    } else if (slug === 'followup_performance') {
+      html += chartSection('Follow-up Volume', 'phone', paintColumnChart(rows.map(function (r) {
+        return { label: r.followup_type, value: r.total_followups };
+      })));
+      html += chartSection('Completion Rate', 'check-circle', paintHorizontalBars(rows, 'followup_type', 'completion_rate_pct', 10));
+      html += chartSection('Demo Related', 'presentation', paintHorizontalBars(rows, 'followup_type', 'demo_related', 10));
+      html += chartSection('Overdue by Type', 'alert-circle', paintHorizontalBars(rows, 'followup_type', 'overdue', 10));
+    } else if (slug === 'monthly_trends') {
+      html += chartSection('Monthly Lead Trend', 'bar-chart-3', paintColumnChart(rows.map(function (r) { return { label: r.month, value: r.new_leads }; })), 2);
+      html += chartSection('Conversion Trend', 'line-chart', paintLineChart(rows, 'month', [{ key: 'conversion_rate_pct', color: '#8b5cf6' }]));
+      html += chartSection('Demo Trend', 'presentation', paintColumnChart(rows.map(function (r) { return { label: r.month, value: r.demo_leads }; }), { color: '#f59e0b' }));
+      html += chartSection('Won Leads', 'trophy', paintColumnChart(rows.map(function (r) { return { label: r.month, value: r.won_leads }; }), { color: '#10b981' }));
+      html += chartSection('Lost Leads', 'trending-down', paintColumnChart(rows.map(function (r) { return { label: r.month, value: r.lost_leads }; }), { color: '#ef4444' }));
+      html += chartSection('Month Comparison', 'grid-3x3', paintHeatmap(rows), 'full');
+    } else if (slug === 'employee_performance') {
+      html += chartSection('Target Achievement', 'trophy', paintHorizontalBars(rows, 'employee_name', 'achievement_pct', 8), 2);
+      html += chartSection('Assigned Leads', 'users', paintHorizontalBars(rows, 'employee_name', 'assigned_leads', 8));
+      html += chartSection('Demo Follow-ups', 'presentation', paintHorizontalBars(rows, 'employee_name', 'demo_followups', 8));
+      html += chartSection('Overdue Items', 'alert-circle', paintHorizontalBars(rows, 'employee_name', 'overdue_followups', 8));
+    } else if (slug === 'city_analysis') {
+      html += chartSection('Top Cities', 'map-pin', paintHorizontalBars(rows, 'city', 'total_leads', 10), 2);
+      html += chartSection('Conversion by City', 'percent', paintHorizontalBars(rows.slice().sort(function (a, b) {
+        return (b.conversion_rate_pct || 0) - (a.conversion_rate_pct || 0);
+      }), 'city', 'conversion_rate_pct', 10));
+      html += chartSection('Status Mix (Hot)', 'flame', paintHorizontalBars(rows, 'city', 'hot_leads', 8));
+      html += chartSection('Lost by City', 'trending-down', paintHorizontalBars(rows, 'city', 'lost_leads', 8));
+    } else if (slug === 'lost_lead_analysis') {
+      html += chartSection('Lost by City', 'map-pin', paintHorizontalBars(
+        aggregateRows(rows, 'city').slice(0, 10), 'label', 'count', 10
+      ), 2);
+      html += chartSection('Lost by Source', 'megaphone', paintHorizontalBars(
+        aggregateRows(rows, 'source').slice(0, 10), 'label', 'count', 10
+      ));
+      html += chartSection('Lost by Employee', 'user', paintHorizontalBars(
+        aggregateRows(rows, 'executive').slice(0, 10), 'label', 'count', 10
+      ));
+    } else if (slug === 'duplicate_productivity') {
+      html += chartSection('Duplicate Attempts', 'shield-alert', paintHorizontalBars(rows, 'employee_name', 'duplicate_attempts', 10), 2);
+      html += chartSection('Unique Leads', 'users', paintHorizontalBars(rows, 'employee_name', 'unique_leads', 10));
+      html += chartSection('Quality Score', 'star', paintHorizontalBars(rows, 'employee_name', 'quality_score', 10));
+      html += chartSection('Follow-up Completion', 'check-circle', paintHorizontalBars(rows, 'employee_name', 'followup_completion_pct', 10));
+    } else if (slug === 'assignment_statistics') {
+      var typeRows = report.breakdown || [];
+      html += chartSection('Daily Assignments', 'calendar', paintLineChart(rows, 'report_date', [{ key: 'assignments', color: '#3b82f6' }]), 2);
+      html += chartSection('By Assignment Type', 'layers', paintColumnChart(typeRows.map(function (r) {
+        return { label: r.assignment_type, value: r.assignment_count };
+      })));
+    } else if (slug === 'campaign_analytics') {
+      var channels = report.breakdown || [];
+      html += chartSection('Channel Delivery', 'send', paintHorizontalBars(channels, 'channel', 'delivered', 5), 2);
+      html += chartSection('Failed Messages', 'x-circle', paintHorizontalBars(channels, 'channel', 'failed', 5));
+      html += chartSection('Delivery Rate', 'percent', paintHorizontalBars(channels, 'channel', 'delivery_rate_pct', 5));
+    } else if (rows.length) {
+      html += chartSection('Report Overview', 'bar-chart-3', paintColumnChart(rows.slice(0, 12).map(function (r, i) {
+        var keys = Object.keys(r);
+        var numKey = keys.find(function (k) { return typeof r[k] === 'number'; }) || keys[0];
+        var labelKey = keys.find(function (k) { return typeof r[k] === 'string'; }) || ('Row ' + (i + 1));
+        return { label: r[labelKey] || ('Row ' + (i + 1)), value: Number(r[numKey]) || 0 };
+      })), 'full');
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function aggregateRows(rows, key) {
+    var map = {};
+    (rows || []).forEach(function (row) {
+      var label = row[key] || '—';
+      map[label] = (map[label] || 0) + 1;
+    });
+    return Object.keys(map).map(function (label) {
+      return { label: label, count: map[label] };
+    }).sort(function (a, b) { return b.count - a.count; });
+  }
+
   function filterRows(rows, columns) {
     rows = rows.slice();
     var q = (state.tableSearch || '').toLowerCase().trim();
@@ -340,6 +531,13 @@ window.CrmReportAnalytics = (function () {
         return Object.keys(columns).some(function (key) {
           return String(row[key] == null ? '' : row[key]).toLowerCase().indexOf(q) >= 0;
         });
+      });
+    }
+    if (state.drillDown && state.drillDown.key) {
+      var dk = state.drillDown.key;
+      var dv = state.drillDown.value;
+      rows = rows.filter(function (row) {
+        return String(row[dk] || '') === String(dv);
       });
     }
     if (state.sortKey) {
@@ -359,7 +557,8 @@ window.CrmReportAnalytics = (function () {
     var columns = report.columns || {};
     var keys = Object.keys(columns);
     if (!keys.length) return '';
-    var rows = filterRows(report.rows || [], columns);
+    var allRows = report.rows || [];
+    var rows = filterRows(allRows, columns);
     var slug = report.slug || state.slug;
 
     var thead = keys.map(function (key) {
@@ -370,100 +569,88 @@ window.CrmReportAnalytics = (function () {
     var tbody = rows.length ? rows.map(function (row, idx) {
       var tds = keys.map(function (key) {
         var val = row[key];
-        if (key === 'achievement_pct' || key === 'conversion_rate_pct' || key === 'completion_rate_pct') {
+        if (key === 'achievement_pct' || key === 'conversion_rate_pct' || key === 'completion_rate_pct' || key === 'followup_completion_pct' || key === 'communication_success_pct') {
           var pct = Math.min(100, Math.max(0, Number(val) || 0));
           return '<td><div class="ra-progress-cell"><span>' + fmtPct(val) + '</span><div class="ra-progress-track"><div class="ra-progress-fill" style="width:' + pct + '%"></div></div></div></td>';
         }
-        if (slug === 'employee_performance' && key === 'employee_name') {
+        if ((slug === 'employee_performance' || slug === 'duplicate_productivity') && key === 'employee_name') {
           return '<td><span class="ra-rank">' + (idx + 1) + '</span> ' + escapeHtml(val == null ? '—' : String(val)) + '</td>';
+        }
+        if (key === 'rank') {
+          return '<td><span class="ra-rank">' + escapeHtml(val == null ? String(idx + 1) : String(val)) + '</span></td>';
         }
         return '<td>' + escapeHtml(val == null ? '—' : String(val)) + '</td>';
       }).join('');
       return '<tr>' + tds + '</tr>';
-    }).join('') : '<tr><td colspan="' + keys.length + '" class="ra-table-empty">No rows match your search.</td></tr>';
+    }).join('') : '<tr><td colspan="' + keys.length + '" class="ra-table-empty">' +
+      (allRows.length ? 'No rows match your search or drill-down.' : CHART_EMPTY) + '</td></tr>';
 
-    return '<section class="ra-table-section">' +
-      '<header class="ra-table-section__head">' +
-        '<div><h4>Detailed Data</h4><p>' + fmtNum(rows.length) + ' records · sortable · searchable</p></div>' +
+    var drillHtml = '';
+    if (state.drillDown && state.drillDown.label) {
+      drillHtml = '<div class="ra-drill-chip">' +
+        '<span>Filtered: ' + escapeHtml(state.drillDown.label) + '</span>' +
+        '<button type="button" class="crm-toolbar-icon-btn" id="ra-drill-clear" title="Clear drill-down" aria-label="Clear drill-down"><i data-lucide="x" class="h-3.5 w-3.5"></i></button>' +
+      '</div>';
+    }
+
+    return '<section class="ra-lc-table-section">' +
+      '<header class="ra-lc-table-section__head">' +
+        '<div><i data-lucide="table" class="h-4 w-4"></i><h4>Detailed Data</h4></div>' +
+        drillHtml +
         '<label class="ra-table-search"><i data-lucide="search" class="h-4 w-4"></i>' +
           '<input type="search" id="ra-table-search" placeholder="Search table…" value="' + escapeHtml(state.tableSearch) + '" aria-label="Search report table" /></label>' +
       '</header>' +
-      '<div class="ra-table-wrap scrollbar-thin"><table class="ra-table"><thead><tr>' + thead + '</tr></thead><tbody>' + tbody + '</tbody></table></div>' +
+      '<p class="ra-table-meta">' + fmtNum(rows.length) + ' of ' + fmtNum(allRows.length) + ' rows · click column headers to sort</p>' +
+      '<div class="ra-table-wrap scrollbar-thin"><table class="ra-table ra-lc-table"><thead><tr>' + thead + '</tr></thead><tbody>' + tbody + '</tbody></table></div>' +
     '</section>';
   }
 
-  function buildInsights(report) {
+  function buildFilterBar(slug) {
+    var filters = FILTER_PRESETS[slug] || ['date', 'employee', 'search'];
+    var parts = [];
+
+    if (filters.indexOf('date') >= 0) {
+      parts.push('<label class="ra-lc-filter" title="Date From"><i data-lucide="calendar" class="h-3.5 w-3.5"></i><input type="date" id="ra-filter-from" class="input-field input-field-sm" aria-label="Date From" /></label>');
+      parts.push('<label class="ra-lc-filter" title="Date To"><i data-lucide="calendar-range" class="h-3.5 w-3.5"></i><input type="date" id="ra-filter-to" class="input-field input-field-sm" aria-label="Date To" /></label>');
+    }
+    if (filters.indexOf('employee') >= 0) {
+      parts.push('<label class="ra-lc-filter ra-lc-filter--grow" title="Employee"><i data-lucide="user" class="h-3.5 w-3.5"></i><select id="ra-filter-employee" class="input-field input-field-sm" aria-label="Employee"><option value="">All employees</option></select></label>');
+    }
+    if (filters.indexOf('status') >= 0) {
+      parts.push('<label class="ra-lc-filter" title="Status"><i data-lucide="filter" class="h-3.5 w-3.5"></i><select id="ra-filter-status" class="input-field input-field-sm" aria-label="Status"><option value="">All statuses</option><option>Hot</option><option>Warm</option><option>New</option><option>Demo Scheduled</option><option>Lost</option></select></label>');
+    }
+    if (filters.indexOf('search') >= 0) {
+      parts.push('<label class="ra-lc-filter ra-lc-filter--grow" title="Search table"><i data-lucide="search" class="h-3.5 w-3.5"></i><input type="search" id="ra-filter-source" class="input-field input-field-sm" placeholder="Search table…" aria-label="Search table" /></label>');
+    }
+
+    parts.push('<button type="button" class="btn-primary btn-sm ra-lc-apply" id="ra-filter-apply">Apply</button>');
+    parts.push('<button type="button" class="crm-toolbar-icon-btn" id="ra-filter-reset" title="Reset filters" aria-label="Reset filters"><i data-lucide="rotate-ccw" class="h-4 w-4"></i></button>');
+
+    return '<div class="ra-lc-toolbar"><div class="ra-lc-filters">' + parts.join('') + '</div></div>';
+  }
+
+  function buildNotice(slug) {
+    var meta = SLUG_META[slug] || {};
+    if (!meta.notice) return '';
+    return '<div class="ra-notice" role="status"><i data-lucide="info" class="h-4 w-4"></i><span>' + escapeHtml(meta.notice) + '</span></div>';
+  }
+
+  function renderUnifiedShell(report) {
     var slug = report.slug || state.slug;
-    var s = report.summary || {};
-    var rows = report.rows || [];
-    var breakdown = report.breakdown || [];
-    var insights = [];
-
-    if (slug === 'employee_performance' && rows.length) {
-      var best = rows.slice().sort(function (a, b) { return (b.achievement_pct || 0) - (a.achievement_pct || 0); })[0];
-      var low = rows.slice().sort(function (a, b) { return (a.achievement_pct || 0) - (b.achievement_pct || 0); })[0];
-      insights.push({ icon: 'sparkles', title: 'Highest converting employee', text: (best.employee_name || '—') + ' · ' + fmtPct(best.achievement_pct) + ' achievement' });
-      insights.push({ icon: 'alert-triangle', title: 'Needs coaching', text: (low.employee_name || '—') + ' · ' + fmtPct(low.achievement_pct) + ' achievement' });
-    }
-    if (slug === 'city_analysis' && rows.length) {
-      var topCity = rows[0];
-      var lowCity = rows.slice().sort(function (a, b) { return (a.conversion_rate_pct || 0) - (b.conversion_rate_pct || 0); })[0];
-      insights.push({ icon: 'map-pin', title: 'Top city', text: (topCity.city || '—') + ' with ' + fmtNum(topCity.total_leads) + ' leads' });
-      insights.push({ icon: 'trending-down', title: 'Lowest performing city', text: (lowCity.city || '—') + ' · ' + fmtPct(lowCity.conversion_rate_pct) + ' conversion' });
-    }
-    if (slug === 'lead_conversion') {
-      var topStatus = breakdown.slice().sort(function (a, b) { return (b.lead_count || 0) - (a.lead_count || 0); })[0];
-      insights.push({ icon: 'filter', title: 'Best lead source signal', text: topStatus ? (topStatus.status + ' · ' + fmtNum(topStatus.lead_count) + ' leads (' + fmtPct(topStatus.share_pct) + ')') : 'Review lead statuses' });
-      insights.push({ icon: 'presentation', title: 'Demo conversion', text: fmtPct(s.demo_ratio_pct) + ' of leads reached demo stage' });
-      insights.push({ icon: 'target', title: 'Today\'s recommendation', text: (Number(s.lost_leads) || 0) > (Number(s.won_leads) || 0) ? 'Focus on recovering lost pipeline leads.' : 'Double down on demo-to-close follow-ups.' });
-    }
-    if (slug === 'monthly_trends' && rows.length) {
-      var bestMonth = rows.slice().sort(function (a, b) { return (b.new_leads || 0) - (a.new_leads || 0); })[0];
-      insights.push({ icon: 'calendar', title: 'Top performing month', text: (bestMonth.month || '—') + ' · ' + fmtNum(bestMonth.new_leads) + ' new leads' });
-      insights.push({ icon: 'line-chart', title: 'Monthly trend', text: 'Won ' + fmtNum(s.total_won_leads) + ' of ' + fmtNum(s.total_new_leads) + ' leads in view' });
-    }
-    if (!insights.length) {
-      insights.push({ icon: 'lightbulb', title: 'Business insight', text: 'Report loaded with ' + fmtNum(rows.length) + ' detail rows for the selected period.' });
-      insights.push({ icon: 'shield-check', title: 'System alert', text: (Number(s.total_overdue_followups) || 0) > 0 ? fmtNum(s.total_overdue_followups) + ' overdue follow-ups need review.' : 'No critical alerts for this report.' });
-    }
-
-    return '<section class="ra-insights-panel">' +
-      '<header class="ra-insights-panel__head"><i data-lucide="sparkles" class="h-4 w-4 text-brand"></i><h4>Business Insights</h4><span class="ra-ai-badge">AI Insights</span></header>' +
-      '<div class="ra-insights-list">' +
-      insights.map(function (item) {
-        return '<article class="ra-insight-card"><span class="ra-insight-card__icon"><i data-lucide="' + item.icon + '" class="h-4 w-4"></i></span><div><h5>' + escapeHtml(item.title) + '</h5><p>' + escapeHtml(item.text) + '</p></div></article>';
-      }).join('') +
-      '</div></section>';
-  }
-
-  function metaLine(report) {
-    var from = ($('ra-filter-from') || $('reports-filter-from') || {}).value || '—';
-    var to = ($('ra-filter-to') || $('reports-filter-to') || {}).value || '—';
-    var user = (window.currentUser && window.currentUser.name) || 'System';
-    return '<span><i data-lucide="calendar-range" class="h-3.5 w-3.5"></i> ' + escapeHtml(from) + ' → ' + escapeHtml(to) + '</span>' +
-      '<span><i data-lucide="clock" class="h-3.5 w-3.5"></i> Updated ' + escapeHtml(new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })) + '</span>' +
-      '<span><i data-lucide="user" class="h-3.5 w-3.5"></i> Generated by ' + escapeHtml(user) + '</span>';
-  }
-
-  function renderShell(report) {
-    var meta = SLUG_META[state.slug] || {};
-    var title = report.label || meta.title || fmtLabel(state.slug);
+    var meta = SLUG_META[slug] || {};
+    var title = report.label || meta.title || fmtLabel(slug);
     var root = $('ra-root');
     if (!root) return;
 
     root.innerHTML =
-      '<header class="ra-drawer__header">' +
-        '<button type="button" class="ra-back-btn" id="ra-back" aria-label="Back">' +
-          '<i data-lucide="arrow-left" class="h-5 w-5"></i><span>Back</span>' +
-        '</button>' +
-        '<div class="ra-drawer__header-main">' +
-          '<p class="ra-drawer__eyebrow"><i data-lucide="' + (meta.icon || 'file-text') + '" class="h-4 w-4"></i> Analytics Dashboard</p>' +
-          '<h2 id="ra-title" class="ra-drawer__title">' + escapeHtml(title) + '</h2>' +
-          '<div class="ra-drawer__meta">' + metaLine(report) + '</div>' +
+      '<header class="ra-lc-header">' +
+        '<button type="button" class="crm-toolbar-icon-btn" id="ra-back" title="Back" aria-label="Back"><i data-lucide="arrow-left" class="h-4 w-4"></i></button>' +
+        '<div class="ra-lc-header__title">' +
+          '<div><i data-lucide="' + (meta.icon || 'file-text') + '" class="h-4 w-4 text-brand"></i><h2 id="ra-title">' + escapeHtml(title) + '</h2></div>' +
         '</div>' +
-        '<div class="ra-drawer__actions">' +
+        '<div class="ra-lc-header__actions">' +
           '<div class="ra-export-menu">' +
-            '<button type="button" class="btn-secondary btn-sm" id="ra-export-toggle" aria-haspopup="true"><i data-lucide="download" class="h-4 w-4"></i> Export</button>' +
+            '<button type="button" class="crm-toolbar-icon-btn" id="ra-export-toggle" title="Export" aria-label="Export"><i data-lucide="download" class="h-4 w-4"></i></button>' +
             '<div class="ra-export-menu__list hidden" id="ra-export-list">' +
               '<button type="button" data-ra-export="pdf">PDF</button>' +
               '<button type="button" data-ra-export="csv">Excel / CSV</button>' +
@@ -472,33 +659,25 @@ window.CrmReportAnalytics = (function () {
           '</div>' +
           '<button type="button" class="crm-toolbar-icon-btn" id="ra-refresh" title="Refresh" aria-label="Refresh"><i data-lucide="refresh-cw" class="h-4 w-4"></i></button>' +
           '<button type="button" class="crm-toolbar-icon-btn" id="ra-share" title="Share" aria-label="Share"><i data-lucide="share-2" class="h-4 w-4"></i></button>' +
-          '<button type="button" class="ca-modal-close" id="ra-close" aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>' +
+          '<button type="button" class="crm-toolbar-icon-btn" id="ra-print" title="Print" aria-label="Print"><i data-lucide="printer" class="h-4 w-4"></i></button>' +
+          '<button type="button" class="crm-toolbar-icon-btn" id="ra-close" title="Close" aria-label="Close"><i data-lucide="x" class="h-4 w-4"></i></button>' +
         '</div>' +
       '</header>' +
-      '<div class="ra-drawer__layout">' +
-        '<aside class="ra-drawer__filters">' +
-          '<h3>Filters</h3>' +
-          '<label class="ra-filter-field"><span>Date From</span><input type="date" id="ra-filter-from" class="input-field input-field-sm" /></label>' +
-          '<label class="ra-filter-field"><span>Date To</span><input type="date" id="ra-filter-to" class="input-field input-field-sm" /></label>' +
-          '<label class="ra-filter-field"><span>Employee</span><select id="ra-filter-employee" class="input-field input-field-sm"><option value="">All employees</option></select></label>' +
-          '<label class="ra-filter-field"><span>Status</span><select id="ra-filter-status" class="input-field input-field-sm"><option value="">All statuses</option><option>Hot</option><option>Warm</option><option>New</option><option>Demo Scheduled</option><option>Lost</option></select></label>' +
-          '<label class="ra-filter-field"><span>Lead Source</span><input type="search" id="ra-filter-source" class="input-field input-field-sm" placeholder="Filter table…" /></label>' +
-          '<div class="ra-filter-actions">' +
-            '<button type="button" class="btn-primary btn-sm w-full" id="ra-filter-apply">Apply</button>' +
-            '<button type="button" class="btn-secondary btn-sm w-full" id="ra-filter-reset">Reset</button>' +
-            '<button type="button" class="btn-ghost btn-sm w-full" id="ra-filter-save">Save Filter</button>' +
-          '</div>' +
-        '</aside>' +
-        '<main class="ra-drawer__main">' +
-          '<div id="ra-kpis">' + buildKpis(report) + '</div>' +
-          '<div id="ra-charts">' + buildCharts(report) + '</div>' +
-          '<div id="ra-table">' + buildTable(report) + '</div>' +
-        '</main>' +
-        '<aside class="ra-drawer__insights" id="ra-insights">' + buildInsights(report) + '</aside>' +
-      '</div>';
+      buildFilterBar(slug) +
+      '<main class="ra-lc-main">' +
+        buildNotice(slug) +
+        '<div id="ra-kpis">' + buildKpis(report) + '</div>' +
+        '<div id="ra-charts">' + buildCharts(report) + '</div>' +
+        '<div id="ra-table">' + buildTable(report) + '</div>' +
+      '</main>';
 
     seedFilters();
+    loadEmployeeOptions();
     iconsIn(root);
+  }
+
+  function renderShell(report) {
+    renderUnifiedShell(report);
   }
 
   function seedFilters() {
@@ -514,12 +693,65 @@ window.CrmReportAnalytics = (function () {
       from.value = start.toISOString().slice(0, 10);
     }
     if (to && !to.value) to.value = new Date().toISOString().slice(0, 10);
+    try {
+      var saved = localStorage.getItem('ca_crm_report_filter_' + state.slug);
+      if (saved) {
+        var preset = JSON.parse(saved);
+        if (preset.from && from) from.value = preset.from;
+        if (preset.to && to) to.value = preset.to;
+        var emp = $('ra-filter-employee');
+        if (preset.employee && emp) emp.value = preset.employee;
+      }
+    } catch (err) { /* ignore */ }
+  }
+
+  function loadEmployeeOptions() {
+    var select = $('ra-filter-employee');
+    if (!select) return;
+    var current = select.value;
+    apiFetch('/employees?per_page=200&status=Active&sort_by=name&sort_dir=asc')
+      .then(function (body) {
+        var items = (body.data && body.data.items) || body.data || [];
+        if (!Array.isArray(items) && body.data && body.data.data) items = body.data.data;
+        if (!Array.isArray(items)) items = [];
+        var html = '<option value="">All employees</option>';
+        items.forEach(function (emp) {
+          var id = emp.employee_id || emp.id;
+          var name = emp.name || emp.employee_name || ('Employee ' + id);
+          if (!id) return;
+          html += '<option value="' + escapeHtml(String(id)) + '">' + escapeHtml(name) + '</option>';
+        });
+        select.innerHTML = html;
+        if (current) select.value = current;
+      })
+      .catch(function () { /* optional */ });
   }
 
   function renderLoading() {
     var root = $('ra-root');
     if (!root) return;
-    root.innerHTML = '<div class="ra-loading"><div class="ra-loading__spinner"></div><p>Loading analytics dashboard…</p></div>';
+    root.innerHTML =
+      '<div class="ra-skeleton">' +
+        '<div class="ra-skeleton__header"></div>' +
+        '<div class="ra-skeleton__filters"></div>' +
+        '<div class="ra-skeleton__kpis">' + Array(6).join('<div class="ra-skeleton__kpi"></div>') + '</div>' +
+        '<div class="ra-skeleton__charts">' + Array(4).join('<div class="ra-skeleton__chart"></div>') + '</div>' +
+        '<div class="ra-skeleton__table"></div>' +
+      '</div>';
+  }
+
+  function renderError(message) {
+    var root = $('ra-root');
+    if (!root) return;
+    root.innerHTML =
+      '<div class="ra-error-state">' +
+        '<i data-lucide="alert-circle" class="h-10 w-10"></i>' +
+        '<h3>Unable to load report</h3>' +
+        '<p>' + escapeHtml(message || 'Something went wrong.') + '</p>' +
+        '<button type="button" class="btn-primary btn-sm" id="ra-error-retry">Retry</button>' +
+        '<button type="button" class="btn-secondary btn-sm" id="ra-close">Close</button>' +
+      '</div>';
+    iconsIn(root);
   }
 
   function openDrawer() {
@@ -543,6 +775,7 @@ window.CrmReportAnalytics = (function () {
     document.body.classList.remove('ra-drawer-open');
     var exportList = $('ra-export-list');
     if (exportList) exportList.classList.add('hidden');
+    state.drillDown = null;
     if (window.CA_CRM && typeof window.CA_CRM.closeModal === 'function') {
       window.CA_CRM.closeModal(drawer);
     } else {
@@ -558,7 +791,8 @@ window.CrmReportAnalytics = (function () {
     var isRefresh = slug === state.slug;
     state.slug = slug;
     if (!isRefresh || !opts.preserveSearch) {
-      state.tableSearch = '';
+      if (!opts.preserveDrill) state.drillDown = null;
+      if (!opts.preserveSearch) state.tableSearch = '';
       state.sortKey = null;
       state.sortDir = 'desc';
     }
@@ -573,34 +807,45 @@ window.CrmReportAnalytics = (function () {
       })
       .catch(function (err) {
         state.loading = false;
+        renderError(err.message || 'Unable to load report');
         toast(err.message || 'Unable to load report', 'error');
-        closeDrawer();
       });
   }
 
   function refreshReport() {
     if (!state.slug) return;
-    loadReport(state.slug, { preserveSearch: true });
+    loadReport(state.slug, { preserveSearch: true, preserveDrill: true });
   }
 
   function applyFilters() {
+    if (!validateDateRange()) return;
     syncHubFilters();
-    var status = $('ra-filter-status');
     var source = $('ra-filter-source');
+    var status = $('ra-filter-status');
     state.tableSearch = (source && source.value) || '';
-    if (status && status.value) state.tableSearch = status.value + ' ' + state.tableSearch;
+    if (status && status.value) state.tableSearch = (status.value + ' ' + state.tableSearch).trim();
+    state.drillDown = null;
     refreshReport();
   }
 
   function resetFilters() {
-    seedFilters();
     state.tableSearch = '';
     state.sortKey = null;
     state.sortDir = 'desc';
+    state.drillDown = null;
     ['ra-filter-status', 'ra-filter-source', 'ra-filter-employee'].forEach(function (id) {
       var el = $(id);
       if (el) el.value = '';
     });
+    var from = $('ra-filter-from');
+    var to = $('ra-filter-to');
+    if (from) {
+      var start = new Date();
+      start.setDate(start.getDate() - 30);
+      from.value = start.toISOString().slice(0, 10);
+    }
+    if (to) to.value = new Date().toISOString().slice(0, 10);
+    syncHubFilters();
     refreshReport();
   }
 
@@ -635,8 +880,16 @@ window.CrmReportAnalytics = (function () {
         closeDrawer();
         return;
       }
+      if (e.target.closest('#ra-error-retry')) {
+        if (state.slug) loadReport(state.slug);
+        return;
+      }
       if (e.target.closest('#ra-refresh')) {
         refreshReport();
+        return;
+      }
+      if (e.target.closest('#ra-print')) {
+        window.print();
         return;
       }
       if (e.target.closest('#ra-share')) {
@@ -673,17 +926,11 @@ window.CrmReportAnalytics = (function () {
         resetFilters();
         return;
       }
-      if (e.target.closest('#ra-filter-save')) {
-        try {
-          localStorage.setItem('ca_crm_report_filter_' + state.slug, JSON.stringify({
-            from: ($('ra-filter-from') || {}).value,
-            to: ($('ra-filter-to') || {}).value,
-            employee: ($('ra-filter-employee') || {}).value,
-          }));
-          toast('Filter preset saved.', 'success');
-        } catch (err) {
-          toast('Could not save filter.', 'error');
-        }
+      if (e.target.closest('#ra-drill-clear')) {
+        state.drillDown = null;
+        var tableEl = $('ra-table');
+        if (tableEl && state.report) tableEl.innerHTML = buildTable(state.report);
+        iconsIn(tableEl);
         return;
       }
       var th = e.target.closest('[data-ra-sort]');

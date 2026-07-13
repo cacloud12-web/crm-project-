@@ -15,6 +15,7 @@ abstract class TestCase extends BaseTestCase
         parent::setUp();
 
         $this->prepareCrmDatabaseForTesting();
+        $this->flushCrmCachesForTesting();
         Auth::logout();
     }
 }

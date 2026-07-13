@@ -247,8 +247,34 @@ class BulkImportFileParser
         }
 
         $value = $cell->xpath('m:v');
+        $raw = trim((string) ($value[0] ?? ''));
 
-        return trim((string) ($value[0] ?? ''));
+        return $this->formatNumericCellValue($raw);
+    }
+
+    private function formatNumericCellValue(string $raw): string
+    {
+        if ($raw === '' || ! is_numeric($raw)) {
+            return $raw;
+        }
+
+        if (preg_match('/^[+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/', $raw) !== 1) {
+            return $raw;
+        }
+
+        $numeric = (float) $raw;
+        if (! is_finite($numeric)) {
+            return $raw;
+        }
+
+        if (floor($numeric) === $numeric) {
+            $digits = strlen(ltrim((string) (int) abs($numeric), '0'));
+            if ($digits >= 9 && $digits <= 12) {
+                return sprintf('%.0f', $numeric);
+            }
+        }
+
+        return rtrim(rtrim(sprintf('%.10F', $numeric), '0'), '.');
     }
 
     private function splitCellReference(string $reference): array

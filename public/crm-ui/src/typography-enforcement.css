@@ -165,7 +165,7 @@ body.crm-layout table th,
 body.crm-layout .ca-table th,
 body.crm-layout .crm-table th,
 body.crm-layout .ca-table--enterprise thead th {
-  font-size: var(--crm-font-size-body) !important;
+  font-size: var(--crm-font-size-table-header) !important;
   font-weight: var(--crm-font-weight-table-header) !important;
   text-transform: none !important;
   letter-spacing: var(--crm-letter-spacing) !important;
@@ -175,7 +175,7 @@ body.crm-layout table td,
 body.crm-layout .ca-table td,
 body.crm-layout .crm-table td,
 body.crm-layout .ca-table--enterprise td {
-  font-size: var(--crm-font-size-body) !important;
+  font-size: var(--crm-font-size-table-cell) !important;
   font-weight: var(--crm-font-weight-table-data) !important;
   letter-spacing: var(--crm-letter-spacing) !important;
 }
@@ -190,7 +190,6 @@ body.crm-layout .crm-listing-filter-label {
 }
 
 body.crm-layout .input-field,
-body.crm-layout .crm-col-filter-input,
 body.crm-layout .cam-filter-select,
 body.crm-layout select,
 body.crm-layout textarea,
@@ -199,6 +198,11 @@ body.crm-layout .ca-input,
 body.crm-layout input::placeholder,
 body.crm-layout textarea::placeholder {
   font-size: var(--crm-font-size-body) !important;
+  font-weight: var(--crm-font-weight-input) !important;
+}
+
+body.crm-layout .crm-col-filter-input {
+  font-size: var(--crm-font-size-table-cell) !important;
   font-weight: var(--crm-font-weight-input) !important;
 }
 

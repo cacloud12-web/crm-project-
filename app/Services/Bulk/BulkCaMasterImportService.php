@@ -12,6 +12,7 @@ use App\Models\DuplicateAttemptLog;
 use App\Models\ImportDuplicateLog;
 use App\Models\TeamSizeMaster;
 use App\Services\Activity\ActivityLogService;
+use App\Services\Cache\CrmCacheService;
 use App\Services\Leads\DuplicateLeadDetectionService;
 use App\Services\Leads\PhoneClassificationService;
 use App\Services\Leads\PhoneNormalizationService;
@@ -36,7 +37,7 @@ class BulkCaMasterImportService
 
     private const SESSION_TTL_MINUTES = 120;
 
-    private const REQUIRED_FIELDS = ['ca_name', 'firm_name'];
+    private const REQUIRED_FIELDS = ['firm_name'];
 
     private const IMPORTABLE_STATUSES = ['valid', 'landline', 'missing_mobile'];
 
@@ -52,6 +53,7 @@ class BulkCaMasterImportService
         private readonly PhoneNormalizationService $phoneNormalization,
         private readonly PhoneClassificationService $phoneClassification,
         private readonly EmployeeDataScopeService $employeeDataScope,
+        private readonly CrmCacheService $cacheService,
     ) {}
 
     public function parseUpload(UploadedFile $file): array
@@ -553,6 +555,10 @@ class BulkCaMasterImportService
 
         if ($sessionId) {
             Cache::forget($this->sessionKey($sessionId));
+        }
+
+        if ($inserted > 0) {
+            $this->invalidateCachesAfterImport();
         }
 
         return [
@@ -1218,7 +1224,7 @@ class BulkCaMasterImportService
     private function rowRules(): array
     {
         return [
-            'ca_name' => 'required|string|max:255',
+            'ca_name' => 'nullable|string|max:255',
             'firm_name' => 'required|string|max:255',
             'membership_no' => 'nullable|string|max:60',
             'frn' => 'nullable|string|max:60',
@@ -1266,7 +1272,7 @@ class BulkCaMasterImportService
             'code' => null,
             'message' => null,
             'payload' => [
-                'ca_name' => trim($data['ca_name']),
+                'ca_name' => $this->hasValue($data['ca_name'] ?? null) ? trim((string) $data['ca_name']) : '',
                 'firm_name' => trim($data['firm_name']),
                 'membership_no' => $this->normalizeOptionalCode($data['membership_no'] ?? null),
                 'frn' => $this->normalizeOptionalCode($data['frn'] ?? null),
@@ -1918,6 +1924,16 @@ class BulkCaMasterImportService
                 'This file was already imported recently (bulk action #'.$priorId.'). Re-upload is blocked to prevent duplicate inserts.',
             );
         }
+    }
+
+    private function invalidateCachesAfterImport(): void
+    {
+        $this->cacheService->forgetDashboardMetrics();
+        $this->cacheService->forgetMasterListings();
+        $this->cacheService->forgetLeadSegmentCounts();
+        $this->cacheService->forgetPipelineStageCounts();
+        $this->cacheService->forgetEmployeeRankings();
+        $this->cacheService->bumpReportCacheVersion();
     }
 
     private function completedFileHashKey(string $hash): string

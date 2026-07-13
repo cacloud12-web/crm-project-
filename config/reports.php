@@ -46,7 +46,7 @@ return [
         'monthly_trends' => [
             'label' => 'Monthly Trends',
             'description' => 'Month-over-month leads, conversions, and activity',
-            'card' => 'Monthly Revenue',
+            'card' => 'Monthly Trends',
         ],
         'city_analysis' => [
             'label' => 'City-wise Analysis',

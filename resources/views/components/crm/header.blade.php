@@ -6,7 +6,7 @@
 
         <div class="header-search-wrap" id="search-wrapper">
           <input id="global-search" type="search" autocomplete="off" placeholder="Search..." class="header-search-field" aria-label="Global search" aria-expanded="false" aria-controls="search-results" />
-          <button id="calendar-btn" type="button" class="header-search-calendar-btn" aria-label="Calendar" data-crm-tip="Calendar" data-page="followups">
+          <button id="calendar-btn" type="button" class="header-search-calendar-btn" aria-label="Calendar" data-crm-tip="Calendar" data-page="demo-calendar">
             <i data-lucide="calendar" class="h-4 w-4"></i>
           </button>
           <div id="search-results" class="search-dropdown hidden" role="listbox"></div>

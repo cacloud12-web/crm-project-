@@ -15589,6 +15589,7 @@ window.CA_CRM = (function () {
       dashboardMetricsPromise = null;
       employeeDashboardLoaded = false;
       employeeDashboardPromise = null;
+      clearDashboardMetricsCache();
       if (isEmployeeUser()) renderEmployeeDashboard();
       else renderManagerDashboard();
       return;
@@ -16950,6 +16951,7 @@ window.CA_CRM = (function () {
           renderBulkImportSummary(summary, false);
           loadBulkImportHistory();
           realLeadsLoaded = false;
+          invalidateDataCaches(['metrics', 'segment_counts', 'leads', 'ca_masters']);
           refreshAll();
           var hasErrors = (summary.error_row_count || 0) > 0 || (summary.failed_rows || 0) > 0 || (summary.duplicate_rows || 0) > 0;
           document.getElementById('bulk-import-summary-downloads')?.classList.toggle('hidden', !hasErrors);
@@ -17956,25 +17958,27 @@ window.CA_CRM = (function () {
 
   var reportsAnalyticsCache = null;
 
-  function getReportsFilterQuery() {
-    var from = document.getElementById('reports-filter-from');
-    var to = document.getElementById('reports-filter-to');
-    var parts = [];
-    if (from && from.value) parts.push('from=' + encodeURIComponent(from.value));
-    if (to && to.value) parts.push('to=' + encodeURIComponent(to.value));
-    return parts.length ? '?' + parts.join('&') : '';
-  }
-
-  function initReportsFilters() {
-    var from = document.getElementById('reports-filter-from');
-    var to = document.getElementById('reports-filter-to');
-    if (!from || !to || from._initialized) return;
-    from._initialized = true;
+  function defaultReportsDateRange() {
     var end = new Date();
     var start = new Date();
     start.setDate(start.getDate() - 30);
-    from.value = start.toISOString().slice(0, 10);
-    to.value = end.toISOString().slice(0, 10);
+    return {
+      from: start.toISOString().slice(0, 10),
+      to: end.toISOString().slice(0, 10),
+    };
+  }
+
+  function getReportsFilterQuery() {
+    var from = document.getElementById('reports-filter-from');
+    var to = document.getElementById('reports-filter-to');
+    var range = defaultReportsDateRange();
+    var fromVal = (from && from.value) || range.from;
+    var toVal = (to && to.value) || range.to;
+    return '?from=' + encodeURIComponent(fromVal) + '&to=' + encodeURIComponent(toVal);
+  }
+
+  function initReportsFilters() {
+    /* Hub date bar removed — default range applied in getReportsFilterQuery(). */
   }
 
   function loadReportsAnalytics(callback) {

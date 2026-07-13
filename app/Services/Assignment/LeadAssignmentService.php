@@ -10,6 +10,7 @@ use App\Services\Cache\CrmCacheService;
 use App\Services\Concerns\SearchesListings;
 use App\Services\Rbac\EmployeeDataScopeService;
 use Illuminate\Support\Collection;
+use Illuminate\Validation\ValidationException;
 
 class LeadAssignmentService
 {
@@ -57,6 +58,12 @@ class LeadAssignmentService
             $data['reason'] ?? 'MANUAL_ASSIGN',
             isset($data['assigned_by']) ? (int) $data['assigned_by'] : null,
         );
+
+        if (($result['status'] ?? '') === 'duplicate') {
+            throw ValidationException::withMessages([
+                'employee_id' => [$result['message'] ?? 'Lead is already assigned to this executive.'],
+            ]);
+        }
 
         return $result['assignment'];
     }

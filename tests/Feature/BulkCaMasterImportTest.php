@@ -263,4 +263,103 @@ class BulkCaMasterImportTest extends TestCase
             'email_id' => null,
         ]);
     }
+
+    public function test_bulk_import_maps_number_column_and_shows_mobile_in_preview(): void
+    {
+        $this->actingAsAdmin();
+        $ts = (string) microtime(true);
+        $mobile = '9'.substr(str_replace('.', '', $ts), -9);
+        $altMobile = '8'.substr(str_replace('.', '', $ts), -9);
+
+        $csv = "ca name,firm name,number,Alternate Mobile No,City\n";
+        $csv .= ',"Sheet Firm '.$ts.'",'.$mobile.','.$altMobile.',"Mumbai"'."\n";
+
+        $file = UploadedFile::fake()->createWithContent('google-sheet-export.csv', $csv);
+
+        $parse = $this->post('/ca-masters/bulk-import/parse', ['file' => $file], [
+            'Accept' => 'application/json',
+        ]);
+        $parse->assertOk();
+        $parse->assertJsonPath('data.has_mobile_column', true);
+
+        $crmFields = collect($parse->json('data.crm_fields'));
+        $this->assertNotNull($crmFields->firstWhere('key', 'mobile_no'));
+        $this->assertSame('Mobile Number', $crmFields->firstWhere('key', 'mobile_no')['label'] ?? null);
+        $this->assertSame('number', $parse->json('data.suggested_mapping.mobile_no'));
+
+        $sessionId = $parse->json('data.session_id');
+        $mapping = [
+            'firm_name' => 'firm name',
+            'mobile_no' => 'number',
+            'alternate_mobile_no' => 'Alternate Mobile No',
+            'city_id' => 'City',
+        ];
+
+        $validate = $this->postJson('/ca-masters/bulk-import/validate', [
+            'session_id' => $sessionId,
+            'mapping' => $mapping,
+        ]);
+        $validate->assertOk();
+        $validate->assertJsonPath('data.valid_rows', 1);
+        $validate->assertJsonPath('data.invalid_rows', 0);
+        $validate->assertJsonPath('data.missing_mobile_rows', 0);
+
+        $preview = $validate->json('data.preview_rows.0');
+        $this->assertSame('valid', $preview['status'] ?? null);
+        $this->assertSame($mobile, $preview['data']['mobile_no'] ?? null);
+        $this->assertSame('Sheet Firm '.$ts, $preview['data']['firm_name'] ?? null);
+
+        $import = $this->postJson('/ca-masters/bulk-import', [
+            'session_id' => $sessionId,
+            'mapping' => $mapping,
+        ]);
+        $import->assertOk();
+        $import->assertJsonPath('data.inserted_rows', 1);
+
+        $this->assertDatabaseHas('ca_masters', [
+            'firm_name' => 'Sheet Firm '.$ts,
+            'mobile_no' => $mobile,
+            'alternate_mobile_no' => $altMobile,
+        ]);
+    }
+
+    public function test_bulk_import_accepts_blank_ca_name_when_firm_and_mobile_mapped(): void
+    {
+        $this->actingAsAdmin();
+        $ts = (string) microtime(true);
+        $mobile = '9'.substr(str_replace('.', '', $ts), -9);
+
+        $csv = "ca name,firm name,number\n";
+        $csv .= ',"Firm Only '.$ts.'",'.$mobile."\n";
+
+        $file = UploadedFile::fake()->createWithContent('firm-mobile-no-ca.csv', $csv);
+        $parse = $this->post('/ca-masters/bulk-import/parse', ['file' => $file], [
+            'Accept' => 'application/json',
+        ])->assertOk();
+
+        $sessionId = $parse->json('data.session_id');
+        $mapping = [
+            'firm_name' => 'firm name',
+            'mobile_no' => 'number',
+        ];
+
+        $this->postJson('/ca-masters/bulk-import/validate', [
+            'session_id' => $sessionId,
+            'mapping' => $mapping,
+        ])->assertOk()
+            ->assertJsonPath('data.valid_rows', 1)
+            ->assertJsonPath('data.invalid_rows', 0);
+
+        $this->postJson('/ca-masters/bulk-import', [
+            'session_id' => $sessionId,
+            'mapping' => $mapping,
+        ])->assertOk()
+            ->assertJsonPath('data.inserted_rows', 1);
+
+        $this->assertDatabaseHas('ca_masters', [
+            'firm_name' => 'Firm Only '.$ts,
+            'mobile_no' => $mobile,
+            'ca_name' => '',
+        ]);
+    }
 }

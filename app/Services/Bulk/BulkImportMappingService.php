@@ -7,12 +7,12 @@ use Illuminate\Support\Str;
 class BulkImportMappingService
 {
     public const CRM_FIELDS = [
-        ['key' => 'ca_name', 'label' => 'CA Name', 'required' => true],
+        ['key' => 'ca_name', 'label' => 'CA Name', 'required' => false],
         ['key' => 'firm_name', 'label' => 'Firm Name', 'required' => true],
         ['key' => 'membership_no', 'label' => 'Membership No', 'required' => false],
         ['key' => 'frn', 'label' => 'FRN', 'required' => false],
         ['key' => 'address', 'label' => 'Address', 'required' => false],
-        ['key' => 'mobile_no', 'label' => 'Mobile No', 'required' => false],
+        ['key' => 'mobile_no', 'label' => 'Mobile Number', 'required' => false],
         ['key' => 'alternate_mobile_no', 'label' => 'Alternate Mobile No', 'required' => false],
         ['key' => 'email_id', 'label' => 'Email', 'required' => false],
         ['key' => 'gst_no', 'label' => 'GST No', 'required' => false],
@@ -35,7 +35,19 @@ class BulkImportMappingService
         'frn' => ['frn', 'firm registration number', 'firm reg no', 'firm registration no'],
         'address' => ['address', 'firm address', 'office address'],
         'pincode' => ['pincode', 'pin code', 'pin_code', 'zip', 'zip code', 'postal code'],
-        'mobile_no' => ['mobile_no', 'mobile no', 'mobile', 'phone', 'phone_no', 'phone no'],
+        'mobile_no' => [
+            'mobile_no',
+            'mobile number',
+            'mobile no',
+            'mobile',
+            'phone',
+            'phone number',
+            'phone_no',
+            'phone no',
+            'contact number',
+            'primary mobile',
+            'number',
+        ],
         'alternate_mobile_no' => ['alternate_mobile_no', 'alternate mobile no', 'alternate mobile', 'alt mobile', 'secondary mobile', 'alternate phone'],
         'email_id' => ['email_id', 'email id', 'email'],
         'gst_no' => ['gst_no', 'gst no', 'gst'],
@@ -55,18 +67,22 @@ class BulkImportMappingService
         return self::CRM_FIELDS;
     }
 
-    private const OPTIONAL_HEADER_FIELDS = ['mobile_no', 'alternate_mobile_no'];
+    private const CONDITIONAL_HEADER_FIELDS = ['alternate_mobile_no'];
 
     public function crmFieldsForHeaders(array $headers): array
     {
         return array_values(array_filter(
             self::CRM_FIELDS,
             function (array $field) use ($headers) {
-                if (! in_array($field['key'], self::OPTIONAL_HEADER_FIELDS, true)) {
+                if ($field['key'] === 'mobile_no') {
                     return true;
                 }
 
-                return $this->fileHasColumn($headers, $field['key']);
+                if (in_array($field['key'], self::CONDITIONAL_HEADER_FIELDS, true)) {
+                    return $this->fileHasColumn($headers, $field['key']);
+                }
+
+                return true;
             },
         ));
     }
@@ -158,13 +174,34 @@ class BulkImportMappingService
                 $fieldKey = $field['key'];
                 $sourceHeader = $mapping[$fieldKey] ?? null;
                 $mapped[$fieldKey] = ($sourceHeader && array_key_exists($sourceHeader, $row))
-                    ? trim((string) $row[$sourceHeader])
+                    ? $this->cellValueAsString($row[$sourceHeader])
                     : '';
             }
             $mappedRows[$index] = $mapped;
         }
 
         return $mappedRows;
+    }
+
+    private function cellValueAsString(mixed $value): string
+    {
+        if ($value === null) {
+            return '';
+        }
+
+        if (is_int($value)) {
+            return (string) $value;
+        }
+
+        if (is_float($value)) {
+            if (floor($value) === $value && abs($value) >= 1_000_000_000 && abs($value) < 100_000_000_000) {
+                return sprintf('%.0f', $value);
+            }
+
+            return rtrim(rtrim(sprintf('%.10F', $value), '0'), '.');
+        }
+
+        return trim((string) $value);
     }
 
     private function normalizeKey(string $value): string

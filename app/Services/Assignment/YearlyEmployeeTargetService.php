@@ -32,7 +32,7 @@ class YearlyEmployeeTargetService
     {
         $user ??= auth()->user();
 
-        return in_array($this->rbacService->roleKey($user), ['super_admin', 'manager'], true);
+        return in_array($this->rbacService->roleKey($user), ['super_admin', 'admin', 'manager'], true);
     }
 
     public function canViewMonitoring(?User $user = null): bool
@@ -480,7 +480,7 @@ class YearlyEmployeeTargetService
     private function assertCanEdit(User $user): void
     {
         if (! $this->canEdit($user)) {
-            abort(403, 'Only managers and super admins can manage yearly employee targets.');
+            abort(403, 'Only managers and admins can manage yearly employee targets.');
         }
     }
 

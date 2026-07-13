@@ -5,6 +5,7 @@ namespace App\Services\Demo;
 use App\Models\DemoProvider;
 use App\Models\DemoSchedule;
 use App\Models\DemoScheduleHistory;
+use App\Models\Employee;
 use App\Models\User;
 use App\Services\Notifications\NotificationService;
 use App\Services\Workflow\DemoReminderService;
@@ -243,7 +244,7 @@ class DemoScheduleCalendarService
         );
 
         if ($schedule->employee_id) {
-            $userId = User::query()->where('employee_id', $schedule->employee_id)->value('id');
+            $userId = Employee::query()->where('employee_id', $schedule->employee_id)->value('user_id');
             if ($userId) {
                 $this->notificationService->notifyUser((int) $userId, 'demo_scheduled', $title, $message, [
                     'demo_schedule_id' => $schedule->id,
