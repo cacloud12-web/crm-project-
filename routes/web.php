@@ -22,6 +22,7 @@ $crmRoutes = [
     'admin',
     'master',
     'google',
+    'ocr',
 ];
 
 foreach ($crmRoutes as $module) {

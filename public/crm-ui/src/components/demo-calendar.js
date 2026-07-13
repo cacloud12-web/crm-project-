@@ -41,7 +41,11 @@ window.CrmDemoCalendar = (function () {
   }
 
   function canSchedule() {
-    return window.CrmRbac && window.CrmRbac.can('followups', 'schedule_demo');
+    if (window.CA_RBAC && typeof window.CA_RBAC.can === 'function') {
+      return window.CA_RBAC.can('followups', 'schedule_followup')
+        || window.CA_RBAC.can('followups', 'schedule_demo');
+    }
+    return true;
   }
 
   function statusClass(status) {

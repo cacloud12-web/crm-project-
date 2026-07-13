@@ -8,6 +8,7 @@
     "require": {
         "php": "^8.3",
         "dompdf/dompdf": "^3.0",
+        "google/cloud-document-ai": "^2.0",
         "laravel/framework": "^13.8",
         "laravel/tinker": "^3.0",
         "webklex/php-imap": "^6.0"

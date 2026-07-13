@@ -131,6 +131,38 @@ class LeadGooglePlacesTest extends TestCase
         $response->assertJsonPath('data.api_error', 'No Google Places results matched this CA firm.');
     }
 
+    public function test_google_lookup_logs_activity_with_performed_by(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $lead = $this->sampleLead();
+
+        Http::fake([
+            'places.googleapis.com/v1/places:searchText' => Http::response([
+                'places' => [[
+                    'id' => 'places/chij-log-1',
+                    'displayName' => ['text' => 'AK Bhardwaj & Co'],
+                    'formattedAddress' => '12 Park Street, Kolkata',
+                    'nationalPhoneNumber' => '+91 9876543210',
+                    'rating' => 4.6,
+                    'userRatingCount' => 12,
+                    'websiteUri' => 'https://example.test',
+                    'location' => ['latitude' => 22.57, 'longitude' => 88.36],
+                    'businessStatus' => 'OPERATIONAL',
+                ]],
+            ], 200),
+        ]);
+
+        $response = $this->postJson('/ca-masters/'.$lead->ca_id.'/research');
+        $response->assertOk();
+
+        $this->assertDatabaseHas('activity_logs', [
+            'module_name' => 'CA_MASTER',
+            'action' => 'Google Places Lookup',
+            'record_id' => (string) $lead->ca_id,
+            'performed_by' => $admin->name,
+        ]);
+    }
+
     public function test_google_lookup_handles_invalid_api_key(): void
     {
         $this->actingAsAdmin();

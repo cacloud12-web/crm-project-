@@ -79,4 +79,40 @@ class FollowUpActionsTest extends TestCase
         ])->assertOk()
             ->assertJsonPath('data.status', 'Completed');
     }
+
+    public function test_employee_cannot_update_another_employees_follow_up(): void
+    {
+        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $this->actingAs($employeeUser);
+
+        $employeeId = \App\Models\Employee::query()->where('user_id', $employeeUser->id)->value('employee_id');
+        $otherFollowUp = FollowUp::query()
+            ->when($employeeId, fn ($q) => $q->where('employee_id', '!=', $employeeId))
+            ->first();
+
+        if (! $otherFollowUp) {
+            $this->markTestSkipped('No follow-up owned by another employee');
+        }
+
+        $this->patchJson('/follow-ups/'.$otherFollowUp->followup_id, [
+            'remarks' => 'Should be blocked',
+        ])->assertForbidden();
+    }
+
+    public function test_manager_can_schedule_follow_up_without_create_permission(): void
+    {
+        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $this->actingAs($manager);
+
+        $lead = \App\Models\CaMaster::query()->firstOrFail();
+        $employeeId = \App\Models\Employee::query()->where('status', 'Active')->value('employee_id');
+
+        $this->postJson('/follow-ups', [
+            'ca_id' => $lead->ca_id,
+            'employee_id' => $employeeId,
+            'followup_type' => 'Follow Up Scheduled',
+            'scheduled_date' => now()->addDay()->format('Y-m-d H:i:s'),
+            'remarks' => 'Manager scheduled follow-up',
+        ])->assertCreated();
+    }
 }

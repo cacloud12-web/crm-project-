@@ -59,7 +59,10 @@
   };
 
   var ACTION_RULES = [
-    { selector: '[data-open-modal="add-lead"]', module: 'leads', permission: 'create' },
+    { selector: '#cam-add-firm-btn', module: 'ca_master', permission: 'create' },
+    { selector: '#leads-kpi-add-btn', module: 'leads', permission: 'create' },
+    { selector: '[data-open-modal="add-lead"]:not(#cam-add-firm-btn)', module: 'leads', permission: 'create' },
+    { selector: '[data-master-add]', module: 'ca_master', permission: 'create' },
     { selector: '[data-open-modal="add-employee"]', module: 'employees', permission: 'create' },
     { selector: '[data-open-modal="assign-lead"]', module: 'assignment', permission: 'create' },
     { selector: '[data-open-modal="followup"]', module: 'followups', permission: 'schedule_followup' },
@@ -80,7 +83,7 @@
     { selector: 'button[data-open-modal="email-campaign"]', module: 'campaigns', permission: 'campaigns' },
     { selector: 'button[data-open-modal="sms-campaign"]', module: 'campaigns', permission: 'campaigns' },
     { selector: '[data-open-modal="add-campaign"]', module: 'campaigns', permission: 'campaigns' },
-    { selector: '[data-manager-schedule-followup]', module: 'assignment', permission: 'view' },
+    { selector: '[data-manager-schedule-followup]', module: 'followups', permission: 'schedule_followup' },
     { selector: '[data-inbox-action="assign"]', module: 'assignment', permission: 'create' },
     { selector: '[data-inbox-action="import"]', permission: 'import', usePageModule: true },
     { selector: '[data-inbox-action="export"]', permission: 'export', usePageModule: true },

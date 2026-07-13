@@ -38,8 +38,13 @@
   }
 
   function shouldShowBulkActions(key) {
-    if (key === 'followup' && global._editingFollowUpId) return false;
+    if (key === 'followup') return false;
     return true;
+  }
+
+  function emptyListMessage(key) {
+    if (key === 'followup') return 'No matching leads found.';
+    return 'No leads match your search.';
   }
 
   function syncBulkBarVisibility(key) {
@@ -49,7 +54,7 @@
   }
 
   function isSingleSelect(key) {
-    if (key === 'followup' && global._editingFollowUpId) return true;
+    if (key === 'followup') return true;
     var hook = hooks[key];
     if (hook && typeof hook.singleSelect === 'function') return hook.singleSelect();
     if (hook && typeof hook.singleSelect === 'boolean') return hook.singleSelect;
@@ -203,7 +208,7 @@
     }
 
     if (!st.items.length) {
-      listEl.innerHTML = '<div class="campaign-lead-picker__empty">No leads match your search.</div>';
+      listEl.innerHTML = '<div class="campaign-lead-picker__empty">' + d().escapeHtml(emptyListMessage(key)) + '</div>';
       updateStats(key);
       return;
     }
@@ -216,7 +221,7 @@
       if (lead.state && lead.state !== '—') {
         cityLine = cityLine ? cityLine + ', ' + lead.state : lead.state;
       }
-      return '<label class="campaign-lead-picker__item' + (selected ? ' is-selected' : '') + '" data-lead-id="' + lead.ca_id + '" role="option" aria-selected="' + (selected ? 'true' : 'false') + '">' +
+      return '<label class="campaign-lead-picker__item' + (selected ? ' is-selected' : '') + '" data-lead-id="' + lead.ca_id + '" role="option" aria-selected="' + (selected ? 'true' : 'false') + '" tabindex="0">' +
         '<input type="checkbox" class="campaign-lead-picker__checkbox" data-lead-id="' + lead.ca_id + '"' + (selected ? ' checked' : '') + ' />' +
         '<div class="campaign-lead-picker__item-body">' +
           '<p class="campaign-lead-picker__firm">' + d().escapeHtml(lead.firm_name || '—') + '</p>' +
@@ -465,11 +470,71 @@
     return loadPage(key, st.page || 1, false);
   }
 
+  function focusListItem(key, leadId) {
+    var listEl = el(key, 'list');
+    if (!listEl) return;
+    var row = listEl.querySelector('.campaign-lead-picker__item[data-lead-id="' + leadId + '"]');
+    if (row && typeof row.focus === 'function') row.focus();
+  }
+
+  function focusAdjacentListItem(key, currentRow, direction) {
+    var listEl = el(key, 'list');
+    if (!listEl || !currentRow) return;
+    var rows = Array.prototype.slice.call(listEl.querySelectorAll('.campaign-lead-picker__item[data-lead-id]'));
+    var idx = rows.indexOf(currentRow);
+    if (idx < 0) return;
+    var next = rows[idx + direction];
+    if (next && typeof next.focus === 'function') next.focus();
+  }
+
+  function bindListKeyboard(key) {
+    var listEl = el(key, 'list');
+    if (!listEl || listEl._crmKeyboardBound) return;
+    listEl._crmKeyboardBound = true;
+    listEl.addEventListener('keydown', function (e) {
+      var row = e.target.closest('.campaign-lead-picker__item[data-lead-id]');
+      if (!row) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        focusAdjacentListItem(key, row, 1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        focusAdjacentListItem(key, row, -1);
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        var cb = row.querySelector('.campaign-lead-picker__checkbox');
+        if (!cb) return;
+        var leadId = row.getAttribute('data-lead-id');
+        var lead = state(key).items.find(function (l) { return String(l.ca_id) === String(leadId); })
+          || state(key).pageItems.find(function (l) { return String(l.ca_id) === String(leadId); })
+          || state(key).selected[String(leadId)];
+        if (lead) toggleSelection(key, lead, isSingleSelect(key) ? true : !cb.checked);
+      }
+    });
+  }
+
+  function bindSearchKeyboard(key) {
+    var input = el(key, 'search');
+    if (!input || input._crmKeyboardBound) return;
+    input._crmKeyboardBound = true;
+    input.addEventListener('keydown', function (e) {
+      if (e.key !== 'ArrowDown') return;
+      var listEl = el(key, 'list');
+      var first = listEl && listEl.querySelector('.campaign-lead-picker__item[data-lead-id]');
+      if (!first) return;
+      e.preventDefault();
+      if (typeof first.focus === 'function') first.focus();
+    });
+  }
+
   function bind(key, keyHooks) {
     if (keyHooks) hooks[key] = keyHooks;
     var flag = '_leadPickerBound_' + key;
     if (global[flag]) return;
     global[flag] = true;
+
+    bindListKeyboard(key);
+    bindSearchKeyboard(key);
 
     el(key, 'search')?.addEventListener('input', function (e) {
       var st = state(key);

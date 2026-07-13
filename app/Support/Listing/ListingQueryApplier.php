@@ -241,11 +241,20 @@ class ListingQueryApplier
 
     private static function applyMasterPipelineStage(Builder $query, string $stage): void
     {
+        $stage = trim($stage);
+        if ($stage === '') {
+            return;
+        }
+
         $statuses = config('crm_master_pipeline.stage_statuses.'.$stage);
 
         if (is_array($statuses) && $statuses !== []) {
             $query->whereIn('status', $statuses);
+
+            return;
         }
+
+        $query->whereRaw('1 = 0');
     }
 
     private static function applySegment(Builder $query, string $segment): void
@@ -254,7 +263,7 @@ class ListingQueryApplier
             'new' => $query->where('is_newly_established', true),
             'hot' => $query->where('status', 'Hot'),
             'cold' => $query->where('status', 'Cold'),
-            'pipeline' => $query->whereIn('status', ['Pipeline', 'Demo Scheduled', 'Negotiation', 'Details Shared']),
+            'pipeline' => $query->whereIn('status', \App\Support\CrmPipeline::pipelineSegmentStatuses()),
             'negotiation' => $query->whereIn('status', ['Negotiation', 'Hot']),
             'lost' => $query->whereIn('status', ['Lost', 'Inactive']),
             'mobile_missing' => $query->where(function (Builder $inner) {

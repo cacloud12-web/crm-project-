@@ -805,8 +805,12 @@
           }
           showToast('Filter: ' + label + ' applied', 'info');
         } else if (chip.dataset.fuType) {
-          document.querySelectorAll('[data-fu-type]').forEach(function (c) { c.classList.remove('active'); });
+          document.querySelectorAll('[data-fu-type]').forEach(function (c) {
+            c.classList.remove('active');
+            c.setAttribute('aria-pressed', 'false');
+          });
           chip.classList.add('active');
+          chip.setAttribute('aria-pressed', 'true');
           if (window.CA_CRM && typeof CA_CRM.applyFollowupTypeFilter === 'function') {
             CA_CRM.applyFollowupTypeFilter(chip.dataset.fuType);
           } else if (window.CA_LISTING_SEARCH) {

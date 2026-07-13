@@ -64,12 +64,14 @@ class CaMasterService
     /**
      * @return array{all: int, new: int, hot: int, pipeline: int, lost: int, pipeline_stages: array<string, int>}
      */
-    public function segmentCounts(): array
+    public function segmentCounts(string $pipeline = ''): array
     {
         $counts = $this->leadSegmentCounts();
 
         return array_merge($counts, [
-            'pipeline_stages' => $this->pipelineStageCounts(),
+            'pipeline_stages' => $pipeline === 'master'
+                ? $this->masterPipelineStageCounts()
+                : $this->pipelineStageCounts(),
         ]);
     }
 
@@ -85,11 +87,7 @@ class CaMasterService
             $query = CaMaster::query()->countableInStatistics();
             $this->employeeDataScope->scopeCaMasterQuery($query, $employeeId);
 
-            $pipelineStatuses = [
-                'Pipeline', 'Warm', 'Demo Scheduled', 'Demo Completed', 'Negotiation', 'Details Shared',
-                'Interested', 'Thinking', 'Purchasing', 'Follow Up Scheduled', 'Follow Up Reminder',
-                'Next Week', 'Next Month', 'Hold',
-            ];
+            $pipelineStatuses = \App\Support\CrmPipeline::pipelineSegmentStatuses();
             $lostStatuses = ['Lost', 'Inactive', 'Not Interested'];
             $pipelineList = "'".implode("','", $pipelineStatuses)."'";
             $lostList = "'".implode("','", $lostStatuses)."'";
@@ -115,6 +113,30 @@ class CaMasterService
     /**
      * @return array<string, int>
      */
+    public function masterPipelineStageCounts(): array
+    {
+        $scopeKey = $this->employeeDataScope->cacheScopeKey();
+
+        return $this->cacheService->rememberPipelineStageCounts($scopeKey.':master', function () {
+            $employeeId = $this->employeeDataScope->scopedEmployeeId(auth()->user());
+            $query = CaMaster::query()->countableInStatistics();
+            $this->employeeDataScope->scopeCaMasterQuery($query, $employeeId);
+
+            $statusCounts = $query
+                ->selectRaw('status, COUNT(*) as total')
+                ->groupBy('status')
+                ->pluck('total', 'status');
+
+            return $this->aggregateStageCounts(
+                $statusCounts,
+                config('crm_master_pipeline.stage_statuses', \App\Support\CrmPipeline::masterStageStatuses()),
+            );
+        });
+    }
+
+    /**
+     * @return array<string, int>
+     */
     public function pipelineStageCounts(): array
     {
         $scopeKey = $this->employeeDataScope->cacheScopeKey();
@@ -129,7 +151,10 @@ class CaMasterService
                 ->groupBy('status')
                 ->pluck('total', 'status');
 
-            return $this->aggregateStageCounts($statusCounts, self::KANBAN_STAGE_STATUSES);
+            return $this->aggregateStageCounts(
+                $statusCounts,
+                \App\Support\CrmPipeline::salesStageStatuses(),
+            );
         });
     }
 
@@ -199,21 +224,11 @@ class CaMasterService
     private function resolveKanbanStageMap(array $params): array
     {
         if (($params['pipeline'] ?? '') === 'master') {
-            return config('crm_master_pipeline.stage_statuses', self::KANBAN_STAGE_STATUSES);
+            return config('crm_master_pipeline.stage_statuses', \App\Support\CrmPipeline::masterStageStatuses());
         }
 
-        return self::KANBAN_STAGE_STATUSES;
+        return \App\Support\CrmPipeline::salesStageStatuses();
     }
-
-    private const KANBAN_STAGE_STATUSES = [
-        'New Lead' => ['New', 'Cold'],
-        'Details Shared' => ['Details Shared', 'Pipeline', 'Warm', 'Follow Up Scheduled', 'Follow Up Reminder'],
-        'Demo Scheduled' => ['Demo Scheduled'],
-        'Demo Completed' => ['Demo Completed', 'Next Week', 'Next Month', 'Hold'],
-        'Negotiation' => ['Hot', 'Negotiation', 'Interested', 'Thinking', 'Purchasing'],
-        'Won' => ['Active', 'Purchased', 'Purchasing'],
-        'Lost' => ['Lost', 'Inactive', 'Not Interested'],
-    ];
 
     /**
      * @return list<string>

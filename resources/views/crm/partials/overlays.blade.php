@@ -727,6 +727,40 @@
       </div>
       <form id="form-followup" class="ca-modal-body space-y-4">
         <input type="hidden" name="ca_id" id="form-followup-ca-id" />
+        <div id="followup-lead-picker-wrap">
+          <div class="campaign-lead-picker followup-lead-picker" id="followup-lead-picker">
+            <div class="campaign-lead-picker__header">
+              <label class="form-label campaign-lead-picker__title" for="followup-lead-picker-search">Lead / Firm</label>
+              <p class="campaign-lead-picker__selected-count hidden" id="followup-lead-picker-selected-label" aria-hidden="true">0 Leads Selected</p>
+            </div>
+            <div class="campaign-lead-picker__stats hidden" id="followup-lead-picker-stats" aria-hidden="true">
+              <span>Total Leads: <strong id="followup-lead-picker-total">0</strong></span>
+              <span class="campaign-lead-picker__stat-sep">·</span>
+              <span>Filtered Leads: <strong id="followup-lead-picker-filtered">0</strong></span>
+              <span class="campaign-lead-picker__stat-sep">·</span>
+              <span>Selected Leads: <strong id="followup-lead-picker-selected">0</strong></span>
+            </div>
+            <div class="campaign-lead-picker__search-wrap">
+              <i data-lucide="search" class="campaign-lead-picker__search-icon h-4 w-4"></i>
+              <input type="search" class="input-field campaign-lead-picker__search" id="followup-lead-picker-search" placeholder="Search firm, CA name, mobile…" autocomplete="off" aria-describedby="followup-lead-error" />
+              <button type="button" class="campaign-lead-picker__search-clear hidden" id="followup-lead-picker-search-clear" aria-label="Clear search">×</button>
+            </div>
+            <p id="followup-lead-error" class="ca-field-error hidden" role="alert"></p>
+            <div class="campaign-lead-picker__bulk hidden" id="followup-lead-picker-bulk" aria-hidden="true">
+              <button type="button" class="btn-secondary btn-sm" id="followup-lead-picker-select-page">Select Page</button>
+              <button type="button" class="btn-secondary btn-sm" id="followup-lead-picker-select-all">Select All</button>
+              <button type="button" class="btn-secondary btn-sm campaign-lead-picker__clear-all" id="followup-lead-picker-clear">Clear All</button>
+            </div>
+            <div class="campaign-lead-picker__chips hidden" id="followup-lead-picker-chips" aria-hidden="true"></div>
+            <div class="campaign-lead-picker__list-wrap" id="followup-lead-picker-list-wrap">
+              <div class="campaign-lead-picker__list" id="followup-lead-picker-list" role="listbox" aria-label="Lead search results"></div>
+              <div class="campaign-lead-picker__list-footer" id="followup-lead-picker-list-footer">
+                <button type="button" class="btn-secondary btn-sm hidden" id="followup-lead-picker-load-more">Load more</button>
+                <span class="text-caption text-slate-400" id="followup-lead-picker-page-info"></span>
+              </div>
+            </div>
+          </div>
+        </div>
         <div id="followup-lead-context" class="followup-lead-context card hidden" aria-live="polite">
           <p class="followup-lead-context__title">Lead</p>
           <dl class="followup-lead-context__grid">
@@ -743,6 +777,10 @@
               <dd id="followup-ctx-mobile">—</dd>
             </div>
             <div class="followup-lead-context__item">
+              <dt>Current Status</dt>
+              <dd id="followup-ctx-status">—</dd>
+            </div>
+            <div class="followup-lead-context__item">
               <dt>City</dt>
               <dd id="followup-ctx-city">—</dd>
             </div>
@@ -756,7 +794,7 @@
         <div><label class="form-label">Remarks</label><textarea name="remarks" class="input-field" rows="2" placeholder="Discussion notes…"></textarea></div>
         <div>
           <label class="form-label" for="form-followup-scheduled-date">Scheduled Date &amp; Time</label>
-          <input name="scheduled_date" type="text" id="form-followup-scheduled-date" class="input-field" data-crm-datetime-input data-preview-prefix="Scheduled for" data-placeholder="Select Date &amp; Time" autocomplete="off" required />
+          <input name="scheduled_date" type="text" id="form-followup-scheduled-date" class="input-field" data-crm-datetime-input data-preview-prefix="Scheduled for" data-placeholder="Select Date &amp; Time" data-minute-increment="15" data-picker-prefer-above="true" data-hide-calendar-preview="true" autocomplete="off" required />
         </div>
         <div id="followup-demo-fields-wrap" class="hidden space-y-4">
           <div>

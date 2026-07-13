@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Database\Grammar\MySqlGrammar;
+use App\Database\Grammar\SqliteGrammar;
 use App\Events\LeadSaved;
 use App\Listeners\RefreshEmployeeProductivityOnLeadSaved;
 use App\Models\CaMaster;
@@ -35,7 +36,9 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->registerMysqlGrammar();
+        $this->registerSqliteGrammar();
         Gate::policy(CaMaster::class, CaMasterPolicy::class);
+        Gate::policy(\App\Models\OcrDocument::class, \App\Policies\OcrDocumentPolicy::class);
         Event::listen(LeadSaved::class, RefreshEmployeeProductivityOnLeadSaved::class);
         $this->registerCommunicationQualityHooks();
 
@@ -57,6 +60,22 @@ class AppServiceProvider extends ServiceProvider
             }
 
             $connection->setQueryGrammar(new MySqlGrammar($connection));
+        });
+    }
+
+    private function registerSqliteGrammar(): void
+    {
+        if (config('database.default') !== 'sqlite') {
+            return;
+        }
+
+        Event::listen(ConnectionEstablished::class, function (ConnectionEstablished $event): void {
+            $connection = $event->connection;
+            if ($connection->getDriverName() !== 'sqlite') {
+                return;
+            }
+
+            $connection->setQueryGrammar(new SqliteGrammar($connection));
         });
     }
 

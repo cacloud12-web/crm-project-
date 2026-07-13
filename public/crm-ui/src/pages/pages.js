@@ -761,17 +761,15 @@ window.CAPages = (function () {
   function caMasterStageFilterBar() {
     return '<div class="cam-filter-bar card cam-stage-filter-bar hidden" id="cam-stage-filter-bar" aria-label="Firm status filters">' +
       '<div class="cam-filter-row">' +
-        '<label class="cam-stage-filter-label" for="cam-filter-pipeline-stage">Status</label>' +
-        '<select id="cam-filter-pipeline-stage" class="input-field cam-filter-select cam-filter-pipeline-stage" aria-label="Filter by pipeline stage">' +
+        '<select id="cam-filter-pipeline-stage" class="input-field cam-filter-select cam-filter-pipeline-stage" aria-label="Status">' +
           '<option value="">All Leads</option>' +
           '<option value="New Lead">New Lead</option>' +
           '<option value="Contacted">Contacted</option>' +
           '<option value="Interested">Interested</option>' +
           '<option value="Converted">Converted</option>' +
         '</select>' +
-        '<button type="button" class="btn btn-sm btn-secondary cam-filter-reset-btn" id="cam-filter-reset" aria-label="Reset filters">' +
-          '<i data-lucide="rotate-ccw" class="h-3.5 w-3.5" aria-hidden="true"></i>' +
-          '<span>Reset Filters</span>' +
+        '<button type="button" class="crm-toolbar-icon-btn cam-filter-reset-btn" id="cam-filter-reset" title="Reset Filters" data-crm-tip="Reset Filters" aria-label="Reset Filters">' +
+          '<i data-lucide="rotate-ccw" class="h-4 w-4" aria-hidden="true"></i>' +
         '</button>' +
       '</div></div>';
   }
@@ -1172,7 +1170,7 @@ window.CAPages = (function () {
             actPrimary('Re-upload Corrected File', 'id="bulk-detail-reupload-btn"', 'upload') +
             '</div>' +
           '</div></div></div>' +
-      table(['Reference', 'Type', 'File', 'Total', 'Success', 'Failed', 'Status', 'Performed By', 'Created'], [], { tbodyId: 'bulk-actions-data-table', tableId: 'bulk-actions-table', paginationId: 'bulk-operations-pagination-slot' });
+      table(['', 'Reference', 'Type', 'File', 'Total', 'Success', 'Failed', 'Status', 'Performed By', 'Created', ''], [], { tbodyId: 'bulk-actions-data-table', tableId: 'bulk-actions-table', paginationId: 'bulk-operations-pagination-slot' });
   }
 
   /* ─── Leads (unified hub — same layout pattern as Master Data) ─── */
@@ -1522,7 +1520,7 @@ window.CAPages = (function () {
           '<h3 class="text-card-heading">Follow-Up Types</h3>' +
         '</div>' +
         '<div class="flex flex-wrap gap-2 mb-3" id="followup-type-chips">' + types.map(function (t) {
-          return '<button type="button" class="ca-chip" data-fu-type="' + t + '">' + t + '</button>';
+          return '<button type="button" class="ca-chip" data-fu-type="' + t + '" aria-pressed="false">' + t + '</button>';
         }).join('') + '</div>' +
         '<div id="followups-main-table-wrap">' +
         table([
@@ -1548,25 +1546,40 @@ window.CAPages = (function () {
           '</div>' +
         '</div>' +
       '</div>' +
-      '<div class="card p-4 lg:p-5 mb-6 followup-history-card">' +
-        '<div class="followup-history-card__head">' +
-          '<div>' +
-            '<h3 class="text-card-heading">Activity History</h3>' +
-            '<p class="text-caption text-slate-500 mt-1">Calls, follow-ups, demos, communication, and outcomes for your leads</p>' +
+      '<div class="card p-4 lg:p-5 mb-6 followup-history-card" id="followup-activity-history-section">' +
+        '<div class="followup-history-panel">' +
+          '<div class="followup-history-panel__header">' +
+            '<div class="min-w-0">' +
+              '<div class="flex items-center gap-2 flex-wrap">' +
+                '<h3 class="text-card-heading">Activity History</h3>' +
+                '<span class="followup-history-count" id="followup-activity-count" aria-live="polite"></span>' +
+              '</div>' +
+              '<p class="text-caption text-slate-500 mt-1">Calls, follow-ups, demos, communication, and outcomes for your leads</p>' +
+            '</div>' +
+            '<div class="followup-history-panel__actions">' +
+              '<button type="button" class="btn-secondary btn-sm" id="followup-timeline-sort" data-sort="desc" aria-label="Sort activity history newest first">' +
+                '<i data-lucide="arrow-down-narrow-wide" class="h-4 w-4"></i> Newest first' +
+              '</button>' +
+              '<button type="button" class="crm-toolbar-icon-btn" id="followup-timeline-refresh" title="Refresh activity history" aria-label="Refresh activity history">' +
+                '<i data-lucide="refresh-cw" class="h-4 w-4"></i>' +
+              '</button>' +
+            '</div>' +
           '</div>' +
-          '<div class="flex items-center gap-2 shrink-0">' +
-            '<button type="button" class="btn-secondary btn-sm" id="followup-timeline-sort" data-sort="desc">' +
-              '<i data-lucide="arrow-down-narrow-wide" class="h-4 w-4"></i> Newest first' +
-            '</button>' +
-            '<button type="button" class="crm-toolbar-icon-btn" id="followup-timeline-refresh" title="Refresh activity history" aria-label="Refresh activity history">' +
-              '<i data-lucide="refresh-cw" class="h-4 w-4"></i>' +
-            '</button>' +
+          '<div class="followup-history-panel__filters-wrap">' +
+            '<div class="followup-history-card__filters" role="group" aria-label="Activity period">' +
+              '<button type="button" class="followup-history-filter is-active" data-followup-activity-period="all" aria-pressed="true">All</button>' +
+              '<button type="button" class="followup-history-filter" data-followup-activity-period="today" aria-pressed="false">Today</button>' +
+              '<button type="button" class="followup-history-filter" data-followup-activity-period="week" aria-pressed="false">This Week</button>' +
+              '<button type="button" class="followup-history-filter" data-followup-activity-period="month" aria-pressed="false">This Month</button>' +
+            '</div>' +
           '</div>' +
+          '<div class="followup-history-panel__scroll" id="followup-activity-scroll" aria-live="polite">' +
+            '<div id="followup-activity-timeline" class="followup-activity-timeline followup-activity-timeline--compact">' +
+              '<p class="text-caption text-slate-400 py-2">Loading activity history…</p>' +
+            '</div>' +
+          '</div>' +
+          '<div class="crm-table-footer followup-history-panel__footer" id="followup-activity-pagination-slot"></div>' +
         '</div>' +
-        '<div id="followup-activity-timeline" class="followup-activity-timeline">' +
-          '<p class="text-caption text-slate-400 py-2">Loading activity history…</p>' +
-        '</div>' +
-        '<div class="crm-table-footer" id="followup-timeline-pagination"></div>' +
       '</div>';
   }
 

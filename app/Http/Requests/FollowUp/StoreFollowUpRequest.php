@@ -7,6 +7,7 @@ use App\Http\Requests\Concerns\SanitizesUserText;
 use App\Http\Requests\Concerns\ValidatesFollowUpSchedule;
 use App\Services\DemoConfirmation\DemoConfirmationService;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
 class StoreFollowUpRequest extends FormRequest
@@ -31,11 +32,11 @@ class StoreFollowUpRequest extends FormRequest
         return [
             'ca_id' => 'required|exists:ca_masters,ca_id',
             'employee_id' => 'nullable|exists:employees,employee_id',
-            'followup_type' => 'required|string|max:255',
+            'followup_type' => ['required', 'string', 'max:255', Rule::in(config('crm_followups.types', []))],
             'remarks' => 'nullable|string',
             'scheduled_date' => 'required|date',
             'next_followup_date' => 'nullable|date',
-            'status' => 'nullable|string|max:255',
+            'status' => ['nullable', 'string', 'max:255', Rule::in(config('crm_followups.statuses', []))],
             'priority' => 'nullable|string|in:Low,Normal,High,Urgent',
             'outcome' => 'nullable|string|max:255',
             'reschedule_reason' => 'nullable|string|max:2000',

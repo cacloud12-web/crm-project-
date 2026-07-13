@@ -155,5 +155,23 @@ class MasterPipelineKanbanTest extends TestCase
         $convertedIds = $extractIds($this->getJson('/ca-masters?master_pipeline_stage=Converted&per_page=100')->assertOk());
         $this->assertTrue($convertedIds->contains((int) $converted->ca_id));
         $this->assertFalse($convertedIds->contains((int) $newLead->ca_id));
+
+        $invalidIds = $extractIds($this->getJson('/ca-masters?master_pipeline_stage=InvalidStage&per_page=100')->assertOk());
+        $this->assertTrue($invalidIds->isEmpty());
+    }
+
+    public function test_segment_counts_support_master_pipeline_stages(): void
+    {
+        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $this->actingAs($admin);
+
+        $response = $this->getJson('/ca-masters/segment-counts?pipeline=master')->assertOk();
+        $stages = $response->json('data.pipeline_stages') ?? [];
+
+        $this->assertArrayHasKey('New Lead', $stages);
+        $this->assertArrayHasKey('Contacted', $stages);
+        $this->assertArrayHasKey('Interested', $stages);
+        $this->assertArrayHasKey('Converted', $stages);
+        $this->assertArrayNotHasKey('Demo Scheduled', $stages);
     }
 }

@@ -284,6 +284,19 @@ class RbacService
             return ['module' => 'reports', 'permission' => 'export'];
         }
 
+        if (str_starts_with($path, 'ocr-documents')) {
+            if ($this->roleKey($request->user()) === 'employee') {
+                $permission = match ($method) {
+                    'POST' => 'edit',
+                    default => $this->methodPermission($method),
+                };
+
+                return ['module' => 'leads', 'permission' => $permission];
+            }
+
+            return ['module' => 'ca_master', 'permission' => $this->methodPermission($method)];
+        }
+
         if (str_starts_with($path, 'activity-logs')) {
             return ['module' => 'activity', 'permission' => $method === 'GET' ? 'view' : 'reports'];
         }
@@ -417,10 +430,20 @@ class RbacService
             return ['module' => 'ca_master', 'permission' => 'edit'];
         }
 
+        if (str_starts_with($path, 'follow-ups')) {
+            $permission = match ($method) {
+                'POST' => 'schedule_followup',
+                'PUT', 'PATCH' => 'edit',
+                'DELETE' => 'delete',
+                default => 'view',
+            };
+
+            return ['module' => 'followups', 'permission' => $permission];
+        }
+
         $prefixes = [
             'ca-masters' => 'ca_master',
             'employees' => 'employees',
-            'follow-ups' => 'followups',
             'lead-assignments' => 'assignment',
             'states' => 'ca_master',
             'cities' => 'ca_master',

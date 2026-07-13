@@ -1,17 +1,34 @@
 /* CA Cloud Desk — Flatpickr CRM theme (#25B7A7) */
 
 .flatpickr-calendar.crm-fp-theme {
-  width: auto;
+  width: 340px;
   max-width: calc(100vw - 24px);
+  max-height: min(420px, calc(100vh - 24px));
   border-radius: 14px;
   border: 1px solid #e2e8f0;
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18), 0 8px 20px rgba(15, 23, 42, 0.08);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
   overflow: hidden;
-  animation: crmFpFadeIn 0.16s ease;
+  animation: crmFpFadeInBelow 0.16s ease;
+  display: flex;
+  flex-direction: column;
 }
 
-@keyframes crmFpFadeIn {
+.flatpickr-calendar.crm-fp-theme.crm-fp-above {
+  animation: crmFpFadeInAbove 0.16s ease;
+}
+
+.flatpickr-calendar.crm-fp-theme.crm-fp-body-portal.open {
+  position: fixed !important;
+  z-index: 12050 !important;
+}
+
+@keyframes crmFpFadeInBelow {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes crmFpFadeInAbove {
   from { opacity: 0; transform: translateY(6px) scale(0.98); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
@@ -20,9 +37,14 @@
   z-index: 12050 !important;
 }
 
+.flatpickr-calendar.crm-fp-theme.crm-fp-no-preview .crm-fp-selection-preview {
+  display: none !important;
+}
+
 .flatpickr-calendar.crm-fp-theme .flatpickr-months {
-  padding: 0.85rem 0.75rem 0.35rem;
+  padding: 0.75rem 0.75rem 0.25rem;
   background: #fff;
+  flex-shrink: 0;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-months .flatpickr-month {
@@ -31,10 +53,14 @@
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-current-month {
-  font-size: 1rem;
+  font-size: 0.9375rem;
   font-weight: 700;
   padding: 0;
   height: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-current-month .flatpickr-monthDropdown-months,
@@ -48,16 +74,18 @@
   background: transparent;
   border: none;
   padding: 0 0.15rem;
+  pointer-events: none;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-current-month input.cur-year {
   font-weight: 700;
-  font-size: 1rem;
+  font-size: 0.9375rem;
+  pointer-events: none;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-prev-month,
 .flatpickr-calendar.crm-fp-theme .flatpickr-next-month {
-  top: 0.85rem;
+  top: 0.75rem;
   padding: 0.35rem;
   border-radius: 8px;
   fill: #64748b;
@@ -65,9 +93,12 @@
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-prev-month:hover,
-.flatpickr-calendar.crm-fp-theme .flatpickr-next-month:hover {
+.flatpickr-calendar.crm-fp-theme .flatpickr-next-month:hover,
+.flatpickr-calendar.crm-fp-theme .flatpickr-prev-month:focus-visible,
+.flatpickr-calendar.crm-fp-theme .flatpickr-next-month:focus-visible {
   background: #f1f5f9;
   fill: #25b7a7;
+  outline: none;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-weekdays {
@@ -84,32 +115,34 @@
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-days {
-  padding: 0.25rem 0.5rem 0.5rem;
-  width: 320px;
+  padding: 0.15rem 0.5rem 0.35rem;
+  width: 100%;
 }
 
 .flatpickr-calendar.crm-fp-theme .dayContainer {
   width: 100%;
-  min-width: 280px;
-  max-width: 320px;
+  min-width: 0;
+  max-width: none;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-day {
   border-radius: 9999px;
   color: #334155;
   font-weight: 500;
-  font-size: 0.875rem;
-  line-height: 38px;
-  height: 38px;
-  max-width: 38px;
-  margin: 2px auto;
+  font-size: 0.8125rem;
+  line-height: 34px;
+  height: 34px;
+  max-width: 34px;
+  margin: 1px auto;
   border: none;
   transition: background 0.12s, color 0.12s, box-shadow 0.12s;
 }
 
-.flatpickr-calendar.crm-fp-theme .flatpickr-day:hover {
+.flatpickr-calendar.crm-fp-theme .flatpickr-day:hover,
+.flatpickr-calendar.crm-fp-theme .flatpickr-day:focus {
   background: #e8f8f6;
   color: #187a6f;
+  outline: none;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-day.today {
@@ -150,122 +183,168 @@
   opacity: 0.45;
 }
 
-/* Side-by-side calendar + time (datetime mode) */
+/* Compact stacked layout: calendar above, time below */
 .flatpickr-calendar.crm-fp-theme.hasTime .flatpickr-innerContainer {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   align-items: stretch;
+  width: 100%;
 }
 
 .flatpickr-calendar.crm-fp-theme.hasTime .flatpickr-rContainer {
-  border-right: 1px solid #f1f5f9;
+  border-right: none;
+  border-bottom: none;
+  width: 100%;
+}
+
+.crm-fp-time-wrap {
+  border-top: 1px solid #f1f5f9;
+  background: #fafbfc;
+  padding: 0.45rem 0.75rem 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+}
+
+.crm-fp-time-label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin: 0;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-time {
   border-top: none;
-  min-width: 148px;
+  min-width: 0;
   max-height: none;
   height: auto;
-  align-self: stretch;
+  width: auto;
+  flex: 1 1 auto;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: 1rem 0.85rem;
-  background: #fafbfc;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.35rem;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-time .numInputWrapper {
-  height: 42px;
+  height: 34px;
+  width: 3rem;
+  flex: 0 0 auto;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-time input.flatpickr-hour,
 .flatpickr-calendar.crm-fp-theme .flatpickr-time input.flatpickr-minute {
-  font-size: 1.125rem;
+  font-size: 0.9375rem;
   font-weight: 700;
   color: #0f172a;
   background: #fff;
   border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  height: 42px;
+  border-radius: 8px;
+  height: 34px;
+  width: 100%;
+  text-align: center;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-time input:focus {
   border-color: #25b7a7;
   box-shadow: 0 0 0 3px rgba(37, 183, 167, 0.18);
+  outline: none;
 }
 
-.flatpickr-calendar.crm-fp-theme .flatpickr-time .flatpickr-time-separator,
-.flatpickr-calendar.crm-fp-theme .flatpickr-time .flatpickr-am-pm {
+.flatpickr-calendar.crm-fp-theme .flatpickr-time .flatpickr-time-separator {
   color: #64748b;
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 0.9375rem;
+  line-height: 1;
+  align-self: center;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-time .flatpickr-am-pm {
+  color: #0f172a;
+  font-weight: 700;
   background: #fff;
   border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  height: 42px;
-  line-height: 42px;
-  font-size: 0.875rem;
-  width: 4.25rem;
+  border-radius: 8px;
+  height: 34px;
+  line-height: 34px;
+  font-size: 0.8125rem;
+  width: 3.25rem;
+  flex: 0 0 auto;
+  text-align: center;
+  cursor: pointer;
+}
+
+.flatpickr-calendar.crm-fp-theme .flatpickr-time .flatpickr-am-pm:hover,
+.flatpickr-calendar.crm-fp-theme .flatpickr-time .flatpickr-am-pm:focus {
+  border-color: #25b7a7;
+  outline: none;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-time .arrowUp,
 .flatpickr-calendar.crm-fp-theme .flatpickr-time .arrowDown {
-  border: none;
+  display: none;
 }
 
-.flatpickr-calendar.crm-fp-theme .flatpickr-time .arrowUp:after {
-  border-bottom-color: #64748b;
+.crm-fp-selection-preview {
+  padding: 0.45rem 0.75rem;
+  border-top: 1px solid #f1f5f9;
+  background: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #187a6f;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.flatpickr-calendar.crm-fp-theme .flatpickr-time .arrowDown:after {
-  border-top-color: #64748b;
+.crm-fp-selection-preview--empty {
+  color: #94a3b8;
+  font-weight: 500;
 }
 
-/* Footer: Today / Clear / Done */
+/* Footer: Today / Clear / Cancel / Done */
 .crm-fp-footer {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.65rem 0.85rem;
+  padding: 0.55rem 0.75rem;
   border-top: 1px solid #f1f5f9;
   background: #fff;
+  flex-shrink: 0;
 }
 
-.crm-fp-footer .btn-secondary {
+.crm-fp-footer__left,
+.crm-fp-footer__right {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.crm-fp-footer .btn-secondary,
+.crm-fp-footer .btn-primary {
   min-height: 32px;
-  padding: 0.35rem 0.75rem;
+  padding: 0.35rem 0.7rem;
   font-size: 0.8125rem;
+  white-space: nowrap;
+}
+
+.crm-fp-footer .btn-primary {
+  min-width: 4.25rem;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-confirm {
-  border-top: 1px solid #f1f5f9;
-  background: #f8fafc;
-  padding: 0.65rem 0.85rem;
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 0.35rem;
-  max-height: none;
-  visibility: visible;
-  height: auto;
-  min-height: 44px;
-  font-weight: 600;
-  font-size: 0.875rem;
-  color: #fff;
-  background: #25b7a7;
-  border-radius: 0 0 14px 14px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.flatpickr-calendar.crm-fp-theme .flatpickr-confirm:hover {
-  background: #1e9688;
-}
-
-.flatpickr-calendar.crm-fp-theme .flatpickr-confirm svg {
-  display: none;
+  display: none !important;
 }
 
 /* Field wrapper */
@@ -276,6 +355,10 @@
 
 .crm-datetime-field:focus-within {
   z-index: 60;
+}
+
+.ca-modal.open .crm-datetime-field:focus-within {
+  z-index: 80;
 }
 
 .crm-datetime-field__input-wrap {
@@ -293,7 +376,6 @@
   pointer-events: auto;
 }
 
-/* Never capture clicks while the parent modal is closed. */
 .ca-modal:not(.open) .crm-datetime-field__trigger,
 .ca-modal:not(.open) .crm-datetime-field__icon-wrap,
 .ca-modal:not(.open) .crm-datetime-flatpickr-source {
@@ -311,6 +393,12 @@
   display: flex;
   align-items: center;
   z-index: 2;
+}
+
+.crm-datetime-field__icon-wrap:focus-visible {
+  outline: 2px solid rgba(37, 183, 167, 0.45);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 .crm-datetime-field__trigger--error {
@@ -349,18 +437,33 @@
   display: none !important;
 }
 
-@media (max-width: 720px) {
-  .flatpickr-calendar.crm-fp-theme.hasTime .flatpickr-innerContainer {
-    flex-direction: column;
+@media (max-width: 640px) {
+  .flatpickr-calendar.crm-fp-theme.crm-fp-mobile-sheet.open {
+    position: fixed !important;
+    left: 50% !important;
+    right: auto !important;
+    bottom: max(12px, env(safe-area-inset-bottom)) !important;
+    top: auto !important;
+    transform: translateX(-50%) !important;
+    width: calc(100vw - 24px);
+    max-width: 360px;
+    max-height: min(70vh, 420px);
+    animation: crmFpFadeInBelow 0.18s ease;
   }
 
-  .flatpickr-calendar.crm-fp-theme.hasTime .flatpickr-rContainer {
-    border-right: none;
-    border-bottom: 1px solid #f1f5f9;
+  .flatpickr-calendar.crm-fp-theme .flatpickr-day {
+    line-height: 36px;
+    height: 36px;
+    max-width: 36px;
   }
 
-  .flatpickr-calendar.crm-fp-theme .flatpickr-days {
-    width: 100%;
-    min-width: 0;
+  .crm-fp-footer {
+    flex-wrap: wrap;
+  }
+
+  .crm-fp-footer__left,
+  .crm-fp-footer__right {
+    flex: 1 1 auto;
+    justify-content: center;
   }
 }

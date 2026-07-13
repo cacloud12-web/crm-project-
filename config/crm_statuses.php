@@ -51,4 +51,21 @@ return [
         'Next Month',
         'Hold',
     ],
+
+    'pipeline_segment' => [
+        'Pipeline',
+        'Warm',
+        'Demo Scheduled',
+        'Demo Completed',
+        'Negotiation',
+        'Details Shared',
+        'Interested',
+        'Thinking',
+        'Purchasing',
+        'Follow Up Scheduled',
+        'Follow Up Reminder',
+        'Next Week',
+        'Next Month',
+        'Hold',
+    ],
 ];

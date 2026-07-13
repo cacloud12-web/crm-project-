@@ -55,8 +55,10 @@ class FollowUpController extends Controller
 
     public function update(UpdateFollowUpRequest $request, string $id): JsonResponse
     {
+        $followUp = $this->followUpService->find($id);
+
         $followUp = $this->followUpService->update(
-            FollowUp::findOrFail($id),
+            $followUp,
             $request->validated(),
         );
 
@@ -69,7 +71,7 @@ class FollowUpController extends Controller
     public function destroy(string $id): JsonResponse
     {
         try {
-            $this->followUpService->delete(FollowUp::findOrFail($id));
+            $this->followUpService->delete($this->followUpService->find($id));
 
             return ApiResponse::success(null, 'Follow-up deleted successfully');
         } catch (\InvalidArgumentException $e) {

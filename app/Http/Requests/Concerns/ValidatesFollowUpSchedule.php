@@ -28,8 +28,12 @@ trait ValidatesFollowUpSchedule
             }
 
             $followUpId = $this->route('follow_up') ?? $this->route('followup') ?? $this->route('id');
-            if ($followUpId) {
-                $existing = FollowUp::query()->find($followUpId);
+            if ($followUpId && auth()->check()) {
+                try {
+                    $existing = app(\App\Services\FollowUp\FollowUpService::class)->find($followUpId);
+                } catch (\Throwable) {
+                    $existing = null;
+                }
                 if ($existing?->scheduled_date && Carbon::parse($existing->scheduled_date)->equalTo($scheduledAt)) {
                     return;
                 }

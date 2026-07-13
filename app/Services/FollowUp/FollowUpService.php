@@ -228,8 +228,13 @@ class FollowUpService
             );
         }
 
+        $nextCaId = isset($data['ca_id']) ? (int) $data['ca_id'] : (int) $followUp->ca_id;
+        if ($nextCaId !== (int) $followUp->ca_id) {
+            $this->employeeDataScope->ensureCanAccessCaMaster($nextCaId);
+        }
+
         $followUp->update(array_merge([
-            'ca_id' => $data['ca_id'] ?? $followUp->ca_id,
+            'ca_id' => $nextCaId,
             'employee_id' => $data['employee_id'] ?? $followUp->employee_id,
             'followup_type' => $data['followup_type'] ?? $followUp->followup_type,
             'outcome' => $data['outcome'] ?? $followUp->outcome,

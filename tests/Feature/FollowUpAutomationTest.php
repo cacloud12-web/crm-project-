@@ -321,4 +321,78 @@ class FollowUpAutomationTest extends TestCase
         $this->assertNotEmpty($feed);
         $this->assertContains('Call Logged', array_column($feed, 'activity_type'));
     }
+
+    public function test_activity_timeline_period_filter_and_pagination(): void
+    {
+        $this->actingAsAdmin();
+        $lead = $this->createLead();
+        $employee = $this->createEmployee();
+
+        FollowUpHistory::query()->create([
+            'ca_id' => $lead->ca_id,
+            'employee_id' => $employee->employee_id,
+            'event_type' => 'Call Logged',
+            'outcome' => 'Connected',
+            'remarks' => 'Today activity',
+            'performed_by' => 'Admin',
+            'created_at' => now(),
+        ]);
+
+        FollowUpHistory::query()->create([
+            'ca_id' => $lead->ca_id,
+            'employee_id' => $employee->employee_id,
+            'event_type' => 'Follow-up Created',
+            'outcome' => 'Open',
+            'remarks' => 'Older activity',
+            'performed_by' => 'Admin',
+            'created_at' => now()->subDays(20),
+        ]);
+
+        $all = $this->getJson('/follow-ups/activity-timeline?ca_id='.$lead->ca_id.'&per_page=10&page=1')
+            ->assertOk()
+            ->json('data');
+
+        $this->assertGreaterThanOrEqual(2, $all['pagination']['total']);
+        $this->assertSame(10, $all['pagination']['per_page']);
+        $this->assertArrayHasKey('from', $all['pagination']);
+        $this->assertArrayHasKey('to', $all['pagination']);
+
+        $today = $this->getJson('/follow-ups/activity-timeline?ca_id='.$lead->ca_id.'&period=today&per_page=10')
+            ->assertOk()
+            ->json('data');
+
+        $this->assertSame(1, $today['pagination']['total']);
+        $this->assertGreaterThan($today['pagination']['total'], $all['pagination']['total']);
+
+        $month = $this->getJson('/follow-ups/activity-timeline?ca_id='.$lead->ca_id.'&period=this_month&per_page=10')
+            ->assertOk()
+            ->json('data');
+
+        $this->assertGreaterThanOrEqual(1, $month['pagination']['total']);
+    }
+
+    public function test_activity_timeline_admin_feed_uses_batch_loader(): void
+    {
+        $this->actingAsAdmin();
+        $lead = $this->createLead();
+        $employee = $this->createEmployee();
+
+        FollowUpHistory::query()->create([
+            'ca_id' => $lead->ca_id,
+            'employee_id' => $employee->employee_id,
+            'event_type' => 'Call Logged',
+            'outcome' => 'Connected',
+            'remarks' => 'Batch feed activity',
+            'performed_by' => 'Admin',
+            'created_at' => now(),
+        ]);
+
+        $response = $this->getJson('/follow-ups/activity-timeline?per_page=10&page=1&period=today')
+            ->assertOk()
+            ->json('data');
+
+        $this->assertGreaterThanOrEqual(1, $response['pagination']['total']);
+        $types = array_column($response['items'] ?? [], 'activity_type');
+        $this->assertContains('Call Logged', $types);
+    }
 }

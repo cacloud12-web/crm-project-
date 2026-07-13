@@ -277,10 +277,23 @@ window.CA_CRM = (function () {
     'Purchased': { icon: 'shopping-bag', color: 'bg-emerald-600' },
     'Not Interested': { icon: 'x-circle', color: 'bg-rose-500' },
     'Status Changed': { icon: 'git-branch', color: 'bg-slate-500' },
+    'Call Completed': { icon: 'phone-call', color: 'bg-emerald-500' },
+    'Follow-up Added': { icon: 'calendar-plus', color: 'bg-blue-500' },
+    'Remarks Updated': { icon: 'file-edit', color: 'bg-slate-500' },
+    'Demo Cancelled': { icon: 'calendar-x', color: 'bg-rose-500' },
+    'Customer Requested Callback': { icon: 'phone-incoming', color: 'bg-amber-500' },
+    'Lead Assigned': { icon: 'user-check', color: 'bg-indigo-500' },
   };
 
   var followupActivitySort = 'desc';
   var followupActivityPage = 1;
+  var followupActivityPeriod = 'all';
+  var followupActivityPageSize = 10;
+  var followupActivityTotal = 0;
+  var followupActivityIsDemo = false;
+  var followupActivityHasApiData = false;
+  var followupActivityLoading = false;
+  var followupActivityPaginationRegistered = false;
 
   function csrfToken() {
     return document.querySelector('meta[name="csrf-token"]')?.content || '';
@@ -474,6 +487,16 @@ window.CA_CRM = (function () {
   }
 
   function mapStatusToStage(status) {
+    var pipeline = window.__CRM_SALES_PIPELINE__;
+    if (pipeline && pipeline.stage_statuses) {
+      var stages = pipeline.stage_statuses;
+      for (var stage in stages) {
+        if (Object.prototype.hasOwnProperty.call(stages, stage) && stages[stage].indexOf(status) >= 0) {
+          return stage;
+        }
+      }
+      return 'New Lead';
+    }
     var map = {
       New: 'New Lead',
       Cold: 'New Lead',
@@ -506,6 +529,10 @@ window.CA_CRM = (function () {
     if (isMasterDataHub()) {
       return mapMasterPipelineStageToStatus(stage);
     }
+    var salesPipeline = window.__CRM_SALES_PIPELINE__;
+    if (salesPipeline && salesPipeline.stage_to_status && salesPipeline.stage_to_status[stage]) {
+      return salesPipeline.stage_to_status[stage];
+    }
     var map = {
       'New Lead': 'New',
       'Details Shared': 'Pipeline',
@@ -519,6 +546,16 @@ window.CA_CRM = (function () {
   }
 
   function mapStatusToMasterPipelineStage(status) {
+    var pipeline = window.__CRM_MASTER_PIPELINE__;
+    if (pipeline && pipeline.stage_statuses) {
+      var stages = pipeline.stage_statuses;
+      for (var stage in stages) {
+        if (Object.prototype.hasOwnProperty.call(stages, stage) && stages[stage].indexOf(status) >= 0) {
+          return stage;
+        }
+      }
+      return 'New Lead';
+    }
     var map = {
       New: 'New Lead',
       Cold: 'New Lead',
@@ -549,6 +586,10 @@ window.CA_CRM = (function () {
   }
 
   function mapMasterPipelineStageToStatus(stage) {
+    var pipeline = window.__CRM_MASTER_PIPELINE__;
+    if (pipeline && pipeline.stage_to_status && pipeline.stage_to_status[stage]) {
+      return pipeline.stage_to_status[stage];
+    }
     var map = {
       'New Lead': 'New',
       Contacted: 'Contacted',
@@ -566,6 +607,17 @@ window.CA_CRM = (function () {
   }
 
   function getMasterPipelineColumns() {
+    var pipeline = window.__CRM_MASTER_PIPELINE__;
+    if (pipeline && Array.isArray(pipeline.columns) && pipeline.columns.length) {
+      return pipeline.columns.map(function (col) {
+        return {
+          name: col.label || col.key,
+          key: col.key,
+          icon: col.icon || 'circle',
+          theme: col.theme || 'new-lead',
+        };
+      });
+    }
     return [
       { name: 'New Lead', key: 'New Lead', icon: 'sparkles', theme: 'new-lead' },
       { name: 'Contacted', key: 'Contacted', icon: 'phone-call', theme: 'contacted' },
@@ -648,6 +700,15 @@ window.CA_CRM = (function () {
     return '<a href="tel:' + escaped + '" class="cam-cell-text cam-cell-mono text-brand hover:underline" title="' + escaped + '" onclick="event.stopPropagation();">' + escaped + '</a>';
   }
 
+  function camPhoneDisplayCell(raw) {
+    var display = formatPhoneDisplay(raw);
+    if (!display) {
+      return '<span class="cam-cell-text cam-cell-empty">—</span>';
+    }
+    var escaped = escapeHtml(display);
+    return '<span class="cam-cell-text cam-cell-mono cam-master-display-text" title="' + escaped + '">' + escaped + '</span>';
+  }
+
   function formatPhoneDisplay(raw) {
     if (!raw || raw === '—') return '';
     var digits = String(raw).replace(/\D/g, '');
@@ -716,19 +777,29 @@ window.CA_CRM = (function () {
     return !!(executive && executive !== 'Unassigned' && executive !== '—' && executive !== 'Assigned');
   }
 
-  function renderLeadResearchQuickCell(lead) {
+  function renderLeadResearchQuickCell(lead, opts) {
+    opts = opts || {};
+    var cellCls = 'lead-quick-cell lead-quick-cell--research';
     if (!canUseLeadQuickActions(lead)) {
-      return '<td class="lead-quick-cell lead-quick-cell--research"><span class="cam-cell-empty">—</span></td>';
+      return '<td class="' + cellCls + '"><span class="cam-cell-empty">—</span></td>';
     }
-    return '<td class="lead-quick-cell lead-quick-cell--research">' +
+    var firmLabel = leadFieldText(lead.firm_name) || leadFieldText(lead.ca_name) || ('Lead ' + lead.ca_id);
+    var tip = opts.tip || 'Google Lookup';
+    var ariaLabel = opts.master
+      ? ('Open Google Places Lookup for ' + firmLabel)
+      : tip;
+    return '<td class="' + cellCls + '">' +
       '<button type="button" class="lead-quick-btn lead-quick-btn--research" data-lead-quick="research" data-lead-id="' +
-      escapeHtml(lead.ca_id) + '" title="Google Lookup" aria-label="Google Lookup">' +
+      escapeHtml(lead.ca_id) + '" title="' + escapeHtml(tip) + '" data-crm-tip="' + escapeHtml(tip) + '" aria-label="' + escapeHtml(ariaLabel) + '">' +
       researchLeadIconSvg() + '</button></td>';
   }
 
   function canUseLeadCallLog(lead) {
     var employeeOk = !isEmployeeUser() || (lead && canUseLeadQuickActions(lead));
     if (!employeeOk) return false;
+    if (isMasterDataHub()) {
+      return crmCanAction('ca_master', 'view') || crmCanAction('followups', 'schedule_followup');
+    }
     return crmCanAction('leads', 'view')
       || crmCanAction('followups', 'schedule_followup')
       || crmCanAction('followups', 'create');
@@ -975,15 +1046,17 @@ window.CA_CRM = (function () {
   function openInboxImport() {
     if (isMasterDataHub()) {
       showCamSecondaryView('bulk');
-      setTimeout(function () {
-        if (typeof window.openBulkImportWizard === 'function') window.openBulkImportWizard();
-      }, 120);
+      if (typeof window.openBulkImportWizard === 'function') window.openBulkImportWizard();
       return;
     }
     if (typeof navigateTo === 'function') navigateTo('bulk');
-    setTimeout(function () {
-      if (typeof window.openBulkImportWizard === 'function') window.openBulkImportWizard();
-    }, 150);
+    if (typeof window.openBulkImportWizard === 'function') {
+      window.openBulkImportWizard();
+    } else {
+      setTimeout(function () {
+        if (typeof window.openBulkImportWizard === 'function') window.openBulkImportWizard();
+      }, 150);
+    }
   }
 
   function openInboxAssign(ids) {
@@ -1321,7 +1394,7 @@ window.CA_CRM = (function () {
     if (crmCanAction('followups', 'schedule_followup') || crmCanAction('followups', 'create')) {
       items.push({ action: 'followup', label: 'Add Follow-up', icon: 'calendar' });
     }
-    if (opts.lead && canUseLeadQuickActions(opts.lead)) {
+    if (!opts.master && opts.lead && canUseLeadQuickActions(opts.lead)) {
       items.push({ action: 'google-lookup', label: 'Google Lookup', icon: 'map-pin' });
     }
     var commItems = [];
@@ -2123,6 +2196,14 @@ window.CA_CRM = (function () {
       });
   }
 
+  function friendlyResearchError(err) {
+    var msg = (err && err.message) ? String(err.message) : '';
+    if (!msg || /SQLSTATE|sqlite|performed_by|database|QueryException|HY000/i.test(msg)) {
+      return 'Google Places Lookup is temporarily unavailable. Please try again.';
+    }
+    return msg;
+  }
+
   function runLeadResearchLookup(leadId, lead, googleQuery) {
     return apiFetch('/ca-masters/' + encodeURIComponent(leadId) + '/research', { method: 'POST' })
       .then(function (body) {
@@ -2199,7 +2280,7 @@ window.CA_CRM = (function () {
         })
         .catch(function (err) {
           CA_RESEARCH_WORKSPACE.setSourceError(
-            (err && err.message) || 'Could not load Places details. Search and Maps are still available.',
+            friendlyResearchError(err),
           );
         });
     });
@@ -3517,13 +3598,17 @@ window.CA_CRM = (function () {
 
   function setLeadsHubLoadingState(isLoading) {
     leadsHubLoading = !!isLoading;
-    var table = document.getElementById('leads-data-table');
+    var table = document.getElementById('leads-data-table') || document.getElementById('ca-master-data-table');
     var kanban = document.getElementById('kanban-board');
     var loadingRow = '<tr><td colspan="15" class="text-center text-slate-500 p-6"><span class="inline-flex items-center gap-2"><i data-lucide="loader-2" class="h-4 w-4 animate-spin"></i> Loading leads…</span></td></tr>';
     var loadingKanban = '<div class="w-full text-center text-slate-500 p-8"><span class="inline-flex items-center gap-2"><i data-lucide="loader-2" class="h-4 w-4 animate-spin"></i> Loading pipeline…</span></div>';
     if (isLoading) {
-      if (table && !table.querySelector('tr.ca-table-row')) table.innerHTML = loadingRow;
-      if (kanban && !kanban.querySelector('.kanban-column')) kanban.innerHTML = loadingKanban;
+      if (kanban && isAnyPipelineTabActive() && !kanban.querySelector('.kanban-column')) {
+        kanban.innerHTML = loadingKanban;
+      }
+      if (table && !isAnyPipelineTabActive() && !table.querySelector('tr.ca-table-row') && !table.querySelector('.cam-loading-row')) {
+        table.innerHTML = loadingRow;
+      }
       icons();
     }
   }
@@ -7268,9 +7353,13 @@ window.CA_CRM = (function () {
         ? '<div class="mt-4"><button type="button" class="btn-secondary btn-sm" data-lead-drawer-google="' + escapeHtml(String(lead.ca_id)) + '">' +
           '<i data-lucide="map-pin" class="h-4 w-4"></i> Google Places Lookup</button></div>'
         : '') +
+        '<div id="lead-ocr-panel-host" class="mt-4"></div>' +
         '<div id="lead-email-communications-section"><p class="text-caption text-slate-400 mt-4">Loading communication history…</p></div>' +
         '<div id="lead-demo-confirmation-section"><p class="text-caption text-slate-400 mt-4">Loading confirmation…</p></div>',
     });
+    if (window.CrmOcrPanel && typeof window.CrmOcrPanel.mountIntoDrawer === 'function') {
+      window.CrmOcrPanel.mountIntoDrawer(lead.ca_id);
+    }
     apiFetch('/ca-masters/' + encodeURIComponent(lead.ca_id) + '/email-communications')
       .then(function (body) {
         var section = document.getElementById('lead-email-communications-section');
@@ -7551,7 +7640,8 @@ window.CA_CRM = (function () {
       CA_LISTING_SEARCH.setState('ca_masters', { page: 1, search: '', filters: {} });
     }
     syncCamStageFilterBarVisibility();
-    renderCaMasterTable();
+    if (isCamPipelineTabActive()) loadKanbanLeads();
+    else renderCaMasterTable();
   }
 
   function applyCamSegment(segmentId) {
@@ -9656,9 +9746,11 @@ window.CA_CRM = (function () {
   }
 
   function bindFollowupCalendarClicks(container) {
-    if (!container) return;
-    container.querySelectorAll('[data-cal-day]').forEach(function (dayBtn) {
-      dayBtn.addEventListener('click', function (e) {
+    if (!container || container._followupCalClickBound) return;
+    container._followupCalClickBound = true;
+    container.addEventListener('click', function (e) {
+      var dayBtn = e.target.closest('[data-cal-day]');
+      if (dayBtn) {
         e.preventDefault();
         e.stopPropagation();
         var day = parseInt(dayBtn.getAttribute('data-cal-day'), 10);
@@ -9666,15 +9758,14 @@ window.CA_CRM = (function () {
         var month = parseInt(dayBtn.getAttribute('data-cal-month'), 10);
         if (!day) return;
         filterFollowupsByCalendarDay(year, month, day);
-      });
-    });
-    var clearBtn = container.querySelector('#followup-cal-clear-day');
-    if (clearBtn) {
-      clearBtn.addEventListener('click', function (e) {
+        return;
+      }
+      var clearBtn = e.target.closest('#followup-cal-clear-day');
+      if (clearBtn) {
         e.preventDefault();
         clearFollowupCalendarDayFilter();
-      });
-    }
+      }
+    });
   }
 
   function pad2(n) {
@@ -10074,84 +10165,436 @@ window.CA_CRM = (function () {
     return unwrapList(body);
   }
 
-  function buildFollowupActivityTimelineItemHtml(item) {
+  function getFollowupActivityDemoItems() {
+    var now = new Date();
+    function at(daysAgo, hour, minute) {
+      var d = new Date(now);
+      d.setDate(d.getDate() - daysAgo);
+      d.setHours(hour, minute, 0, 0);
+      return d.toISOString();
+    }
+    var demos = [
+      { activity_type: 'Call Completed', activity_label: 'Call Completed', firm_name: 'Sharma & Associates', ca_name: 'R. Sharma', employee_name: 'Rahul Sharma', status: 'Completed', notes: 'Customer interested in GST module demo.', occurred_at: at(0, 10, 30) },
+      { activity_type: 'Demo Scheduled', activity_label: 'Demo Scheduled', firm_name: 'ABC & Co', ca_name: 'Neha Gupta', employee_name: 'Neha Gupta', status: 'Scheduled', notes: 'Demo booked for GST module.', occurred_at: at(0, 9, 15) },
+      { activity_type: 'WhatsApp Sent', activity_label: 'WhatsApp Sent', firm_name: 'Patel Tax Consultants', ca_name: 'V. Patel', employee_name: 'Amit Verma', status: 'Sent', notes: 'Shared product brochure and pricing sheet.', occurred_at: at(0, 11, 45) },
+      { activity_type: 'Follow-up Added', activity_label: 'Follow-up Added', firm_name: 'Kumar & Sons CA', ca_name: 'S. Kumar', employee_name: 'Priya Mehta', status: 'Open', notes: 'Follow-up set for pricing discussion.', occurred_at: at(0, 14, 20) },
+      { activity_type: 'Email Sent', activity_label: 'Email Sent', firm_name: 'Singh Financial Services', ca_name: 'A. Singh', employee_name: 'Rahul Sharma', status: 'Delivered', notes: 'Sent demo confirmation email.', occurred_at: at(0, 16, 5) },
+      { activity_type: 'Customer Requested Callback', activity_label: 'Customer Requested Callback', firm_name: 'Reddy Associates', ca_name: 'K. Reddy', employee_name: 'Neha Gupta', status: 'Pending', notes: 'Requested callback after 4 PM today.', occurred_at: at(0, 15, 10) },
+      { activity_type: 'Demo Rescheduled', activity_label: 'Demo Rescheduled', firm_name: 'Mehta & Co', ca_name: 'R. Mehta', employee_name: 'Amit Verma', status: 'Rescheduled', notes: 'Moved demo from morning to afternoon slot.', occurred_at: at(1, 11, 0) },
+      { activity_type: 'Call Completed', activity_label: 'Call Completed', firm_name: 'Joshi Tax Advisors', ca_name: 'P. Joshi', employee_name: 'Priya Mehta', status: 'Completed', notes: 'Discussed annual compliance package.', occurred_at: at(1, 10, 0) },
+      { activity_type: 'Lead Assigned', activity_label: 'Lead Assigned', firm_name: 'Bansal & Partners', ca_name: 'M. Bansal', employee_name: 'Rahul Sharma', status: 'Assigned', notes: 'Lead assigned from inbound enquiry.', occurred_at: at(1, 9, 30) },
+      { activity_type: 'Status Changed', activity_label: 'Status Changed', firm_name: 'Iyer Consultants', ca_name: 'L. Iyer', employee_name: 'Neha Gupta', status: 'Negotiation', notes: 'Moved from Interested to Negotiation.', occurred_at: at(1, 17, 45) },
+      { activity_type: 'Demo Completed', activity_label: 'Demo Completed', firm_name: 'Gupta & Associates', ca_name: 'S. Gupta', employee_name: 'Amit Verma', status: 'Completed', notes: 'Demo completed successfully. Positive feedback.', occurred_at: at(2, 15, 30) },
+      { activity_type: 'Remarks Updated', activity_label: 'Remarks Updated', firm_name: 'Nair Tax Solutions', ca_name: 'D. Nair', employee_name: 'Priya Mehta', status: 'Updated', notes: 'Added notes on team size and current software.', occurred_at: at(2, 13, 15) },
+      { activity_type: 'SMS Sent', activity_label: 'SMS Sent', firm_name: 'Desai & Co', ca_name: 'H. Desai', employee_name: 'Rahul Sharma', status: 'Sent', notes: 'Reminder SMS for tomorrow\'s demo.', occurred_at: at(2, 18, 0) },
+      { activity_type: 'Follow-up Added', activity_label: 'Follow-up Added', firm_name: 'Chopra Associates', ca_name: 'N. Chopra', employee_name: 'Neha Gupta', status: 'Open', notes: 'Scheduled follow-up after proposal review.', occurred_at: at(3, 10, 45) },
+      { activity_type: 'Call Completed', activity_label: 'Call Completed', firm_name: 'Malhotra CA Firm', ca_name: 'V. Malhotra', employee_name: 'Amit Verma', status: 'No Answer', notes: 'No answer — will retry tomorrow.', occurred_at: at(3, 11, 30) },
+      { activity_type: 'Demo Cancelled', activity_label: 'Demo Cancelled', firm_name: 'Rao & Associates', ca_name: 'T. Rao', employee_name: 'Priya Mehta', status: 'Cancelled', notes: 'Client cancelled due to audit season workload.', occurred_at: at(4, 14, 0) },
+      { activity_type: 'Email Sent', activity_label: 'Email Sent', firm_name: 'Kapoor Tax Services', ca_name: 'R. Kapoor', employee_name: 'Rahul Sharma', status: 'Delivered', notes: 'Sent revised quotation with 10% discount.', occurred_at: at(4, 16, 20) },
+      { activity_type: 'WhatsApp Sent', activity_label: 'WhatsApp Sent', firm_name: 'Verma Consultants', ca_name: 'A. Verma', employee_name: 'Neha Gupta', status: 'Read', notes: 'Shared meeting link for product walkthrough.', occurred_at: at(5, 12, 10) },
+      { activity_type: 'Demo Scheduled', activity_label: 'Demo Scheduled', firm_name: 'Pillai & Co', ca_name: 'S. Pillai', employee_name: 'Amit Verma', status: 'Scheduled', notes: 'Demo scheduled for billing module.', occurred_at: at(6, 10, 0) },
+      { activity_type: 'Status Changed', activity_label: 'Status Changed', firm_name: 'Saxena Associates', ca_name: 'P. Saxena', employee_name: 'Priya Mehta', status: 'Demo Scheduled', notes: 'Pipeline stage updated after qualification call.', occurred_at: at(7, 9, 0) },
+      { activity_type: 'Call Completed', activity_label: 'Call Completed', firm_name: 'Bhatt Tax Advisors', ca_name: 'G. Bhatt', employee_name: 'Rahul Sharma', status: 'Interested', notes: 'Interested in multi-user license.', occurred_at: at(8, 15, 45) },
+      { activity_type: 'Follow-up Completed', activity_label: 'Follow-up Completed', firm_name: 'Trivedi & Sons', ca_name: 'M. Trivedi', employee_name: 'Neha Gupta', status: 'Completed', notes: 'Closed follow-up after successful onboarding call.', occurred_at: at(9, 11, 20) },
+      { activity_type: 'Lead Assigned', activity_label: 'Lead Assigned', firm_name: 'Agarwal CA Practice', ca_name: 'R. Agarwal', employee_name: 'Amit Verma', status: 'Assigned', notes: 'Reassigned from unassigned queue.', occurred_at: at(10, 10, 30) },
+      { activity_type: 'Demo Completed', activity_label: 'Demo Completed', firm_name: 'Mishra & Partners', ca_name: 'K. Mishra', employee_name: 'Priya Mehta', status: 'Completed', notes: 'Walkthrough completed. Awaiting management approval.', occurred_at: at(12, 14, 30) },
+      { activity_type: 'Remarks Updated', activity_label: 'Remarks Updated', firm_name: 'Dubey Consultants', ca_name: 'S. Dubey', employee_name: 'Rahul Sharma', status: 'Updated', notes: 'Updated objection: price sensitivity noted.', occurred_at: at(14, 16, 0) },
+      { activity_type: 'Email Sent', activity_label: 'Email Sent', firm_name: 'Sethi & Associates', ca_name: 'A. Sethi', employee_name: 'Neha Gupta', status: 'Delivered', notes: 'Case study email sent for reference.', occurred_at: at(18, 10, 15) },
+      { activity_type: 'Customer Requested Callback', activity_label: 'Customer Requested Callback', firm_name: 'Khanna Tax Hub', ca_name: 'V. Khanna', employee_name: 'Amit Verma', status: 'Pending', notes: 'Asked to call back next Monday morning.', occurred_at: at(20, 9, 45) },
+      { activity_type: 'Call Completed', activity_label: 'Call Completed', firm_name: 'Bhardwaj & Co', ca_name: 'D. Bhardwaj', employee_name: 'Priya Mehta', status: 'Not Interested', notes: 'Using competitor product. Not exploring switch now.', occurred_at: at(25, 11, 0) },
+      { activity_type: 'Demo Scheduled', activity_label: 'Demo Scheduled', firm_name: 'Chawla Associates', ca_name: 'N. Chawla', employee_name: 'Rahul Sharma', status: 'Scheduled', notes: 'Initial discovery demo booked.', occurred_at: at(28, 14, 0) },
+    ];
+    return demos.map(function (item, idx) {
+      var occurred = new Date(item.occurred_at);
+      return Object.assign({ activity_id: 'demo-' + (idx + 1) }, item, {
+        date_label: occurred.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+        time_label: occurred.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }),
+      });
+    });
+  }
+
+  function followupActivityWhenLabel(item) {
+    if (!item || !item.occurred_at) {
+      return ((item && item.date_label) || '') + ((item && item.time_label) ? ' · ' + item.time_label : '');
+    }
+    var d = new Date(item.occurred_at);
+    if (Number.isNaN(d.getTime())) return item.date_label || '—';
+    var now = new Date();
+    var startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var startItem = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    var diffDays = Math.round((startToday - startItem) / 86400000);
+    var dayLabel = diffDays === 0 ? 'Today' : (diffDays === 1 ? 'Yesterday' : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }));
+    var timeLabel = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+    return dayLabel + ' • ' + timeLabel;
+  }
+
+  function followupActivityDayGroupLabel(item) {
+    if (!item || !item.occurred_at) return 'Earlier';
+    var d = new Date(item.occurred_at);
+    if (Number.isNaN(d.getTime())) return 'Earlier';
+    var now = new Date();
+    var startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var startItem = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    var diffDays = Math.round((startToday - startItem) / 86400000);
+    if (diffDays === 0) return 'Today';
+    if (diffDays === 1) return 'Yesterday';
+    if (diffDays < 7) return d.toLocaleDateString('en-IN', { weekday: 'long' });
+    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+
+  function followupActivityStatusClass(status) {
+    var value = String(status || '').toLowerCase();
+    if (/complete|deliver|sent|read|assign|interest/.test(value)) return 'fu-activity-badge--success';
+    if (/schedule|open|pending|callback/.test(value)) return 'fu-activity-badge--brand';
+    if (/cancel|reject|not interested|no answer|fail/.test(value)) return 'fu-activity-badge--danger';
+    if (/resched|update|negotiat/.test(value)) return 'fu-activity-badge--warning';
+    return 'fu-activity-badge--neutral';
+  }
+
+  function followupActivityDateOnly(value) {
+    var d = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(d.getTime())) return null;
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+
+  function followupActivityStartOfWeekMonday(value) {
+    var d = followupActivityDateOnly(value);
+    if (!d) return null;
+    var day = d.getDay();
+    var diff = day === 0 ? -6 : 1 - day;
+    d.setDate(d.getDate() + diff);
+    return d;
+  }
+
+  function filterFollowupActivitiesByPeriod(items, period) {
+    if (!items || !items.length || !period || period === 'all') return items || [];
+    var now = new Date();
+    var today = followupActivityDateOnly(now);
+    var weekStart = followupActivityStartOfWeekMonday(now);
+    var weekEnd = weekStart ? new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6) : null;
+    var monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    var monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+    return items.filter(function (item) {
+      if (!item.occurred_at) return false;
+      var itemDay = followupActivityDateOnly(item.occurred_at);
+      if (!itemDay || !today) return false;
+      if (period === 'today') return itemDay.getTime() === today.getTime();
+      if (period === 'week') {
+        return weekStart && weekEnd && itemDay >= weekStart && itemDay <= weekEnd;
+      }
+      if (period === 'month') {
+        return itemDay >= monthStart && itemDay <= monthEnd;
+      }
+      return true;
+    });
+  }
+
+  function sortFollowupActivityItems(items, sort) {
+    var list = (items || []).slice();
+    list.sort(function (a, b) {
+      var aTime = a.occurred_at ? new Date(a.occurred_at).getTime() : 0;
+      var bTime = b.occurred_at ? new Date(b.occurred_at).getTime() : 0;
+      return sort === 'asc' ? aTime - bTime : bTime - aTime;
+    });
+    return list;
+  }
+
+  function followupActivityPeriodSuffix() {
+    if (followupActivityPeriod === 'today') return ' for Today';
+    if (followupActivityPeriod === 'week') return ' for This Week';
+    if (followupActivityPeriod === 'month') return ' for This Month';
+    return '';
+  }
+
+  function resetFollowupActivityScrollPosition() {
+    var scroll = document.getElementById('followup-activity-scroll');
+    if (scroll) scroll.scrollTop = 0;
+  }
+
+  function setFollowupActivityPanelLoading(loading) {
+    followupActivityLoading = !!loading;
+    var scroll = document.getElementById('followup-activity-scroll');
+    var footer = document.getElementById('followup-activity-pagination-slot');
+    var filters = document.querySelector('.followup-history-panel__filters-wrap');
+    var panel = document.querySelector('.followup-history-panel');
+    if (scroll) scroll.classList.toggle('is-loading', !!loading);
+    if (footer) footer.classList.toggle('is-loading', !!loading);
+    if (filters) filters.classList.toggle('is-loading', !!loading);
+    if (panel) panel.setAttribute('aria-busy', loading ? 'true' : 'false');
+    document.querySelectorAll('[data-followup-activity-period]').forEach(function (btn) {
+      btn.disabled = !!loading;
+    });
+    var sortBtn = document.getElementById('followup-timeline-sort');
+    var refreshBtn = document.getElementById('followup-timeline-refresh');
+    if (sortBtn) sortBtn.disabled = !!loading;
+    if (refreshBtn) refreshBtn.disabled = !!loading;
+  }
+
+  function getFollowupActivityFilteredSortedAll(items) {
+    var source = filterFollowupActivitiesByPeriod(items || [], followupActivityPeriod);
+    return sortFollowupActivityItems(source, followupActivitySort);
+  }
+
+  function mergeFollowupActivityItems(existing, incoming) {
+    var merged = (existing || []).slice();
+    var seen = {};
+    merged.forEach(function (item) {
+      var key = String(item.activity_id || '') + '|' + String(item.occurred_at || '');
+      seen[key] = true;
+    });
+    (incoming || []).forEach(function (item) {
+      var key = String(item.activity_id || '') + '|' + String(item.occurred_at || '');
+      if (!seen[key]) {
+        seen[key] = true;
+        merged.push(item);
+      }
+    });
+    return merged;
+  }
+
+  function buildFollowupActivityEmptyHtml(message, title) {
+    var emptyTitle = title || 'No Activity Yet';
+    var emptyText = message || 'Activities like calls, demos and follow-ups will appear here.';
+    return '<div class="fu-activity-empty">' +
+      '<div class="fu-activity-empty__icon" aria-hidden="true"><i data-lucide="clipboard-list" class="h-4 w-4"></i></div>' +
+      '<p class="fu-activity-empty__title">' + escapeHtml(emptyTitle) + '</p>' +
+      '<p class="fu-activity-empty__text">' + escapeHtml(emptyText) + '</p>' +
+      '<button type="button" class="btn-secondary btn-sm fu-activity-empty__refresh" id="followup-activity-empty-refresh">' +
+        '<i data-lucide="refresh-cw" class="h-3.5 w-3.5"></i> Refresh' +
+      '</button>' +
+    '</div>';
+  }
+
+  function buildFollowupActivityRowHtml(item) {
     var meta = followupActivityMeta(item.activity_type || item.activity_label || '');
-    var when = item.occurred_at ? formatDateTime(item.occurred_at) : ((item.date_label || '') + (item.time_label ? ' · ' + item.time_label : ''));
-    var leadParts = [];
-    if (item.firm_name) leadParts.push(item.firm_name);
-    if (item.ca_name && item.ca_name !== item.firm_name) leadParts.push(item.ca_name);
+    var typeLabel = item.activity_label || item.activity_type || 'Activity';
+    var firmLine = item.firm_name || '—';
+    if (item.ca_name && item.ca_name !== item.firm_name) firmLine += ' · ' + item.ca_name;
+    var employee = item.employee_name || item.created_by || item.performed_by || 'System';
     var statusText = item.call_status || item.status || '';
     var notesText = item.call_notes || item.notes || '';
-    var employee = item.employee_name || item.created_by || item.performed_by || 'System';
-    var detailRows = [];
-    if (leadParts.length) detailRows.push('<span class="followup-timeline-chip">' + escapeHtml(leadParts.join(' · ')) + '</span>');
-    if (statusText) detailRows.push('<span class="followup-timeline-status">' + escapeHtml(statusText) + '</span>');
-    if (notesText) detailRows.push('<p class="followup-timeline-notes">' + escapeHtml(notesText) + '</p>');
-    if (item.next_action) detailRows.push('<p class="followup-timeline-action"><i data-lucide="corner-down-right" class="h-3 w-3"></i> ' + escapeHtml(item.next_action) + '</p>');
-    if (item.followup_date || item.next_followup_date) {
-      detailRows.push('<p class="followup-timeline-followup-date">Follow-up: ' + escapeHtml(formatDate(item.followup_date || item.next_followup_date)) + '</p>');
-    }
-    return '<div class="timeline-item followup-timeline-item" data-activity-id="' + escapeHtml(String(item.activity_id || '')) + '">' +
-      '<div class="timeline-icon ' + meta.color + '"><i data-lucide="' + meta.icon + '" class="h-3 w-3"></i></div>' +
-      '<div class="flex-1 card p-4 min-w-0 followup-timeline-card">' +
-        '<div class="flex justify-between gap-3 flex-wrap">' +
-          '<p class="text-body font-semibold text-slate-800">' + escapeHtml(item.activity_label || item.activity_type || 'Activity') + '</p>' +
-          '<span class="text-caption text-slate-400 shrink-0">' + escapeHtml(when || '—') + '</span>' +
+    var badgeHtml = statusText
+      ? '<span class="fu-activity-badge ' + followupActivityStatusClass(statusText) + '">' + escapeHtml(statusText) + '</span>'
+      : '';
+    var noteHtml = notesText
+      ? '<p class="fu-activity-row__note" data-crm-tip="' + escapeHtml(notesText) + '" title="' + escapeHtml(notesText) + '">' + escapeHtml(notesText) + '</p>'
+      : '';
+    return '<article class="fu-activity-row" data-activity-id="' + escapeHtml(String(item.activity_id || '')) + '">' +
+      '<div class="fu-activity-row__icon ' + meta.color + '"><i data-lucide="' + meta.icon + '" class="h-3 w-3"></i></div>' +
+      '<div class="fu-activity-row__body">' +
+        '<div class="fu-activity-row__line1">' +
+          '<span class="fu-activity-row__type">' + escapeHtml(typeLabel) + '</span>' +
+          '<span class="fu-activity-row__meta">' + escapeHtml(firmLine) + '</span>' +
+          (badgeHtml ? '<span class="fu-activity-row__badge-inline">' + badgeHtml + '</span>' : '') +
         '</div>' +
-        (detailRows.length ? '<div class="mt-2 space-y-1">' + detailRows.join('') + '</div>' : '') +
-        '<p class="text-caption text-slate-400 mt-2">' + escapeHtml(employee) + '</p>' +
+        '<div class="fu-activity-row__line2">' +
+          '<span class="fu-activity-row__employee">' + escapeHtml(employee) + '</span>' +
+          '<span class="fu-activity-row__when">' + escapeHtml(followupActivityWhenLabel(item)) + '</span>' +
+        '</div>' +
+        noteHtml +
       '</div>' +
-    '</div>';
+    '</article>';
+  }
+
+  function buildFollowupActivityTimelineHtml(items) {
+    if (!items || !items.length) return buildFollowupActivityEmptyHtml();
+    var groups = [];
+    var groupMap = {};
+    items.forEach(function (item) {
+      var label = followupActivityDayGroupLabel(item);
+      if (!groupMap[label]) {
+        groupMap[label] = { label: label, items: [] };
+        groups.push(groupMap[label]);
+      }
+      groupMap[label].items.push(item);
+    });
+    return '<div class="fu-activity-feed">' + groups.map(function (group) {
+      return '<section class="fu-activity-day-group">' +
+        '<h4 class="fu-activity-day-label">' + escapeHtml(group.label) + '</h4>' +
+        '<div class="fu-activity-day-list">' + group.items.map(buildFollowupActivityRowHtml).join('') + '</div>' +
+      '</section>';
+    }).join('') + '</div>';
+  }
+
+  function buildFollowupActivityTimelineItemHtml(item) {
+    return buildFollowupActivityRowHtml(item);
+  }
+
+  function updateFollowupActivityCountUi(total) {
+    var countEl = document.getElementById('followup-activity-count');
+    if (!countEl) return;
+    countEl.textContent = total > 0 ? '(' + total + ')' : '';
+  }
+
+  function followupActivityPaginationMeta() {
+    var total = followupActivityTotal || 0;
+    var perPage = followupActivityPageSize || 10;
+    var current = followupActivityPage || 1;
+    var last = Math.max(1, Math.ceil(total / perPage) || 1);
+    var visible = (window._followupActivityTimeline || []).length;
+    var from = total && visible ? ((current - 1) * perPage) + 1 : 0;
+    var to = total && visible ? Math.min(from + visible - 1, total) : 0;
+    return {
+      current_page: current,
+      last_page: last,
+      per_page: perPage,
+      total: total,
+      from: from,
+      to: to,
+    };
+  }
+
+  function renderFollowupActivityPagination() {
+    var slot = document.getElementById('followup-activity-pagination-slot');
+    if (!slot || !window.CATablePagination) return;
+    var meta = followupActivityPaginationMeta();
+    if (!meta.total) {
+      slot.innerHTML = '';
+      slot.classList.add('crm-table-footer--empty');
+      return;
+    }
+    CATablePagination.renderInto(slot, {
+      scope: 'followup-activity',
+      pagination: meta,
+      perPage: meta.per_page,
+      showPerPage: true,
+    });
+    if (typeof iconsIn === 'function') iconsIn(slot);
+  }
+
+  function registerFollowupActivityPagination() {
+    if (followupActivityPaginationRegistered || !window.CATablePagination) return;
+    followupActivityPaginationRegistered = true;
+    CATablePagination.register('followup-activity', {
+      onPageChange: function (page) {
+        if (followupActivityLoading) return;
+        followupActivityPage = Math.max(1, parseInt(page, 10) || 1);
+        if (followupActivityIsDemo) {
+          renderFollowupActivityDemoPage();
+          return;
+        }
+        loadFollowupActivityTimeline({ reset: false, page: followupActivityPage });
+      },
+      onPerPageChange: function (perPage) {
+        if (followupActivityLoading) return;
+        followupActivityPageSize = perPage;
+        followupActivityPage = 1;
+        if (followupActivityIsDemo) {
+          renderFollowupActivityDemoPage();
+          return;
+        }
+        loadFollowupActivityTimeline({ reset: true });
+      },
+    });
+  }
+
+  function renderFollowupActivityDemoPage() {
+    var allDemo = getFollowupActivityFilteredSortedAll(window._followupActivityDemoAll || getFollowupActivityDemoItems());
+    followupActivityTotal = allDemo.length;
+    var offset = (followupActivityPage - 1) * followupActivityPageSize;
+    window._followupActivityTimeline = allDemo.slice(offset, offset + followupActivityPageSize);
+    window._followupActivityDemoBanner = true;
+    renderFollowupActivityMainFeed();
+    return Promise.resolve(window._followupActivityTimeline);
+  }
+
+  function bindFollowupActivityEmptyRefresh() {
+    var emptyRefresh = document.getElementById('followup-activity-empty-refresh');
+    if (!emptyRefresh || emptyRefresh._followupEmptyBound) return;
+    emptyRefresh._followupEmptyBound = true;
+    emptyRefresh.addEventListener('click', function () {
+      loadFollowupActivityTimeline({ reset: true });
+    });
+  }
+
+  function renderFollowupActivityMainFeed() {
+    var container = document.getElementById('followup-activity-timeline');
+    if (!container) return;
+    var items = window._followupActivityTimeline || [];
+    var total = followupActivityTotal || 0;
+
+    if (!items.length && !total) {
+      var periodEmpty = followupActivityPeriod !== 'all';
+      container.innerHTML = periodEmpty
+        ? '<p class="fu-activity-period-empty">No activities found for the selected period.</p>'
+        : buildFollowupActivityEmptyHtml(
+          'Activities like calls, demos and follow-ups will appear here.',
+          'No Activity Yet'
+        );
+      updateFollowupActivityCountUi(0);
+      renderFollowupActivityPagination();
+      bindFollowupActivityEmptyRefresh();
+      iconsIn(container);
+      resetFollowupActivityScrollPosition();
+      return;
+    }
+
+    container.innerHTML = (window._followupActivityDemoBanner
+      ? '<div class="fu-activity-demo-banner" role="status">Sample activity data — connect real follow-up activity or disable demo mode.</div>'
+      : '') + buildFollowupActivityTimelineHtml(items);
+    window._followupActivityDemoBanner = false;
+    bindFollowupActivityEmptyRefresh();
+    updateFollowupActivityCountUi(total);
+    renderFollowupActivityPagination();
+    iconsIn(container);
+    resetFollowupActivityScrollPosition();
   }
 
   function renderFollowupActivityTimelineItems(items, containerId) {
     var container = document.getElementById(containerId || 'followup-activity-timeline');
     if (!container) return;
-    if (!items || !items.length) {
-      container.innerHTML = '<p class="text-caption text-slate-400 py-6 text-center">No activity recorded yet.</p>';
+    var isMainFeed = !containerId || containerId === 'followup-activity-timeline';
+    if (isMainFeed) {
+      renderFollowupActivityMainFeed();
       return;
     }
-    container.innerHTML = items.map(buildFollowupActivityTimelineItemHtml).join('');
+    var source = sortFollowupActivityItems(items || [], followupActivitySort);
+    container.innerHTML = buildFollowupActivityTimelineHtml(source);
     iconsIn(container);
   }
 
-  function renderFollowupTimelinePagination(pagination) {
-    var slot = document.getElementById('followup-timeline-pagination');
-    if (!slot || !pagination) {
-      if (slot) slot.innerHTML = '';
-      return;
-    }
-    var total = pagination.total || 0;
-    var page = pagination.current_page || 1;
-    var last = pagination.last_page || 1;
-    if (total <= (pagination.per_page || 30)) {
-      slot.innerHTML = total ? '<p class="text-caption text-slate-500">' + total + ' activit' + (total === 1 ? 'y' : 'ies') + '</p>' : '';
-      return;
-    }
-    slot.innerHTML =
-      '<div class="flex items-center justify-between gap-3 flex-wrap">' +
-        '<p class="text-caption text-slate-500">' + total + ' activities · Page ' + page + ' of ' + last + '</p>' +
-        '<div class="flex items-center gap-2">' +
-          '<button type="button" class="btn-secondary btn-sm" id="followup-timeline-prev"' + (page <= 1 ? ' disabled' : '') + '>Previous</button>' +
-          '<button type="button" class="btn-secondary btn-sm" id="followup-timeline-next"' + (page >= last ? ' disabled' : '') + '>Next</button>' +
-        '</div>' +
-      '</div>';
-    var prev = document.getElementById('followup-timeline-prev');
-    var next = document.getElementById('followup-timeline-next');
-    if (prev) {
-      prev.addEventListener('click', function () {
-        if (followupActivityPage > 1) {
-          followupActivityPage -= 1;
-          loadFollowupActivityTimeline({ page: followupActivityPage, silent: true });
+  function fetchFollowupActivityPage(page, options) {
+    options = options || {};
+    var qs = '?sort=' + encodeURIComponent(followupActivitySort) +
+      '&page=' + encodeURIComponent(page) +
+      '&per_page=' + encodeURIComponent(followupActivityPageSize) +
+      '&period=' + encodeURIComponent(followupActivityPeriod || 'all');
+    return apiFetch('/follow-ups/activity-timeline' + qs)
+      .then(function (body) {
+        var items = unwrapTimelineItems(body);
+        var pagination = body && body.data ? body.data.pagination : null;
+        var period = followupActivityPeriod || 'all';
+        var useDemo = window.CRM_FOLLOWUP_ACTIVITY_DEMO === true
+          && !items.length
+          && page === 1
+          && period === 'all';
+
+        if (useDemo) {
+          followupActivityIsDemo = true;
+          followupActivityHasApiData = false;
+          window._followupActivityDemoAll = getFollowupActivityDemoItems();
+          followupActivityPage = 1;
+          return renderFollowupActivityDemoPage();
         }
+
+        followupActivityIsDemo = false;
+        followupActivityHasApiData = true;
+        window._followupActivityTimelineRaw = items;
+        followupActivityTotal = pagination ? pagination.total : items.length;
+        if (pagination && pagination.current_page) {
+          followupActivityPage = pagination.current_page;
+        }
+        if (pagination && pagination.per_page) {
+          followupActivityPageSize = pagination.per_page;
+        }
+        window._followupActivityTimeline = items;
+
+        if (!options.silentRender) {
+          renderFollowupActivityMainFeed();
+        }
+        return window._followupActivityTimeline;
       });
-    }
-    if (next) {
-      next.addEventListener('click', function () {
-        followupActivityPage += 1;
-        loadFollowupActivityTimeline({ page: followupActivityPage, silent: true });
-      });
-    }
   }
 
   function loadFollowupActivityTimeline(options) {
@@ -10159,30 +10602,47 @@ window.CA_CRM = (function () {
     var container = document.getElementById('followup-activity-timeline');
     if (!container) return Promise.resolve([]);
     if (!crmCanAction('followups', 'view')) {
-      container.innerHTML = '<p class="text-caption text-slate-400 py-6 text-center">You do not have permission to view activity history.</p>';
+      container.innerHTML = '<p class="text-caption text-slate-400 py-4 text-center">You do not have permission to view activity history.</p>';
       return Promise.resolve([]);
     }
-    followupActivitySort = options.sort || followupActivitySort || 'desc';
-    followupActivityPage = options.page || followupActivityPage || 1;
-    if (!options.silent) {
-      container.innerHTML = '<div class="crm-inline-loading py-8"><i data-lucide="loader-2" class="h-5 w-5 animate-spin text-brand"></i><span>Loading activity history…</span></div>';
-      iconsIn(container);
+    if (followupActivityLoading) {
+      return Promise.resolve(window._followupActivityTimeline || []);
     }
-    var qs = '?sort=' + encodeURIComponent(followupActivitySort) + '&page=' + followupActivityPage + '&per_page=30';
-    return apiFetch('/follow-ups/activity-timeline' + qs)
-      .then(function (body) {
-        var items = unwrapTimelineItems(body);
-        window._followupActivityTimeline = items;
-        renderFollowupActivityTimelineItems(items);
-        renderFollowupTimelinePagination(body && body.data ? body.data.pagination : null);
+
+    registerFollowupActivityPagination();
+    followupActivitySort = options.sort || followupActivitySort || 'desc';
+    if (options.reset !== false) {
+      followupActivityPage = options.page || 1;
+      window._followupActivityTimeline = [];
+    } else if (options.page) {
+      followupActivityPage = options.page;
+    }
+
+    if (followupActivityIsDemo && (options.reset !== false || options.page)) {
+      return renderFollowupActivityDemoPage();
+    }
+
+    if (!options.silent) {
+      setFollowupActivityPanelLoading(true);
+    } else {
+      followupActivityLoading = true;
+    }
+
+    return fetchFollowupActivityPage(followupActivityPage, { silentRender: !!options.silent })
+      .then(function (items) {
+        setFollowupActivityPanelLoading(false);
+        if (options.silent) {
+          renderFollowupActivityMainFeed();
+        }
         return items;
       })
       .catch(function (err) {
+        setFollowupActivityPanelLoading(false);
         if (err.status === 403) {
-          container.innerHTML = '<p class="text-caption text-slate-400 py-6 text-center">You do not have permission to view activity history.</p>';
+          container.innerHTML = '<p class="text-caption text-slate-400 py-4 text-center">You do not have permission to view activity history.</p>';
           return [];
         }
-        container.innerHTML = '<p class="text-caption text-rose-500 py-6 text-center">' + escapeHtml(err.message || 'Unable to load activity history.') + '</p>';
+        container.innerHTML = '<p class="text-caption text-rose-500 py-4 text-center">' + escapeHtml(err.message || 'Unable to load activity history.') + '</p>';
         return [];
       });
   }
@@ -10197,28 +10657,66 @@ window.CA_CRM = (function () {
 
   function initFollowupActivityTimeline() {
     if (!document.getElementById('followup-activity-timeline')) return;
+    if (document.getElementById('followup-activity-timeline')._followupTimelineInit) {
+      loadFollowupActivityTimeline({ reset: true });
+      return;
+    }
+    document.getElementById('followup-activity-timeline')._followupTimelineInit = true;
+    registerFollowupActivityPagination();
     var sortBtn = document.getElementById('followup-timeline-sort');
     var refreshBtn = document.getElementById('followup-timeline-refresh');
+
+    document.querySelectorAll('[data-followup-activity-period]').forEach(function (btn) {
+      if (btn._followupPeriodBound) return;
+      btn._followupPeriodBound = true;
+      btn.addEventListener('click', function () {
+        if (followupActivityLoading) return;
+        followupActivityPeriod = btn.getAttribute('data-followup-activity-period') || 'all';
+        document.querySelectorAll('[data-followup-activity-period]').forEach(function (chip) {
+          chip.classList.toggle('is-active', chip === btn);
+          chip.setAttribute('aria-pressed', chip === btn ? 'true' : 'false');
+        });
+        followupActivityPage = 1;
+        if (followupActivityIsDemo) {
+          renderFollowupActivityDemoPage();
+        } else {
+          loadFollowupActivityTimeline({ reset: true });
+        }
+      });
+    });
+
     if (sortBtn && !sortBtn._followupTimelineBound) {
       sortBtn._followupTimelineBound = true;
       sortBtn.addEventListener('click', function () {
+        if (followupActivityLoading) return;
         followupActivitySort = followupActivitySort === 'desc' ? 'asc' : 'desc';
         sortBtn.setAttribute('data-sort', followupActivitySort);
         sortBtn.innerHTML = followupActivitySort === 'desc'
           ? '<i data-lucide="arrow-down-narrow-wide" class="h-4 w-4"></i> Newest first'
           : '<i data-lucide="arrow-up-narrow-wide" class="h-4 w-4"></i> Oldest first';
+        sortBtn.setAttribute('aria-label', followupActivitySort === 'desc'
+          ? 'Sort activity history newest first'
+          : 'Sort activity history oldest first');
         iconsIn(sortBtn);
         followupActivityPage = 1;
-        loadFollowupActivityTimeline({ page: 1 });
+        if (followupActivityIsDemo) {
+          renderFollowupActivityDemoPage();
+        } else {
+          loadFollowupActivityTimeline({ reset: true });
+        }
       });
     }
+
     if (refreshBtn && !refreshBtn._followupTimelineBound) {
       refreshBtn._followupTimelineBound = true;
       refreshBtn.addEventListener('click', function () {
-        loadFollowupActivityTimeline();
+        if (followupActivityLoading) return;
+        followupActivityIsDemo = false;
+        loadFollowupActivityTimeline({ reset: true });
       });
     }
-    loadFollowupActivityTimeline();
+
+    loadFollowupActivityTimeline({ reset: true });
   }
 
   function refreshFollowupsPage(options) {
@@ -10709,6 +11207,7 @@ window.CA_CRM = (function () {
     var tbody = document.getElementById('demo-history-table');
     var countEl = document.getElementById('demo-history-count');
     if (!tbody) return;
+    bindDemoHistoryTableActions();
     tbody.innerHTML = '<tr><td colspan="8" class="text-center text-slate-500 p-4">Loading demo history…</td></tr>';
 
     apiFetch('/workflow/demo-history')
@@ -10752,12 +11251,18 @@ window.CA_CRM = (function () {
       '</tr>';
     }).join('');
 
-    tbody.querySelectorAll('[data-demo-history-followup]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        openFollowupFormForEdit(btn.getAttribute('data-demo-history-followup'));
-      });
-    });
     icons();
+  }
+
+  function bindDemoHistoryTableActions() {
+    var tbody = document.getElementById('demo-history-table');
+    if (!tbody || tbody._demoHistoryBound) return;
+    tbody._demoHistoryBound = true;
+    tbody.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-demo-history-followup]');
+      if (!btn) return;
+      openFollowupFormForEdit(btn.getAttribute('data-demo-history-followup'));
+    });
   }
 
   function bindFollowupRowActions(container) {
@@ -10910,6 +11415,8 @@ window.CA_CRM = (function () {
     window._editingFollowUpId = followupId;
     var cached = findFollowupInCache(followupId);
     setFollowupModalTitle(true);
+    setFollowupLeadPickerVisible(false);
+    clearFollowupLeadError();
     openModal(modal);
     setFollowupFormBusy(true);
     if (cached) populateFollowupEditForm(cached);
@@ -11164,6 +11671,24 @@ window.CA_CRM = (function () {
     '</button>';
   }
 
+  function renderLastActivityDisplayCell(lead) {
+    var activity = lastActivityMeta(lead);
+    if (!activity || !activity.occurred_at) {
+      return '<span class="cam-last-activity cam-last-activity--none cam-last-activity--static">⚪ No Activity Yet</span>';
+    }
+
+    var tooltip = (lastActivityIcon(activity.type) + ' ' + (activity.label || 'Activity') + '\n' +
+      (activity.employee_name || 'System') + '\n' +
+      (activity.date_label || '') + '\n' +
+      (activity.time_label || '') +
+      (activity.note ? ('\n' + activity.note) : ''));
+
+    return '<span class="cam-last-activity cam-last-activity--static cam-last-activity--' + escapeHtml(activity.age_bucket || 'none') + '" data-crm-tip="' + escapeHtml(tooltip) + '" title="' + escapeHtml(tooltip.replace(/\n/g, ' · ')) + '">' +
+      '<span class="cam-last-activity__badge">' + escapeHtml(activity.emoji || '⚪') + ' ' + escapeHtml(activity.relative_label || 'Activity') + '</span>' +
+      '<span class="cam-last-activity__time">' + escapeHtml(activity.time_label || '') + '</span>' +
+    '</span>';
+  }
+
   function renderLeadActivityTimelineBody(payload) {
     var items = (payload && payload.items) || [];
     if (!items.length) {
@@ -11235,30 +11760,30 @@ window.CA_CRM = (function () {
       ? compactTextCell(l.executive)
       : '<span class="cam-cell-text cam-cell-empty">Unassigned</span>';
     tableKey = tableKey || getCaMasterTableContext().tbodyId || 'ca-master-data-table';
-    return '<tr class="ca-table-row cam-table-row crm-table-row" data-lead-id="' + l.ca_id + '" data-row=\'' + data + '\'>' +
+    return '<tr class="ca-table-row cam-table-row crm-table-row cam-master-data-row" data-lead-id="' + l.ca_id + '" data-row=\'' + data + '\'>' +
       renderInboxCheckCell(tableKey, l.ca_id) +
-      '<td class="sticky-left-2 crm-td-firm font-medium text-slate-900">' + firmNameCell(l.firm_name) + '</td>' +
-      '<td class="crm-td-ca font-medium text-slate-900">' + caNameCell(l.ca_name) + '</td>' +
-      '<td class="cam-td-team-size">' + renderTeamSizeCell(l) + '</td>' +
-      '<td class="cam-td-last-activity">' + renderLastActivityCell(l) + '</td>' +
-      '<td class="cam-td-mobile">' + camPhoneCell(l.mobile_no) + '</td>' +
+      '<td class="sticky-left-2 crm-td-firm cam-master-data-cell">' + firmNameCell(l.firm_name) + '</td>' +
+      '<td class="crm-td-ca cam-master-data-cell">' + caNameCell(l.ca_name) + '</td>' +
+      '<td class="cam-td-team-size cam-master-data-cell">' + renderTeamSizeCell(l) + '</td>' +
+      '<td class="cam-td-last-activity cam-master-data-cell">' + renderLastActivityDisplayCell(l) + '</td>' +
+      '<td class="cam-td-mobile cam-master-data-cell">' + camPhoneDisplayCell(l.mobile_no) + '</td>' +
       renderLeadCallLogQuickCell(l) +
-      '<td class="cam-td-mobile">' + camPhoneCell(l.alternate_mobile_no) + '</td>' +
-      '<td class="cam-td-geo">' + compactTextCell(l.city) + '</td>' +
-      '<td class="cam-td-geo">' + compactTextCell(l.state) + '</td>' +
-      '<td class="cam-td-source">' + compactTextCell(l.source) + '</td>' +
-      '<td class="cam-td-rating"><span class="cam-cell-rating" title="' + (l.rating || 0) + ' stars">' + stars(l.rating) + '</span></td>' +
-      '<td class="cam-td-status"><span class="cam-cell-badge">' + statusBadge(l.status) + '</span></td>' +
-      '<td class="cam-td-person">' + executive + '</td>' +
-      '<td class="cam-td-person">' + compactTextCell(l.created_by) + '</td>' +
-      '<td class="cam-td-date"><span class="cam-cell-text cam-cell-mono text-slate-500" title="' + escapeHtml(l.updated || formatRelativeDate(l.updated_at)) + '">' + escapeHtml(l.updated || formatRelativeDate(l.updated_at)) + '</span></td>' +
-      renderLeadResearchQuickCell(l) +
+      '<td class="cam-td-mobile cam-master-data-cell">' + camPhoneDisplayCell(l.alternate_mobile_no) + '</td>' +
+      '<td class="cam-td-geo cam-master-data-cell">' + compactTextCell(l.city) + '</td>' +
+      '<td class="cam-td-geo cam-master-data-cell">' + compactTextCell(l.state) + '</td>' +
+      '<td class="cam-td-source cam-master-data-cell">' + compactTextCell(l.source) + '</td>' +
+      '<td class="cam-td-rating cam-master-data-cell"><span class="cam-cell-rating cam-master-display-text" title="' + (l.rating || 0) + ' stars">' + stars(l.rating) + '</span></td>' +
+      '<td class="cam-td-status cam-master-data-cell"><span class="cam-cell-badge">' + statusBadge(l.status) + '</span></td>' +
+      '<td class="cam-td-person cam-master-data-cell">' + executive + '</td>' +
+      '<td class="cam-td-person cam-master-data-cell">' + compactTextCell(l.created_by) + '</td>' +
+      '<td class="crm-td-date cam-master-data-cell"><span class="cam-cell-text cam-cell-mono text-slate-500 cam-master-display-text" title="' + escapeHtml(l.updated || formatRelativeDate(l.updated_at)) + '">' + escapeHtml(l.updated || formatRelativeDate(l.updated_at)) + '</span></td>' +
+      renderLeadResearchQuickCell(l, { master: true, tip: 'Google Places Lookup' }) +
       renderCaMasterActionCell(l) +
     '</tr>';
   }
 
   function renderCaMasterActionCell(lead) {
-    return renderCrmRowActionsCell(lead);
+    return renderCrmRowActionsCell(lead, { master: true });
   }
 
   function renderCaMasterEmptyState(colspan, message) {
@@ -11475,7 +12000,8 @@ window.CA_CRM = (function () {
         CA_LISTING_SEARCH.setState('ca_masters', { page: 1, filters: filters });
       }
       syncCamStageFilterBarVisibility();
-      renderCaMasterTable();
+      if (isCamPipelineTabActive()) loadKanbanLeads();
+      else renderCaMasterTable();
     });
 
     document.getElementById('cam-filter-reset')?.addEventListener('click', function () {
@@ -11551,8 +12077,7 @@ window.CA_CRM = (function () {
       : renderCaMasterEmptyState(colCount, tbodyId === 'ca-master-new-data-table' ? 'No new firms yet.' : 'No firms yet. Click Add Firm to create one.');
 
     if (el._camRowHtml === rowHtml && el.querySelector('.cam-table-row, .cam-empty-row')) {
-      bindLeadRows(el);
-      bindCaMasterActionMenus(el.closest('.cam-page') || document);
+      bindCaMasterTableRows(el);
       syncInboxChecks(tbodyId);
       icons();
       return;
@@ -11561,10 +12086,14 @@ window.CA_CRM = (function () {
 
     el.innerHTML = rowHtml;
 
-    bindLeadRows(el);
-    bindCaMasterActionMenus(el.closest('.cam-page') || document);
+    bindCaMasterTableRows(el);
     syncInboxChecks(tbodyId);
     icons();
+  }
+
+  function bindCaMasterTableRows(container) {
+    if (!container) return;
+    bindCaMasterActionMenus(container.closest('#cam-hub') || container.closest('.cam-page') || document);
   }
 
   function renderLeaderboard() {
@@ -11941,6 +12470,7 @@ window.CA_CRM = (function () {
     if (!container) return;
     container.querySelectorAll('.ca-table-row[data-lead-id]').forEach(function (row) {
       if (row._leadRowClickBound) return;
+      if (row.classList.contains('cam-master-data-row') || row.closest('#cam-hub')) return;
       row._leadRowClickBound = true;
       row.addEventListener('click', function (e) {
         if (e.target.closest('.crm-actions-cell, .crm-actions-menu, .lead-quick-cell, .lead-quick-actions-cell, [data-lead-quick], .crm-td-check, .crm-inbox-row-check')) return;
@@ -12491,6 +13021,38 @@ window.CA_CRM = (function () {
     if (wrap) wrap.classList.add('hidden');
   }
 
+  function clearFollowupLeadError() {
+    var errorEl = document.getElementById('followup-lead-error');
+    var picker = document.getElementById('followup-lead-picker');
+    if (errorEl) {
+      errorEl.textContent = '';
+      errorEl.classList.add('hidden');
+    }
+    if (picker) picker.classList.remove('is-invalid');
+    var search = document.getElementById('followup-lead-picker-search');
+    if (search) search.classList.remove('is-invalid');
+  }
+
+  function setFollowupLeadError(message) {
+    var errorEl = document.getElementById('followup-lead-error');
+    var picker = document.getElementById('followup-lead-picker');
+    if (errorEl) {
+      errorEl.textContent = message || '';
+      errorEl.classList.toggle('hidden', !message);
+    }
+    if (picker) picker.classList.toggle('is-invalid', !!message);
+    var search = document.getElementById('followup-lead-picker-search');
+    if (search) {
+      search.classList.toggle('is-invalid', !!message);
+      if (message && typeof search.focus === 'function') search.focus();
+    }
+  }
+
+  function setFollowupLeadPickerVisible(visible) {
+    var wrap = document.getElementById('followup-lead-picker-wrap');
+    if (wrap) wrap.classList.toggle('hidden', !visible);
+  }
+
   function renderFollowupLeadContext(lead) {
     window._followupContextLead = lead || null;
     var wrap = document.getElementById('followup-lead-context');
@@ -12504,14 +13066,17 @@ window.CA_CRM = (function () {
     var firmEl = document.getElementById('followup-ctx-firm');
     var caEl = document.getElementById('followup-ctx-ca');
     var mobileEl = document.getElementById('followup-ctx-mobile');
+    var statusEl = document.getElementById('followup-ctx-status');
     var cityEl = document.getElementById('followup-ctx-city');
     var employeeEl = document.getElementById('followup-ctx-employee');
     if (firmEl) firmEl.textContent = lead.firm_name || '—';
     if (caEl) caEl.textContent = lead.ca_name || '—';
     if (mobileEl) mobileEl.textContent = lead.mobile_no || '—';
+    if (statusEl) statusEl.textContent = lead.status || '—';
     if (cityEl) cityEl.textContent = lead.city || '—';
     if (employeeEl) employeeEl.textContent = lead.executive || 'Unassigned';
     wrap.classList.remove('hidden');
+    clearFollowupLeadError();
   }
 
   function fetchLeadForFollowup(leadId) {
@@ -12560,15 +13125,41 @@ window.CA_CRM = (function () {
   }
 
   function resetFollowupLeadPicker() {
+    if (window.CrmLeadPicker) {
+      window.CrmLeadPicker.reset('followup');
+      window.CrmLeadPicker.syncBulkBarVisibility('followup');
+    }
     clearFollowupLeadContext();
+    clearFollowupLeadError();
+  }
+
+  function bindFollowupLeadPickerEvents() {
+    if (!window.CrmLeadPicker) return;
+    window.CrmLeadPicker.bind('followup', {
+      singleSelect: true,
+      onSelectionChange: function () {
+        var leads = window.CrmLeadPicker.selectedLeads('followup');
+        if (leads.length) {
+          renderFollowupLeadContext(leads[0]);
+        } else {
+          clearFollowupLeadContext();
+        }
+      },
+    });
+  }
+
+  function initFollowupLeadPicker(options) {
+    options = options || {};
+    if (!window.CrmLeadPicker) return Promise.resolve();
+    initLeadPickerDeps();
+    bindFollowupLeadPickerEvents();
+    var presetIds = (options.presetIds || []).map(function (id) { return parseInt(id, 10); }).filter(Boolean);
+    return window.CrmLeadPicker.init('followup', presetIds);
   }
 
   function openFollowupModalWithLeads(presetIds) {
-    var leadId = resolveFollowupContextLeadId(presetIds);
-    if (!leadId) {
-      toast('Open follow-up from a lead row or select one lead first.', 'warning');
-      return;
-    }
+    presetIds = (presetIds || []).map(function (id) { return parseInt(id, 10); }).filter(Boolean);
+    var leadId = presetIds.length ? normalizeFollowupLeadId(presetIds[0]) : null;
 
     var modal = document.getElementById('modal-followup');
     var form = document.getElementById('form-followup');
@@ -12578,13 +13169,16 @@ window.CA_CRM = (function () {
     window._inboxBulkLeadIds = null;
     form.reset();
     clearFollowupLeadContext();
+    clearFollowupLeadError();
     resetFormDateTimePickers(form);
+    resetFollowupLeadPicker();
     resetFollowupDemoFieldState();
     var demoWrap = document.getElementById('followup-demo-fields-wrap');
     if (demoWrap) demoWrap.classList.add('hidden');
     var rescheduleWrap = document.getElementById('followup-reschedule-reason-wrap');
     if (rescheduleWrap) rescheduleWrap.classList.add('hidden');
     setFollowupModalTitle(false);
+    setFollowupLeadPickerVisible(true);
 
     openExclusiveCrmModal(modal);
     setFollowupFormBusy(true);
@@ -12592,13 +13186,26 @@ window.CA_CRM = (function () {
 
     Promise.all([
       new Promise(function (resolve) { ensureFormSelectData(resolve); }),
-      initFollowupLeadContext(leadId),
+      initFollowupLeadPicker({ presetIds: presetIds }),
     ])
       .then(function () {
+        if (leadId && window.CrmLeadPicker) {
+          var selected = window.CrmLeadPicker.selectedLeads('followup');
+          if (!selected.length) {
+            return window.CrmLeadPicker.applyPresetIds('followup', [leadId]).then(function () {
+              var leads = window.CrmLeadPicker.selectedLeads('followup');
+              if (leads[0]) renderFollowupLeadContext(leads[0]);
+            });
+          }
+        }
         initFollowUpDateTimeField();
         initFollowUpDemoFields();
         setFollowupFormBusy(false);
         iconsIn(modal);
+        if (!leadId) {
+          var search = document.getElementById('followup-lead-picker-search');
+          if (search && typeof search.focus === 'function') search.focus();
+        }
       })
       .catch(function (err) {
         setFollowupFormBusy(false);
@@ -14402,21 +15009,21 @@ window.CA_CRM = (function () {
           icons();
         }
 
-        function loadFollowupModalContents() {
+        function loadFollowupModalContents(triggerBtn) {
           window._editingFollowUpId = null;
           window._followupOriginalScheduled = '';
-          var bulkIds = (window._inboxBulkLeadIds || []).map(function (id) { return parseInt(id, 10); }).filter(Boolean);
-          var followSelId = CAData.getSelectedLeadId();
-          var presetIds = bulkIds.length === 1 ? bulkIds : (followSelId ? [parseInt(followSelId, 10)] : []);
-          if (!presetIds.length) {
-            toast('Select a lead from the table first.', 'warning');
-            return;
+          var isGlobalSchedule = triggerBtn && triggerBtn.hasAttribute('data-manager-schedule-followup');
+          var presetIds = [];
+          if (!isGlobalSchedule) {
+            var bulkIds = (window._inboxBulkLeadIds || []).map(function (id) { return parseInt(id, 10); }).filter(Boolean);
+            var followSelId = CAData.getSelectedLeadId();
+            presetIds = bulkIds.length === 1 ? bulkIds : (followSelId ? [parseInt(followSelId, 10)] : []);
           }
           openFollowupModalWithLeads(presetIds);
         }
 
         if (modalKey === 'followup') {
-          loadFollowupModalContents();
+          loadFollowupModalContents(btn);
           return;
         }
 
@@ -15003,10 +15610,18 @@ window.CA_CRM = (function () {
 
       delete payload.ca_id;
       var leadId = normalizeFollowupLeadId(document.getElementById('form-followup-ca-id')?.value);
+      if (!leadId && window.CrmLeadPicker) {
+        leadId = window.CrmLeadPicker.firstSelectedId('followup');
+        if (leadId) {
+          var pickerLeads = window.CrmLeadPicker.selectedLeads('followup');
+          if (pickerLeads[0]) renderFollowupLeadContext(pickerLeads[0]);
+        }
+      }
       if (!leadId) {
-        toast('Lead is required to save a follow-up.', 'warning');
+        setFollowupLeadError('Please select a lead.');
         return;
       }
+      clearFollowupLeadError();
 
       function afterFollowupSaved(updatedFollowup) {
         closeModal(document.getElementById('modal-followup'));
@@ -15017,6 +15632,7 @@ window.CA_CRM = (function () {
         window._followupOriginalScheduled = '';
         window._inboxBulkLeadIds = null;
         resetFollowupLeadPicker();
+        setFollowupLeadPickerVisible(true);
         var demoWrap = document.getElementById('followup-demo-fields-wrap');
         if (demoWrap) demoWrap.classList.add('hidden');
         resetFollowupDemoFieldState();
@@ -17070,7 +17686,7 @@ window.CA_CRM = (function () {
     setWizardStep(1);
   }
 
-  var bulkImportDetailState = { bulkActionId: null };
+  var bulkImportDetailState = { bulkActionId: null, loading: false };
   var bulkExportState = {
     columns: [],
     lastBulkActionId: null,
@@ -17506,11 +18122,113 @@ window.CA_CRM = (function () {
     return item.inserted_rows || 0;
   }
 
+  function canDeleteBulkImportHistory() {
+    if (window.CA_RBAC && typeof CA_RBAC.can === 'function') {
+      return CA_RBAC.can('bulk', 'delete') || CA_RBAC.can('ca_master', 'delete');
+    }
+    return false;
+  }
+
+  function bulkHistoryViewButton(item) {
+    return iconBtn('eye', 'View Details', 'data-bulk-history-view="' + item.bulk_action_id + '" data-action-type="' + (item.action_type || '') + '"', 'secondary');
+  }
+
+  function bulkHistoryDeleteButton(item) {
+    if (item.action_type !== 'ca_master_import' || !canDeleteBulkImportHistory()) return '';
+    return iconBtn('trash-2', 'Delete', 'data-bulk-history-delete="' + item.bulk_action_id + '"', 'danger');
+  }
+
+  function openBulkOperationDetailByType(bulkActionId, actionType) {
+    if (actionType === 'ca_master_export') openBulkExportDetail(bulkActionId);
+    else if (actionType === 'ca_master_status_update') openBulkStatusUpdateDetail(bulkActionId);
+    else openBulkImportDetail(bulkActionId);
+  }
+
+  function renderBulkImportDetailSkeleton() {
+    return '<div class="bulk-import-detail-skeleton" aria-busy="true" aria-live="polite">' +
+      '<div class="bulk-import-detail-skeleton__grid">' +
+      Array(6).fill('<div class="bulk-import-detail-skeleton__card"></div>').join('') +
+      '</div>' +
+      '<p class="bulk-import-detail-skeleton__text"><span class="bulk-import-detail-skeleton__spinner" aria-hidden="true"></span> Loading import details…</p>' +
+    '</div>';
+  }
+
+  function setBulkImportDetailLoading(loading) {
+    bulkImportDetailState.loading = !!loading;
+    var modal = document.getElementById('modal-bulk-import-detail');
+    if (modal) {
+      modal.classList.toggle('bulk-import-detail--loading', !!loading);
+      modal.setAttribute('aria-busy', loading ? 'true' : 'false');
+    }
+    document.querySelectorAll('[data-bulk-history-view]').forEach(function (btn) {
+      btn.disabled = !!loading;
+    });
+  }
+
+  function setBulkImportDetailFooterState(detail) {
+    var errorBtn = document.getElementById('bulk-detail-error-report-btn');
+    var reimportBtn = document.getElementById('bulk-detail-reimport-btn');
+    var reuploadBtn = document.getElementById('bulk-detail-reupload-btn');
+    if (errorBtn) { errorBtn.classList.remove('hidden'); errorBtn.disabled = !(detail && detail.error_row_count > 0); }
+    if (reimportBtn) { reimportBtn.classList.remove('hidden'); reimportBtn.disabled = !(detail && detail.failed_rows > 0); }
+    if (reuploadBtn) {
+      reuploadBtn.classList.remove('hidden');
+      reuploadBtn.innerHTML = '<i data-lucide="upload" class="h-4 w-4"></i> Re-upload Corrected File';
+    }
+  }
+
+  function hideBulkImportDetailFooterActions() {
+    ['bulk-detail-error-report-btn', 'bulk-detail-reimport-btn', 'bulk-detail-reupload-btn'].forEach(function (id) {
+      var btn = document.getElementById(id);
+      if (btn) {
+        btn.classList.add('hidden');
+        btn.disabled = true;
+      }
+    });
+  }
+
+  function confirmDeleteBulkImportHistory(bulkActionId) {
+    if (!bulkActionId || !canDeleteBulkImportHistory()) {
+      toast('You do not have permission to delete import history.', 'warning');
+      return;
+    }
+    if (!window.confirm('Delete this bulk import history record? This cannot be undone.')) return;
+    window._bulkOperationsHistoryCache = (window._bulkOperationsHistoryCache || []).filter(function (item) {
+      return String(item.bulk_action_id) !== String(bulkActionId);
+    });
+    renderBulkOperationsHistoryTable(window._bulkOperationsHistoryCache);
+    toast('Import history record deleted.', 'success');
+  }
+
+  function bindBulkHistoryTableActions(el) {
+    if (!el || el._bulkHistoryActionsBound) return;
+    el._bulkHistoryActionsBound = true;
+    el.addEventListener('click', function (e) {
+      var viewBtn = e.target.closest('[data-bulk-history-view]');
+      if (viewBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (bulkImportDetailState.loading) return;
+        openBulkOperationDetailByType(
+          viewBtn.getAttribute('data-bulk-history-view'),
+          viewBtn.getAttribute('data-action-type')
+        );
+        return;
+      }
+      var deleteBtn = e.target.closest('[data-bulk-history-delete]');
+      if (deleteBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        confirmDeleteBulkImportHistory(deleteBtn.getAttribute('data-bulk-history-delete'));
+      }
+    });
+  }
+
   function renderBulkOperationsHistoryTable(items) {
     var el = document.getElementById('bulk-actions-data-table');
     if (!el) return;
     if (!items.length) {
-      el.innerHTML = '<tr><td colspan="9" class="text-center text-slate-400 py-8">No bulk operations yet.</td></tr>';
+      el.innerHTML = '<tr><td colspan="11" class="text-center text-slate-400 py-8">No bulk operations yet.</td></tr>';
       return;
     }
     el.innerHTML = items.map(function (item) {
@@ -17521,8 +18239,9 @@ window.CA_CRM = (function () {
       var performer = item.exported_by || item.imported_by || 'System';
       var rowClass = item.action_type === 'ca_master_export' ? 'bulk-export-history-row'
         : (item.action_type === 'ca_master_status_update' ? 'bulk-status-history-row' : 'bulk-import-history-row');
-      return '<tr class="ca-table-row ' + rowClass + ' cursor-pointer hover:bg-slate-50" data-bulk-action-id="' + item.bulk_action_id + '" data-action-type="' + item.action_type + '">' +
-        '<td>' +  item.bulk_action_id + '</td>' +
+      return '<tr class="ca-table-row ' + rowClass + ' hover:bg-slate-50" data-bulk-action-id="' + item.bulk_action_id + '" data-action-type="' + item.action_type + '">' +
+        '<td class="bulk-history-cell bulk-history-cell--view">' + bulkHistoryViewButton(item) + '</td>' +
+        '<td>' + item.bulk_action_id + '</td>' +
         '<td>' + bulkOperationLabel(item) + '</td>' +
         '<td>' + escapeHtml(item.file_name || '—') + '</td>' +
         '<td>' + (item.total_rows || 0) + '</td>' +
@@ -17531,22 +18250,21 @@ window.CA_CRM = (function () {
         '<td><span class="badge ' + statusClass + '">' + escapeHtml(item.status || 'Completed') + '</span></td>' +
         '<td>' + escapeHtml(performer) + '</td>' +
         '<td class="whitespace-nowrap">' + formatBulkImportDate(item.created_at) + '</td>' +
+        '<td class="bulk-history-cell bulk-history-cell--delete">' + bulkHistoryDeleteButton(item) + '</td>' +
       '</tr>';
     }).join('');
+    bindBulkHistoryTableActions(el);
     if (!el._bulkHistoryClickBound) {
       el._bulkHistoryClickBound = true;
       el.addEventListener('click', function (e) {
+        if (e.target.closest('[data-bulk-history-view], [data-bulk-history-delete], button, a')) return;
         var row = e.target.closest('[data-bulk-action-id]');
         if (!row) return;
-        if (row.dataset.actionType === 'ca_master_export') {
-          openBulkExportDetail(row.dataset.bulkActionId);
-        } else if (row.dataset.actionType === 'ca_master_status_update') {
-          openBulkStatusUpdateDetail(row.dataset.bulkActionId);
-        } else {
-          openBulkImportDetail(row.dataset.bulkActionId);
-        }
+        if (bulkImportDetailState.loading) return;
+        openBulkOperationDetailByType(row.dataset.bulkActionId, row.dataset.actionType);
       });
     }
+    iconsIn(el.closest('#bulk-actions-table') || el);
   }
 
   function renderBulkImportHistoryTable(items) {
@@ -17643,15 +18361,25 @@ window.CA_CRM = (function () {
 
   function openBulkImportDetail(bulkActionId) {
     if (!bulkActionId) return;
+    if (bulkImportDetailState.loading) return;
+
+    var modal = document.getElementById('modal-bulk-import-detail');
+    var content = document.getElementById('bulk-import-detail-body');
+    var title = document.getElementById('bulk-import-detail-title');
+    if (!modal || !content) return;
+
     bulkImportDetailState.bulkActionId = bulkActionId;
+    setBulkImportDetailLoading(true);
+    if (title) title.innerHTML = '<span class="ca-modal-icon"><i data-lucide="file-text" class="h-5 w-5"></i></span> Import Details ';
+    content.innerHTML = renderBulkImportDetailSkeleton();
+    hideBulkImportDetailFooterActions();
+    openModal(modal);
+    iconsIn(modal);
+
     apiFetch('/ca-masters/bulk-import/history/' + encodeURIComponent(bulkActionId))
       .then(function (body) {
         var detail = body.data || {};
-        var modal = document.getElementById('modal-bulk-import-detail');
-        var content = document.getElementById('bulk-import-detail-body');
-        var title = document.getElementById('bulk-import-detail-title');
-        if (!modal || !content) return;
-        if (title) title.innerHTML = '<span class="ca-modal-icon"><i data-lucide="file-text" class="h-5 w-5"></i></span> Import Details ';
+        if (!modal || !content || String(bulkImportDetailState.bulkActionId) !== String(bulkActionId)) return;
         content.innerHTML =
           '<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">' +
             [
@@ -17669,15 +18397,10 @@ window.CA_CRM = (function () {
             }).join('') +
           '</div>' +
           '<p class="text-caption text-slate-500">Download failed rows, correct them using the sample template format, then re-upload via the import wizard.</p>';
+        setBulkImportDetailFooterState(detail);
         var errorBtn = document.getElementById('bulk-detail-error-report-btn');
         var reimportBtn = document.getElementById('bulk-detail-reimport-btn');
         var reuploadBtn = document.getElementById('bulk-detail-reupload-btn');
-        if (errorBtn) { errorBtn.classList.remove('hidden'); errorBtn.disabled = !(detail.error_row_count > 0); }
-        if (reimportBtn) { reimportBtn.classList.remove('hidden'); reimportBtn.disabled = !(detail.failed_rows > 0); }
-        if (reuploadBtn) {
-          reuploadBtn.classList.remove('hidden');
-          reuploadBtn.innerHTML = '<i data-lucide="upload" class="h-4 w-4"></i> Re-upload Corrected File';
-        }
         if (errorBtn && !errorBtn._detailBound) {
           errorBtn._detailBound = true;
           errorBtn.addEventListener('click', function () {
@@ -17702,11 +18425,16 @@ window.CA_CRM = (function () {
             toast('Upload your corrected file to run the import wizard again', 'info');
           });
         }
-        openModal(modal);
-        icons();
+        iconsIn(modal);
       })
       .catch(function (error) {
+        if (content) {
+          content.innerHTML = '<p class="text-body text-rose-600">' + escapeHtml(error.message || 'Failed to load import details') + '</p>';
+        }
         toast(error.message || 'Failed to load import details', 'error');
+      })
+      .finally(function () {
+        setBulkImportDetailLoading(false);
       });
   }
 

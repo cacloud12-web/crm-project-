@@ -39,10 +39,10 @@ class CaMasterController extends Controller
         return ListingResponse::from($result, CaMasterResource::class, 'Leads loaded');
     }
 
-    public function segmentCounts(): JsonResponse
+    public function segmentCounts(Request $request): JsonResponse
     {
         return ApiResponse::success(
-            $this->caMasterService->segmentCounts(),
+            $this->caMasterService->segmentCounts((string) $request->query('pipeline', '')),
             'Lead segment counts loaded',
         );
     }

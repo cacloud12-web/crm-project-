@@ -261,16 +261,6 @@ class CaMasterResource extends JsonResource
 
     private static function resolveMasterPipelineStage(?string $status): string
     {
-        if ($status === null || $status === '') {
-            return 'New Lead';
-        }
-
-        foreach (config('crm_master_pipeline.stage_statuses', []) as $stage => $statuses) {
-            if (in_array($status, $statuses, true)) {
-                return $stage;
-            }
-        }
-
-        return 'New Lead';
+        return \App\Support\CrmPipeline::masterStageForStatus($status);
     }
 }

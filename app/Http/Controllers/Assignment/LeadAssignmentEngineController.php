@@ -4,9 +4,9 @@ namespace App\Http\Controllers\Assignment;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\LeadAssignment\StoreLeadAssignmentRequest;
+use App\Http\Requests\LeadAssignment\UpdateLeadAssignmentRequest;
 use App\Http\Requests\LeadAssignment\UpdateLeadAssignmentStatusRequest;
 use App\Http\Resources\LeadAssignmentResource;
-use App\Models\LeadAssignmentEngine;
 use App\Services\Assignment\LeadAssignmentService;
 use App\Support\ApiResponse;
 use App\Support\Listing\ListingResponse;
@@ -53,11 +53,11 @@ class LeadAssignmentEngineController extends Controller
         return redirect('/');
     }
 
-    public function update(Request $request, string $id): JsonResponse
+    public function update(UpdateLeadAssignmentRequest $request, string $id): JsonResponse
     {
         $assignment = $this->leadAssignmentService->update(
-            LeadAssignmentEngine::findOrFail($id),
-            $request->all(),
+            $this->leadAssignmentService->find($id),
+            $request->validated(),
         );
 
         return ApiResponse::success(
@@ -69,7 +69,7 @@ class LeadAssignmentEngineController extends Controller
     public function updateStatus(UpdateLeadAssignmentStatusRequest $request, string $id): JsonResponse
     {
         $assignment = $this->leadAssignmentService->setStatus(
-            LeadAssignmentEngine::findOrFail($id),
+            $this->leadAssignmentService->find($id),
             $request->validated('status'),
         );
 
@@ -81,7 +81,7 @@ class LeadAssignmentEngineController extends Controller
 
     public function destroy(string $id): JsonResponse
     {
-        $this->leadAssignmentService->delete(LeadAssignmentEngine::findOrFail($id));
+        $this->leadAssignmentService->delete($this->leadAssignmentService->find($id));
 
         return ApiResponse::success(null, 'Assignment deleted successfully');
     }

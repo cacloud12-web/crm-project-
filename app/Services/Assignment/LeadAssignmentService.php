@@ -158,6 +158,8 @@ class LeadAssignmentService
 
     public function delete(LeadAssignmentEngine $assignment): void
     {
+        $this->employeeDataScope->ensureCanAccessAssignment($assignment->assignment_id);
+
         $id = (string) $assignment->assignment_id;
 
         $this->activityLogService->log(

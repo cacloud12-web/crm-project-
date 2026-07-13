@@ -526,19 +526,23 @@ class LeadResearchService
      */
     private function logActivity(CaMaster $lead, ?User $user, string $query, array $payload, ?string $ipAddress): void
     {
-        $this->activityLogService->log(
-            'CA_MASTER',
-            'Google Places Lookup',
-            (string) $lead->ca_id,
-            ($lead->firm_name ?: $lead->ca_name).' · '.$query,
-            performedBy: $user?->name,
-            afterValue: [
-                'source' => $payload['source'] ?? 'fallback',
-                'place_id' => $payload['place']['place_id'] ?? null,
-                'result_count' => count($payload['results'] ?? []),
-            ],
-            ipAddress: $ipAddress,
-        );
+        try {
+            $this->activityLogService->log(
+                'CA_MASTER',
+                'Google Places Lookup',
+                (string) $lead->ca_id,
+                ($lead->firm_name ?: $lead->ca_name).' · '.$query,
+                performedBy: $user?->name,
+                afterValue: [
+                    'source' => $payload['source'] ?? 'fallback',
+                    'place_id' => $payload['place']['place_id'] ?? null,
+                    'result_count' => count($payload['results'] ?? []),
+                ],
+                ipAddress: $ipAddress,
+            );
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
     }
 
     /**

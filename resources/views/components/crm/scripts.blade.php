@@ -11,6 +11,7 @@
 <script src="{{ asset('crm-ui/src/components/table-pagination.js') }}"></script>
 <script src="{{ asset('crm-ui/src/components/google-maps.js') }}"></script>
 <script src="{{ asset('crm-ui/src/components/research-workspace.js') }}"></script>
+<script src="{{ asset('crm-ui/src/components/ocr-panel.js') }}"></script>
 <script src="{{ asset('crm-ui/src/api/crm.js') }}"></script>
 <script src="{{ asset('crm-ui/src/components/lead-picker.js') }}"></script>
 <script src="{{ asset('crm-ui/src/components/entity-lookup.js') }}"></script>
@@ -27,6 +28,9 @@
     $crmUser = app(\App\Services\Rbac\RbacService::class)->userPayload(auth()->user());
 @endphp
 <script>window.__CRM_USER__ = @json($crmUser);</script>
+<script>window.CRM_FOLLOWUP_ACTIVITY_DEMO = @json((bool) config('crm_followups.demo_activity_enabled', false));</script>
+<script>window.__CRM_MASTER_PIPELINE__ = @json(config('crm_master_pipeline'));</script>
+<script>window.__CRM_SALES_PIPELINE__ = @json(config('crm_sales_pipeline'));</script>
 <script src="{{ asset('crm-ui/src/services/rbac.js') }}"></script>
 <script>window.__CRM_INITIAL_PAGE__ = @json($spaPage ?? null);</script>
 <script src="{{ asset('crm-ui/src/app.js') }}"></script>

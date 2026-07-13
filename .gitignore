@@ -26,6 +26,8 @@
 /storage/framework/sessions/
 /storage/framework/views/
 /storage/backups/
+/storage/app/google/*.json
+/storage/app/google/document-ai-service-account.json
 /vendor
 /.tools/
 /.env.mysql.bak
