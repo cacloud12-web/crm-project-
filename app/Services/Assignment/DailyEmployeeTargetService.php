@@ -387,7 +387,8 @@ class DailyEmployeeTargetService
         $dateRange = $this->resolveDateRange($filters);
         $query = $this->scopedTargetQuery($user)
             ->with(['employee:employee_id,name,role', 'manager:employee_id,name'])
-            ->whereBetween('target_date', [$dateRange['from'], $dateRange['to']])
+            ->whereDate('target_date', '>=', $dateRange['from'])
+            ->whereDate('target_date', '<=', $dateRange['to'])
             ->orderByDesc('target_date')
             ->orderBy('employee_id');
 

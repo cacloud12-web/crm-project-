@@ -3959,12 +3959,18 @@ window.CA_CRM = (function () {
   }
 
   function dashboardCacheStorageKey() {
-    var role = (window.__CRM_USER__ || {}).role || 'user';
-    return 'crm_dashboard_metrics_v2_' + role;
+    var crmUser = window.__CRM_USER__ || {};
+    var role = crmUser.role || 'user';
+    var scope = role;
+    if (role === 'employee' && crmUser.id) {
+      scope = role + '_' + crmUser.id;
+    }
+    return 'crm_dashboard_metrics_v2_' + scope;
   }
 
   function readDashboardMetricsCache() {
-    var storages = [sessionStorage, localStorage];
+    var isEmployee = (window.__CRM_USER__ || {}).role === 'employee';
+    var storages = isEmployee ? [sessionStorage] : [sessionStorage, localStorage];
     for (var s = 0; s < storages.length; s++) {
       try {
         var raw = storages[s].getItem(dashboardCacheStorageKey());
@@ -3988,8 +3994,12 @@ window.CA_CRM = (function () {
       savedAt: Date.now(),
       data: data,
     });
+    var isEmployee = (window.__CRM_USER__ || {}).role === 'employee';
     try { sessionStorage.setItem(dashboardCacheStorageKey(), payload); } catch (e) { /* quota */ }
-    try { localStorage.setItem(dashboardCacheStorageKey(), payload); } catch (e) { /* quota */ }
+    // Employee dashboards change on assignment; avoid long-lived localStorage staleness.
+    if (!isEmployee) {
+      try { localStorage.setItem(dashboardCacheStorageKey(), payload); } catch (e) { /* quota */ }
+    }
   }
 
   function clearDashboardMetricsCache() {
@@ -4215,11 +4225,15 @@ window.CA_CRM = (function () {
         var metrics = isEmployee ? mapEmployeeDashboardToLeadMetrics(cached.data) : cached.data;
         if (callback) callback(metrics, null, { fromCache: true });
         loadDashboardMetricsFromDatabase(function (freshMetrics, err, meta) {
-          if (!meta || !meta.background || err || !window.dashboardMetrics) return;
-          if (window._currentPageId === 'dashboard') {
-            if (isEmployeeUser()) {
-              paintEmployeeDashboard(employeeDashboardData || window.dashboardMetrics);
-            } else {
+          if (!meta || !meta.background || err) return;
+          if (isEmployeeUser()) {
+            if (!employeeDashboardData) return;
+            if (window._currentPageId === 'dashboard') {
+              paintEmployeeDashboard(employeeDashboardData);
+            }
+          } else {
+            if (!window.dashboardMetrics) return;
+            if (window._currentPageId === 'dashboard') {
               paintManagerDashboard(buildDashboardDisplayMetrics(freshMetrics || window.dashboardMetrics));
               renderDashboardCharts((freshMetrics || window.dashboardMetrics).reports);
             }
@@ -5296,8 +5310,7 @@ window.CA_CRM = (function () {
     }
 
     loadDashboardMetricsFromDatabase(function (data, error, meta) {
-      if (meta && meta.background) return;
-      if (meta && meta.fromCache && painted) return;
+      if (meta && meta.fromCache && painted && !meta.background) return;
       if (error && !employeeDashboardData && !cached) {
         toast('Unable to load your dashboard', 'error');
         return;
@@ -10954,7 +10967,10 @@ window.CA_CRM = (function () {
     apiFetch('/follow-ups/' + encodeURIComponent(followupId), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'Completed' }),
+      body: JSON.stringify({
+        status: 'Completed',
+        meeting_link: cached && cached.meeting_link ? String(cached.meeting_link).trim() : undefined,
+      }),
     })
       .then(function (body) {
         if (row) row.classList.remove('crm-row-busy');
@@ -15597,9 +15613,9 @@ window.CA_CRM = (function () {
             resetAssignLeadModalUi();
             clearInboxSelection('leads-data-table');
             clearInboxSelection('ca-master-data-table');
-            invalidateDataCaches(['metrics', 'segment_counts', 'leads', 'assignments']);
+            invalidateDataCaches(['metrics', 'segment_counts', 'leads', 'assignments', 'employee_dashboard']);
             reloadLeadDataAfterMutation({
-              cacheKeys: ['metrics', 'leads', 'assignments'],
+              cacheKeys: ['metrics', 'leads', 'assignments', 'employee_dashboard'],
             }).then(function () {
               if (affected !== bulkLeadIds.length) {
                 toast('Assigned ' + affected + ' of ' + bulkLeadIds.length + ' selected leads', 'warning');
@@ -15636,9 +15652,9 @@ window.CA_CRM = (function () {
           resetAssignLeadModalUi();
           clearInboxSelection('leads-data-table');
           clearInboxSelection('ca-master-data-table');
-          invalidateDataCaches(['metrics', 'segment_counts', 'leads', 'assignments']);
+          invalidateDataCaches(['metrics', 'segment_counts', 'leads', 'assignments', 'employee_dashboard']);
           reloadLeadDataAfterMutation({
-            cacheKeys: ['metrics', 'leads', 'assignments'],
+            cacheKeys: ['metrics', 'leads', 'assignments', 'employee_dashboard'],
           }).then(function () {
             toast(editingAssignmentId ? 'Assignment updated successfully' : 'Lead assigned successfully', 'success');
           });

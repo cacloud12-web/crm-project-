@@ -5,6 +5,7 @@ namespace App\Services\Notifications;
 use App\Events\NotificationCreated;
 use App\Models\CrmNotification;
 use App\Models\CrmNotificationRead;
+use App\Models\Employee;
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
@@ -220,6 +221,26 @@ class NotificationService
             ->first();
 
         return $user ? (int) $user->id : null;
+    }
+
+    public function resolveUserIdForEmployee(?Employee $employee): ?int
+    {
+        if (! $employee) {
+            return null;
+        }
+
+        if ($employee->user_id) {
+            $linked = User::query()
+                ->where('id', $employee->user_id)
+                ->where('is_active', true)
+                ->value('id');
+
+            if ($linked) {
+                return (int) $linked;
+            }
+        }
+
+        return $this->resolveUserIdByEmployeeEmail($employee->email_id);
     }
 
     public function customerReplyReceived(

@@ -119,14 +119,23 @@ class DailyEmployeeTargetTest extends TestCase
             'call_target' => 25,
         ])->assertCreated();
 
+        $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();
+
+        CallLog::query()
+            ->where('employee_id', $employee->employee_id)
+            ->whereDate('called_at', $today)
+            ->delete();
+
         CallLog::query()->create([
-            'ca_id' => CaMaster::query()->countableInStatistics()->value('ca_id'),
+            'ca_id' => $lead->ca_id,
             'employee_id' => $employee->employee_id,
             'called_at' => now(),
             'call_status' => 'Connected',
             'call_note' => 'Test call',
             'created_by_user_id' => $this->employeeUser()->id,
         ]);
+
+        $this->flushCrmCachesForTesting();
 
         $this->actingAs($admin);
         $response = $this->getJson('/daily-employee-targets?preset=today&employee_id='.$employee->employee_id);

@@ -222,10 +222,12 @@ class AssignmentReportsE2ETest extends TestCase
             ->assertOk()
             ->assertJsonStructure(['success', 'data']);
 
-        $this->assertDatabaseHas('daily_employee_targets', [
-            'employee_id' => $employee->employee_id,
-            'target_date' => $today,
-        ]);
+        $this->assertTrue(
+            DailyEmployeeTarget::query()
+                ->where('employee_id', $employee->employee_id)
+                ->whereDate('target_date', $today)
+                ->exists()
+        );
         $this->assertDatabaseHas('yearly_employee_targets', [
             'employee_id' => $employee->employee_id,
             'target_year' => $year,

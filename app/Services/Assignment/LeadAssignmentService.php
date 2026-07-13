@@ -106,6 +106,9 @@ class LeadAssignmentService
             json_encode(['before' => $before, 'after' => $assignment->only(['ca_id', 'employee_id', 'assignment_type', 'status'])]),
         );
 
+        app(CrmCacheService::class)
+            ->forgetDashboardMetricsAfterAssignment([(int) $assignment->employee_id]);
+
         return $assignment->fresh(['caMaster.city', 'employee']);
     }
 
@@ -169,6 +172,9 @@ class LeadAssignmentService
             'CA '.$assignment->ca_id.' · Employee '.$assignment->employee_id,
         );
 
+        $employeeId = (int) $assignment->employee_id;
         $assignment->delete();
+
+        app(CrmCacheService::class)->forgetDashboardMetricsAfterAssignment([$employeeId]);
     }
 }

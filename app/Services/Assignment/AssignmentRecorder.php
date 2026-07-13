@@ -10,6 +10,7 @@ use App\Services\Activity\ActivityLogService;
 use App\Services\Cache\CrmCacheService;
 use App\Services\Notifications\NotificationService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class AssignmentRecorder
 {
@@ -96,8 +97,8 @@ class AssignmentRecorder
                 $detail,
             );
 
-            $employee = Employee::query()->where('employee_id', $employeeId)->first(['employee_id', 'name', 'email_id']);
-            $employeeUserId = $this->notificationService->resolveUserIdByEmployeeEmail($employee?->email_id);
+            $employee = Employee::query()->where('employee_id', $employeeId)->first(['employee_id', 'name', 'email_id', 'user_id']);
+            $employeeUserId = $this->notificationService->resolveUserIdForEmployee($employee);
             $title = $action === 'reassigned' ? 'Lead reassigned' : 'New lead assigned';
             $message = $firm.' → '.$employeeName;
             $extra = [
@@ -120,6 +121,15 @@ class AssignmentRecorder
                 $affected[] = (int) $previousEmployeeId;
             }
             $this->cacheService->forgetDashboardMetricsAfterAssignment($affected);
+
+            Log::info('Lead assignment recorded', [
+                'ca_id' => $caId,
+                'assigned_employee_id' => $employeeId,
+                'previous_employee_id' => $previousEmployeeId,
+                'action' => $action,
+                'assignment_id' => $assignment->assignment_id,
+                'status' => $assignment->status,
+            ]);
 
             return [
                 'status' => $action,

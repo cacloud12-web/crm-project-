@@ -191,8 +191,8 @@ class BulkAssignmentWriter
         ]);
 
         foreach ($employeeCounts as $employeeId => $count) {
-            $employee = Employee::query()->where('employee_id', $employeeId)->first(['email_id']);
-            $userId = $this->notificationService->resolveUserIdByEmployeeEmail($employee?->email_id);
+            $employee = Employee::query()->where('employee_id', $employeeId)->first(['email_id', 'user_id']);
+            $userId = $this->notificationService->resolveUserIdForEmployee($employee);
             if ($userId) {
                 $this->notificationService->notifyUser(
                     $userId,

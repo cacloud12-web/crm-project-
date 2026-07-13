@@ -80,6 +80,28 @@ class FollowUpActionsTest extends TestCase
             ->assertJsonPath('data.status', 'Completed');
     }
 
+    public function test_manager_can_mark_demo_scheduled_completed_when_meeting_link_exists(): void
+    {
+        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $this->actingAs($manager);
+
+        $followUp = FollowUp::query()
+            ->where('followup_type', 'Demo Scheduled')
+            ->whereNotIn('status', ['Completed', 'Closed', 'Done'])
+            ->whereNotNull('meeting_link')
+            ->where('meeting_link', '!=', '')
+            ->first();
+
+        if (! $followUp) {
+            $this->markTestSkipped('No open demo scheduled follow-ups with meeting link in database');
+        }
+
+        $this->patchJson('/follow-ups/'.$followUp->followup_id, [
+            'status' => 'Completed',
+        ])->assertOk()
+            ->assertJsonPath('data.status', 'Completed');
+    }
+
     public function test_employee_cannot_update_another_employees_follow_up(): void
     {
         $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();

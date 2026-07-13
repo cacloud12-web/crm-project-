@@ -16,6 +16,7 @@ use App\Models\SmsLog;
 use App\Models\WaMessageLog;
 use App\Services\Cache\CrmCacheService;
 use Carbon\Carbon;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -277,23 +278,59 @@ class EmployeeProductivityService
      */
     private function persistSnapshot(int $employeeId, Carbon $date, array $metrics): EmployeeProductivityLog
     {
-        return EmployeeProductivityLog::query()->updateOrCreate(
-            ['employee_id' => $employeeId, 'log_date' => $date->toDateString()],
-            [
-                'leads_assigned' => $metrics['leads_assigned'],
-                'unique_leads_added' => $metrics['unique_leads'],
-                'duplicate_attempts' => $metrics['duplicate_attempts'],
-                'wrong_numbers' => $metrics['wrong_numbers'],
-                'verified_leads' => $metrics['verified_leads'],
-                'followups_completed' => $metrics['followups_completed'],
-                'sms_failed' => $metrics['sms_failed'],
-                'whatsapp_failed' => $metrics['whatsapp_failed'],
-                'email_failed' => $metrics['email_failed'],
-                'invalid_leads' => $metrics['invalid_leads'],
-                'quality_score' => $metrics['quality_score'],
-                'rank' => $metrics['rank'],
-            ],
-        );
+        $logDate = $date->toDateString();
+        $values = [
+            'leads_assigned' => $metrics['leads_assigned'],
+            'unique_leads_added' => $metrics['unique_leads'],
+            'duplicate_attempts' => $metrics['duplicate_attempts'],
+            'wrong_numbers' => $metrics['wrong_numbers'],
+            'verified_leads' => $metrics['verified_leads'],
+            'followups_completed' => $metrics['followups_completed'],
+            'sms_failed' => $metrics['sms_failed'],
+            'whatsapp_failed' => $metrics['whatsapp_failed'],
+            'email_failed' => $metrics['email_failed'],
+            'invalid_leads' => $metrics['invalid_leads'],
+            'quality_score' => $metrics['quality_score'],
+            'rank' => $metrics['rank'],
+        ];
+
+        $existing = EmployeeProductivityLog::query()
+            ->where('employee_id', $employeeId)
+            ->whereDate('log_date', $logDate)
+            ->first();
+
+        if ($existing) {
+            $existing->update($values);
+
+            return $existing->refresh();
+        }
+
+        try {
+            return EmployeeProductivityLog::query()->create(array_merge([
+                'employee_id' => $employeeId,
+                'log_date' => $logDate,
+            ], $values));
+        } catch (QueryException $exception) {
+            if (! $this->isProductivityLogUniqueViolation($exception)) {
+                throw $exception;
+            }
+
+            $log = EmployeeProductivityLog::query()
+                ->where('employee_id', $employeeId)
+                ->whereDate('log_date', $logDate)
+                ->firstOrFail();
+            $log->update($values);
+
+            return $log->refresh();
+        }
+    }
+
+    private function isProductivityLogUniqueViolation(QueryException $exception): bool
+    {
+        $message = strtolower($exception->getMessage());
+
+        return str_contains($message, 'employee_productivity_logs')
+            && str_contains($message, 'unique');
     }
 
     /**

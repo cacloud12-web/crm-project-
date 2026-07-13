@@ -190,10 +190,12 @@ class QualityControlTest extends TestCase
         $metrics = app(EmployeeProductivityService::class)->employeeDailyMetrics((int) $employeeModel->employee_id);
         $this->assertGreaterThanOrEqual(1, $metrics['unique_leads']);
 
-        $this->assertDatabaseHas('employee_productivity_logs', [
-            'employee_id' => $employeeModel->employee_id,
-            'log_date' => now()->toDateString(),
-        ]);
+        $this->assertTrue(
+            EmployeeProductivityLog::query()
+                ->where('employee_id', $employeeModel->employee_id)
+                ->whereDate('log_date', now()->toDateString())
+                ->exists()
+        );
     }
 
     public function test_duplicate_attempt_increments_productivity_penalty(): void

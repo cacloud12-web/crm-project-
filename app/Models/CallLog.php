@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\Cache\CrmCacheService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -22,6 +23,19 @@ class CallLog extends Model
         return [
             'called_at' => 'datetime',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        static::created(function (CallLog $log): void {
+            if (! $log->employee_id) {
+                return;
+            }
+
+            $cache = app(CrmCacheService::class);
+            $cache->forgetDailyEmployeeTargets((int) $log->employee_id);
+            $cache->forgetDashboardMetrics();
+        });
     }
 
     public function lead(): BelongsTo

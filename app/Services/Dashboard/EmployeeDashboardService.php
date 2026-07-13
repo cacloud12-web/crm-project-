@@ -16,6 +16,7 @@ use App\Services\Rbac\RbacService;
 use App\Services\Leads\EmployeeProductivityService;
 use App\Support\Database\SqlAggregate;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class EmployeeDashboardService
 {
@@ -57,6 +58,26 @@ class EmployeeDashboardService
         $today = now()->toDateString();
         $yearlyTarget = $this->yearlyEmployeeTargetService->currentYearForEmployee($user);
         $dailyTarget = $this->dailyEmployeeTargetService->todayForEmployee($user);
+        $assignedLeads = $this->recentAssignedLeads($employeeId);
+
+        Log::info('Employee dashboard metrics built', [
+            'user_id' => $user->id,
+            'user_email' => $user->email,
+            'resolved_employee_id' => $employeeId,
+            'my_leads' => (int) ($leadCounts['total'] ?? 0),
+            'assigned_leads_visible' => count($assignedLeads),
+            'active_assignments' => LeadAssignmentEngine::query()
+                ->where('employee_id', $employeeId)
+                ->where('status', 'Active')
+                ->count(),
+            'assigned_lead_ids' => LeadAssignmentEngine::query()
+                ->where('employee_id', $employeeId)
+                ->where('status', 'Active')
+                ->orderByDesc('assignment_id')
+                ->limit(8)
+                ->pluck('ca_id')
+                ->all(),
+        ]);
 
         return [
             'employee_id' => $employeeId,
@@ -96,7 +117,7 @@ class EmployeeDashboardService
                 'calls_today' => $followUpCounts['calls_today'],
                 'upcoming_tasks' => $followUpCounts['upcoming'],
             ],
-            'assigned_leads' => $this->recentAssignedLeads($employeeId),
+            'assigned_leads' => $assignedLeads,
             'followups' => $this->followUpBuckets($employeeId),
             'tasks' => $this->taskItems($employeeId),
             'calendar' => $this->calendarItems($employeeId),

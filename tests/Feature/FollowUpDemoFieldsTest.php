@@ -4,6 +4,8 @@ namespace Tests\Feature;
 
 use App\Models\CaMaster;
 use App\Models\City;
+use App\Models\DemoSchedule;
+use App\Models\FollowUp;
 use App\Models\State;
 use App\Models\User;
 use App\Support\Demo\DemoProviderResolver;
@@ -142,6 +144,63 @@ class FollowUpDemoFieldsTest extends TestCase
             'remarks' => 'Call back',
         ])->assertCreated()
             ->assertJsonPath('data.meeting_link', null);
+
+        $this->deleteJson('/ca-masters/'.$lead->ca_id)->assertOk();
+    }
+
+    public function test_demo_scheduled_can_be_marked_completed_using_existing_meeting_link(): void
+    {
+        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $this->actingAs($admin);
+
+        $lead = $this->createLeadWithTeamSize(8);
+        $scheduled = now()->addDays(3)->setTime(15, 30);
+
+        $create = $this->postJson('/follow-ups', [
+            'ca_id' => $lead->ca_id,
+            'followup_type' => 'Demo Scheduled',
+            'scheduled_date' => $scheduled->toDateTimeString(),
+            'meeting_link' => 'https://meet.google.com/awm-gsft-xov',
+        ])->assertCreated();
+
+        $followupId = $create->json('data.followup_id');
+
+        $this->patchJson('/follow-ups/'.$followupId, [
+            'status' => 'Completed',
+        ])->assertOk()
+            ->assertJsonPath('data.status', 'Completed');
+
+        $this->deleteJson('/ca-masters/'.$lead->ca_id)->assertOk();
+    }
+
+    public function test_demo_scheduled_can_be_marked_completed_when_link_exists_on_demo_schedule_only(): void
+    {
+        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $this->actingAs($admin);
+
+        $lead = $this->createLeadWithTeamSize(8);
+        $scheduled = now()->addDays(2)->setTime(11, 0);
+
+        $followUp = FollowUp::query()->create([
+            'ca_id' => $lead->ca_id,
+            'followup_type' => 'Demo Scheduled',
+            'scheduled_date' => $scheduled,
+            'status' => 'Pending',
+            'meeting_link' => null,
+        ]);
+
+        DemoSchedule::query()->create([
+            'ca_id' => $lead->ca_id,
+            'followup_id' => $followUp->followup_id,
+            'demo_at' => $scheduled,
+            'meeting_link' => 'https://meet.google.com/demo-schedule-only',
+            'status' => 'scheduled',
+        ]);
+
+        $this->patchJson('/follow-ups/'.$followUp->followup_id, [
+            'status' => 'Completed',
+        ])->assertOk()
+            ->assertJsonPath('data.status', 'Completed');
 
         $this->deleteJson('/ca-masters/'.$lead->ca_id)->assertOk();
     }

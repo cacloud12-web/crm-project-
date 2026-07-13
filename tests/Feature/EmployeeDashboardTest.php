@@ -7,6 +7,7 @@ use App\Models\Employee;
 use App\Models\LeadAssignmentEngine;
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
 class EmployeeDashboardTest extends TestCase
@@ -128,9 +129,121 @@ class EmployeeDashboardTest extends TestCase
             ->count();
 
         $this->actingAs($user);
-        app(\App\Services\Cache\CrmCacheService::class)->forgetEmployeeDashboard((int) $employee->employee_id);
         $response = $this->getJson('/dashboard/employee')->assertOk();
         $this->assertSame($expected, (int) $response->json('data.summary.my_leads'));
+    }
+
+    public function test_assigned_lead_appears_on_employee_dashboard_after_single_assignment(): void
+    {
+        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $caId = CaMaster::query()
+            ->whereDoesntHave('leadAssignments', fn ($q) => $q->where('status', 'Active'))
+            ->value('ca_id');
+
+        if (! $caId) {
+            $this->markTestSkipped('No unassigned lead available.');
+        }
+
+        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $this->actingAs($admin);
+        $this->postJson('/lead-assignments', [
+            'ca_id' => $caId,
+            'employee_id' => $employee->employee_id,
+            'assignment_type' => 'Manual',
+            'reason' => 'MANUAL_ASSIGN',
+        ])->assertCreated();
+
+        $this->assertDatabaseHas('lead_assignment_engines', [
+            'ca_id' => $caId,
+            'employee_id' => $employee->employee_id,
+            'status' => 'Active',
+        ]);
+
+        $this->actingAs($this->employeeUser());
+        $response = $this->getJson('/dashboard/employee')->assertOk();
+        $assignedIds = collect($response->json('data.assigned_leads') ?? [])
+            ->pluck('ca_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $this->assertContains((int) $caId, $assignedIds);
+    }
+
+    public function test_reassignment_moves_lead_between_employee_dashboards(): void
+    {
+        $employeeA = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employeeB = Employee::query()->updateOrCreate(
+            ['email_id' => 'employee.dashboard.test.b@ca.local'],
+            [
+                'name' => 'Dashboard Test B',
+                'mobile_no' => '9000000099',
+                'role' => 'Sales Executive',
+                'status' => 'Active',
+            ],
+        );
+        $userB = User::query()->updateOrCreate(
+            ['email' => 'employee.dashboard.test.b@ca.local'],
+            [
+                'name' => 'Dashboard Test B',
+                'crm_role' => 'employee',
+                'password' => Hash::make('password'),
+                'is_active' => true,
+            ],
+        );
+        $employeeB->update(['user_id' => $userB->id]);
+
+        $caId = CaMaster::query()
+            ->whereDoesntHave('leadAssignments', fn ($q) => $q->where('status', 'Active'))
+            ->value('ca_id');
+
+        if (! $caId) {
+            $this->markTestSkipped('No unassigned lead available.');
+        }
+
+        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $this->actingAs($admin);
+
+        $this->postJson('/lead-assignments', [
+            'ca_id' => $caId,
+            'employee_id' => $employeeA->employee_id,
+            'assignment_type' => 'Manual',
+            'reason' => 'MANUAL_ASSIGN',
+        ])->assertCreated();
+
+        $assignmentId = LeadAssignmentEngine::query()
+            ->where('ca_id', $caId)
+            ->where('status', 'Active')
+            ->value('assignment_id');
+
+        $this->putJson('/lead-assignments/'.$assignmentId, [
+            'ca_id' => $caId,
+            'employee_id' => $employeeB->employee_id,
+            'assignment_type' => 'Manual',
+            'reason' => 'REASSIGN',
+        ])->assertOk();
+
+        $this->assertDatabaseHas('lead_assignment_engines', [
+            'assignment_id' => $assignmentId,
+            'ca_id' => $caId,
+            'employee_id' => $employeeB->employee_id,
+            'status' => 'Active',
+        ]);
+
+        $this->assertDatabaseHas('assignment_histories', [
+            'ca_id' => $caId,
+            'previous_employee_id' => $employeeA->employee_id,
+            'new_employee_id' => $employeeB->employee_id,
+        ]);
+
+        $this->actingAs($this->employeeUser());
+        $responseA = $this->getJson('/dashboard/employee')->assertOk();
+        $idsA = collect($responseA->json('data.assigned_leads') ?? [])->pluck('ca_id')->map(fn ($id) => (int) $id)->all();
+        $this->assertNotContains((int) $caId, $idsA);
+
+        $this->actingAs($userB);
+        $responseB = $this->getJson('/dashboard/employee')->assertOk();
+        $idsB = collect($responseB->json('data.assigned_leads') ?? [])->pluck('ca_id')->map(fn ($id) => (int) $id)->all();
+        $this->assertContains((int) $caId, $idsB);
     }
 
     public function test_employee_leads_listing_only_shows_assigned_leads(): void
