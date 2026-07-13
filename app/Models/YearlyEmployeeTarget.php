@@ -19,6 +19,8 @@ class YearlyEmployeeTarget extends Model
         'email_target',
         'sms_target',
         'notes',
+        'annual_leave_allowance',
+        'allow_negative_leave_balance',
         'created_by',
         'updated_by',
     ];
@@ -35,7 +37,15 @@ class YearlyEmployeeTarget extends Model
             'followup_target' => 'integer',
             'email_target' => 'integer',
             'sms_target' => 'integer',
+            'annual_leave_allowance' => 'integer',
+            'allow_negative_leave_balance' => 'boolean',
         ];
+    }
+
+    public function leaves(): HasMany
+    {
+        return $this->hasMany(EmployeeLeave::class, 'employee_id', 'employee_id')
+            ->whereColumn('employee_leaves.target_year', 'yearly_employee_targets.target_year');
     }
 
     public function employee(): BelongsTo

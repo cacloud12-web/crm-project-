@@ -29,6 +29,7 @@ Route::middleware(['auth', 'rbac'])->group(function () {
         'activity',
         'security',
         'queue',
+        'demo-calendar',
     ];
 
     foreach ($spaPages as $page) {

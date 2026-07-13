@@ -28,6 +28,7 @@ class EmailAccountManagementTest extends TestCase
     private function issueSmtpToken(User $user, array $payload): string
     {
         $this->mock(EmailSmtpConnectionService::class, function ($mock) {
+            $mock->shouldReceive('normalizeConfig')->andReturnUsing(fn (array $config) => $config);
             $mock->shouldReceive('test')->andReturn(['success' => true, 'message' => 'SMTP OK']);
         });
 

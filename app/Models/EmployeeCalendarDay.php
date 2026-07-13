@@ -13,6 +13,10 @@ class EmployeeCalendarDay extends Model
 
     public const TYPE_SUNDAY = 'sunday';
 
+    public const TYPE_LEAVE = 'leave';
+
+    public const TYPE_INACTIVE = 'inactive';
+
     protected $fillable = [
         'employee_id',
         'yearly_employee_target_id',

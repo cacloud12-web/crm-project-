@@ -16,6 +16,25 @@ class WhatsAppProductionTemplatesTest extends TestCase
 {
     use DatabaseTransactions;
 
+    private function syncProductionWhatsAppTemplates(): void
+    {
+        MessageTemplate::query()
+            ->where('channel', MessageTemplate::CHANNEL_WHATSAPP)
+            ->whereNotIn('template_name', [
+                'expense_partnerjeyfg90rzl',
+                'proforma_invoicel5ekuo0baa',
+            ])
+            ->update([
+                'is_active' => false,
+                'publish_status' => 'disabled',
+                'status' => 'archived',
+            ]);
+
+        $this->artisan('migrate', [
+            '--path' => 'database/migrations/2026_07_11_200000_sync_production_whatsapp_templates.php',
+        ]);
+    }
+
     private function admin(): User
     {
         return User::query()->where('email', 'admin@ca.local')->firstOrFail();
@@ -23,7 +42,7 @@ class WhatsAppProductionTemplatesTest extends TestCase
 
     public function test_only_production_templates_are_active_after_migration(): void
     {
-        $this->artisan('migrate', ['--path' => 'database/migrations/2026_07_11_200000_sync_production_whatsapp_templates.php']);
+        $this->syncProductionWhatsAppTemplates();
 
         $activeNames = MessageTemplate::query()
             ->where('channel', MessageTemplate::CHANNEL_WHATSAPP)
@@ -41,7 +60,7 @@ class WhatsAppProductionTemplatesTest extends TestCase
 
     public function test_expense_template_variables_are_mapped(): void
     {
-        $this->artisan('migrate', ['--path' => 'database/migrations/2026_07_11_200000_sync_production_whatsapp_templates.php']);
+        $this->syncProductionWhatsAppTemplates();
 
         $template = MessageTemplate::query()
             ->where('template_name', 'expense_partnerjeyfg90rzl')
@@ -72,7 +91,7 @@ class WhatsAppProductionTemplatesTest extends TestCase
 
     public function test_proforma_template_builds_document_payload(): void
     {
-        $this->artisan('migrate', ['--path' => 'database/migrations/2026_07_11_200000_sync_production_whatsapp_templates.php']);
+        $this->syncProductionWhatsAppTemplates();
 
         $template = MessageTemplate::query()
             ->where('template_name', 'proforma_invoicel5ekuo0baa')
@@ -120,7 +139,7 @@ class WhatsAppProductionTemplatesTest extends TestCase
             'test_mobile_number' => '9876543210',
         ]);
 
-        $this->artisan('migrate', ['--path' => 'database/migrations/2026_07_11_200000_sync_production_whatsapp_templates.php']);
+        $this->syncProductionWhatsAppTemplates();
 
         $template = MessageTemplate::query()
             ->where('template_name', 'expense_partnerjeyfg90rzl')
@@ -164,7 +183,7 @@ class WhatsAppProductionTemplatesTest extends TestCase
             'integration_status' => WhatsAppSetting::INTEGRATION_INTEGRATED,
         ]);
 
-        $this->artisan('migrate', ['--path' => 'database/migrations/2026_07_11_200000_sync_production_whatsapp_templates.php']);
+        $this->syncProductionWhatsAppTemplates();
 
         $this->actingAs($this->admin());
 

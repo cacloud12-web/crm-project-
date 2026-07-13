@@ -30,18 +30,26 @@ class DemoScheduleCalendarService
     public function schedule(array $data, ?User $actor = null): array
     {
         $actor ??= auth()->user();
-        $check = $this->availabilityService->checkConflict($data);
-        if (! $check['available']) {
-            throw new InvalidArgumentException($check['conflict']['message'] ?? 'Demo slot is not available.');
-        }
-
         $provider = $this->availabilityService->resolveProvider(
             isset($data['demo_provider_id']) ? (int) $data['demo_provider_id'] : null,
             isset($data['team_size']) ? (int) $data['team_size'] : null,
             $data['demo_provider_name'] ?? null,
         );
-
+        if (! $provider) {
+            throw new InvalidArgumentException('Demo provider is required.');
+        }
         [$start, $end] = $this->availabilityService->resolveWindow($data, $provider);
+        app(DemoSchedulingRulesService::class)->validate(
+            $start->toDateString(),
+            $start->format('H:i'),
+            $end->format('H:i'),
+        );
+
+        $check = $this->availabilityService->checkConflict($data);
+        if (! $check['available']) {
+            throw new InvalidArgumentException($check['conflict']['message'] ?? 'Demo slot is not available.');
+        }
+
         $payload = array_merge($data, [
             'demo_at' => $start->toDateTimeString(),
             'demo_end_at' => $end->toDateTimeString(),
@@ -93,11 +101,6 @@ class DemoScheduleCalendarService
             'team_size' => $data['team_size'] ?? $schedule->team_size,
         ]);
 
-        $check = $this->availabilityService->checkConflict($payload, $schedule->id);
-        if (! $check['available']) {
-            throw new InvalidArgumentException($check['conflict']['message'] ?? 'Demo slot is not available.');
-        }
-
         $provider = $this->availabilityService->resolveProvider(
             (int) ($payload['demo_provider_id'] ?? 0),
             isset($payload['team_size']) ? (int) $payload['team_size'] : null,
@@ -109,6 +112,17 @@ class DemoScheduleCalendarService
         }
 
         [$start, $end] = $this->availabilityService->resolveWindow($payload, $provider);
+        app(DemoSchedulingRulesService::class)->validate(
+            $start->toDateString(),
+            $start->format('H:i'),
+            $end->format('H:i'),
+        );
+
+        $check = $this->availabilityService->checkConflict($payload, $schedule->id);
+        if (! $check['available']) {
+            throw new InvalidArgumentException($check['conflict']['message'] ?? 'Demo slot is not available.');
+        }
+
         $before = $schedule->toArray();
 
         return DB::transaction(function () use ($schedule, $provider, $start, $end, $payload, $actor, $before) {

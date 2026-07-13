@@ -248,7 +248,9 @@ class CaMasterService
 
         $executiveId = $this->extractExecutiveId($data);
         $payload = $this->normalize($data);
-        $payload['created_by_employee_id'] = $this->employeeDataScope->resolveEmployeeId($user);
+        $payload['created_by_employee_id'] = ! empty($data['created_by_employee_id'])
+            ? (int) $data['created_by_employee_id']
+            : $this->employeeDataScope->resolveEmployeeId($user);
 
         $lead = DB::transaction(function () use ($payload, $data) {
             try {

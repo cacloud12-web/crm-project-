@@ -59,8 +59,9 @@ class LeadTeamSizeColumnTest extends TestCase
         $response = $this->getJson('/ca-masters?team_size=50&firm_name=Filter Firm 50');
 
         $response->assertOk();
-        $this->assertGreaterThanOrEqual(1, count($response->json('data') ?? []));
-        $this->assertSame(50, (int) ($response->json('data.0.team_size') ?? 0));
+        $items = $response->json('data.items') ?? $response->json('data') ?? [];
+        $this->assertGreaterThanOrEqual(1, count($items));
+        $this->assertSame(50, (int) ($items[0]['team_size'] ?? 0));
     }
 
     public function test_team_size_filter_matches_not_specified(): void
@@ -80,7 +81,7 @@ class LeadTeamSizeColumnTest extends TestCase
         $response = $this->getJson('/ca-masters?team_size=not+specified&firm_name='.urlencode((string) $lead->firm_name));
 
         $response->assertOk();
-        $ids = collect($response->json('data') ?? [])->pluck('ca_id')->map(fn ($id) => (int) $id);
+        $ids = collect($response->json('data.items') ?? $response->json('data') ?? [])->pluck('ca_id')->map(fn ($id) => (int) $id);
         $this->assertTrue($ids->contains((int) $lead->ca_id));
     }
 
@@ -108,12 +109,12 @@ class LeadTeamSizeColumnTest extends TestCase
 
         $asc = $this->getJson('/ca-masters?sort_by=team_size&sort_dir=asc&firm_name='.$prefix);
         $asc->assertOk();
-        $ascSizes = collect($asc->json('data') ?? [])->pluck('team_size')->map(fn ($v) => (int) $v)->values()->all();
+        $ascSizes = collect($asc->json('data.items') ?? $asc->json('data') ?? [])->pluck('team_size')->map(fn ($v) => (int) $v)->values()->all();
         $this->assertSame([3, 120], $ascSizes);
 
         $desc = $this->getJson('/ca-masters?sort_by=team_size&sort_dir=desc&firm_name='.$prefix);
         $desc->assertOk();
-        $descSizes = collect($desc->json('data') ?? [])->pluck('team_size')->map(fn ($v) => (int) $v)->values()->all();
+        $descSizes = collect($desc->json('data.items') ?? $desc->json('data') ?? [])->pluck('team_size')->map(fn ($v) => (int) $v)->values()->all();
         $this->assertSame([120, 3], $descSizes);
     }
 
@@ -132,13 +133,17 @@ class LeadTeamSizeColumnTest extends TestCase
         ]);
 
         $response = $this->postJson('/ca-masters/bulk-export', [
+            'scope' => 'filtered',
             'format' => 'csv',
             'columns' => ['firm_name', 'team_size'],
             'filters' => ['mobile_no' => $mobile],
         ]);
 
         $response->assertOk();
-        $path = storage_path('app/'.$response->json('data.path'));
+        $bulkActionId = $response->json('data.bulk_action_id');
+        $this->assertNotNull($bulkActionId);
+
+        $path = app(\App\Services\Bulk\BulkCaMasterExportService::class)->downloadPath($bulkActionId)['path'];
         $this->assertFileExists($path);
 
         $contents = file_get_contents($path);

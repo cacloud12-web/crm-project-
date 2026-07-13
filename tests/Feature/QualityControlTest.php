@@ -29,7 +29,7 @@ class QualityControlTest extends TestCase
         $this->postJson('/ca-masters', [
             'ca_name' => 'Fake Mobile CA',
             'firm_name' => 'Fake Firm',
-            'mobile_no' => '1111111111',
+            'mobile_no' => '12345',
             'state_id' => $stateId,
             'status' => 'New',
         ])->assertStatus(422)
@@ -167,9 +167,9 @@ class QualityControlTest extends TestCase
 
     public function test_productivity_score_updates_after_unique_lead_create(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
         $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
-        $this->actingAs($employee);
+        $this->actingAs($admin);
 
         $stateId = CaMaster::query()->whereNotNull('state_id')->value('state_id');
         $mobile = '9'.random_int(100000000, 999999999);
@@ -180,6 +180,7 @@ class QualityControlTest extends TestCase
             'mobile_no' => $mobile,
             'state_id' => $stateId,
             'status' => 'New',
+            'created_by_employee_id' => $employeeModel->employee_id,
         ])->assertCreated();
 
         $lead = CaMaster::query()->where('firm_name', 'QC Firm')->firstOrFail();
@@ -215,13 +216,23 @@ class QualityControlTest extends TestCase
             'phone_type' => 'primary',
         ]);
 
-        $this->actingAs($employee);
-        $this->postJson('/ca-masters', [
-            'ca_name' => 'QC Dup',
-            'firm_name' => 'QC Dup Firm',
-            'mobile_no' => '9876501234',
+        $assignedLead = CaMaster::query()->create([
+            'ca_name' => 'QC Assigned',
+            'firm_name' => 'QC Assigned Firm',
+            'mobile_no' => null,
             'state_id' => $stateId,
             'status' => 'New',
+        ]);
+        LeadAssignmentEngine::query()->create([
+            'ca_id' => $assignedLead->ca_id,
+            'employee_id' => $employeeModel->employee_id,
+            'assigned_date' => now()->toDateString(),
+            'status' => 'Active',
+        ]);
+
+        $this->actingAs($employee);
+        $this->putJson('/ca-masters/'.$assignedLead->ca_id, [
+            'mobile_no' => '9876501234',
         ])->assertStatus(409);
 
         $log = EmployeeProductivityLog::query()

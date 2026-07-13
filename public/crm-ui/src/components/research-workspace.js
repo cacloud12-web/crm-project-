@@ -111,50 +111,133 @@
     return status || '—';
   }
 
+  function confidenceTier(score) {
+    var value = parseInt(score, 10) || 0;
+    if (value >= 80) return { label: 'Excellent', mod: 'excellent' };
+    if (value >= 60) return { label: 'Good', mod: 'good' };
+    if (value >= 40) return { label: 'Possible', mod: 'possible' };
+    return { label: 'Low', mod: 'low' };
+  }
+
+  function confidenceTierBadge(score) {
+    var tier = confidenceTier(score);
+    return '<span class="rw-match-badge rw-match-badge--' + tier.mod + '">' + esc(tier.label) + '</span>';
+  }
+
+  function bestMatchPlaceId() {
+    var results = state.results || [];
+    if (!results.length) return '';
+    var best = results[0];
+    return best.place_id || best.google_place_id || '';
+  }
+
+  function isPlaceSelected(place) {
+    if (!place || !state.place) return false;
+    var id = place.place_id || place.google_place_id || '';
+    var selectedId = state.place.place_id || state.place.google_place_id || '';
+    return id && selectedId && id === selectedId;
+  }
+
+  function ratingDisplay(place) {
+    if (!place || place.google_rating == null) return '—';
+    var text = '★ ' + String(place.google_rating);
+    if (place.google_review_count != null) {
+      text += ' (' + place.google_review_count + ')';
+    }
+    return text;
+  }
+
+  function visibleSaveFieldDefs() {
+    return [
+      { save: 'mobile_no', from: 'mobile_no', label: 'Phone' },
+      { save: 'city_name', from: 'city_name', label: 'City' },
+      { save: 'state_name', from: 'state_name', label: 'State' },
+      { save: 'website', from: 'website', label: 'Website' },
+      { save: 'google_rating', from: 'google_rating', label: 'Google Rating' },
+    ];
+  }
+
+  function hiddenSaveFieldDefs() {
+    return [
+      { save: 'google_place_id', from: 'google_place_id', label: 'Place ID' },
+      { save: 'address', from: 'verified_address', label: 'Address' },
+      { save: 'google_maps_url', from: 'google_maps_url', label: 'Maps URL' },
+      { save: 'latitude', from: 'latitude', label: 'Latitude' },
+      { save: 'longitude', from: 'longitude', label: 'Longitude' },
+      { save: 'google_business_status', from: 'google_business_status', label: 'Business Status' },
+    ];
+  }
+
+  function fieldCanSave(saveKey) {
+    if (!state.canSave) return false;
+    if (saveKey === 'address') {
+      return isFieldEmptyOnLead(state.current, 'address') && isFieldEmptyOnLead(state.current, 'verified_address');
+    }
+    if (saveKey === 'city_name' || saveKey === 'state_name') {
+      return isFieldEmptyOnLead(state.current, saveKey);
+    }
+    return isFieldEmptyOnLead(state.current, saveKey);
+  }
+
+  function fieldLabelForSaveKey(key) {
+    var map = {
+      mobile_no: 'Phone',
+      city_name: 'City',
+      state_name: 'State',
+      website: 'Website',
+      google_rating: 'Google Rating',
+      google_review_count: 'Reviews',
+      google_place_id: 'Place ID',
+      address: 'Address',
+      google_maps_url: 'Maps URL',
+      latitude: 'Latitude',
+      longitude: 'Longitude',
+      google_business_status: 'Business Status',
+    };
+    return map[key] || researchFieldLabel(key);
+  }
+
+  function collectSaveFields(includeHidden) {
+    var fields = [];
+    if (state.el) {
+      state.el.querySelectorAll('input[data-research-field]:checked:not(:disabled)').forEach(function (input) {
+        var key = input.getAttribute('data-research-field');
+        if (key && fields.indexOf(key) < 0) fields.push(key);
+      });
+    }
+    if (includeHidden === false) return fields;
+
+    hiddenSaveFieldDefs().forEach(function (field) {
+      if (fields.indexOf(field.save) >= 0) return;
+      var val = researchFieldValue(state.place, field.from);
+      if (field.save === 'google_place_id' && !val) {
+        val = state.place.place_id || state.place.google_place_id || '';
+      }
+      if (!val || !fieldCanSave(field.save)) return;
+      fields.push(field.save);
+    });
+
+    if (fields.indexOf('google_rating') >= 0 && fields.indexOf('google_review_count') < 0) {
+      if (state.place && state.place.google_review_count != null && fieldCanSave('google_review_count')) {
+        fields.push('google_review_count');
+      }
+    }
+    return fields;
+  }
+
+  function formatFieldsList(fields) {
+    return fields.map(fieldLabelForSaveKey).join(', ');
+  }
+
   function savedGoogleDataHtml(current) {
     if (!hasSavedGoogleData(current)) return '';
-
-    var businessName = savedFieldValue(current, ['firm_name']);
-    var address = savedFieldValue(current, ['verified_address', 'address']);
-    var mapsUrl = savedFieldValue(current, ['google_maps_url']);
-    var placeId = savedFieldValue(current, ['google_place_id']);
-    var latitude = savedFieldValue(current, ['latitude']);
-    var longitude = savedFieldValue(current, ['longitude']);
-    var rating = current.google_rating != null ? String(current.google_rating) : '';
-    if (rating && current.google_review_count != null) {
-      rating += ' (' + current.google_review_count + ' reviews)';
-    }
-    var openStatus = formatOpenStatus(current.google_business_status);
-    var researchedAt = current.researched_at ? String(current.researched_at) : '';
-
-    function row(label, value, link) {
-      if (!value) return '';
-      var valueHtml = link
-        ? '<a class="rw-saved__link" href="' + esc(value) + '" target="_blank" rel="noopener noreferrer">' + esc(value) + '</a>'
-        : esc(value);
-      return '<div class="rw-saved__row"><span class="rw-saved__label">' + esc(label) + '</span><span class="rw-saved__value">' + valueHtml + '</span></div>';
-    }
-
-    return '<section class="rw-saved" data-rw-saved-panel>' +
-      '<div class="rw-saved__head">' +
-        '<i data-lucide="bookmark-check" class="h-4 w-4"></i>' +
-        '<div>' +
-          '<h3 class="rw-saved__title">Saved Google data on this lead</h3>' +
-          '<p class="rw-saved__subtitle">Loaded from the database — no new search required unless you refresh.</p>' +
-        '</div>' +
-      '</div>' +
-      '<div class="rw-saved__grid">' +
-        row('Business name', businessName) +
-        row('Address', address) +
-        row('Google Maps URL', mapsUrl, true) +
-        row('Place ID', placeId) +
-        row('Latitude', latitude) +
-        row('Longitude', longitude) +
-        row('Rating', rating) +
-        row('Open/Closed', openStatus) +
-        row('Last saved', researchedAt) +
-      '</div>' +
-    '</section>';
+    var firm = savedFieldValue(current, ['firm_name']);
+    var savedAt = current.researched_at ? String(current.researched_at) : '';
+    return '<div class="rw-saved-banner" data-rw-saved-panel>' +
+      '<i data-lucide="bookmark-check" class="h-3.5 w-3.5"></i>' +
+      '<span>Previously saved on this lead' + (firm ? ': <strong>' + esc(firm) + '</strong>' : '') + '</span>' +
+      (savedAt ? '<span class="rw-saved-banner__meta">' + esc(savedAt) + '</span>' : '') +
+    '</div>';
   }
 
   function researchFieldLabel(key) {
@@ -176,11 +259,6 @@
       open_status: 'Open/Closed',
     };
     return labels[key] || key;
-  }
-
-  function confidenceBadge(label, matched) {
-    return '<span class="rw-confidence-badge' + (matched ? ' rw-confidence-badge--match' : '') + '">' +
-      esc(label) + (matched ? ' ✓' : ' —') + '</span>';
   }
 
   function normalizeApiError(error, recommendation, reason) {
@@ -232,14 +310,9 @@
     '</div>';
   }
 
-  function confidenceHtml(place) {
-    var confidence = (place && place.confidence) || {};
-    return '<div class="rw-confidence-row">' +
-      confidenceBadge('Firm', !!confidence.firm_name_match) +
-      confidenceBadge('City', !!confidence.city_match) +
-      confidenceBadge('State', !!confidence.state_match) +
-      confidenceBadge('CA keyword', !!confidence.ca_keyword_match) +
-      '</div>';
+  function resultCardMetaItem(icon, text) {
+    if (!text || text === '—') return '';
+    return '<span class="rw-result-card__item"><i data-lucide="' + icon + '" class="h-3 w-3"></i>' + esc(text) + '</span>';
   }
 
   function resultsPanelHtml() {
@@ -248,37 +321,49 @@
       return '<div class="rw-results rw-results--empty" data-rw-results-panel>' +
         (state.apiError
           ? apiErrorPanelHtml()
-          : '<p class="rw-import__empty-text">No Google Places results yet. Run lookup or check API configuration.</p>') +
+          : '<p class="rw-empty-note">No Google Places results yet. Run lookup or check API configuration.</p>') +
       '</div>';
     }
 
-    var cards = results.map(function (place, index) {
+    var bestId = bestMatchPlaceId();
+    var cards = results.map(function (place) {
       var placeId = place.place_id || place.google_place_id || '';
-      var selected = state.place && (state.place.place_id === placeId || state.place.google_place_id === placeId);
-      return '<article class="rw-result-card' + (selected ? ' rw-result-card--selected' : '') + '" data-place-id="' + esc(placeId) + '">' +
-        '<div class="rw-result-card__head">' +
-          '<h4 class="rw-result-card__title">' + esc(place.business_name || 'Unnamed business') + '</h4>' +
-          '<span class="rw-result-card__score">' + esc(String(place.confidence_score || 0)) + '% match</span>' +
+      var selected = isPlaceSelected(place);
+      var isBest = placeId && placeId === bestId;
+      var website = place.website || '';
+      var websiteHtml = website
+        ? '<a class="rw-result-card__link" href="' + esc(website) + '" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">' + esc(website.replace(/^https?:\/\//, '')) + '</a>'
+        : '<span class="rw-result-card__muted">—</span>';
+
+      return '<article class="rw-result-card' +
+        (selected ? ' rw-result-card--selected' : '') +
+        (isBest ? ' rw-result-card--best' : '') +
+        '" data-place-id="' + esc(placeId) + '">' +
+        '<div class="rw-result-card__main">' +
+          '<div class="rw-result-card__top">' +
+            '<h4 class="rw-result-card__title" title="' + esc(place.business_name || 'Unnamed business') + '">' +
+              esc(place.business_name || 'Unnamed business') +
+            '</h4>' +
+            confidenceTierBadge(place.confidence_score) +
+            (isBest ? '<span class="rw-result-card__best-label">Best match</span>' : '') +
+          '</div>' +
+          '<div class="rw-result-card__facts">' +
+            resultCardMetaItem('star', ratingDisplay(place)) +
+            resultCardMetaItem('phone', place.mobile_no || place.phone || '') +
+            resultCardMetaItem('map-pin', [place.city_name || place.city, place.state_name || place.state].filter(Boolean).join(', ')) +
+            '<span class="rw-result-card__item rw-result-card__item--web"><i data-lucide="globe" class="h-3 w-3"></i>' + websiteHtml + '</span>' +
+          '</div>' +
         '</div>' +
-        '<p class="rw-result-card__address">' + esc(place.verified_address || place.address || '—') + '</p>' +
-        confidenceHtml(place) +
-        '<div class="rw-result-card__meta">' +
-          (place.google_rating != null ? '<span>★ ' + esc(String(place.google_rating)) + '</span>' : '') +
-          (place.mobile_no ? '<span>' + esc(place.mobile_no) + '</span>' : '') +
-          (place.city_name || place.state_name
-            ? '<span>' + esc([place.city_name, place.state_name].filter(Boolean).join(', ')) + '</span>'
-            : '') +
-        '</div>' +
-        '<button type="button" class="btn-secondary btn-sm" data-rw-action="select-place" data-place-id="' + esc(placeId) + '">' +
-          (selected ? 'Selected' : 'Use this result') +
+        '<button type="button" class="btn-primary btn-sm rw-result-card__select" data-rw-action="select-place" data-place-id="' + esc(placeId) + '">' +
+          (selected ? 'Selected' : 'Select') +
         '</button>' +
       '</article>';
     }).join('');
 
     return '<div class="rw-results" data-rw-results-panel>' +
       '<div class="rw-results__head">' +
-        '<h3 class="rw-results__title">Google Places results</h3>' +
-        '<span class="rw-results__count">' + results.length + ' found</span>' +
+        '<h3 class="rw-results__title">Matching firms</h3>' +
+        '<span class="rw-results__count">' + results.length + ' result' + (results.length === 1 ? '' : 's') + '</span>' +
       '</div>' +
       '<div class="rw-results__list">' + cards + '</div>' +
     '</div>';
@@ -349,18 +434,14 @@
       : '<iframe class="rw-panel__iframe" data-rw-iframe="' + type + '" src="' + esc(embedUrl) +
           '" title="' + esc(title) + '" referrerpolicy="no-referrer-when-downgrade" loading="eager"></iframe>';
 
-    return '<section class="rw-panel rw-panel--' + type + '" data-rw-panel="' + type + '">' +
-      '<div class="rw-panel__head">' +
-        '<div class="rw-panel__head-left">' +
-          '<span class="rw-panel__badge rw-panel__badge--' + type + '"></span>' +
-          '<h3 class="rw-panel__title">' + esc(title) + '</h3>' +
-        '</div>' +
-        '<span class="rw-panel__hint">' + esc(useJsMap ? 'Interactive map (Maps JavaScript API)' : 'Preview may be limited by Google embed policy') + '</span>' +
+    return '<section class="rw-panel rw-panel--' + type + ' rw-panel--compact" data-rw-panel="' + type + '">' +
+      '<div class="rw-panel__head rw-panel__head--compact">' +
+        '<h3 class="rw-panel__title">' + esc(title) + '</h3>' +
       '</div>' +
-      '<div class="rw-panel__body">' +
+      '<div class="rw-panel__body rw-panel__body--compact">' +
         '<div class="rw-panel__loading" data-rw-loading="' + type + '" aria-live="polite">' +
-          '<i data-lucide="loader-2" class="h-5 w-5 animate-spin text-brand"></i>' +
-          '<span>Loading ' + esc(title) + '…</span>' +
+          '<i data-lucide="loader-2" class="h-4 w-4 animate-spin text-brand"></i>' +
+          '<span>Loading map…</span>' +
         '</div>' +
         '<div class="rw-panel__blocked hidden" data-rw-blocked="' + type + '">' +
           '<p>' + esc(fallbackText) + '</p>' +
@@ -397,46 +478,90 @@
     });
   }
 
+  function summaryValueHtml(label, value, link) {
+    if (!value || value === '—') {
+      return '<div class="rw-selected__field"><span class="rw-selected__label">' + esc(label) + '</span><span class="rw-selected__value rw-selected__value--empty">—</span></div>';
+    }
+    var valueHtml = link
+      ? '<a class="rw-selected__link" href="' + esc(value) + '" target="_blank" rel="noopener noreferrer">' + esc(value.replace(/^https?:\/\//, '')) + '</a>'
+      : esc(value);
+    return '<div class="rw-selected__field"><span class="rw-selected__label">' + esc(label) + '</span><span class="rw-selected__value">' + valueHtml + '</span></div>';
+  }
+
+  function advancedDetailsHtml(place) {
+    if (!place) return '';
+    var placeId = researchFieldValue(place, 'google_place_id') || place.place_id || '';
+    var mapsUrl = researchFieldValue(place, 'google_maps_url');
+    var address = researchFieldValue(place, 'verified_address') || researchFieldValue(place, 'address');
+    var businessType = formatOpenStatus(place.google_business_status || place.open_status);
+
+    return '<details class="rw-advanced">' +
+      '<summary class="rw-advanced__toggle">Advanced Details</summary>' +
+      '<div class="rw-advanced__grid">' +
+        summaryValueHtml('Place ID', placeId) +
+        summaryValueHtml('Maps URL', mapsUrl, !!mapsUrl) +
+        summaryValueHtml('Latitude', place.latitude != null ? String(place.latitude) : '') +
+        summaryValueHtml('Longitude', place.longitude != null ? String(place.longitude) : '') +
+        summaryValueHtml('Business ID', placeId) +
+        summaryValueHtml('Address', address) +
+        summaryValueHtml('Business Type', businessType) +
+      '</div>' +
+    '</details>';
+  }
+
   function importBarHtml(place, current) {
     if (!place) {
-      if (state.apiError) {
-        return '';
-      }
-      return '<div class="rw-import rw-import--empty" data-rw-import-bar>' +
-        '<p class="rw-import__empty-text">' + esc(state.sourceNote || 'Run Google Places lookup to find CA firm details.') + '</p>' +
+      if (state.apiError) return '';
+      return '<div class="rw-selected rw-selected--empty" data-rw-import-bar>' +
+        '<p class="rw-empty-note">' + esc(state.sourceNote || 'Select a matching firm to review details before saving.') + '</p>' +
       '</div>';
     }
 
-    var chips = saveFieldKeys().map(function (field) {
+    var checkboxes = visibleSaveFieldDefs().map(function (field) {
       var found = researchFieldValue(place, field.from);
-      if (!found && field.from === 'google_place_id') {
-        found = place.place_id || place.google_place_id || '';
+      if (!found && field.from === 'google_rating' && place.google_rating != null) {
+        found = ratingDisplay(place);
       }
       if (!found) return '';
-      var canSave = state.canSave && isFieldEmptyOnLead(current, field.save);
-      return '<label class="rw-import-chip' + (canSave ? '' : ' rw-import-chip--disabled') + '">' +
+      var canSave = fieldCanSave(field.save);
+      return '<label class="rw-save-option' + (canSave ? '' : ' rw-save-option--disabled') + '">' +
         '<input type="checkbox" data-research-field="' + field.save + '"' +
-        (canSave ? ' checked' : ' disabled') + '> ' +
-        '<span><strong>' + esc(researchFieldLabel(field.display)) + ':</strong> ' + esc(found) +
-        (canSave ? '' : ' <em>(set)</em>') + '</span></label>';
+        (canSave ? ' checked' : ' disabled') + '>' +
+        '<span>' + esc(field.label) + '</span>' +
+        (!canSave ? '<em class="rw-save-option__hint">(already set)</em>' : '') +
+      '</label>';
     }).join('');
 
-    if (place.business_name) {
-      chips = '<span class="rw-import-chip rw-import-chip--info"><strong>Business:</strong> ' + esc(place.business_name) + '</span>' + chips;
-    }
+    var previewPanel = '<div class="rw-preview hidden" data-rw-preview-panel role="status" aria-live="polite"></div>';
 
-    return '<div class="rw-import" data-rw-import-bar>' +
-      '<div class="rw-import__meta">' +
-        '<span class="rw-import__label">Selected Google result</span>' +
-        '<span class="rw-import__source" data-rw-source>' + esc(state.sourceNote || 'Places API result') + '</span>' +
+    return '<div class="rw-selected" data-rw-import-bar>' +
+      '<div class="rw-selected__head">' +
+        '<div><h3 class="rw-selected__title">Selected CA</h3>' +
+        '<p class="rw-selected__subtitle">Review details before saving to CRM</p></div>' +
+        '<span class="badge-brand rw-selected__badge">Ready to save</span>' +
       '</div>' +
-      confidenceHtml(place) +
-      '<div class="rw-import__chips">' + (chips || '<span class="rw-import__empty-text">No importable fields found.</span>') + '</div>' +
+      '<div class="rw-selected__grid">' +
+        summaryValueHtml('Firm Name', place.business_name || '') +
+        summaryValueHtml('Phone', place.mobile_no || place.phone || '') +
+        summaryValueHtml('City', place.city_name || place.city || '') +
+        summaryValueHtml('State', place.state_name || place.state || '') +
+        summaryValueHtml('Website', place.website || '', !!place.website) +
+        summaryValueHtml('Google Rating', ratingDisplay(place)) +
+      '</div>' +
+      advancedDetailsHtml(place) +
+      '<div class="rw-save-options" aria-label="Fields to import">' + (checkboxes || '<p class="rw-empty-note">No importable fields found.</p>') + '</div>' +
+      previewPanel +
       (state.canSave
-        ? '<button type="button" class="btn-primary btn-sm rw-import__btn" data-rw-action="import" data-research-save="1">' +
-            '<i data-lucide="download" class="h-4 w-4"></i> Save Google Data' +
-          '</button>'
-        : '<p class="rw-import__empty-text">You can view Google data but cannot save changes for this lead.</p>') +
+        ? '<div class="rw-selected__actions">' +
+            '<button type="button" class="btn-primary btn-sm" data-rw-action="import" data-research-save="1">' +
+              '<i data-lucide="save" class="h-4 w-4"></i> Save to CRM' +
+            '</button>' +
+            '<button type="button" class="btn-secondary btn-sm" data-rw-action="preview">' +
+              '<i data-lucide="eye" class="h-4 w-4"></i> Preview' +
+            '</button>' +
+            '<button type="button" class="btn-secondary btn-sm" data-rw-action="close">Cancel</button>' +
+          '</div>'
+        : '<p class="rw-empty-note">You can view Google data but cannot save changes for this lead.</p>') +
     '</div>';
   }
 
@@ -474,12 +599,16 @@
             toolbarButton('close', 'x', 'Close') +
           '</div>' +
         '</header>' +
-        '<div class="rw-saved-wrap" data-rw-saved-wrap>' + savedGoogleDataHtml(state.current) + '</div>' +
-        '<div class="rw-results-wrap" data-rw-results-wrap>' + resultsPanelHtml() + '</div>' +
-        '<div class="rw-import-wrap" data-rw-import-wrap>' + importBarHtml(state.place, state.current) + '</div>' +
-        '<div class="rw-split rw-split--compact">' +
-          panelHtml('maps', 'Google Maps Preview', state.mapsEmbed,
-            'Maps preview may be blocked. Open in a new tab for location, Street View, and reviews.') +
+        '<div class="rw-body">' +
+          '<div class="rw-body__content">' +
+            '<div class="rw-saved-wrap" data-rw-saved-wrap>' + savedGoogleDataHtml(state.current) + '</div>' +
+            '<div class="rw-results-wrap" data-rw-results-wrap>' + resultsPanelHtml() + '</div>' +
+            '<div class="rw-import-wrap" data-rw-import-wrap>' + importBarHtml(state.place, state.current) + '</div>' +
+          '</div>' +
+          '<div class="rw-body__map">' +
+            panelHtml('maps', 'Map Preview', state.mapsEmbed,
+              'Maps preview may be blocked. Open in a new tab for location details.') +
+          '</div>' +
         '</div>' +
       '</div>' +
     '</div>';
@@ -611,17 +740,35 @@
     window.open(url, '_blank', 'noopener,noreferrer');
   }
 
+  function previewImportDetails() {
+    if (!state.place) {
+      toast('Select a firm before previewing import', 'warning');
+      return;
+    }
+    var visible = collectSaveFields(false);
+    var all = collectSaveFields(true);
+    var hidden = all.filter(function (field) { return visible.indexOf(field) < 0; });
+    if (!all.length) {
+      toast('No fields available to import', 'warning');
+      return;
+    }
+    var panel = state.el && state.el.querySelector('[data-rw-preview-panel]');
+    if (panel) {
+      panel.classList.remove('hidden');
+      panel.innerHTML =
+        '<strong>Preview import</strong>' +
+        '<p>Visible fields: ' + esc(formatFieldsList(visible) || 'None selected') + '</p>' +
+        (hidden.length ? '<p class="rw-preview__hidden">Also included automatically: ' + esc(formatFieldsList(hidden)) + '</p>' : '');
+    }
+    toast('Will import: ' + formatFieldsList(all), 'info');
+  }
+
   function saveImportDetails() {
     if (!state.leadId || !state.place) {
       toast('No research details to import yet', 'warning');
       return;
     }
-    var fields = [];
-    if (state.el) {
-      state.el.querySelectorAll('input[data-research-field]:checked:not(:disabled)').forEach(function (input) {
-        fields.push(input.getAttribute('data-research-field'));
-      });
-    }
+    var fields = collectSaveFields(true);
     if (!fields.length) {
       toast('Select at least one empty field to import', 'warning');
       return;
@@ -640,6 +787,8 @@
       return;
     }
 
+    var importedLabels = formatFieldsList(fields);
+
     apiFetch('/ca-masters/' + encodeURIComponent(state.leadId) + '/research/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -656,7 +805,7 @@
         if (typeof deps.onSaved === 'function') {
           deps.onSaved(lead);
         }
-        toast(body.message || 'Research details imported', 'success');
+        toast((body.message || 'Saved to CRM') + ' — imported: ' + importedLabels, 'success');
         updatePanels();
         closeWorkspace();
       })
@@ -805,6 +954,10 @@
     }
     if (action === 'import') {
       saveImportDetails();
+      return;
+    }
+    if (action === 'preview') {
+      previewImportDetails();
       return;
     }
     if (action === 'open-browser') {

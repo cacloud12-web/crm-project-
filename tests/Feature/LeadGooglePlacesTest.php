@@ -148,7 +148,7 @@ class LeadGooglePlacesTest extends TestCase
 
         $response = $this->postJson('/ca-masters/'.$lead->ca_id.'/research');
         $response->assertOk();
-        $response->assertJsonPath('data.api_status', 'REQUEST_DENIED');
+        $response->assertJsonPath('data.api_status', 'API_KEY_INVALID');
     }
 
     public function test_save_google_data_persists_fields(): void

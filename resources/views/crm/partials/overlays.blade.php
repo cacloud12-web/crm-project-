@@ -153,6 +153,14 @@
     </div>
   </div>
 
+  <!-- Report Analytics Drawer (full BI dashboard) -->
+  <div id="report-analytics-drawer" class="ra-drawer ca-modal" role="dialog" aria-modal="true" aria-labelledby="ra-title" aria-hidden="true">
+    <div class="ra-drawer__backdrop" data-ra-close aria-hidden="true"></div>
+    <div class="ra-drawer__panel">
+      <div id="ra-root" class="ra-drawer__content"></div>
+    </div>
+  </div>
+
 
   <div id="modal-add-lead" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="add-lead-title">
     <div class="ca-modal-panel ca-modal-panel-lg">
@@ -1209,16 +1217,24 @@
           <select id="assign-yearly-target-employee" class="input-field" data-crm-entity-lookup="employee" data-crm-lookup-placeholder="Search employee…" aria-required="true"><option value="">Select employee…</option></select>
         </div>
         <div><label class="form-label">Target Year *</label><input name="target_year" id="assign-yearly-target-year-input" type="number" min="2020" max="2100" class="input-field" required /></div>
-        <p class="text-caption text-slate-500">Targets below apply to each working day. Sundays and company holidays are excluded automatically.</p>
         <div class="grid sm:grid-cols-2 gap-4">
-          <div><label class="form-label">Lead Target / day</label><input name="lead_target" id="assign-yearly-target-leads" type="number" min="0" step="1" class="input-field" value="0" /></div>
-          <div><label class="form-label">Call Target / day</label><input name="call_target" id="assign-yearly-target-calls" type="number" min="0" step="1" class="input-field" value="0" /></div>
-          <div><label class="form-label">Demo Target / day</label><input name="demo_target" id="assign-yearly-target-demos" type="number" min="0" step="1" class="input-field" value="0" /></div>
-          <div><label class="form-label">Follow-up Target / day</label><input name="followup_target" id="assign-yearly-target-followups" type="number" min="0" step="1" class="input-field" value="0" /></div>
-          <div><label class="form-label">Email Target / day <span class="text-slate-400">(optional)</span></label><input name="email_target" id="assign-yearly-target-email" type="number" min="0" step="1" class="input-field" value="0" /></div>
-          <div><label class="form-label">SMS Target / day <span class="text-slate-400">(optional)</span></label><input name="sms_target" id="assign-yearly-target-sms" type="number" min="0" step="1" class="input-field" value="0" /></div>
+          <div><label class="form-label">Leads per day</label><input name="lead_target" id="assign-yearly-target-leads" type="number" min="0" step="1" class="input-field" value="0" /></div>
+          <div><label class="form-label">Calls per day</label><input name="call_target" id="assign-yearly-target-calls" type="number" min="0" step="1" class="input-field" value="0" /></div>
+          <div><label class="form-label">Demos per day</label><input name="demo_target" id="assign-yearly-target-demos" type="number" min="0" step="1" class="input-field" value="0" /></div>
+          <div><label class="form-label">Follow-ups per day</label><input name="followup_target" id="assign-yearly-target-followups" type="number" min="0" step="1" class="input-field" value="0" /></div>
         </div>
-        <div><label class="form-label">Notes / Instructions</label><textarea name="notes" id="assign-yearly-target-notes" class="input-field" rows="3" placeholder="Instructions for the employee…"></textarea></div>
+        <div id="assign-yearly-target-preview" class="assign-yearly-target-preview hidden">
+          <p class="assign-yearly-target-preview__title">Calculated yearly totals</p>
+          <dl class="assign-yearly-target-preview__grid">
+            <div><dt>Selected Year</dt><dd id="assign-yearly-preview-year">—</dd></div>
+            <div><dt>Target Working Days</dt><dd id="assign-yearly-preview-days">—</dd></div>
+            <div><dt>Yearly Leads Target</dt><dd id="assign-yearly-preview-leads">—</dd></div>
+            <div><dt>Yearly Calls Target</dt><dd id="assign-yearly-preview-calls">—</dd></div>
+            <div><dt>Yearly Demos Target</dt><dd id="assign-yearly-preview-demos">—</dd></div>
+            <div><dt>Yearly Follow-ups Target</dt><dd id="assign-yearly-preview-followups">—</dd></div>
+          </dl>
+        </div>
+        <div><label class="form-label">Remarks <span class="text-slate-400">(optional)</span></label><textarea name="notes" id="assign-yearly-target-notes" class="input-field" rows="3" placeholder="Optional notes for the employee…"></textarea></div>
       </form>
       <div class="ca-modal-footer">
         <div class="ca-modal-footer-buttons flex-wrap">
@@ -1226,6 +1242,57 @@
           <button type="submit" form="form-assign-yearly-target" class="btn-primary flex-1" id="assign-yearly-target-save">Save Yearly Target</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- View Company Holidays Modal -->
+  <div id="modal-view-company-holidays" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="view-company-holidays-title">
+    <div class="ca-modal-panel ca-modal-panel-md">
+      <div class="ca-modal-header">
+        <h3 id="view-company-holidays-title" class="ca-modal-title"><span class="ca-modal-icon"><i data-lucide="calendar-days" class="h-5 w-5"></i></span> Company Holidays</h3>
+        <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
+      </div>
+      <div class="ca-modal-body">
+        <p class="text-caption text-slate-500 mb-3">11 fixed holidays applied automatically each year. Sundays are excluded separately.</p>
+        <div class="crm-table-container scrollbar-thin"><table class="ca-table w-full"><thead><tr><th>Holiday</th><th>Date</th><th>Notes</th></tr></thead><tbody id="view-company-holidays-table"></tbody></table></div>
+      </div>
+      <div class="ca-modal-footer"><div class="ca-modal-footer-buttons"><button type="button" class="btn-secondary" data-close-crm-modal>Close</button></div></div>
+    </div>
+  </div>
+
+  <!-- Edit Holiday Dates Modal -->
+  <div id="modal-edit-holiday-dates" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="edit-holiday-dates-title">
+    <div class="ca-modal-panel ca-modal-panel-md">
+      <div class="ca-modal-header">
+        <h3 id="edit-holiday-dates-title" class="ca-modal-title"><span class="ca-modal-icon"><i data-lucide="calendar-range" class="h-5 w-5"></i></span> Edit Holiday Dates</h3>
+        <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
+      </div>
+      <form id="form-edit-holiday-dates" class="ca-modal-body space-y-3">
+        <p class="text-caption text-slate-500">Update movable festival dates for the selected year. Duplicate dates are not allowed.</p>
+        <div id="edit-holiday-dates-list"></div>
+      </form>
+      <div class="ca-modal-footer"><div class="ca-modal-footer-buttons"><button type="button" class="btn-secondary" data-close-crm-modal>Cancel</button><button type="submit" form="form-edit-holiday-dates" class="btn-primary">Save Dates</button></div></div>
+    </div>
+  </div>
+
+  <!-- Employee Leave Modal -->
+  <div id="modal-employee-leave" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="employee-leave-title">
+    <div class="ca-modal-panel ca-modal-panel-md">
+      <div class="ca-modal-header">
+        <h3 id="employee-leave-title" class="ca-modal-title"><span class="ca-modal-icon"><i data-lucide="palmtree" class="h-5 w-5"></i></span> Employee Leave</h3>
+        <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
+      </div>
+      <div class="ca-modal-body space-y-4">
+        <form id="form-employee-leave-request" class="space-y-3 hidden">
+          <div class="grid sm:grid-cols-2 gap-3">
+            <div><label class="form-label">Leave Date</label><input type="date" id="employee-leave-date" class="input-field" required /></div>
+            <div><label class="form-label">Reason</label><input type="text" id="employee-leave-reason" class="input-field" placeholder="Optional" /></div>
+          </div>
+          <button type="submit" class="btn-primary btn-sm">Request Leave</button>
+        </form>
+        <div class="crm-table-container scrollbar-thin max-h-72 overflow-auto"><table class="ca-table w-full"><thead><tr><th>Date</th><th>Status</th><th>Reason</th><th></th></tr></thead><tbody id="employee-leave-table"></tbody></table></div>
+      </div>
+      <div class="ca-modal-footer"><div class="ca-modal-footer-buttons"><button type="button" class="btn-secondary" data-close-crm-modal>Close</button></div></div>
     </div>
   </div>
 
@@ -1268,7 +1335,7 @@
   </div>
 
   <div id="modal-demo-calendar-schedule" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="demo-cal-schedule-title">
-    <div class="ca-modal-dialog ca-modal-dialog--wide">
+    <div class="ca-modal-panel ca-modal-panel-xl">
       <div class="ca-modal-header">
         <h3 id="demo-cal-schedule-title" class="ca-modal-title"><i data-lucide="video" class="h-5 w-5 text-brand"></i> Schedule Demo</h3>
         <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
@@ -1291,6 +1358,79 @@
         <div class="ca-modal-footer-buttons">
           <button type="button" class="btn-secondary" data-close-crm-modal>Cancel</button>
           <button type="submit" form="form-demo-calendar-schedule" class="btn-primary">Save Demo</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-dcp-detail" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="dcp-detail-title">
+    <div class="ca-modal-panel ca-modal-panel-xl">
+      <div class="ca-modal-header">
+        <h3 id="dcp-detail-title" class="ca-modal-title"><i data-lucide="presentation" class="h-5 w-5 text-brand"></i> Demo Details</h3>
+        <span class="badge-brand ml-2">Demo Mode</span>
+        <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
+      </div>
+      <div class="ca-modal-body dcp-detail-body">
+        <div class="dcp-detail-grid">
+          <div class="dcp-detail-row"><span class="dcp-detail-label">Firm Name</span><span id="dcp-detail-firm" class="dcp-detail-value"></span></div>
+          <div class="dcp-detail-row"><span class="dcp-detail-label">CA Name</span><span id="dcp-detail-ca" class="dcp-detail-value"></span></div>
+          <div class="dcp-detail-row"><span class="dcp-detail-label">Assigned Executive</span><span id="dcp-detail-employee" class="dcp-detail-value"></span></div>
+          <div class="dcp-detail-row"><span class="dcp-detail-label">Phone Number</span><span id="dcp-detail-phone" class="dcp-detail-value"></span></div>
+          <div class="dcp-detail-row"><span class="dcp-detail-label">Demo Date</span><span id="dcp-detail-date" class="dcp-detail-value"></span></div>
+          <div class="dcp-detail-row"><span class="dcp-detail-label">Demo Time</span><span id="dcp-detail-time" class="dcp-detail-value"></span></div>
+          <div class="dcp-detail-row"><span class="dcp-detail-label">Meeting Link</span><a id="dcp-detail-meeting" class="dcp-detail-link" href="#" target="_blank" rel="noopener noreferrer"></a></div>
+          <div class="dcp-detail-row"><span class="dcp-detail-label">Demo Status</span><span id="dcp-detail-status" class="dcp-detail-value"></span></div>
+          <div class="dcp-detail-row"><span class="dcp-detail-label">Priority</span><span id="dcp-detail-priority" class="dcp-detail-value"></span></div>
+          <div class="dcp-detail-row"><span class="dcp-detail-label">Last Follow-up</span><span id="dcp-detail-followup" class="dcp-detail-value"></span></div>
+        </div>
+        <div class="dcp-detail-row dcp-detail-row--block"><span class="dcp-detail-label">Remarks</span><p id="dcp-detail-desc" class="dcp-detail-remarks"></p></div>
+      </div>
+      <div class="ca-modal-footer">
+        <div class="ca-modal-footer-buttons dcp-detail-actions">
+          <button type="button" class="btn-primary btn-sm" id="dcp-action-start"><i data-lucide="play" class="h-4 w-4"></i> Start Demo</button>
+          <button type="button" class="btn-secondary btn-sm" id="dcp-action-complete"><i data-lucide="check-circle" class="h-4 w-4"></i> Mark Completed</button>
+          <button type="button" class="btn-secondary btn-sm" id="dcp-action-reschedule"><i data-lucide="calendar-clock" class="h-4 w-4"></i> Reschedule</button>
+          <button type="button" class="btn-secondary btn-sm" id="dcp-action-edit"><i data-lucide="pencil" class="h-4 w-4"></i> Edit Demo</button>
+          <button type="button" class="btn-secondary btn-sm text-rose-600 border-rose-200" id="dcp-action-cancel"><i data-lucide="x-circle" class="h-4 w-4"></i> Cancel Demo</button>
+          <button type="button" class="btn-secondary btn-sm" id="dcp-action-followup"><i data-lucide="phone-forwarded" class="h-4 w-4"></i> Add Follow-up</button>
+          <button type="button" class="btn-secondary btn-sm" id="dcp-detail-close">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-dcp-form" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="dcp-form-title">
+    <div class="ca-modal-panel ca-modal-panel-lg">
+      <div class="ca-modal-header">
+        <h3 id="dcp-form-title" class="ca-modal-title">Schedule Demo</h3>
+        <span class="badge-brand ml-2">Demo Mode</span>
+        <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
+      </div>
+      <div class="ca-modal-body">
+        <p class="dcp-form-hours-note">Working hours: Mon–Sat, 10:00 AM – 7:00 PM. Sundays are closed.</p>
+        <div class="dcp-form-grid">
+          <label class="dcp-form-field">Firm Name<input type="text" id="dcp-form-firm" class="input-field" autocomplete="organization" /></label>
+          <label class="dcp-form-field">CA Name<input type="text" id="dcp-form-ca" class="input-field" autocomplete="name" /></label>
+          <label class="dcp-form-field">Assigned Executive<input type="text" id="dcp-form-executive" class="input-field" /></label>
+          <label class="dcp-form-field">Phone<input type="tel" id="dcp-form-phone" class="input-field" autocomplete="tel" /></label>
+          <label class="dcp-form-field">Demo Date<input type="date" id="dcp-form-date" class="input-field" /></label>
+          <label class="dcp-form-field">Start Time<select id="dcp-form-start" class="input-field"></select></label>
+          <label class="dcp-form-field">End Time<select id="dcp-form-end" class="input-field"></select></label>
+          <label class="dcp-form-field">Priority
+            <select id="dcp-form-priority" class="input-field">
+              <option value="high">High</option>
+              <option value="medium" selected>Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
+          <label class="dcp-form-field dcp-form-field--full">Remarks<textarea id="dcp-form-remarks" class="input-field" rows="2"></textarea></label>
+        </div>
+        <p id="dcp-form-error" class="dcp-form-error" role="alert"></p>
+      </div>
+      <div class="ca-modal-footer">
+        <div class="ca-modal-footer-buttons">
+          <button type="button" class="btn-primary btn-sm" id="dcp-form-save">Save Demo</button>
+          <button type="button" class="btn-secondary btn-sm" id="dcp-form-cancel">Cancel</button>
         </div>
       </div>
     </div>

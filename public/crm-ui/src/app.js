@@ -283,6 +283,7 @@
     '/security': 'security',
     '/queue': 'queue',
     '/admin/database-health': 'db-health',
+    '/demo-calendar': 'demo-calendar',
   };
 
   var PAGE_PATH_MAP = {
@@ -314,6 +315,7 @@
     security: '/security',
     queue: '/queue',
     'db-health': '/admin/database-health',
+    'demo-calendar': '/demo-calendar',
   };
 
   function normalizePath(path) {
@@ -348,7 +350,7 @@
 
   function updateFabVisibility(pageId) {
     if (fabWrap) {
-      var hideFab = pageId === 'dashboard' || pageId === 'settings'
+      var hideFab = pageId === 'dashboard' || pageId === 'settings' || pageId === 'demo-calendar'
         || pageId === 'sales-list' || pageId === 'email-configuration'
         || pageId === 'ca-master' || pageId === 'bulk' || pageId === 'leads';
       fabWrap.classList.toggle('hidden', hideFab);
@@ -417,6 +419,7 @@
       if (!isActive && link.dataset.page === 'reports' && REPORTS_PAGES.indexOf(pageId) >= 0) isActive = true;
       if (!isActive && link.dataset.page === 'assignment' && ASSIGNMENT_PAGES.indexOf(pageId) >= 0) isActive = true;
       if (!isActive && link.dataset.page === 'ca-master' && CA_MASTER_PAGES.indexOf(pageId) >= 0) isActive = true;
+      if (!isActive && link.dataset.page === 'dashboard' && pageId === 'demo-calendar') isActive = true;
       link.classList.toggle('active', isActive);
     });
 

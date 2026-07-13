@@ -272,34 +272,86 @@ window.CAPages = (function () {
     return '<div class="ca-tab-panel' + (active ? ' active' : '') + '" data-panel="' + id + '" data-tab-group="' + group + '">' + html + '</div>';
   }
 
-  function demoCalendarSection(prefix) {
-    prefix = prefix || 'demo-cal';
-    return '<section class="mgr-panel card dash-section demo-calendar-card" id="' + prefix + '-section">' +
-      '<div class="demo-cal-head">' +
-        '<div><h3 class="mgr-panel-title"><i data-lucide="calendar-range" class="h-5 w-5 text-brand"></i> Demo Calendar</h3>' +
-        '<p class="text-caption text-slate-500 mt-1">Provider availability, bookings, and scheduling</p></div>' +
-        '<div class="demo-cal-head__actions">' +
-          '<div class="demo-cal-view-tabs" role="tablist">' +
-            '<button type="button" class="demo-cal-view-tab" data-demo-cal-view="day">Day</button>' +
-            '<button type="button" class="demo-cal-view-tab active" data-demo-cal-view="week">Week</button>' +
-            '<button type="button" class="demo-cal-view-tab" data-demo-cal-view="month">Month</button>' +
-            '<button type="button" class="demo-cal-view-tab" data-demo-cal-view="agenda">Agenda</button>' +
+  function demoCalendarDashboardCard() {
+    return '<section class="mgr-panel card dash-section demo-calendar-dash-entry" aria-label="Demo Management Calendar">' +
+      '<button type="button" class="demo-calendar-dash-entry__btn" data-nav-page="demo-calendar">' +
+        '<span class="demo-calendar-dash-entry__icon" aria-hidden="true"><i data-lucide="presentation" class="h-6 w-6 text-brand"></i></span>' +
+        '<span class="demo-calendar-dash-entry__body">' +
+          '<span class="demo-calendar-dash-entry__title">Demo Management Calendar</span>' +
+          '<span class="demo-calendar-dash-entry__desc">Track scheduled demos, follow-ups, and executive assignments</span>' +
+        '</span>' +
+        '<span class="demo-calendar-dash-entry__arrow" aria-hidden="true"><i data-lucide="arrow-right" class="h-5 w-5"></i></span>' +
+      '</button></section>';
+  }
+
+  function demoCalendarPage() {
+    return '<div class="dcp-page card mgr-panel" id="dcp-root">' +
+      '<header class="dcp-header">' +
+        '<div class="dcp-header__title">' +
+          '<h2 class="dcp-header__heading"><i data-lucide="presentation" class="h-5 w-5 text-brand"></i> Demo Management Calendar</h2>' +
+          '<p class="dcp-header__sub">Track product demos across CA firms, executives, and follow-ups.</p>' +
+        '</div>' +
+        '<div class="dcp-top-actions">' +
+          '<div class="dcp-export-icons" aria-label="Export actions">' +
+            '<button type="button" class="crm-toolbar-icon-btn" id="dcp-export-today" data-crm-tip="Export Today\'s Demos" aria-label="Export Today\'s Demos"><i data-lucide="download" class="h-4 w-4"></i></button>' +
+            '<button type="button" class="crm-toolbar-icon-btn" id="dcp-export-week" data-crm-tip="Export Weekly Demos" aria-label="Export Weekly Demos"><i data-lucide="calendar-range" class="h-4 w-4"></i></button>' +
+            '<button type="button" class="crm-toolbar-icon-btn" id="dcp-export-print" data-crm-tip="Print Demo Schedule" aria-label="Print Demo Schedule"><i data-lucide="printer" class="h-4 w-4"></i></button>' +
           '</div>' +
-          '<button type="button" class="btn-secondary btn-sm" id="demo-cal-refresh-btn" title="Refresh"><i data-lucide="refresh-cw" class="h-4 w-4"></i></button>' +
-          '<button type="button" class="btn-primary btn-sm" id="demo-cal-schedule-btn"><i data-lucide="plus" class="h-4 w-4"></i> Schedule Demo</button>' +
-        '</div></div>' +
-      '<div class="demo-cal-summary" id="' + prefix + '-summary"></div>' +
-      '<div class="demo-cal-toolbar">' +
-        '<select id="' + prefix + '-provider" class="input-field input-field-sm"><option value="">All Demo Providers</option></select>' +
-        '<input type="date" id="' + prefix + '-date" class="input-field input-field-sm" data-crm-date-input data-allow-past data-hide-preview />' +
-        '<select id="' + prefix + '-status" class="input-field input-field-sm">' +
-          '<option value="">All Statuses</option><option value="scheduled">Scheduled</option><option value="rescheduled">Rescheduled</option>' +
-          '<option value="completed">Completed</option><option value="missed">Missed</option><option value="cancelled">Cancelled</option>' +
-        '</select></div>' +
-      '<div class="demo-cal-layout">' +
-        '<div class="demo-cal-main" id="' + prefix + '-body"><p class="text-caption text-slate-400 py-4">Loading demo calendar…</p></div>' +
-        '<aside class="demo-cal-side"><h4 class="text-sm font-semibold mb-2">Available Slots</h4><div id="' + prefix + '-slots"></div></aside>' +
-      '</div></section>';
+          '<button type="button" class="crm-toolbar-icon-btn crm-toolbar-icon-btn--primary" id="dcp-add-btn" data-crm-tip="Schedule Demo" aria-label="Schedule Demo"><i data-lucide="plus" class="h-4 w-4"></i></button>' +
+          '<button type="button" class="btn-secondary btn-sm" id="dcp-reset-demo" title="Reset demo data"><i data-lucide="rotate-ccw" class="h-4 w-4"></i></button>' +
+        '</div>' +
+      '</header>' +
+      '<section class="dcp-summary" id="dcp-summary" aria-label="Demo summary"></section>' +
+      '<div class="dcp-search-bar">' +
+        '<div class="dcp-search-row">' +
+          '<input type="search" id="dcp-search-q" class="input-field input-field-sm dcp-search-input" placeholder="Search firm, CA, executive…" aria-label="Search demos" />' +
+          '<select id="dcp-search-status" class="input-field input-field-sm dcp-search-select" aria-label="Filter by status">' +
+            '<option value="">All Statuses</option><option value="scheduled">Scheduled</option><option value="completed">Completed</option>' +
+            '<option value="pending">Pending</option><option value="cancelled">Cancelled</option><option value="rescheduled">Rescheduled</option><option value="follow_up">Follow-up Required</option>' +
+            '<option value="invalid_schedule">Invalid Schedule</option>' +
+          '</select>' +
+          '<select id="dcp-search-priority" class="input-field input-field-sm dcp-search-select" aria-label="Filter by priority">' +
+            '<option value="">All Priorities</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>' +
+          '</select>' +
+          '<select id="dcp-search-executive" class="input-field input-field-sm dcp-search-select" aria-label="Filter by executive"><option value="">All Executives</option></select>' +
+          '<input type="date" id="dcp-search-date" class="input-field input-field-sm dcp-search-date" aria-label="Filter by date" />' +
+          '<button type="button" class="btn-primary btn-sm" id="dcp-search-btn"><i data-lucide="search" class="h-4 w-4"></i> Search</button>' +
+          '<button type="button" class="btn-secondary btn-sm" id="dcp-search-clear">Clear</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="dcp-filters" id="dcp-filters" role="tablist" aria-label="Demo status filters"></div>' +
+      '<div class="dcp-layout">' +
+        '<div class="dcp-main">' +
+          '<div class="dcp-top">' +
+            '<div class="dcp-month-nav">' +
+              '<button type="button" class="btn-secondary btn-sm" id="dcp-prev-month" aria-label="Previous month"><i data-lucide="chevron-left" class="h-4 w-4"></i></button>' +
+              '<input type="month" id="dcp-month-picker" class="input-field input-field-sm dcp-month-input" aria-label="Select month and year" />' +
+              '<button type="button" class="btn-secondary btn-sm" id="dcp-next-month" aria-label="Next month"><i data-lucide="chevron-right" class="h-4 w-4"></i></button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="dcp-toolbar">' +
+            '<div class="dcp-toolbar-left">' +
+              '<button type="button" class="btn-secondary btn-sm" id="dcp-today">Today</button>' +
+              '<button type="button" class="btn-secondary btn-sm" id="dcp-back">Back</button>' +
+              '<button type="button" class="btn-secondary btn-sm" id="dcp-next-nav">Next</button>' +
+            '</div>' +
+            '<div class="dcp-toolbar-title" id="dcp-title" aria-live="polite"></div>' +
+            '<div class="dcp-view-tabs" role="tablist" aria-label="Calendar view">' +
+              '<button type="button" class="dcp-view-tab active" data-dcp-view="month" role="tab">Month</button>' +
+              '<button type="button" class="dcp-view-tab" data-dcp-view="week" role="tab">Week</button>' +
+              '<button type="button" class="dcp-view-tab" data-dcp-view="day" role="tab">Day</button>' +
+              '<button type="button" class="dcp-view-tab" data-dcp-view="agenda" role="tab">Agenda</button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="dcp-body" id="dcp-body"></div>' +
+        '</div>' +
+        '<aside class="dcp-queue card" aria-label="Today\'s demo queue">' +
+          '<div class="dcp-queue-head"><h3 class="dcp-queue-title"><i data-lucide="list-ordered" class="h-4 w-4 text-brand"></i> Today\'s Demo Queue</h3></div>' +
+          '<div class="dcp-queue-list" id="dcp-queue-list"></div>' +
+        '</aside>' +
+      '</div>' +
+      '<div class="dcp-demo-foot"><span class="badge-brand">Demo Mode</span><span class="text-caption text-slate-500">Demo data is stored locally in your browser only.</span></div>' +
+    '</div>';
   }
 
   function employeeDashboardPage() {
@@ -308,7 +360,7 @@ window.CAPages = (function () {
       '<section class="dash-section" aria-label="Key metrics"><div class="dash-kpi-sections" id="emp-kpi-sections"></div></section>' +
       '<section class="mgr-panel card dash-section" id="emp-daily-targets-panel"></section>' +
       '<div id="emp-productivity-panel" class="mgr-panel card dash-productivity-panel"></div>' +
-      demoCalendarSection('demo-cal') +
+      demoCalendarDashboardCard() +
       '<div class="dash-toolbar-row">' +
         '<section class="mgr-panel card dash-quick-actions-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="zap" class="h-5 w-5 text-brand"></i> Quick Actions</h3></div><div class="emp-quick-actions dash-quick-actions" id="emp-quick-actions"></div></section>' +
         '<section class="mgr-panel card dash-activity-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="activity" class="h-5 w-5 text-brand"></i> Recent Activity</h3></div><div id="emp-activity-list" class="mgr-activity-feed dash-activity-feed"></div></section>' +
@@ -326,7 +378,7 @@ window.CAPages = (function () {
       '<header class="mgr-top card" id="mgr-top-header"></header>' +
       '<div id="mgr-employee-productivity-panel" class="mgr-panel card dash-productivity-panel hidden"></div>' +
       '<section class="dash-section" aria-label="Key metrics"><div class="dash-kpi-sections" id="mgr-kpi-sections"></div></section>' +
-      demoCalendarSection('demo-cal') +
+      demoCalendarDashboardCard() +
       '<div class="dash-toolbar-row">' +
         '<section class="mgr-panel card dash-quick-actions-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="zap" class="h-5 w-5 text-brand"></i> Quick Actions</h3></div><div id="dash-quick-actions" class="dash-quick-actions"></div></section>' +
         '<section class="mgr-panel card dash-activity-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="activity" class="h-5 w-5 text-brand"></i> Recent Activity</h3><button type="button" class="mgr-link-btn" data-nav-page="activity">View all</button></div><div id="recent-activity-list" class="mgr-activity-feed dash-activity-feed"></div></section>' +
@@ -1197,10 +1249,8 @@ window.CAPages = (function () {
     var year = new Date().getFullYear();
     return '<section class="assign-section card mb-6 assign-daily-targets-card" id="assign-yearly-targets-section">' +
       '<div class="assign-daily-targets-head">' +
-        '<div><h3 class="text-card-heading">Yearly Employee Targets</h3>' +
-        '<p class="assign-section__subtitle">Per-working-day targets for the full year. Sundays and company holidays are excluded automatically.</p></div>' +
+        '<div><h3 class="text-card-heading">Yearly Employee Targets</h3></div>' +
         '<div class="assign-daily-targets-actions" id="assign-yearly-targets-actions">' +
-          '<button type="button" class="btn-secondary btn-sm hidden" id="assign-holidays-open-btn"><i data-lucide="calendar-off" class="h-3.5 w-3.5"></i> Holidays</button>' +
           '<button type="button" class="btn-primary btn-sm hidden" id="assign-yearly-target-open-modal"><i data-lucide="target" class="h-3.5 w-3.5"></i> Assign Yearly Target</button>' +
         '</div>' +
       '</div>' +
@@ -1225,19 +1275,12 @@ window.CAPages = (function () {
       '<div class="crm-table-container scrollbar-thin assign-daily-targets-table-wrap">' +
         '<table class="ca-table w-full assign-daily-targets-table assign-daily-targets-table--compact">' +
           '<thead><tr>' +
-            '<th>Employee</th><th>Year</th><th>Working Days</th><th>Leads/day</th><th>Calls/day</th><th>Demos/day</th><th>Follow-ups/day</th>' +
+            '<th>Employee</th><th>Year</th><th>Target Working Days</th><th>Leads/day</th><th>Calls/day</th><th>Demos/day</th><th>Follow-ups/day</th>' +
             '<th>YTD Progress</th><th>Status</th><th></th>' +
           '</tr></thead>' +
           '<tbody id="assign-yearly-targets-table"><tr><td colspan="10" class="text-center text-slate-500 py-4 text-sm">Loading…</td></tr></tbody>' +
         '</table>' +
       '</div>' +
-      '<details class="assign-daily-targets-history-toggle mt-3 hidden" id="assign-company-holidays-panel">' +
-        '<summary>Company Holidays (11 yearly holidays + Sundays auto-applied)</summary>' +
-        '<div class="mt-3" id="assign-company-holidays-list"></div>' +
-        '<div class="mt-3 hidden" id="assign-company-holidays-actions">' +
-          '<button type="button" class="btn-primary btn-sm" id="assign-company-holidays-save">Save Holidays</button>' +
-        '</div>' +
-      '</details>' +
     '</section>';
   }
 
@@ -1643,6 +1686,7 @@ window.CAPages = (function () {
   function receptionPage() {
     return hdr('Reception', 'Manage visitor queue, calls, and front-desk routing.', null,
       actPrimary('Add Visitor', 'data-page-action="Add visitor to queue"')) +
+      '<p class="text-caption text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 mb-4">Preview module — sample data shown below. Full reception workflow is not yet connected to the backend.</p>' +
       kpis([
         { icon: 'users', label: 'Visitors Today', value: '24', trend: '+3' },
         { icon: 'phone-incoming', label: 'Calls Routed', value: '86', trend: '+12%' },
@@ -1835,14 +1879,13 @@ window.CAPages = (function () {
 
   /* ─── Queue ─── */
   function dbHealthPage() {
-    // TODO: Protect this dev-only page with admin authentication before production.
     return hdr(
       'Database Health',
-      'Development admin view — table counts, duplicate checks, foreign keys, API routes, and database size.',
-      'DEV · DB_HEALTH',
+      'Super Admin view — table counts, duplicate checks, foreign keys, API routes, and database size.',
+      'SUPER ADMIN · DB_HEALTH',
       actSecondary('Refresh', 'id="db-health-refresh-btn"', 'refresh-cw'),
     ) +
-      '<p class="text-caption text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 mb-6">Administrator access only. Restricted to authorized users.</p>' +
+      '<p class="text-caption text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 mb-6">Super Admin access only. Other roles cannot open this page or API.</p>' +
       '<div id="db-health-kpi-grid" class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 mb-6"></div>' +
       '<div class="grid lg:grid-cols-2 gap-4 mb-6">' +
         '<div class="card p-4"><p class="text-caption text-slate-500">Database</p><p id="db-health-db-name" class="font-semibold text-slate-900">Loading…</p><p id="db-health-db-size" class="text-caption text-slate-500 mt-1">—</p></div>' +
@@ -1917,9 +1960,9 @@ window.CAPages = (function () {
     var reportCards = '<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">' +
       reportDefs.map(function (r) {
         var navAttr = r.nav ? ' data-nav-page="' + r.nav + '"' : ' data-report="' + r.card + '" data-report-slug="' + r.slug + '"';
-        return '<div class="card-interactive p-5 flex items-center gap-4 report-card"' + navAttr + '>' +
-          '<div class="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-50 text-brand"><i data-lucide="' + (r.icon || 'file-text') + '" class="h-6 w-6"></i></div>' +
-          '<div><p class="text-card-heading">' + r.card + '</p><p class="text-caption text-slate-500 report-card-meta" data-report-slug="' + r.slug + '">Live data</p></div></div>';
+        return '<div class="card-interactive p-4 flex items-center gap-3 report-card"' + navAttr + '>' +
+          '<div class="report-card__icon flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand"><i data-lucide="' + (r.icon || 'file-text') + '" class="h-5 w-5"></i></div>' +
+          '<div><p class="text-card-heading report-card__title">' + r.card + '</p><p class="text-caption text-slate-500 report-card-meta" data-report-slug="' + r.slug + '">Live data</p></div></div>';
       }).join('') + '</div>';
     var analyticsCharts = [
       { label: 'Daily Calls', key: 'daily_calls' },
@@ -1930,7 +1973,8 @@ window.CAPages = (function () {
       { label: 'Target Achievement', key: 'target_achievement' },
     ];
 
-    return hdr('Reports', null, null,
+    return '<div class="reports-hub-page">' +
+      hdr('Reports', null, null,
       pageHeroToolbar(
         actSecondary('Export Summary', 'data-action="export" data-export="export-report"', 'download') +
         actSecondary('Export PDF', 'data-action="export" data-export="export-report-pdf"', 'file-text') +
@@ -1950,7 +1994,8 @@ window.CAPages = (function () {
       panel('reports', activeTab === 'reports', reportCards, 'reports-hub') +
       panel('analytics', activeTab === 'analytics', charts(analyticsCharts), 'reports-hub') +
       panel('activity', activeTab === 'activity', activityBody(), 'reports-hub') +
-      panel('audit', activeTab === 'audit', auditBody(), 'reports-hub');
+      panel('audit', activeTab === 'audit', auditBody(), 'reports-hub') +
+    '</div>';
   }
 
   /* ─── Activity / Audit (standalone kept for search) ─── */
@@ -2327,7 +2372,7 @@ window.CAPages = (function () {
         '</div>') +
       panel('integrations', false,
         '<div class="grid gap-4" id="integration-cards">' +
-          [{ n: 'Email SMTP', s: 'Connected', i: 'mail', badge: 'badge-success' }, { n: 'Cashfree Payments', s: 'Connected', i: 'credit-card', badge: 'badge-success' }].map(function (x) {
+          [{ n: 'Email SMTP', s: 'Configure in Settings', i: 'mail', badge: 'badge-neutral' }, { n: 'Cashfree Payments', s: 'Not configured', i: 'credit-card', badge: 'badge-neutral' }].map(function (x) {
             return '<div class="card p-4 flex items-center justify-between"><div class="flex items-center gap-3"><i data-lucide="' + x.i + '" class="h-5 w-5 text-brand"></i><span class="text-card-heading">' + x.n + '</span></div><span class="' + x.badge + '">' + x.s + '</span></div>';
           }).join('') +
           '<button type="button" class="card p-4 flex items-center justify-between w-full text-left integration-card hover:border-brand/40 transition-colors cursor-pointer" data-open-integration="whatsapp-cloud" id="whatsapp-integration-card">' +
@@ -2485,6 +2530,10 @@ window.CAPages = (function () {
     dashboard: {
       title: 'Dashboard', breadcrumb: 'Dashboard', er: 'ADMIN_DASHBOARD_METRICS',
       html: dashboardPage(),
+    },
+    'demo-calendar': {
+      title: 'Demo Management Calendar', breadcrumb: 'Dashboard / Demo Management', er: 'DEMO_CALENDAR',
+      html: demoCalendarPage(),
     },
     'ca-master': { title: 'Master Data', breadcrumb: 'Master Data', er: 'CA_MASTER', html: caMasterPage('all') },
     'recycle-bin': { title: 'Recycle Bin', breadcrumb: 'Recycle Bin', er: 'CA_MASTER', html: recycleBinPage() },

@@ -44,7 +44,6 @@ class EmployeeLeadFieldGuard
      * @var list<string>
      */
     private const ALWAYS_EDITABLE_FOR_EMPLOYEE = [
-        'mobile_no',
         'alternate_mobile_no',
         'call_status',
         'demo_status',

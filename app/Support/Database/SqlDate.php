@@ -60,7 +60,7 @@ class SqlDate
 
         $monday = self::mysqlWeekStart($column);
 
-        return "DATE_FORMAT({$monday}, '%Y-%m-%d') as {$alias}";
+        return "{$monday} as {$alias}";
     }
 
     public static function weekBucket(string $column): string

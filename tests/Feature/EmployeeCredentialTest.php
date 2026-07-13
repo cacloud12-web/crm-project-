@@ -157,8 +157,7 @@ class EmployeeCredentialTest extends TestCase
             'crm_role' => 'admin',
             'password' => 'SecurePass123',
             'password_confirmation' => 'SecurePass123',
-        ])->assertUnprocessable()
-            ->assertJsonValidationErrors(['crm_role']);
+        ])->assertForbidden();
     }
 
     public function test_password_is_not_returned_in_employee_api_response(): void

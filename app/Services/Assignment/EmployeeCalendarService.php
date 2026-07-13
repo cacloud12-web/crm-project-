@@ -4,6 +4,7 @@ namespace App\Services\Assignment;
 
 use App\Models\CompanyHoliday;
 use App\Models\EmployeeCalendarDay;
+use App\Models\EmployeeLeave;
 use App\Models\YearlyEmployeeTarget;
 use Carbon\Carbon;
 use Carbon\CarbonPeriod;
@@ -12,17 +13,16 @@ use Illuminate\Support\Facades\DB;
 
 class EmployeeCalendarService
 {
+    public function __construct(
+        private readonly YearProductivityCalendarService $productivityCalendar,
+    ) {}
+
     /**
      * @return list<string>
      */
     public function companyHolidayDatesForYear(int $year): array
     {
-        return CompanyHoliday::query()
-            ->where('is_active', true)
-            ->orderBy('sort_order')
-            ->get()
-            ->map(fn (CompanyHoliday $holiday) => $holiday->dateForYear($year))
-            ->all();
+        return $this->productivityCalendar->resolvedCompanyHolidayDates($year);
     }
 
     /**
@@ -30,16 +30,7 @@ class EmployeeCalendarService
      */
     public function companyHolidayMapForYear(int $year): array
     {
-        $map = [];
-        CompanyHoliday::query()
-            ->where('is_active', true)
-            ->orderBy('sort_order')
-            ->get()
-            ->each(function (CompanyHoliday $holiday) use (&$map, $year) {
-                $map[$holiday->dateForYear($year)] = $holiday->name;
-            });
-
-        return $map;
+        return $this->productivityCalendar->resolvedCompanyHolidayMap($year);
     }
 
     public function regenerateForTarget(YearlyEmployeeTarget $target): void
@@ -47,22 +38,33 @@ class EmployeeCalendarService
         $year = (int) $target->target_year;
         $employeeId = (int) $target->employee_id;
         $holidayMap = $this->companyHolidayMapForYear($year);
-        $start = Carbon::create($year, 1, 1)->startOfDay();
-        $end = Carbon::create($year, 12, 31)->startOfDay();
-        $rows = [];
+        $period = $this->productivityCalendar->resolveEmploymentPeriod($employeeId, $year);
+        $approvedLeaves = array_flip(
+            app(EmployeeLeaveService::class)->approvedLeaveDatesOnWorkingDays($employeeId, $year)
+        );
 
-        foreach (CarbonPeriod::create($start, $end) as $date) {
+        $rows = [];
+        foreach (CarbonPeriod::create(Carbon::create($year, 1, 1), Carbon::create($year, 12, 31)) as $date) {
             $dateString = $date->toDateString();
             $isSunday = $date->isSunday();
             $holidayName = $holidayMap[$dateString] ?? null;
+            $outsideEmployment = $dateString < $period['start'] || $dateString > $period['end'];
 
-            if ($isSunday) {
+            if ($outsideEmployment) {
+                $dayType = EmployeeCalendarDay::TYPE_INACTIVE;
+                $label = 'Inactive';
+                $lead = $call = $demo = $followup = $email = $sms = 0;
+            } elseif ($isSunday) {
                 $dayType = EmployeeCalendarDay::TYPE_SUNDAY;
                 $label = 'Sunday';
                 $lead = $call = $demo = $followup = $email = $sms = 0;
             } elseif ($holidayName !== null) {
                 $dayType = EmployeeCalendarDay::TYPE_HOLIDAY;
                 $label = $holidayName;
+                $lead = $call = $demo = $followup = $email = $sms = 0;
+            } elseif (isset($approvedLeaves[$dateString])) {
+                $dayType = EmployeeCalendarDay::TYPE_LEAVE;
+                $label = 'Leave';
                 $lead = $call = $demo = $followup = $email = $sms = 0;
             } else {
                 $dayType = EmployeeCalendarDay::TYPE_WORKING;
@@ -102,6 +104,30 @@ class EmployeeCalendarService
                 EmployeeCalendarDay::query()->insert($chunk);
             }
         });
+    }
+
+    public function applyApprovedLeaveToCalendar(EmployeeLeave $leave, YearlyEmployeeTarget $target): void
+    {
+        $dateString = $leave->leave_date->toDateString();
+        $day = EmployeeCalendarDay::query()
+            ->where('employee_id', $target->employee_id)
+            ->whereDate('calendar_date', $dateString)
+            ->first();
+
+        if (! $day || $day->day_type !== EmployeeCalendarDay::TYPE_WORKING) {
+            return;
+        }
+
+        $day->update([
+            'day_type' => EmployeeCalendarDay::TYPE_LEAVE,
+            'holiday_name' => 'Leave',
+            'lead_target' => 0,
+            'call_target' => 0,
+            'demo_target' => 0,
+            'followup_target' => 0,
+            'email_target' => 0,
+            'sms_target' => 0,
+        ]);
     }
 
     public function regenerateAllEmployeesForYear(int $year): void

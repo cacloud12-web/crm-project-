@@ -15,7 +15,7 @@ class StoreYearlyEmployeeTargetRequest extends FormRequest
     {
         return [
             'employee_id' => ['required', 'integer', 'exists:employees,employee_id'],
-            'target_year' => ['nullable', 'integer', 'min:2020', 'max:2100'],
+            'target_year' => ['required', 'integer', 'min:2020', 'max:2100'],
             'lead_target' => ['nullable', 'integer', 'min:0'],
             'call_target' => ['nullable', 'integer', 'min:0'],
             'demo_target' => ['nullable', 'integer', 'min:0'],

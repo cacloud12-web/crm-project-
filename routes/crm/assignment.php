@@ -20,10 +20,24 @@ Route::middleware(['auth', 'rbac'])->group(function () {
 
     Route::get('yearly-employee-targets/summary', [YearlyEmployeeTargetController::class, 'summary'])
         ->middleware('spa.browser:assignment');
+    Route::get('yearly-employee-targets/calendar-summary', [YearlyEmployeeTargetController::class, 'calendarSummary'])
+        ->middleware('spa.browser:assignment');
+    Route::post('yearly-employee-targets/recalculate', [YearlyEmployeeTargetController::class, 'recalculate'])
+        ->middleware('spa.browser:assignment');
     Route::get('yearly-employee-targets/current-year', [YearlyEmployeeTargetController::class, 'currentYear']);
     Route::get('yearly-employee-targets/holidays', [YearlyEmployeeTargetController::class, 'holidays'])
         ->middleware('spa.browser:assignment');
+    Route::put('yearly-employee-targets/holiday-dates', [YearlyEmployeeTargetController::class, 'syncHolidayDates'])
+        ->middleware('spa.browser:assignment');
     Route::put('yearly-employee-targets/holidays', [YearlyEmployeeTargetController::class, 'syncHolidays'])
+        ->middleware('spa.browser:assignment');
+    Route::get('yearly-employee-targets/{employeeId}/leaves', [YearlyEmployeeTargetController::class, 'leaves'])
+        ->middleware('spa.browser:assignment');
+    Route::post('yearly-employee-targets/leaves', [YearlyEmployeeTargetController::class, 'storeLeave'])
+        ->middleware('spa.browser:assignment');
+    Route::post('yearly-employee-targets/leaves/{employeeLeave}/approve', [YearlyEmployeeTargetController::class, 'approveLeave'])
+        ->middleware('spa.browser:assignment');
+    Route::post('yearly-employee-targets/leaves/{employeeLeave}/reject', [YearlyEmployeeTargetController::class, 'rejectLeave'])
         ->middleware('spa.browser:assignment');
     Route::get('yearly-employee-targets/{employeeId}/calendar', [YearlyEmployeeTargetController::class, 'calendar'])
         ->middleware('spa.browser:assignment');

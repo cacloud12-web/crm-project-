@@ -39,6 +39,7 @@ class StoreCaMasterRequest extends FormRequest
             'priority' => ['nullable', 'string', Rule::in(config('crm_leads.priorities', []))],
             'research_status' => ['nullable', 'string', Rule::in(config('crm_leads.research_statuses', []))],
             'executive_id' => 'nullable|integer|exists:employees,employee_id',
+            'created_by_employee_id' => 'nullable|integer|exists:employees,employee_id',
         ];
     }
 }

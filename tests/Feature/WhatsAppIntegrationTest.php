@@ -245,7 +245,7 @@ class WhatsAppIntegrationTest extends TestCase
         ]);
 
         $response->assertStatus(422)
-            ->assertJsonPath('message', 'Template must first be approved in Meta WhatsApp Manager. Template name does not exist in the translation');
+            ->assertJsonPath('message', 'Template Not Found or Language Mismatch. Verify the template name and language (en_US) are approved in Meta WhatsApp Manager. Meta response: Template name does not exist in the translation');
 
         $this->assertDatabaseHas('wa_message_logs', [
             'template_name' => 'task_scheduled_reminder',

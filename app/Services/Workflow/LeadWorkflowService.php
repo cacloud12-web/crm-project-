@@ -86,8 +86,10 @@ class LeadWorkflowService
             'created_by_user_id' => $actor?->id,
         ]);
 
+        $nextFollowUp = null;
         if ($current) {
             $this->automationService->completeFollowUp($current, $status, $note);
+            $nextFollowUp = $this->automationService->createSequenceFollowUp($status, $current->fresh(), $note);
         }
 
         $this->historyService->record(
@@ -110,8 +112,8 @@ class LeadWorkflowService
             $this->leadQualityHistory->markWrongNumber($lead, 'Call status: Wrong Number', $actor);
         }
 
-        $nextFollowUp = null;
-        if ($status === 'Follow-up Required' || ! empty($data['next_followup_date'])) {
+        $nextFollowUp = $nextFollowUp ?? null;
+        if (($status === 'Follow-up Required' || ! empty($data['next_followup_date'])) && $nextFollowUp === null) {
             if (empty($data['next_followup_date'])) {
                 throw new InvalidArgumentException('Follow-up date is required.');
             }

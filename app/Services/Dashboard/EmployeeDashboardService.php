@@ -8,6 +8,7 @@ use App\Models\Employee;
 use App\Models\FollowUp;
 use App\Models\LeadAssignmentEngine;
 use App\Models\Task;
+use App\Services\Assignment\DailyEmployeeTargetService;
 use App\Services\Assignment\YearlyEmployeeTargetService;
 use App\Services\Cache\CrmCacheService;
 use App\Services\Rbac\EmployeeDataScopeService;
@@ -29,6 +30,7 @@ class EmployeeDashboardService
     public function __construct(
         private readonly EmployeeDataScopeService $employeeDataScope,
         private readonly EmployeeProductivityService $employeeProductivity,
+        private readonly DailyEmployeeTargetService $dailyEmployeeTargetService,
         private readonly YearlyEmployeeTargetService $yearlyEmployeeTargetService,
         private readonly CrmCacheService $cacheService,
     ) {}
@@ -54,6 +56,7 @@ class EmployeeDashboardService
         $productivity = $this->employeeProductivity->employeeDailyMetrics($employeeId);
         $today = now()->toDateString();
         $yearlyTarget = $this->yearlyEmployeeTargetService->currentYearForEmployee($user);
+        $dailyTarget = $this->dailyEmployeeTargetService->todayForEmployee($user);
 
         return [
             'employee_id' => $employeeId,
@@ -84,7 +87,7 @@ class EmployeeDashboardService
             ],
             'productivity' => $productivity,
             'yearly_target' => $yearlyTarget,
-            'daily_target' => $yearlyTarget,
+            'daily_target' => $dailyTarget,
             'today_work' => [
                 'followups_due' => $followUpCounts['due_today'],
                 'followups_overdue' => $followUpCounts['overdue'],

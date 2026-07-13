@@ -160,6 +160,7 @@ class FollowUpAutomationTest extends TestCase
             'followup_id' => $dayOne->followup_id,
             'employee_id' => $employee->employee_id,
             'outcome' => 'No Answer',
+            'remarks' => 'Still no answer on day one',
         ]);
 
         $response->assertOk();

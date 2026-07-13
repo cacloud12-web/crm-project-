@@ -315,6 +315,13 @@ window.CrmDemoCalendar = (function () {
     var date = document.getElementById('demo-cal-schedule-date').value;
     var start = document.getElementById('demo-cal-schedule-start').value;
     var end = document.getElementById('demo-cal-schedule-end').value;
+    if (window.CrmDemoCalendarData && typeof window.CrmDemoCalendarData.validateSchedule === 'function') {
+      var rulesCheck = window.CrmDemoCalendarData.validateSchedule(date, start, end || start);
+      if (!rulesCheck.valid) {
+        toast(rulesCheck.message, 'error');
+        return;
+      }
+    }
     var payload = {
       ca_id: parseInt(caId, 10),
       demo_provider_id: providerId,

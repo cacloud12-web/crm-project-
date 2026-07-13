@@ -21,6 +21,7 @@ class YearlyEmployeeTargetService
     public function __construct(
         private readonly YearlyEmployeeTargetProgressService $progressService,
         private readonly EmployeeCalendarService $calendarService,
+        private readonly YearProductivityCalendarService $productivityCalendar,
         private readonly RbacService $rbacService,
         private readonly EmployeeDataScopeService $employeeDataScope,
         private readonly ActivityLogService $activityLogService,
@@ -81,6 +82,7 @@ class YearlyEmployeeTargetService
             ],
             'items' => $list['items'],
             'year' => $list['year'],
+            'target_working_days' => $this->productivityCalendar->targetWorkingDays((int) $list['year']),
         ];
     }
 
@@ -147,6 +149,60 @@ class YearlyEmployeeTargetService
     }
 
     /**
+     * @return array<string, mixed>
+     */
+    public function calendarSummary(array $filters, ?User $user = null): array
+    {
+        $user ??= auth()->user();
+        $this->assertCanAccess($user);
+
+        $year = (int) ($filters['year'] ?? now()->year);
+        $summary = $this->productivityCalendar->buildYearSummary($year);
+        $employeeId = ! empty($filters['employee_id']) ? (int) $filters['employee_id'] : null;
+
+        $payload = [
+            'calendar_summary' => $summary,
+            'holidays' => $this->productivityCalendar->listHolidaysForYear($year),
+            'can_edit_holidays' => $this->canEdit($user),
+        ];
+
+        if ($employeeId) {
+            $this->assertCanViewEmployee($user, $employeeId);
+            $target = $this->findByEmployeeAndYear($employeeId, $year);
+            $payload['employee_summary'] = $this->productivityCalendar->buildEmployeeSummary(
+                $employeeId,
+                $year,
+                $target,
+            );
+        }
+
+        return $payload;
+    }
+
+    public function recalculate(array $filters, ?User $user = null): void
+    {
+        $user ??= auth()->user();
+        $this->assertCanEdit($user);
+
+        $year = (int) ($filters['year'] ?? now()->year);
+
+        if (! empty($filters['employee_id'])) {
+            $employeeId = (int) $filters['employee_id'];
+            $this->assertCanManageEmployee($user, $employeeId);
+            $target = $this->findByEmployeeAndYear($employeeId, $year);
+            if ($target) {
+                $this->calendarService->regenerateForTarget($target);
+                $this->cacheService->forgetYearlyEmployeeTargets($employeeId);
+            }
+
+            return;
+        }
+
+        $this->calendarService->regenerateAllEmployeesForYear($year);
+        $this->cacheService->forgetYearlyEmployeeTargets();
+    }
+
+    /**
      * @param  array<string, mixed>  $payload
      * @return array<string, mixed>
      */
@@ -174,6 +230,7 @@ class YearlyEmployeeTargetService
                 'followup_target' => (int) ($payload['followup_target'] ?? 0),
                 'email_target' => (int) ($payload['email_target'] ?? 0),
                 'sms_target' => (int) ($payload['sms_target'] ?? 0),
+                'annual_leave_allowance' => (int) ($payload['annual_leave_allowance'] ?? config('yearly_productivity.leave_allowance', 12)),
                 'notes' => $payload['notes'] ?? null,
                 'created_by' => $user->id,
                 'updated_by' => $user->id,
@@ -208,6 +265,9 @@ class YearlyEmployeeTargetService
                 'followup_target' => (int) ($payload['followup_target'] ?? $target->followup_target),
                 'email_target' => (int) ($payload['email_target'] ?? $target->email_target),
                 'sms_target' => (int) ($payload['sms_target'] ?? $target->sms_target),
+                'annual_leave_allowance' => array_key_exists('annual_leave_allowance', $payload)
+                    ? (int) $payload['annual_leave_allowance']
+                    : $target->annual_leave_allowance,
                 'notes' => array_key_exists('notes', $payload) ? $payload['notes'] : $target->notes,
                 'updated_by' => $user->id,
             ])->save();
@@ -305,6 +365,7 @@ class YearlyEmployeeTargetService
                 'employee_role' => $employee->role,
                 'target_year' => $year,
                 'has_target_record' => false,
+                'target_working_days' => $this->productivityCalendar->targetWorkingDays($year),
                 'notes' => null,
                 'metrics' => [],
                 'overall_pct' => 0,
@@ -344,9 +405,19 @@ class YearlyEmployeeTargetService
             'overall_raw_pct' => $progress['overall_raw_pct'] ?? 0,
             'status' => $progress['status'] ?? 'not_started',
             'status_label' => $progress['status_label'] ?? 'Not Started',
-            'working_days_elapsed' => $progress['working_days_elapsed'] ?? 0,
-            'working_days_total' => $progress['working_days_total'] ?? 0,
-            'non_working_days' => $progress['non_working_days'] ?? 0,
+            'working_days_elapsed' => $progress['actual_effective_working_days_elapsed'] ?? $progress['working_days_elapsed'] ?? 0,
+            'working_days_total' => $progress['actual_effective_working_days_total'] ?? $progress['working_days_total'] ?? 0,
+            'standard_countable_days' => $progress['standard_countable_days'] ?? 0,
+            'target_working_days' => $progress['standard_countable_days'] ?? $this->productivityCalendar->targetWorkingDays((int) $target->target_year),
+            'standard_non_working_days' => $progress['standard_non_working_days'] ?? $this->productivityCalendar->yearlyNonWorkingDays(),
+            'actual_effective_working_days_total' => $progress['actual_effective_working_days_total'] ?? 0,
+            'actual_effective_working_days_elapsed' => $progress['actual_effective_working_days_elapsed'] ?? 0,
+            'approved_leave_used' => $progress['approved_leave_used'] ?? 0,
+            'remaining_leave_balance' => $progress['remaining_leave_balance'] ?? 0,
+            'annual_leave_allowance' => $progress['annual_leave_allowance'] ?? (int) config('yearly_productivity.leave_allowance', 12),
+            'requires_proration_review' => $progress['requires_proration_review'] ?? false,
+            'proration_review_reason' => $progress['proration_review_reason'] ?? null,
+            'calendar_summary' => $progress['calendar_summary'] ?? null,
             'achievements' => $progress['achievements'] ?? [],
         ];
     }

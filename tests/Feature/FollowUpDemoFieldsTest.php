@@ -108,7 +108,7 @@ class FollowUpDemoFieldsTest extends TestCase
         $settings = \App\Models\SmsSetting::query()->first();
         if ($settings) {
             $settings->forceFill([
-                'api_key' => 'eyJpdiI6InRlc3QiLCJ2YWx1ZSI6ImNvcnJ1cHQiLCJtYWMiOiJ0ZXN0In0=',
+                'api_key' => 'invalid-ciphertext',
                 'mode' => \App\Models\SmsSetting::MODE_SIMULATION,
             ])->save();
         }

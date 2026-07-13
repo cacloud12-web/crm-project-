@@ -58,8 +58,8 @@ class RbacService
             'send_sms' => ['campaigns', 'send_sms'],
             'assign' => ['assign', 'create'],
             'reassign' => ['reassign', 'edit'],
-            'schedule_followup' => ['schedule_followup', 'create'],
-            'schedule_demo' => ['schedule_demo', 'create'],
+            'schedule_followup' => ['schedule_followup', 'create', 'edit'],
+            'schedule_demo' => ['schedule_demo', 'create', 'edit'],
             'mark_completed' => ['mark_completed', 'edit'],
             'manage_settings' => ['manage_settings', 'edit'],
         ];
@@ -238,7 +238,11 @@ class RbacService
             return ['module' => 'employees', 'permission' => 'edit'];
         }
 
-        if (str_starts_with($path, 'admin/db-health') || str_starts_with($path, 'admin/queue-status')) {
+        if (str_starts_with($path, 'admin/db-health')) {
+            return ['module' => 'admin', 'permission' => 'manage_settings'];
+        }
+
+        if (str_starts_with($path, 'admin/queue-status')) {
             return ['module' => 'admin', 'permission' => 'reports'];
         }
 
@@ -407,6 +411,10 @@ class RbacService
 
         if ($path === 'ca-masters/trashed') {
             return ['module' => 'ca_master', 'permission' => 'delete'];
+        }
+
+        if (preg_match('#^ca-masters/\d+/research#', $path)) {
+            return ['module' => 'ca_master', 'permission' => 'edit'];
         }
 
         $prefixes = [

@@ -168,7 +168,7 @@ return [
         'activity' => ['module' => 'activity', 'permission' => 'view'],
         'security' => ['module' => 'security', 'permission' => 'view'],
         'queue' => ['module' => 'admin', 'permission' => 'view'],
-        'db-health' => ['module' => 'admin', 'permission' => 'view_reports'],
+        'db-health' => ['module' => 'admin', 'permission' => 'manage_settings'],
         'settings' => ['module' => 'settings', 'permission' => 'view'],
         'settings-email-templates' => ['module' => 'email_templates', 'permission' => 'view'],
         'settings-whatsapp-templates' => ['module' => 'whatsapp_templates', 'permission' => 'view'],
@@ -178,6 +178,7 @@ return [
         'notifications' => ['module' => 'dashboard', 'permission' => 'view'],
         'analytics' => ['module' => 'reports', 'permission' => 'view_reports'],
         'audit' => ['module' => 'activity', 'permission' => 'view'],
+        'demo-calendar' => ['module' => 'dashboard', 'permission' => 'view'],
     ],
 
     'matrix' => [
@@ -196,7 +197,7 @@ return [
             'leads' => ['view', 'edit', 'assign', 'export'],
             'assignment' => ['view', 'assign', 'reassign'],
             'campaigns' => ['view', 'send_email', 'send_sms', 'campaigns'],
-            'followups' => ['view', 'schedule_followup', 'schedule_demo', 'mark_completed'],
+            'followups' => ['view', 'schedule_followup', 'schedule_demo', 'mark_completed', 'edit'],
             'sales_list' => ['view', 'edit', 'export'],
             'reports' => ['view', 'view_reports', 'export', 'reports'],
             'settings' => ['view'],

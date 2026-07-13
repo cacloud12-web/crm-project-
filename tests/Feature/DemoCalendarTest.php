@@ -127,4 +127,40 @@ class DemoCalendarTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.provider.id', $provider->id);
     }
+
+    public function test_sunday_schedule_is_blocked_by_company_rules(): void
+    {
+        $this->actingAsAdmin();
+        $lead = $this->createLead();
+        $provider = $this->provider();
+        $sunday = Carbon::parse('next Sunday')->toDateString();
+
+        $response = $this->postJson('/demo-calendar/check-conflict', [
+            'ca_id' => $lead->ca_id,
+            'demo_provider_id' => $provider->id,
+            'demo_at' => $sunday.' 10:00:00',
+            'demo_end_at' => $sunday.' 11:00:00',
+        ])->assertOk()->json('data');
+
+        $this->assertFalse($response['available']);
+        $this->assertSame('Demos cannot be scheduled on Sundays.', $response['conflict']['message'] ?? null);
+    }
+
+    public function test_before_ten_am_is_blocked_by_company_rules(): void
+    {
+        $this->actingAsAdmin();
+        $lead = $this->createLead();
+        $provider = $this->provider();
+        $monday = Carbon::now()->next('Monday')->toDateString();
+
+        $response = $this->postJson('/demo-calendar/check-conflict', [
+            'ca_id' => $lead->ca_id,
+            'demo_provider_id' => $provider->id,
+            'demo_at' => $monday.' 09:30:00',
+            'demo_end_at' => $monday.' 10:30:00',
+        ])->assertOk()->json('data');
+
+        $this->assertFalse($response['available']);
+        $this->assertSame('Demo start time must be 10:00 AM or later.', $response['conflict']['message'] ?? null);
+    }
 }

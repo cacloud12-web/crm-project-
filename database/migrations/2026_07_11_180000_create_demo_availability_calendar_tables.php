@@ -20,7 +20,7 @@ return new class extends Migration
                 $table->unsignedSmallInteger('buffer_minutes')->default(15);
                 $table->unsignedSmallInteger('max_demos_per_day')->default(6);
                 $table->time('work_start_time')->default('10:00:00');
-                $table->time('work_end_time')->default('18:00:00');
+                $table->time('work_end_time')->default('19:00:00');
                 $table->time('break_start_time')->nullable();
                 $table->time('break_end_time')->nullable();
                 $table->json('working_days')->nullable();
@@ -115,7 +115,7 @@ return new class extends Migration
         }
 
         $defaults = [
-            ['start' => '10:00:00', 'end' => '18:00:00', 'break_start' => '13:00:00', 'break_end' => '14:00:00'],
+            ['start' => '10:00:00', 'end' => '19:00:00', 'break_start' => '13:00:00', 'break_end' => '14:00:00'],
         ];
         $workingDays = [1, 2, 3, 4, 5, 6];
         $sort = 0;

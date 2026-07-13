@@ -25,7 +25,14 @@ class LeadLastActivityTest extends TestCase
     {
         $this->actingAsAdmin();
 
-        $lead = CaMaster::query()->firstOrFail();
+        $ts = (string) microtime(true);
+        $lead = CaMaster::query()->create([
+            'ca_name' => 'Activity CA '.$ts,
+            'firm_name' => 'Activity Firm '.$ts,
+            'mobile_no' => '9'.substr(str_replace('.', '', $ts), -9),
+            'state_id' => CaMaster::query()->value('state_id'),
+            'status' => 'New',
+        ]);
         $employee = Employee::query()->where('status', 'Active')->firstOrFail();
 
         CallLog::query()->create([

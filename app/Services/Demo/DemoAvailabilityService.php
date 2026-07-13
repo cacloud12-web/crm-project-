@@ -12,6 +12,10 @@ use InvalidArgumentException;
 
 class DemoAvailabilityService
 {
+    public function __construct(
+        private readonly DemoSchedulingRulesService $schedulingRules,
+    ) {}
+
     /** @var list<string> */
     private const ACTIVE_STATUSES = [
         DemoSchedule::STATUS_SCHEDULED,
@@ -59,6 +63,24 @@ class DemoAvailabilityService
         [$start, $end] = $this->resolveWindow($data, $provider);
         $date = $start->toDateString();
 
+        try {
+            $this->schedulingRules->validate(
+                $date,
+                $start->format('H:i'),
+                $end->format('H:i'),
+            );
+        } catch (InvalidArgumentException $e) {
+            return [
+                'available' => false,
+                'conflict' => [
+                    'message' => $e->getMessage(),
+                    'type' => 'company_rules',
+                ],
+                'suggestions' => [],
+                'alternate_providers' => [],
+            ];
+        }
+
         if ($this->isOnLeave($provider->id, $date)) {
             return [
                 'available' => false,
@@ -72,10 +94,14 @@ class DemoAvailabilityService
         }
 
         if (! $this->isWorkingDay($provider, $start)) {
+            $message = $this->schedulingRules->isClosedWeekday($start)
+                ? (config('crm_demo_calendar.messages.sunday') ?? 'Demos cannot be scheduled on Sundays.')
+                : $provider->name.' is not available on '.$start->format('l').'.';
+
             return [
                 'available' => false,
                 'conflict' => [
-                    'message' => $provider->name.' is not available on '.$start->format('l').'.',
+                    'message' => $message,
                     'type' => 'non_working_day',
                 ],
                 'suggestions' => $this->nextAvailableSlots($provider, $start->copy()->addDay(), 5),
@@ -168,7 +194,12 @@ class DemoAvailabilityService
             }
 
             foreach ($bookings as $booking) {
-                if ($this->timesOverlap($slot['start_at'], $slot['end_at'], $booking->demo_at, $booking->demo_end_at ?? $booking->demo_at->copy()->addMinutes($provider->slot_duration_minutes))) {
+                if ($this->timesOverlap(
+                    Carbon::parse($slot['start_at']),
+                    Carbon::parse($slot['end_at']),
+                    $booking->demo_at,
+                    $booking->demo_end_at ?? $booking->demo_at->copy()->addMinutes($provider->slot_duration_minutes),
+                )) {
                     return array_merge($slot, [
                         'status' => $this->mapBookingStatus($booking->status),
                         'status_label' => ucfirst(str_replace('_', ' ', $booking->status)),

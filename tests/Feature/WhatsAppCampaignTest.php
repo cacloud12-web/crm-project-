@@ -262,9 +262,11 @@ class WhatsAppCampaignTest extends TestCase
         $this->seedWhatsAppSettings();
         $template = MessageTemplate::query()->where('template_name', 'task_customermp2et391nk')->first()
             ?? $this->approvedTemplate();
-        if (! $template->meta_api_name) {
-            $template->update(['meta_api_name' => 'task_customermp2et391nk']);
-        }
+        $template->update([
+            'meta_api_name' => $template->meta_api_name ?: 'task_customermp2et391nk',
+            'status' => MessageTemplate::STATUS_APPROVED,
+            'is_active' => true,
+        ]);
         $admin = $this->admin();
         $this->actingAs($admin);
 
@@ -374,7 +376,7 @@ class WhatsAppCampaignTest extends TestCase
             $components = $template['components'] ?? [];
 
             return ($template['name'] ?? null) === 'task_customermp2et391nk'
-                && ($template['language']['code'] ?? null) === 'en_US'
+                && ($template['language']['code'] ?? null) === 'en'
                 && count($components) === 2
                 && ($components[0]['type'] ?? null) === 'header'
                 && ($components[0]['parameters'][0]['type'] ?? null) === 'document'

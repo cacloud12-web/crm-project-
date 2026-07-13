@@ -67,15 +67,16 @@ class BulkCaMasterExportController extends Controller
                 $payload['performed_by'] ?? 'System',
             );
 
-            if ($summary['uses_background']) {
+            if ($summary['uses_background'] ?? false) {
                 ProcessBulkCaMasterExportJob::dispatch($summary['bulk_action_id']);
             } else {
                 $this->exportService->processExport($summary['bulk_action_id']);
                 $summary = $this->exportService->status($summary['bulk_action_id']);
                 $summary['download_ready'] = true;
+                $summary['uses_background'] = false;
             }
 
-            return ApiResponse::success($summary, $summary['uses_background']
+            return ApiResponse::success($summary, ($summary['uses_background'] ?? false)
                 ? 'Export queued for background processing'
                 : 'Export completed successfully');
         } catch (RuntimeException $e) {

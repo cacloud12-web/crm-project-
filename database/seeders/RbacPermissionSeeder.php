@@ -67,18 +67,43 @@ class RbacPermissionSeeder extends Seeder
 
                 $rows = [];
                 $now = now();
+                $grantedPermissionIds = [];
+
+                $grant = function (int $permissionId) use (&$rows, &$grantedPermissionIds, $role, $now): void {
+                    if (isset($grantedPermissionIds[$permissionId])) {
+                        return;
+                    }
+
+                    $grantedPermissionIds[$permissionId] = true;
+                    $rows[] = [
+                        'crm_role_id' => $role->id,
+                        'crm_permission_id' => $permissionId,
+                        'granted' => true,
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ];
+                };
 
                 if (isset($roleMatrix['*']) && in_array('*', $roleMatrix['*'], true)) {
                     foreach ($permissionMap as $permission) {
-                        $rows[] = [
-                            'crm_role_id' => $role->id,
-                            'crm_permission_id' => $permission->id,
-                            'granted' => true,
-                            'created_at' => $now,
-                            'updated_at' => $now,
-                        ];
+                        $grant((int) $permission->id);
                     }
                 } else {
+                    $wildcardActions = (isset($roleMatrix['*']) && is_array($roleMatrix['*']))
+                        ? $roleMatrix['*']
+                        : [];
+
+                    if ($wildcardActions !== []) {
+                        foreach ($modules as $module) {
+                            foreach ($wildcardActions as $action) {
+                                $permission = $permissionMap->get($module.'.'.$action);
+                                if ($permission) {
+                                    $grant((int) $permission->id);
+                                }
+                            }
+                        }
+                    }
+
                     foreach ($roleMatrix as $module => $moduleActions) {
                         if ($module === '*' || ! is_array($moduleActions)) {
                             continue;
@@ -86,17 +111,9 @@ class RbacPermissionSeeder extends Seeder
 
                         foreach ($moduleActions as $action) {
                             $permission = $permissionMap->get($module.'.'.$action);
-                            if (! $permission) {
-                                continue;
+                            if ($permission) {
+                                $grant((int) $permission->id);
                             }
-
-                            $rows[] = [
-                                'crm_role_id' => $role->id,
-                                'crm_permission_id' => $permission->id,
-                                'granted' => true,
-                                'created_at' => $now,
-                                'updated_at' => $now,
-                            ];
                         }
                     }
                 }

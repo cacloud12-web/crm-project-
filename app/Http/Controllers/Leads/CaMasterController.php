@@ -56,6 +56,7 @@ class CaMasterController extends Controller
             'stage_counts' => $result['stage_counts'],
             'items' => CaMasterResource::collection($result['items'])->resolve(),
             'per_stage' => $result['per_stage'],
+            'pipeline' => $result['pipeline'],
         ], 'Pipeline board loaded');
     }
 

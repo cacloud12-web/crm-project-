@@ -59,7 +59,11 @@ class SmsSetting extends Model
 
     public function hasApiKey(): bool
     {
-        $raw = $this->getRawOriginal('api_key');
+        if ($this->exists) {
+            $raw = $this->getRawOriginal('api_key');
+        } else {
+            $raw = $this->attributes['api_key'] ?? null;
+        }
 
         return filled($raw);
     }

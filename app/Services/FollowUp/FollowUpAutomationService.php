@@ -88,7 +88,8 @@ class FollowUpAutomationService
             );
         }
 
-        if (($outcomeConfig['requires_followup'] ?? false) === true) {
+        if (($outcomeConfig['requires_followup'] ?? false) === true
+            || (($outcomeConfig['advance_sequence'] ?? false) && $this->sequenceService->shouldAdvanceSequence($outcome))) {
             $nextFollowUp = $this->scheduleNextFollowUp(
                 $caId,
                 $employeeId,
@@ -392,6 +393,27 @@ class FollowUpAutomationService
         }
 
         return $followUp->fresh(['caMaster', 'employee']);
+    }
+
+    public function createSequenceFollowUp(string $outcome, FollowUp $completedFollowUp, ?string $remarks = null): ?FollowUp
+    {
+        $outcomeConfig = config('followup_automation.outcomes.'.$outcome);
+        if (! is_array($outcomeConfig) || ! ($outcomeConfig['advance_sequence'] ?? false)) {
+            return null;
+        }
+
+        if (! $this->sequenceService->shouldAdvanceSequence($outcome)) {
+            return null;
+        }
+
+        return $this->scheduleNextFollowUp(
+            (int) $completedFollowUp->ca_id,
+            (int) ($completedFollowUp->employee_id ?? 0),
+            $outcome,
+            $outcomeConfig,
+            $completedFollowUp,
+            ['remarks' => $remarks],
+        );
     }
 
     private function resolveNextSchedule(

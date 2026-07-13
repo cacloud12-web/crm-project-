@@ -2,7 +2,6 @@
 
 namespace App\Services\Assignment;
 
-use App\Models\EmployeeCalendarDay;
 use App\Models\YearlyEmployeeTarget;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -12,6 +11,8 @@ class YearlyEmployeeTargetProgressService
     public function __construct(
         private readonly DailyEmployeeTargetProgressService $dailyProgressService,
         private readonly EmployeeCalendarService $calendarService,
+        private readonly YearProductivityCalendarService $productivityCalendar,
+        private readonly EmployeeLeaveService $leaveService,
     ) {}
 
     /**
@@ -23,20 +24,28 @@ class YearlyEmployeeTargetProgressService
         $employeeId = (int) $target->employee_id;
         $untilDate ??= min(now()->toDateString(), Carbon::create($year, 12, 31)->toDateString());
 
+        $yearSummary = $this->productivityCalendar->buildYearSummary($year);
+        $employeeSummary = $this->productivityCalendar->buildEmployeeSummary($employeeId, $year, $target, $this->leaveService);
+
         $workingDays = $this->calendarService->workingDaysUpTo($employeeId, $year, $untilDate);
         $workingDates = $workingDays->pluck('calendar_date')->map(fn ($d) => $d->toDateString())->all();
 
         $achievements = $this->achievementsOnWorkingDays($employeeId, $workingDates);
-        $metrics = $this->metricDefinitions($target, $workingDays, $achievements);
-        $overall = $this->overallProgress($metrics);
-        $status = $this->resolveStatus($overall['raw_pct'], $year, $untilDate);
 
-        $totalWorkingDays = $this->calendarService->workingDayCountForYear($employeeId, $year);
-        $holidaysAndSundays = EmployeeCalendarDay::query()
-            ->where('employee_id', $employeeId)
-            ->whereYear('calendar_date', $year)
-            ->whereIn('day_type', [EmployeeCalendarDay::TYPE_HOLIDAY, EmployeeCalendarDay::TYPE_SUNDAY])
-            ->count();
+        $standardCountableDays = (int) $yearSummary['standard_countable_days'];
+        $actualElapsedDays = max(1, (int) $employeeSummary['actual_effective_working_days_elapsed']);
+        $actualTotalDays = (int) $employeeSummary['actual_effective_working_days_total'];
+
+        $metrics = $this->metricDefinitions(
+            $target,
+            $achievements,
+            $standardCountableDays,
+            $actualElapsedDays,
+            $actualTotalDays,
+        );
+
+        $overall = $this->overallProgress($metrics, useActual: true);
+        $status = $this->resolveStatus($overall['raw_pct'], $year, $untilDate);
 
         return [
             'metrics' => $metrics,
@@ -45,9 +54,18 @@ class YearlyEmployeeTargetProgressService
             'status' => $status,
             'status_label' => $this->statusLabel($status),
             'achievements' => $achievements,
-            'working_days_elapsed' => $workingDays->count(),
-            'working_days_total' => $totalWorkingDays,
-            'non_working_days' => $holidaysAndSundays,
+            'working_days_elapsed' => $actualElapsedDays,
+            'working_days_total' => $actualTotalDays,
+            'standard_countable_days' => $standardCountableDays,
+            'standard_non_working_days' => (int) $yearSummary['standard_non_working_days'],
+            'actual_effective_working_days_total' => $actualTotalDays,
+            'actual_effective_working_days_elapsed' => $actualElapsedDays,
+            'approved_leave_used' => (int) $employeeSummary['approved_leave_used'],
+            'remaining_leave_balance' => (int) $employeeSummary['remaining_leave_balance'],
+            'annual_leave_allowance' => (int) $employeeSummary['annual_leave_allowance'],
+            'requires_proration_review' => (bool) $employeeSummary['requires_proration_review'],
+            'proration_review_reason' => $employeeSummary['proration_review_reason'],
+            'calendar_summary' => $yearSummary,
             'year_end_date' => Carbon::create($year, 12, 31)->toDateString(),
             'progress_through' => $untilDate,
         ];
@@ -93,10 +111,13 @@ class YearlyEmployeeTargetProgressService
      * @param  array<string, int>  $achievements
      * @return list<array<string, mixed>>
      */
-    private function metricDefinitions(YearlyEmployeeTarget $target, Collection $workingDays, array $achievements): array
-    {
-        $workingDayCount = max(1, $workingDays->count());
-
+    private function metricDefinitions(
+        YearlyEmployeeTarget $target,
+        array $achievements,
+        int $standardCountableDays,
+        int $actualElapsedDays,
+        int $actualTotalDays,
+    ): array {
         $defs = [
             ['key' => 'lead', 'label' => 'Leads', 'daily_target' => (int) $target->lead_target, 'completed' => (int) $achievements['lead_completed']],
             ['key' => 'call', 'label' => 'Calls', 'daily_target' => (int) $target->call_target, 'completed' => (int) $achievements['call_completed']],
@@ -112,19 +133,23 @@ class YearlyEmployeeTargetProgressService
             $defs[] = ['key' => 'sms', 'label' => 'SMS', 'daily_target' => (int) $target->sms_target, 'completed' => (int) $achievements['sms_completed']];
         }
 
-        return array_map(function (array $row) use ($workingDayCount) {
+        return array_map(function (array $row) use ($standardCountableDays, $actualElapsedDays, $actualTotalDays) {
             $dailyTarget = max(0, (int) $row['daily_target']);
-            $target = $dailyTarget * $workingDayCount;
+            $standardYearlyTarget = $dailyTarget * $standardCountableDays;
+            $actualElapsedTarget = $dailyTarget * max(1, $actualElapsedDays);
+            $actualYearlyTarget = $dailyTarget * max(1, $actualTotalDays);
             $completed = max(0, (int) $row['completed']);
-            $pct = $target > 0 ? round(($completed / $target) * 100, 1) : 0.0;
+            $pct = $actualElapsedTarget > 0 ? round(($completed / $actualElapsedTarget) * 100, 1) : 0.0;
 
             return [
                 'key' => $row['key'],
                 'label' => $row['label'],
                 'daily_target' => $dailyTarget,
-                'target' => $target,
+                'standard_yearly_target' => $standardYearlyTarget,
+                'actual_yearly_target' => $actualYearlyTarget,
+                'target' => $actualElapsedTarget,
                 'completed' => $completed,
-                'remaining' => max(0, $target - $completed),
+                'remaining' => max(0, $actualElapsedTarget - $completed),
                 'pct' => min(100.0, $pct),
                 'raw_pct' => $pct,
             ];
@@ -135,7 +160,7 @@ class YearlyEmployeeTargetProgressService
      * @param  list<array<string, mixed>>  $metrics
      * @return array{display_pct: float, raw_pct: float}
      */
-    private function overallProgress(array $metrics): array
+    private function overallProgress(array $metrics, bool $useActual = true): array
     {
         $enabled = array_values(array_filter($metrics, fn (array $m) => ($m['target'] ?? 0) > 0));
 

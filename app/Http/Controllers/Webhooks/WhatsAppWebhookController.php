@@ -41,8 +41,18 @@ class WhatsAppWebhookController extends Controller
 
     public function receive(Request $request): JsonResponse
     {
+        if (! $this->verifyWebhookSignature($request)) {
+            Log::warning('whatsapp.webhook.signature_invalid', [
+                'has_signature' => $request->headers->has('X-Hub-Signature-256'),
+            ]);
+
+            return response()->json(['success' => false, 'message' => 'Invalid webhook signature.'], 403);
+        }
+
         $payload = $request->all();
-        Log::info('whatsapp.webhook.received', ['payload' => $payload]);
+        Log::info('whatsapp.webhook.received', [
+            'entry_count' => count($payload['entry'] ?? []),
+        ]);
 
         foreach ($payload['entry'] ?? [] as $entry) {
             foreach ($entry['changes'] ?? [] as $change) {
@@ -73,6 +83,23 @@ class WhatsAppWebhookController extends Controller
         }
 
         return response()->json(['success' => true]);
+    }
+
+    private function verifyWebhookSignature(Request $request): bool
+    {
+        $secret = trim((string) config('whatsapp_cloud.env_defaults.app_secret'));
+        if ($secret === '') {
+            return app()->environment(['local', 'testing']);
+        }
+
+        $signature = (string) $request->header('X-Hub-Signature-256');
+        if ($signature === '' || ! str_starts_with($signature, 'sha256=')) {
+            return false;
+        }
+
+        $expected = 'sha256='.hash_hmac('sha256', $request->getContent(), $secret);
+
+        return hash_equals($expected, $signature);
     }
 
     /**

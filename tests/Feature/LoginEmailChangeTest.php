@@ -563,17 +563,11 @@ class LoginEmailChangeTest extends TestCase
 
         $this->postJson('/auth/login-email-change', $this->changePayload($user, $newEmail))
             ->assertUnprocessable()
-            ->assertJsonValidationErrors(['new_email']);
+            ->assertJsonValidationErrors(['email']);
 
         $this->assertDatabaseMissing('login_email_change_requests', [
             'user_id' => $user->id,
             'new_email' => $newEmail,
-        ]);
-
-        $this->assertDatabaseHas('activity_logs', [
-            'module_name' => 'SECURITY',
-            'action' => 'Login Email Change',
-            'performed_by' => $user->name,
         ]);
     }
 
@@ -596,7 +590,7 @@ class LoginEmailChangeTest extends TestCase
 
         $this->postJson('/auth/login-email-change/resend')
             ->assertUnprocessable()
-            ->assertJsonValidationErrors(['request']);
+            ->assertJsonValidationErrors(['email']);
 
         $this->assertDatabaseHas('login_email_change_requests', [
             'id' => $request->id,

@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\CaMaster;
 use App\Models\DuplicateAttemptLog;
 use App\Models\Employee;
+use App\Models\LeadAssignmentEngine;
 use App\Models\LeadPhoneNumber;
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -39,7 +40,6 @@ class DuplicateLeadDetectionTest extends TestCase
 
     public function test_duplicate_create_is_blocked_and_logged_for_employee(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
         $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
         $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
 
@@ -59,16 +59,26 @@ class DuplicateLeadDetectionTest extends TestCase
             'phone_type' => 'primary',
         ]);
 
-        $this->actingAs($employee);
-
-        $this->postJson('/ca-masters', [
-            'ca_name' => 'Duplicate CA',
-            'firm_name' => 'Duplicate Firm',
-            'mobile_no' => '919123456789',
+        $assignedLead = CaMaster::query()->create([
+            'ca_name' => 'Assigned CA',
+            'firm_name' => 'Assigned Firm',
+            'mobile_no' => null,
             'state_id' => $stateId,
             'status' => 'New',
+        ]);
+        LeadAssignmentEngine::query()->create([
+            'ca_id' => $assignedLead->ca_id,
+            'employee_id' => $employeeModel->employee_id,
+            'assigned_date' => now()->toDateString(),
+            'status' => 'Active',
+        ]);
+
+        $this->actingAs($employee);
+
+        $this->putJson('/ca-masters/'.$assignedLead->ca_id, [
+            'mobile_no' => '9123456789',
         ])->assertStatus(409)
-            ->assertJsonPath('message', 'Duplicate lead detected. This number already exists.');
+            ->assertJsonPath('message', 'Duplicate Number Found. This number already exists.');
 
         $this->assertDatabaseHas('duplicate_attempt_logs', [
             'employee_id' => $employeeModel->employee_id,

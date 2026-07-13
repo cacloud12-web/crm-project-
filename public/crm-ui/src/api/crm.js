@@ -8420,7 +8420,7 @@ window.CA_CRM = (function () {
     ]);
   }
 
-  var yearlyEmployeeTargetsState = { items: [], summary: null, holidays: [], loading: false };
+  var yearlyEmployeeTargetsState = { items: [], summary: null, targetWorkingDays: null, loading: false };
 
   function canEditYearlyEmployeeTargets() {
     var role = (window.__CRM_USER__ || {}).role || 'employee';
@@ -8460,6 +8460,7 @@ window.CA_CRM = (function () {
     if (!tbody) return;
     items = items || yearlyEmployeeTargetsState.items || [];
     var statusFilter = (document.getElementById('assign-yearly-target-status-filter') || {}).value || '';
+    var defaultWorkingDays = yearlyEmployeeTargetsState.targetWorkingDays;
     if (statusFilter) items = items.filter(function (row) { return (row.status || '') === statusFilter; });
     if (!items.length) {
       tbody.innerHTML = '<tr><td colspan="10" class="text-center text-slate-500 py-4 text-sm">No yearly targets found.</td></tr>';
@@ -8467,7 +8468,6 @@ window.CA_CRM = (function () {
     }
     tbody.innerHTML = items.map(function (row) {
       var hasTarget = !!row.has_target_record;
-      var pct = Math.min(100, Number(row.overall_pct || 0));
       var actions = '';
       if (canEditYearlyEmployeeTargets()) {
         if (hasTarget) {
@@ -8477,10 +8477,11 @@ window.CA_CRM = (function () {
           actions = '<button type="button" class="ca-icon-btn" data-yearly-target-assign="' + row.employee_id + '" title="Assign"><i data-lucide="target" class="h-3.5 w-3.5"></i></button>';
         }
       }
+      var workingDays = hasTarget ? (row.target_working_days || row.standard_countable_days || defaultWorkingDays || '—') : (defaultWorkingDays || '—');
       return '<tr>' +
         '<td>' + escapeHtml(row.employee_name || '—') + '</td>' +
         '<td>' + escapeHtml(String(row.target_year || '—')) + '</td>' +
-        '<td>' + (hasTarget ? escapeHtml(String(row.working_days_elapsed || 0) + ' / ' + String(row.working_days_total || 0)) : '—') + '</td>' +
+        '<td>' + escapeHtml(String(workingDays)) + '</td>' +
         '<td>' + (hasTarget ? escapeHtml(String(row.lead_target || 0)) : '—') + '</td>' +
         '<td>' + (hasTarget ? escapeHtml(String(row.call_target || 0)) : '—') + '</td>' +
         '<td>' + (hasTarget ? escapeHtml(String(row.demo_target || 0)) : '—') + '</td>' +
@@ -8493,56 +8494,155 @@ window.CA_CRM = (function () {
     icons();
   }
 
-  function renderCompanyHolidaysList(holidays) {
-    var el = document.getElementById('assign-company-holidays-list');
-    if (!el) return;
-    holidays = holidays || [];
-    var canEdit = canEditYearlyEmployeeTargets();
-    el.innerHTML = '<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">' + holidays.map(function (h, idx) {
-      return '<div class="rounded-lg border border-slate-200 p-3">' +
-        (canEdit
-          ? '<input class="input-field input-field-sm mb-2" data-holiday-name="' + idx + '" value="' + escapeHtml(h.name || '') + '" placeholder="Holiday name" />' +
-            '<div class="flex gap-2"><input type="number" min="1" max="12" class="input-field input-field-sm w-16" data-holiday-month="' + idx + '" value="' + (h.month || 1) + '" /><input type="number" min="1" max="31" class="input-field input-field-sm w-16" data-holiday-day="' + idx + '" value="' + (h.day || 1) + '" /></div>'
-          : '<p class="font-medium">' + escapeHtml(h.name || '') + '</p><p class="text-caption text-slate-500">' + escapeHtml(h.display_date || '') + '</p>') +
-      '</div>';
-    }).join('') + '</div>';
+  function updateYearlyTargetPreview() {
+    var preview = document.getElementById('assign-yearly-target-preview');
+    if (!preview) return;
+    var year = parseInt((document.getElementById('assign-yearly-target-year-input') || {}).value || new Date().getFullYear(), 10);
+    var workingDays = yearlyEmployeeTargetsState.targetWorkingDays;
+    if (!workingDays || !year) {
+      preview.classList.add('hidden');
+      return;
+    }
+    var leads = parseInt((document.getElementById('assign-yearly-target-leads') || {}).value, 10) || 0;
+    var calls = parseInt((document.getElementById('assign-yearly-target-calls') || {}).value, 10) || 0;
+    var demos = parseInt((document.getElementById('assign-yearly-target-demos') || {}).value, 10) || 0;
+    var followups = parseInt((document.getElementById('assign-yearly-target-followups') || {}).value, 10) || 0;
+    function setText(id, value) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = value;
+    }
+    setText('assign-yearly-preview-year', year);
+    setText('assign-yearly-preview-days', workingDays);
+    setText('assign-yearly-preview-leads', (leads * workingDays).toLocaleString('en-IN'));
+    setText('assign-yearly-preview-calls', (calls * workingDays).toLocaleString('en-IN'));
+    setText('assign-yearly-preview-demos', (demos * workingDays).toLocaleString('en-IN'));
+    setText('assign-yearly-preview-followups', (followups * workingDays).toLocaleString('en-IN'));
+    preview.classList.remove('hidden');
   }
 
-  function loadCompanyHolidays() {
-    return apiFetch('/yearly-employee-targets/holidays').then(function (body) {
-      yearlyEmployeeTargetsState.holidays = (body.data || {}).items || [];
-      renderCompanyHolidaysList(yearlyEmployeeTargetsState.holidays);
-      var panel = document.getElementById('assign-company-holidays-panel');
-      var actions = document.getElementById('assign-company-holidays-actions');
-      if (panel && canEditYearlyEmployeeTargets()) panel.classList.remove('hidden');
-      if (actions) actions.classList.toggle('hidden', !canEditYearlyEmployeeTargets());
-    }).catch(function () {});
-  }
-
-  function saveCompanyHolidays() {
-    var holidays = (yearlyEmployeeTargetsState.holidays || []).map(function (h, idx) {
-      var nameEl = document.querySelector('[data-holiday-name="' + idx + '"]');
-      var monthEl = document.querySelector('[data-holiday-month="' + idx + '"]');
-      var dayEl = document.querySelector('[data-holiday-day="' + idx + '"]');
-      return {
-        id: h.id,
-        name: nameEl ? nameEl.value : h.name,
-        month: monthEl ? parseInt(monthEl.value, 10) : h.month,
-        day: dayEl ? parseInt(dayEl.value, 10) : h.day,
-        is_active: true,
-      };
+  function fetchYearlyTargetWorkingDays(year) {
+    var qs = 'year=' + encodeURIComponent(year);
+    return apiFetch('/yearly-employee-targets/calendar-summary?' + qs).then(function (body) {
+      var cal = (body.data || {}).calendar_summary || {};
+      yearlyEmployeeTargetsState.targetWorkingDays = cal.target_working_days || cal.standard_countable_days || null;
+      return yearlyEmployeeTargetsState.targetWorkingDays;
+    }).catch(function () {
+      yearlyEmployeeTargetsState.targetWorkingDays = null;
+      return null;
     });
-    apiFetch('/yearly-employee-targets/holidays', {
+  }
+
+  function openViewHolidaysModal() {
+    var holidays = yearlyEmployeeTargetsState.holidays || [];
+    var tbody = document.getElementById('view-company-holidays-table');
+    if (tbody) {
+      tbody.innerHTML = holidays.length ? holidays.map(function (h) {
+        return '<tr><td>' + escapeHtml(h.name || '') + '</td><td>' + escapeHtml(h.display_date || h.holiday_date || '') + '</td><td>' +
+          (h.falls_on_sunday ? 'Falls on Sunday (counted once)' : (h.is_movable ? 'Movable festival' : 'Fixed')) + '</td></tr>';
+      }).join('') : '<tr><td colspan="3" class="text-center text-slate-500 py-3">No holidays configured.</td></tr>';
+    }
+    openModal(document.getElementById('modal-view-company-holidays'));
+    icons();
+  }
+
+  function openEditHolidayDatesModal() {
+    if (!canEditYearlyEmployeeTargets()) return;
+    var year = (document.getElementById('assign-yearly-target-year') || {}).value || new Date().getFullYear();
+    var list = document.getElementById('edit-holiday-dates-list');
+    var holidays = yearlyEmployeeTargetsState.holidays || [];
+    if (list) {
+      list.innerHTML = holidays.map(function (h, idx) {
+        var editable = h.is_movable || canEditYearlyEmployeeTargets();
+        return '<div class="rounded-lg border border-slate-200 p-3 mb-2">' +
+          '<p class="font-medium mb-1">' + escapeHtml(h.name || '') + '</p>' +
+          (editable
+            ? '<input type="date" class="input-field input-field-sm" data-edit-holiday-id="' + h.id + '" value="' + escapeHtml((h.holiday_date || '').slice(0, 10)) + '" />'
+            : '<p class="text-caption text-slate-500">' + escapeHtml(h.display_date || '') + ' (fixed)</p>') +
+        '</div>';
+      }).join('');
+    }
+    openModal(document.getElementById('modal-edit-holiday-dates'));
+    icons();
+  }
+
+  function saveHolidayDates(e) {
+    if (e) e.preventDefault();
+    if (!canEditYearlyEmployeeTargets()) return;
+    var year = parseInt((document.getElementById('assign-yearly-target-year') || {}).value || new Date().getFullYear(), 10);
+    var holidays = (yearlyEmployeeTargetsState.holidays || []).map(function (h) {
+      var input = document.querySelector('[data-edit-holiday-id="' + h.id + '"]');
+      return { id: h.id, holiday_date: input ? input.value : h.holiday_date };
+    }).filter(function (row) { return row.holiday_date; });
+    apiFetch('/yearly-employee-targets/holiday-dates', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ holidays: holidays }),
+      body: JSON.stringify({ year: year, holidays: holidays }),
     }).then(function () {
-      toast('Company holidays saved', 'success');
-      loadCompanyHolidays();
+      toast('Holiday dates saved', 'success');
+      closeModal(document.getElementById('modal-edit-holiday-dates'));
       refreshYearlyEmployeeTargets(true);
-    }).catch(function (err) {
-      toast(err.message || 'Unable to save holidays', 'error');
-    });
+    }).catch(function (err) { toast(err.message || 'Unable to save holiday dates', 'error'); });
+  }
+
+  function openEmployeeLeaveModal() {
+    var employeeId = (document.getElementById('assign-yearly-target-employee-filter') || {}).value;
+    if (!employeeId) {
+      toast('Select an employee first.', 'warning');
+      return;
+    }
+    var year = (document.getElementById('assign-yearly-target-year') || {}).value || new Date().getFullYear();
+    yearlyEmployeeTargetsState.selectedLeaveEmployeeId = employeeId;
+    apiFetch('/yearly-employee-targets/' + encodeURIComponent(employeeId) + '/leaves?year=' + encodeURIComponent(year)).then(function (body) {
+      renderEmployeeLeaveTable((body.data || {}).items || [], !!(body.data || {}).can_manage);
+      var formWrap = document.getElementById('form-employee-leave-request');
+      if (formWrap) formWrap.classList.toggle('hidden', !canEditYearlyEmployeeTargets());
+      openModal(document.getElementById('modal-employee-leave'));
+      icons();
+    }).catch(function (err) { toast(err.message || 'Unable to load leave records', 'error'); });
+  }
+
+  function renderEmployeeLeaveTable(items, canManage) {
+    var tbody = document.getElementById('employee-leave-table');
+    if (!tbody) return;
+    tbody.innerHTML = items.length ? items.map(function (row) {
+      var actions = '';
+      if (canManage && row.status === 'pending') {
+        actions = '<button type="button" class="btn-primary btn-xs" data-leave-approve="' + row.id + '">Approve</button> ' +
+          '<button type="button" class="btn-secondary btn-xs" data-leave-reject="' + row.id + '">Reject</button>';
+      }
+      return '<tr><td>' + escapeHtml(row.leave_date || '') + '</td><td>' + escapeHtml(row.status || '') + '</td><td>' + escapeHtml(row.reason || '—') + '</td><td>' + actions + '</td></tr>';
+    }).join('') : '<tr><td colspan="4" class="text-center text-slate-500 py-3">No leave records.</td></tr>';
+  }
+
+  function submitEmployeeLeaveRequest(e) {
+    if (e) e.preventDefault();
+    var employeeId = yearlyEmployeeTargetsState.selectedLeaveEmployeeId;
+    if (!employeeId) return;
+    var year = (document.getElementById('assign-yearly-target-year') || {}).value || new Date().getFullYear();
+    apiFetch('/yearly-employee-targets/leaves', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        employee_id: parseInt(employeeId, 10),
+        leave_date: document.getElementById('employee-leave-date').value,
+        target_year: parseInt(year, 10),
+        reason: document.getElementById('employee-leave-reason').value || null,
+      }),
+    }).then(function () {
+      toast('Leave request submitted', 'success');
+      openEmployeeLeaveModal();
+      refreshYearlyEmployeeTargets(true);
+    }).catch(function (err) { toast(err.message || 'Unable to submit leave', 'error'); });
+  }
+
+  function recalculateYearlyCalendars() {
+    if (!canEditYearlyEmployeeTargets()) return;
+    var params = yearlyTargetQueryParams();
+    var qs = Object.keys(params).map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); }).join('&');
+    apiFetch('/yearly-employee-targets/recalculate?' + qs, { method: 'POST' }).then(function () {
+      toast('Yearly calendars recalculated', 'success');
+      refreshYearlyEmployeeTargets(true);
+    }).catch(function (err) { toast(err.message || 'Recalculation failed', 'error'); });
   }
 
   function openYearlyTargetModal(row, employeeId) {
@@ -8554,27 +8654,29 @@ window.CA_CRM = (function () {
       document.getElementById('assign-yearly-target-id').value = row && row.id ? row.id : '';
       var yearInput = document.getElementById('assign-yearly-target-year-input');
       var yearFilter = document.getElementById('assign-yearly-target-year');
-      if (yearInput) yearInput.value = (row && row.target_year) || (yearFilter ? yearFilter.value : new Date().getFullYear());
+      var selectedYear = (row && row.target_year) || (yearFilter ? yearFilter.value : new Date().getFullYear());
+      if (yearInput) yearInput.value = selectedYear;
       resetYearlyTargetEmployeeField(row, employeeId);
       if (row && row.id) {
         document.getElementById('assign-yearly-target-leads').value = row.lead_target || 0;
         document.getElementById('assign-yearly-target-calls').value = row.call_target || 0;
         document.getElementById('assign-yearly-target-demos').value = row.demo_target || 0;
         document.getElementById('assign-yearly-target-followups').value = row.followup_target || 0;
-        document.getElementById('assign-yearly-target-email').value = row.email_target || 0;
-        document.getElementById('assign-yearly-target-sms').value = row.sms_target || 0;
         document.getElementById('assign-yearly-target-notes').value = row.notes || '';
         document.getElementById('assign-yearly-target-title').textContent = 'Edit Yearly Target';
       } else {
-        ['leads', 'calls', 'demos', 'followups', 'email', 'sms'].forEach(function (k) {
+        ['leads', 'calls', 'demos', 'followups'].forEach(function (k) {
           var el = document.getElementById('assign-yearly-target-' + k);
           if (el) el.value = 0;
         });
         document.getElementById('assign-yearly-target-notes').value = '';
         document.getElementById('assign-yearly-target-title').textContent = 'Assign Yearly Target';
       }
-      openModal(modal);
-      icons();
+      fetchYearlyTargetWorkingDays(selectedYear).then(function () {
+        updateYearlyTargetPreview();
+        openModal(modal);
+        icons();
+      });
     });
   }
 
@@ -8590,6 +8692,10 @@ window.CA_CRM = (function () {
       else if (select.value) hidden.value = String(select.value);
     }
     var employeeId = (hidden && hidden.value) || (select && select.value);
+    if (!employeeId) {
+      toast('Employee is required.', 'warning');
+      return;
+    }
     var payload = {
       employee_id: parseInt(employeeId, 10),
       target_year: parseInt(document.getElementById('assign-yearly-target-year-input').value, 10),
@@ -8597,8 +8703,8 @@ window.CA_CRM = (function () {
       call_target: parseInt(document.getElementById('assign-yearly-target-calls').value, 10) || 0,
       demo_target: parseInt(document.getElementById('assign-yearly-target-demos').value, 10) || 0,
       followup_target: parseInt(document.getElementById('assign-yearly-target-followups').value, 10) || 0,
-      email_target: parseInt(document.getElementById('assign-yearly-target-email').value, 10) || 0,
-      sms_target: parseInt(document.getElementById('assign-yearly-target-sms').value, 10) || 0,
+      email_target: 0,
+      sms_target: 0,
       notes: document.getElementById('assign-yearly-target-notes').value || '',
     };
     var url = id ? '/yearly-employee-targets/' + encodeURIComponent(id) : '/yearly-employee-targets';
@@ -8662,6 +8768,7 @@ window.CA_CRM = (function () {
       var listData = results[1].data || {};
       yearlyEmployeeTargetsState.summary = summaryData;
       yearlyEmployeeTargetsState.items = listData.items || summaryData.items || [];
+      yearlyEmployeeTargetsState.targetWorkingDays = summaryData.target_working_days || yearlyEmployeeTargetsState.targetWorkingDays;
       populateYearlyTargetEmployeeFilter();
       renderYearlyEmployeeTargetsSummary(summaryData.cards || {});
       renderYearlyEmployeeTargetsTable(yearlyEmployeeTargetsState.items);
@@ -8680,13 +8787,12 @@ window.CA_CRM = (function () {
     }
     section.classList.remove('hidden');
     bindYearlyEmployeeTargetsUi();
-    var actions = document.getElementById('assign-yearly-targets-actions');
-    if (actions) {
-      actions.querySelectorAll('button').forEach(function (btn) {
-        btn.classList.toggle('hidden', !canEditYearlyEmployeeTargets());
-      });
-    }
-    return Promise.all([loadYearlyEmployeeTargets(), loadCompanyHolidays()]);
+    var openBtn = document.getElementById('assign-yearly-target-open-modal');
+    if (openBtn) openBtn.classList.toggle('hidden', !canEditYearlyEmployeeTargets());
+    var year = (document.getElementById('assign-yearly-target-year') || {}).value || new Date().getFullYear();
+    return fetchYearlyTargetWorkingDays(year).then(function () {
+      return loadYearlyEmployeeTargets();
+    });
   }
 
   function bindYearlyEmployeeTargetsUi() {
@@ -8695,6 +8801,12 @@ window.CA_CRM = (function () {
     section._yearlyBound = true;
     var form = document.getElementById('form-assign-yearly-target');
     if (form) form.addEventListener('submit', submitYearlyTargetForm);
+    ['assign-yearly-target-leads', 'assign-yearly-target-calls', 'assign-yearly-target-demos', 'assign-yearly-target-followups'].forEach(function (id) {
+      document.getElementById(id)?.addEventListener('input', updateYearlyTargetPreview);
+    });
+    document.getElementById('assign-yearly-target-year-input')?.addEventListener('change', function (e) {
+      fetchYearlyTargetWorkingDays(e.target.value).then(updateYearlyTargetPreview);
+    });
     ['assign-yearly-target-year', 'assign-yearly-target-employee-filter', 'assign-yearly-target-status-filter'].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.addEventListener('change', function () {
@@ -8706,17 +8818,6 @@ window.CA_CRM = (function () {
       if (e.target.closest('#assign-yearly-target-open-modal')) {
         e.preventDefault();
         openYearlyTargetModal(null);
-        return;
-      }
-      if (e.target.closest('#assign-holidays-open-btn')) {
-        e.preventDefault();
-        var panel = document.getElementById('assign-company-holidays-panel');
-        if (panel) panel.open = true;
-        return;
-      }
-      if (e.target.closest('#assign-company-holidays-save')) {
-        e.preventDefault();
-        saveCompanyHolidays();
         return;
       }
       var editBtn = e.target.closest('[data-yearly-target-edit]');
@@ -9205,7 +9306,9 @@ window.CA_CRM = (function () {
     }).filter(Boolean);
     panel.innerHTML = '<div class="emp-daily-target-card">' +
       '<div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="target" class="h-5 w-5 text-brand"></i> Yearly Targets (' + (target.target_year || year) + ')</h3><span class="' + dailyTargetStatusClass(target.status) + '">' + escapeHtml(target.status_label || '') + '</span></div>' +
-      '<p class="text-caption text-slate-500 mb-3">Working days: ' + escapeHtml(String(target.working_days_elapsed || 0) + ' / ' + String(target.working_days_total || 0)) + ' · Progress counts working days only (Sundays & holidays excluded)</p>' +
+      '<p class="text-caption text-slate-500 mb-3">Standard countable days: ' + escapeHtml(String(target.standard_countable_days || '—')) +
+      ' · Actual effective days: ' + escapeHtml(String(target.actual_effective_working_days_elapsed || 0) + ' / ' + String(target.actual_effective_working_days_total || 0)) +
+      ' · Leave used: ' + escapeHtml(String(target.approved_leave_used || 0) + ' / ' + String(target.annual_leave_allowance || 12)) + '</p>' +
       '<div class="emp-daily-target-grid">' + metrics.map(function (metric) {
         var pct = Math.min(100, Number(metric.pct || 0));
         return '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">' + escapeHtml(metric.label || '') + '</p><p class="emp-daily-target-item__value">' + (metric.completed || 0) + ' / ' + (metric.target || 0) + '</p>' +
@@ -15422,11 +15525,15 @@ window.CA_CRM = (function () {
     if (pageId === 'dashboard') {
       if (isEmployeeUser()) renderEmployeeDashboard();
       else renderManagerDashboard();
-      if (window.CrmDemoCalendar && typeof window.CrmDemoCalendar.init === 'function') {
-        window.CrmDemoCalendar.init('demo-cal');
-      }
       if (window.CA_CRM && typeof CA_CRM.startNotificationPoller === 'function') {
         CA_CRM.startNotificationPoller();
+      }
+      icons();
+      return;
+    }
+    if (pageId === 'demo-calendar') {
+      if (window.CrmDemoCalendarPage && typeof window.CrmDemoCalendarPage.init === 'function') {
+        window.CrmDemoCalendarPage.init();
       }
       icons();
       return;
@@ -17841,6 +17948,10 @@ window.CA_CRM = (function () {
   }
 
   function openReport(slug) {
+    if (window.CrmReportAnalytics && typeof window.CrmReportAnalytics.open === 'function') {
+      window.CrmReportAnalytics.open(slug);
+      return;
+    }
     apiFetch('/reports/' + encodeURIComponent(slug) + getReportsFilterQuery())
       .then(function (body) {
         var report = body.data || {};
