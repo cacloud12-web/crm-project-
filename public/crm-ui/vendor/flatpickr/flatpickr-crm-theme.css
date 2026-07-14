@@ -375,13 +375,36 @@
 /* Footer: Today / Clear / Cancel / Done */
 .crm-fp-footer {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.35rem;
   padding: 0.55rem 0.75rem;
   border-top: 1px solid #f1f5f9;
   background: #fff;
   flex-shrink: 0;
+}
+
+.crm-fp-inline-error {
+  width: 100%;
+  border-radius: 8px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.35;
+  padding: 0.35rem 0.55rem;
+}
+
+.crm-fp-inline-error.hidden {
+  display: none;
+}
+
+.crm-fp-footer__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
 }
 
 .crm-fp-footer__left,

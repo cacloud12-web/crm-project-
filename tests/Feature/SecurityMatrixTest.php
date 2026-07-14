@@ -27,9 +27,33 @@ class SecurityMatrixTest extends TestCase
             ->assertOk()
             ->assertJsonPath('success', true)
             ->assertJsonStructure([
-                'data' => ['matrix', 'modules', 'permissions', 'can_edit', 'users'],
+                'data' => ['matrix', 'modules', 'permissions', 'can_edit', 'users', 'summary'],
             ])
             ->assertJsonPath('data.can_edit', true);
+    }
+
+    public function test_security_matrix_summary_returns_live_counts(): void
+    {
+        $superAdmin = User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
+        $this->actingAs($superAdmin);
+
+        $this->getJson('/admin/security-matrix')
+            ->assertOk()
+            ->assertJsonStructure([
+                'data' => [
+                    'summary' => [
+                        'role_count',
+                        'user_count',
+                        'consent_count',
+                        'dnd_count',
+                        'active_lock_count',
+                        'encryption_label',
+                        'api_rate_summary',
+                    ],
+                ],
+            ])
+            ->assertJsonPath('data.summary.role_count', fn ($value) => $value >= 1)
+            ->assertJsonPath('data.summary.user_count', fn ($value) => $value >= 1);
     }
 
     public function test_manager_gets_read_only_security_matrix(): void

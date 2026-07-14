@@ -1,8 +1,8 @@
   <aside id="sidebar" class="crm-sidebar ca-sidebar flex flex-col bg-white border-r border-slate-200/90 shadow-soft">
     <!-- Logo header (CA Cloud Desk reference) -->
     <div class="ca-sidebar-brand">
-      <button id="sidebar-toggle" type="button" class="ca-sidebar-collapse hidden lg:flex" aria-label="Collapse sidebar">
-        <i id="sidebar-toggle-icon" data-lucide="chevrons-left" class="h-4 w-4"></i>
+      <button id="sidebar-toggle" type="button" class="ca-sidebar-collapse" aria-label="Expand sidebar">
+        <i id="sidebar-toggle-icon" data-lucide="chevrons-right" class="h-4 w-4"></i>
       </button>
       <a href="#" class="ca-sidebar-logo-link" data-page="dashboard" aria-label="CA Cloud Desk home">
         <img src={{ asset('crm-ui/assets/communication/logo-ca-clouddesk.png') }} alt="CA Cloud Desk" class="ca-sidebar-logo" width="200" height="48" />

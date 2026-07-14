@@ -24,6 +24,18 @@
         return new Date(parseInt(dateOnly[1], 10), parseInt(dateOnly[2], 10) - 1, parseInt(dateOnly[3], 10), 0, 0, 0, 0);
       }
     }
+    var sqlDateTime = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (sqlDateTime) {
+      return new Date(
+        parseInt(sqlDateTime[1], 10),
+        parseInt(sqlDateTime[2], 10) - 1,
+        parseInt(sqlDateTime[3], 10),
+        parseInt(sqlDateTime[4], 10),
+        parseInt(sqlDateTime[5], 10),
+        parseInt(sqlDateTime[6] || '0', 10),
+        0,
+      );
+    }
     var normalized = raw.length === 16 && raw.indexOf('T') === 10 ? raw + ':00' : raw;
     var d = new Date(normalized);
     if (!Number.isNaN(d.getTime())) return d;
@@ -35,6 +47,94 @@
     if (ampm === 'PM' && hour < 12) hour += 12;
     if (ampm === 'AM' && hour === 12) hour = 0;
     return new Date(parseInt(match[3], 10), parseInt(match[2], 10) - 1, parseInt(match[1], 10), hour, minute, 0, 0);
+  }
+
+  function convert12To24(hour12, isPM) {
+    if (Number.isNaN(hour12) || hour12 < 1 || hour12 > 12) return null;
+    if (isPM) return hour12 === 12 ? 12 : hour12 + 12;
+    return hour12 === 12 ? 0 : hour12;
+  }
+
+  function readAmpmFromTimeEl(timeEl) {
+    if (!timeEl) return false;
+    var pmBtn = timeEl.querySelector('.crm-fp-ampm-btn[data-ampm="PM"]');
+    if (pmBtn) return pmBtn.classList.contains('is-active');
+    var native = timeEl.querySelector('.flatpickr-am-pm');
+    return native ? String(native.textContent || '').trim().toUpperCase() === 'PM' : false;
+  }
+
+  function validateTimeParts(hour12, minute) {
+    if (Number.isNaN(hour12) || hour12 < 1 || hour12 > 12) {
+      return { valid: false, message: 'Hour must be between 1 and 12.' };
+    }
+    if (Number.isNaN(minute) || minute < 0 || minute > 59) {
+      return { valid: false, message: 'Minute must be between 00 and 59.' };
+    }
+    return { valid: true, hour12: hour12, minute: minute };
+  }
+
+  function syncFlatpickrTimeFromInputs(instance) {
+    if (!instance || !instance.selectedDates.length) return null;
+    var timeEl = instance.calendarContainer && instance.calendarContainer.querySelector('.flatpickr-time');
+    if (!timeEl) return instance.selectedDates[0];
+    var hourInput = timeEl.querySelector('input.flatpickr-hour');
+    var minuteInput = timeEl.querySelector('input.flatpickr-minute');
+    if (!hourInput || !minuteInput) return instance.selectedDates[0];
+
+    var hour12 = parseInt(hourInput.value, 10);
+    var minute = parseInt(minuteInput.value, 10);
+    var isPM = readAmpmFromTimeEl(timeEl);
+    var hour24 = convert12To24(hour12, isPM);
+    if (hour24 === null) return instance.selectedDates[0];
+
+    var merged = new Date(instance.selectedDates[0]);
+    merged.setHours(hour24, Number.isNaN(minute) ? 0 : minute, 0, 0);
+    instance.setDate(merged, false);
+    if (instance._crmSyncAmpm) instance._crmSyncAmpm();
+    return merged;
+  }
+
+  function hidePickerInlineError(instance) {
+    if (!instance || !instance.calendarContainer) return;
+    var el = instance.calendarContainer.querySelector('.crm-fp-inline-error');
+    if (el) {
+      el.classList.add('hidden');
+      el.textContent = '';
+    }
+  }
+
+  function showPickerInlineError(instance, message) {
+    if (!instance || !instance.calendarContainer) return;
+    var el = instance.calendarContainer.querySelector('.crm-fp-inline-error');
+    if (!el) return;
+    el.textContent = message || 'Please check the selected date and time.';
+    el.classList.remove('hidden');
+  }
+
+  function initDraftFromConfirmed(instance, mode) {
+    if (!instance) return;
+    var confirmed = instance._crmConfirmedValue || instance.input.value || '';
+    var parsed = parseInputValue(confirmed, mode);
+    if (parsed) {
+      instance.setDate(parsed, false);
+    } else {
+      instance.clear(false);
+    }
+    if (instance._crmSyncAmpm) instance._crmSyncAmpm();
+  }
+
+  function syncAltInputFromConfirmed(instance, mode) {
+    if (!instance || !instance.altInput) return;
+    var parsed = parseInputValue(instance.input.value || '', mode);
+    if (!parsed) {
+      instance.altInput.value = '';
+      return;
+    }
+    try {
+      instance.altInput.value = instance.formatDate(parsed, instance.config.altFormat);
+    } catch (err) {
+      instance.altInput.value = formatDisplay(parsed, mode);
+    }
   }
 
   function toLocalInputValue(date, mode) {
@@ -116,25 +216,28 @@
     var footer = document.createElement('div');
     footer.className = 'crm-fp-footer';
     footer.innerHTML =
-      '<div class="crm-fp-footer__left">' +
-        '<button type="button" class="btn-secondary btn-sm" data-fp-today type="button">Today</button>' +
-        '<button type="button" class="btn-secondary btn-sm" data-fp-clear type="button">Clear</button>' +
-      '</div>' +
-      '<div class="crm-fp-footer__right">' +
-        '<button type="button" class="btn-secondary btn-sm" data-fp-cancel type="button">Cancel</button>' +
-        '<button type="button" class="btn-primary btn-sm" data-fp-done type="button">Done</button>' +
+      '<div class="crm-fp-inline-error hidden" role="alert" aria-live="polite"></div>' +
+      '<div class="crm-fp-footer__actions">' +
+        '<div class="crm-fp-footer__left">' +
+          '<button type="button" class="btn-secondary btn-sm" data-fp-today type="button">Today</button>' +
+          '<button type="button" class="btn-secondary btn-sm" data-fp-clear type="button">Clear</button>' +
+        '</div>' +
+        '<div class="crm-fp-footer__right">' +
+          '<button type="button" class="btn-secondary btn-sm" data-fp-cancel type="button">Cancel</button>' +
+          '<button type="button" class="btn-primary btn-sm" data-fp-done type="button">Done</button>' +
+        '</div>' +
       '</div>';
     instance.calendarContainer.appendChild(footer);
 
     footer.querySelector('[data-fp-today]').addEventListener('click', function (e) {
       e.preventDefault();
       e.stopPropagation();
+      hidePickerInlineError(instance);
       var today = options.mode === 'date' ? startOfDay(new Date()) : new Date();
       if (!options.allowPast && options.mode === 'datetime' && isPast(today)) {
-        today.setMinutes(today.getMinutes() + 5 - (today.getMinutes() % 5), 0, 0);
+        today.setMinutes(today.getMinutes() + (options.minuteIncrement || 5) - (today.getMinutes() % (options.minuteIncrement || 5)), 0, 0);
       }
       instance.setDate(today, false);
-      restoreConfirmedInputValue(instance);
       updateCalendarPreview(instance, options);
       if (instance._crmSyncAmpm) instance._crmSyncAmpm();
       notifyDraftChange(instance);
@@ -148,6 +251,7 @@
     footer.querySelector('[data-fp-clear]').addEventListener('click', function (e) {
       e.preventDefault();
       e.stopPropagation();
+      hidePickerInlineError(instance);
       clearPickerDraft(instance, options);
     });
 
@@ -165,6 +269,32 @@
     });
   }
 
+  function bindTimeInputListeners(instance, options) {
+    var timeEl = instance.calendarContainer && instance.calendarContainer.querySelector('.flatpickr-time');
+    if (!timeEl || timeEl.dataset.crmTimeBound === '1') return;
+    timeEl.dataset.crmTimeBound = '1';
+
+    ['.flatpickr-hour', '.flatpickr-minute'].forEach(function (selector) {
+      var input = timeEl.querySelector(selector);
+      if (!input) return;
+      input.addEventListener('input', function () {
+        hidePickerInlineError(instance);
+        notifyDraftChange(instance);
+      });
+      input.addEventListener('blur', function () {
+        syncFlatpickrTimeFromInputs(instance);
+        notifyDraftChange(instance);
+      });
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          syncFlatpickrTimeFromInputs(instance);
+          notifyDraftChange(instance);
+        }
+      });
+    });
+  }
+
   function decorateTimeSection(instance) {
     var timeEl = instance.calendarContainer.querySelector('.flatpickr-time');
     if (!timeEl || timeEl.closest('.crm-fp-time-wrap')) return;
@@ -179,6 +309,7 @@
     wrap.appendChild(label);
     wrap.appendChild(timeEl);
     decorateAmpmSegment(instance, timeEl);
+    bindTimeInputListeners(instance);
   }
 
   function decorateAmpmSegment(instance, timeEl) {
@@ -237,13 +368,12 @@
         : (parseInputValue(instance._crmConfirmedValue || '', 'datetime') || new Date());
       var hour12 = base.getHours() % 12;
       if (hour12 === 0) hour12 = 12;
-      var nextHour = ampm === 'PM'
-        ? (hour12 === 12 ? 12 : hour12 + 12)
-        : (hour12 === 12 ? 0 : hour12);
+      var nextHour = convert12To24(hour12, ampm === 'PM');
+      if (nextHour === null) return;
       base.setHours(nextHour, base.getMinutes(), 0, 0);
       instance.setDate(base, false);
       syncAmpmUI();
-      restoreConfirmedInputValue(instance);
+      hidePickerInlineError(instance);
     }
 
     amBtn.addEventListener('click', function (e) {
@@ -291,50 +421,66 @@
   }
 
   function commitPickerSelection(instance, options, preview, input) {
+    hidePickerInlineError(instance);
+    var enhancement = getPickerEnhancement(instance);
+
     if (!instance.selectedDates.length) {
       if (!options.optional) {
-        if (preview) {
-          preview.classList.add('hidden');
-        }
-        var enhancement = getPickerEnhancement(instance);
+        if (preview) preview.classList.add('hidden');
         if (enhancement) enhancement.showError();
+        showPickerInlineError(instance, options.mode === 'date' ? 'Please select a date.' : 'Please select a date and time.');
         return false;
       }
       instance._crmCommitting = true;
+      instance._crmDidCommit = true;
       input.value = '';
       instance._crmConfirmedValue = '';
       if (instance.altInput) instance.altInput.value = '';
       updatePreviewRow(instance, options, preview, false);
       instance._crmCommitting = false;
-      instance._crmDidCommit = true;
       input.dispatchEvent(new Event('change', { bubbles: true }));
       input.dispatchEvent(new Event('input', { bubbles: true }));
       instance.close();
       return true;
     }
 
+    if (options.mode !== 'date') {
+      var timeEl = instance.calendarContainer && instance.calendarContainer.querySelector('.flatpickr-time');
+      var hourInput = timeEl && timeEl.querySelector('input.flatpickr-hour');
+      var minuteInput = timeEl && timeEl.querySelector('input.flatpickr-minute');
+      var timeCheck = validateTimeParts(
+        hourInput ? parseInt(hourInput.value, 10) : NaN,
+        minuteInput ? parseInt(minuteInput.value, 10) : NaN,
+      );
+      if (!timeCheck.valid) {
+        if (enhancement) enhancement.showError(timeCheck.message);
+        showPickerInlineError(instance, timeCheck.message);
+        return false;
+      }
+      syncFlatpickrTimeFromInputs(instance);
+    }
+
     var selected = instance.selectedDates[0];
+    if (!selected || Number.isNaN(selected.getTime())) {
+      showPickerInlineError(instance, 'Please select a valid date and time.');
+      return false;
+    }
+
     if (options.requireFuture && isPast(selected)) {
-      var enh = getPickerEnhancement(instance);
-      if (enh) enh.showError('Please select a future date and time.');
+      if (enhancement) enhancement.showError('Please select a future date and time.');
+      showPickerInlineError(instance, 'Please select a future date and time.');
       return false;
     }
 
     instance._crmCommitting = true;
+    instance._crmDidCommit = true;
     var newValue = toLocalInputValue(selected, options.mode);
     input.value = newValue;
     instance._crmConfirmedValue = newValue;
-    if (instance.altInput) {
-      instance.altInput.value = formatDisplay(selected, options.mode).replace(' • ', ' ').replace(' •', '');
-      try {
-        instance.altInput.value = instance.formatDate(selected, instance.config.altFormat);
-      } catch (err) {
-        instance.altInput.value = formatDisplay(selected, options.mode);
-      }
-    }
+    syncAltInputFromConfirmed(instance, options.mode);
     updatePreviewRow(instance, options, preview, false);
+    if (enhancement) enhancement.clearError();
     instance._crmCommitting = false;
-    instance._crmDidCommit = true;
     input.dispatchEvent(new Event('change', { bubbles: true }));
     input.dispatchEvent(new Event('input', { bubbles: true }));
     instance.close();
@@ -343,10 +489,12 @@
 
   function dismissPicker(instance, opts) {
     opts = opts || {};
+    hidePickerInlineError(instance);
     if (!opts.commit) {
       revertPickerSnapshot(instance);
       var enhancement = getPickerEnhancement(instance);
       if (enhancement) {
+        enhancement.clearError();
         updatePreviewRow(instance, enhancement.options, enhancement.preview, false);
       }
     }
@@ -359,7 +507,10 @@
     restoreConfirmedInputValue(instance);
     updateCalendarPreview(instance, options);
     var enhancement = getPickerEnhancement(instance);
-    if (enhancement) updatePreviewRow(instance, options, enhancement.preview, true);
+    if (enhancement) {
+      enhancement.clearError();
+      updatePreviewRow(instance, options, enhancement.preview, true);
+    }
     if (instance._crmSyncAmpm) instance._crmSyncAmpm();
   }
 
@@ -380,14 +531,14 @@
 
   function revertPickerSnapshot(instance) {
     var snapshot = instance._crmOpenSnapshot || '';
-    if (!snapshot) {
-      instance.clear();
-      return;
-    }
     var mode = instance.input.getAttribute('data-crm-date-input') !== null ? 'date' : 'datetime';
+    instance.input.value = snapshot;
+    instance._crmConfirmedValue = snapshot;
     var parsed = parseInputValue(snapshot, mode);
     if (parsed) instance.setDate(parsed, false);
-    else instance.clear();
+    else instance.clear(false);
+    syncAltInputFromConfirmed(instance, mode);
+    if (instance._crmSyncAmpm) instance._crmSyncAmpm();
   }
 
   function positionPickerCalendar(instance) {
@@ -742,10 +893,14 @@
         capturePickerSnapshot(instance);
         error.classList.add('hidden');
         if (instance.altInput) instance.altInput.classList.remove('crm-datetime-field__trigger--error');
+        initDraftFromConfirmed(instance, mode);
+        hidePickerInlineError(instance);
         requestAnimationFrame(function () {
           positionPickerCalendar(instance);
           enhanceCalendarA11y(instance, options);
           if (instance._crmSyncAmpm) instance._crmSyncAmpm();
+          updateCalendarPreview(instance, options);
+          updatePreviewRow(instance, options, preview, true);
         });
       },
       onClose: function (selectedDates, dateStr, instance) {
@@ -812,8 +967,15 @@
         this.clearError();
         if (!date) {
           fp.clear();
+          input.value = '';
+          fp._crmConfirmedValue = '';
+          if (fp.altInput) fp.altInput.value = '';
         } else {
           fp.setDate(date, false);
+          var nextValue = toLocalInputValue(date, mode);
+          input.value = nextValue;
+          fp._crmConfirmedValue = nextValue;
+          syncAltInputFromConfirmed(fp, mode);
         }
         updatePreviewRow(fp, options, preview);
         if (!opts.silent) {
@@ -828,8 +990,12 @@
 
     if (input.value) {
       var parsed = parseInputValue(input.value, mode);
-      if (parsed) fp.setDate(parsed, false);
+      if (parsed) {
+        fp.setDate(parsed, false);
+        fp._crmConfirmedValue = toLocalInputValue(parsed, mode);
+      }
     }
+    syncAltInputFromConfirmed(fp, mode);
     updatePreviewRow(fp, options, preview);
 
     instances.set(input, instance);
@@ -954,5 +1120,12 @@
     isPast: isPast,
     close: closePopup,
     isOpen: function () { return !!(activeFlatpickr && activeFlatpickr.isOpen); },
+    testHelpers: {
+      parseInputValue: parseInputValue,
+      convert12To24: convert12To24,
+      validateTimeParts: validateTimeParts,
+      toLocalInputValue: toLocalInputValue,
+      formatDisplay: formatDisplay,
+    },
   };
 })();

@@ -7601,6 +7601,9 @@ window.CA_CRM = (function () {
     var hub = document.getElementById('cam-hub');
     if (hub) hub.dataset.camSecondary = view || '';
     if (view === 'bulk') {
+      ensureBulkImportDetailCloseHandlers();
+      ensureBulkImportDetailModalRoot();
+      bindBulkImportDetailFooterActions();
       if (typeof initBulkImportWizard === 'function') initBulkImportWizard();
       if (typeof initBulkAssignmentPanel === 'function') initBulkAssignmentPanel();
       if (typeof initBulkExportPanel === 'function') initBulkExportPanel();
@@ -17191,13 +17194,55 @@ window.CA_CRM = (function () {
     validationTimer: null,
   };
 
-  var bulkImportDetailState = { bulkActionId: null, loading: false };
+  var bulkImportDetailState = {
+    isOpen: false,
+    bulkActionId: null,
+    loading: false,
+    details: null,
+    error: null,
+    requestSeq: 0,
+    abortController: null,
+  };
 
-  function closeBulkImportDetail() {
-    var modal = document.getElementById('modal-bulk-import-detail');
-    if (!modal) return;
+  function ensureBulkImportDetailModalRoot() {
+    var modals = document.querySelectorAll('#modal-bulk-import-detail');
+    if (!modals.length) return null;
+
+    var rootModal = document.querySelector('#modal-bulk-import-detail[data-crm-modal-root="true"]')
+      || document.body.querySelector(':scope > #modal-bulk-import-detail')
+      || modals[0];
+
+    modals.forEach(function (modal) {
+      if (modal === rootModal) return;
+      if (modal.classList.contains('open')) {
+        rootModal.classList.add('open');
+      }
+      modal.remove();
+    });
+
+    if (rootModal.parentElement !== document.body) {
+      document.body.appendChild(rootModal);
+    }
+
+    return rootModal;
+  }
+
+  function resetBulkImportDetailState() {
+    if (bulkImportDetailState.abortController) {
+      bulkImportDetailState.abortController.abort();
+      bulkImportDetailState.abortController = null;
+    }
+    bulkImportDetailState.isOpen = false;
     bulkImportDetailState.bulkActionId = null;
     bulkImportDetailState.loading = false;
+    bulkImportDetailState.details = null;
+    bulkImportDetailState.error = null;
+  }
+
+  function closeBulkImportDetail() {
+    var modal = ensureBulkImportDetailModalRoot();
+    if (!modal) return;
+    resetBulkImportDetailState();
     modal.classList.remove('bulk-import-detail--loading');
     modal.setAttribute('aria-busy', 'false');
     closeModal(modal);
@@ -17232,8 +17277,43 @@ window.CA_CRM = (function () {
     }, true);
   }
 
+  function bindBulkImportDetailFooterActions() {
+    var errorBtn = document.getElementById('bulk-detail-error-report-btn');
+    var reimportBtn = document.getElementById('bulk-detail-reimport-btn');
+    var reuploadBtn = document.getElementById('bulk-detail-reupload-btn');
+    if (errorBtn && !errorBtn._detailBound) {
+      errorBtn._detailBound = true;
+      errorBtn.addEventListener('click', function () {
+        if (!bulkImportDetailState.bulkActionId) return;
+        window.location.href = '/ca-masters/bulk-import/history/' + encodeURIComponent(bulkImportDetailState.bulkActionId) + '/error-report.csv';
+      });
+    }
+    if (reimportBtn && !reimportBtn._detailBound) {
+      reimportBtn._detailBound = true;
+      reimportBtn.addEventListener('click', function () {
+        if (!bulkImportDetailState.bulkActionId) return;
+        window.location.href = '/ca-masters/bulk-import/history/' + encodeURIComponent(bulkImportDetailState.bulkActionId) + '/reimport-template.csv';
+      });
+    }
+    if (reuploadBtn && !reuploadBtn._detailBound) {
+      reuploadBtn._detailBound = true;
+      reuploadBtn.addEventListener('click', function () {
+        var modal = document.getElementById('modal-bulk-import-detail');
+        closeBulkImportDetail();
+        if (typeof window.openBulkImportWizard === 'function') window.openBulkImportWizard();
+        if (window.CA_CRM && typeof window.CA_CRM.initBulkImportWizard === 'function') {
+          var fileInput = document.getElementById('bulk-import-file');
+          if (fileInput) fileInput.click();
+        }
+        toast('Upload your corrected file to run the import wizard again', 'info');
+      });
+    }
+  }
+
   function initBulkImportWizard() {
     ensureBulkImportDetailCloseHandlers();
+    ensureBulkImportDetailModalRoot();
+    bindBulkImportDetailFooterActions();
     var wizard = document.getElementById('bulk-import-wizard');
     var zone = document.getElementById('bulk-upload-zone');
     var fileInput = document.getElementById('bulk-import-file');
@@ -18431,7 +18511,9 @@ window.CA_CRM = (function () {
       modal.setAttribute('aria-busy', loading ? 'true' : 'false');
     }
     document.querySelectorAll('[data-bulk-history-view]').forEach(function (btn) {
-      btn.disabled = !!loading;
+      var btnId = btn.getAttribute('data-bulk-history-view');
+      var isActive = bulkImportDetailState.bulkActionId && String(btnId) === String(bulkImportDetailState.bulkActionId);
+      btn.disabled = !!loading && isActive;
     });
   }
 
@@ -18479,9 +18561,10 @@ window.CA_CRM = (function () {
       if (viewBtn) {
         e.preventDefault();
         e.stopPropagation();
-        if (bulkImportDetailState.loading) return;
+        var viewId = viewBtn.getAttribute('data-bulk-history-view');
+        if (bulkImportDetailState.loading && String(bulkImportDetailState.bulkActionId) === String(viewId)) return;
         openBulkOperationDetailByType(
-          viewBtn.getAttribute('data-bulk-history-view'),
+          viewId,
           viewBtn.getAttribute('data-action-type')
         );
         return;
@@ -18531,7 +18614,7 @@ window.CA_CRM = (function () {
         if (e.target.closest('[data-bulk-history-view], [data-bulk-history-delete], button, a')) return;
         var row = e.target.closest('[data-bulk-action-id]');
         if (!row) return;
-        if (bulkImportDetailState.loading) return;
+        if (bulkImportDetailState.loading && String(bulkImportDetailState.bulkActionId) === String(row.dataset.bulkActionId)) return;
         openBulkOperationDetailByType(row.dataset.bulkActionId, row.dataset.actionType);
       });
     }
@@ -18544,13 +18627,19 @@ window.CA_CRM = (function () {
 
   function openBulkStatusUpdateDetail(bulkActionId) {
     if (!bulkActionId) return;
-    var items = window._bulkOperationsHistoryCache || [];
-    var detail = items.find(function (item) { return String(item.bulk_action_id) === String(bulkActionId); });
-    var modal = document.getElementById('modal-bulk-import-detail');
+    ensureBulkImportDetailCloseHandlers();
+    var modal = ensureBulkImportDetailModalRoot();
     var content = document.getElementById('bulk-import-detail-body');
     var title = document.getElementById('bulk-import-detail-title');
     if (!modal || !content) return;
+    bulkImportDetailState.isOpen = true;
+    bulkImportDetailState.bulkActionId = bulkActionId;
+    bulkImportDetailState.loading = false;
+    bulkImportDetailState.details = null;
+    bulkImportDetailState.error = null;
     if (title) title.innerHTML = '<span class="ca-modal-icon"><i data-lucide="refresh-cw" class="h-5 w-5"></i></span> Status Update Details ';
+    var items = window._bulkOperationsHistoryCache || [];
+    var detail = items.find(function (item) { return String(item.bulk_action_id) === String(bulkActionId); });
     if (!detail) {
       content.innerHTML = '<p class="text-body text-slate-500">Details for bulk action #' + escapeHtml(String(bulkActionId)) + '.</p>';
     } else {
@@ -18576,19 +18665,35 @@ window.CA_CRM = (function () {
     if (errorBtn) { errorBtn.classList.add('hidden'); errorBtn.disabled = true; }
     if (reimportBtn) { reimportBtn.classList.add('hidden'); reimportBtn.disabled = true; }
     if (reuploadBtn) { reuploadBtn.classList.add('hidden'); reuploadBtn.disabled = true; }
-    openModal(modal);
-    icons();
+    openExclusiveCrmModal(modal);
+    iconsIn(modal);
   }
 
   function openBulkExportDetail(bulkActionId) {
     if (!bulkActionId) return;
+    ensureBulkImportDetailCloseHandlers();
+    var modal = ensureBulkImportDetailModalRoot();
+    var content = document.getElementById('bulk-import-detail-body');
+    var title = document.getElementById('bulk-import-detail-title');
+    if (!modal || !content) return;
+
+    bulkImportDetailState.isOpen = true;
+    bulkImportDetailState.bulkActionId = bulkActionId;
+    bulkImportDetailState.details = null;
+    bulkImportDetailState.error = null;
+    setBulkImportDetailLoading(true);
+    if (title) title.innerHTML = '<span class="ca-modal-icon"><i data-lucide="download" class="h-5 w-5"></i></span> Export Details ';
+    content.innerHTML = renderBulkImportDetailSkeleton();
+    hideBulkImportDetailFooterActions();
+    openExclusiveCrmModal(modal);
+    iconsIn(modal);
+
     apiFetch('/ca-masters/bulk-export/history/' + encodeURIComponent(bulkActionId))
       .then(function (body) {
         var detail = body.data || {};
-        var modal = document.getElementById('modal-bulk-import-detail');
-        var content = document.getElementById('bulk-import-detail-body');
-        var title = document.getElementById('bulk-import-detail-title');
-        if (!modal || !content) return;
+        if (!modal || !content || String(bulkImportDetailState.bulkActionId) !== String(bulkActionId)) return;
+        bulkImportDetailState.details = detail;
+        bulkImportDetailState.error = null;
         if (title) title.innerHTML = '<span class="ca-modal-icon"><i data-lucide="download" class="h-5 w-5"></i></span> Export Details ';
         content.innerHTML =
           '<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">' +
@@ -18622,35 +18727,59 @@ window.CA_CRM = (function () {
             window.location.href = '/ca-masters/bulk-export/history/' + encodeURIComponent(bulkActionId) + '/download';
           };
         }
-        openModal(modal);
-        icons();
+        iconsIn(modal);
       })
       .catch(function (error) {
-        toast(error.message || 'Failed to load export details', 'error');
+        if (String(bulkImportDetailState.bulkActionId) !== String(bulkActionId)) return;
+        bulkImportDetailState.error = error.message || 'Failed to load export details';
+        if (content) {
+          content.innerHTML = '<p class="text-body text-rose-600">' + escapeHtml(bulkImportDetailState.error) + '</p>';
+        }
+        toast(bulkImportDetailState.error, 'error');
+      })
+      .finally(function () {
+        if (String(bulkImportDetailState.bulkActionId) === String(bulkActionId)) {
+          setBulkImportDetailLoading(false);
+        }
       });
   }
 
   function openBulkImportDetail(bulkActionId) {
     if (!bulkActionId) return;
-    if (bulkImportDetailState.loading) return;
+    if (bulkImportDetailState.loading && String(bulkImportDetailState.bulkActionId) === String(bulkActionId)) return;
 
-    var modal = document.getElementById('modal-bulk-import-detail');
+    ensureBulkImportDetailCloseHandlers();
+    bindBulkImportDetailFooterActions();
+    var modal = ensureBulkImportDetailModalRoot();
     var content = document.getElementById('bulk-import-detail-body');
     var title = document.getElementById('bulk-import-detail-title');
     if (!modal || !content) return;
 
+    if (bulkImportDetailState.abortController) {
+      bulkImportDetailState.abortController.abort();
+    }
+    var requestSeq = ++bulkImportDetailState.requestSeq;
+    var abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    bulkImportDetailState.abortController = abortController;
+
+    bulkImportDetailState.isOpen = true;
     bulkImportDetailState.bulkActionId = bulkActionId;
+    bulkImportDetailState.details = null;
+    bulkImportDetailState.error = null;
     setBulkImportDetailLoading(true);
     if (title) title.innerHTML = '<span class="ca-modal-icon"><i data-lucide="file-text" class="h-5 w-5"></i></span> Import Details ';
     content.innerHTML = renderBulkImportDetailSkeleton();
     hideBulkImportDetailFooterActions();
-    openModal(modal);
+    openExclusiveCrmModal(modal);
     iconsIn(modal);
 
-    apiFetch('/ca-masters/bulk-import/history/' + encodeURIComponent(bulkActionId))
+    apiFetch('/ca-masters/bulk-import/history/' + encodeURIComponent(bulkActionId), abortController ? { signal: abortController.signal } : {})
       .then(function (body) {
+        if (requestSeq !== bulkImportDetailState.requestSeq) return;
         var detail = body.data || {};
         if (!modal || !content || String(bulkImportDetailState.bulkActionId) !== String(bulkActionId)) return;
+        bulkImportDetailState.details = detail;
+        bulkImportDetailState.error = null;
         content.innerHTML =
           '<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">' +
             [
@@ -18669,44 +18798,26 @@ window.CA_CRM = (function () {
           '</div>' +
           '<p class="text-caption text-slate-500">Download failed rows, correct them using the sample template format, then re-upload via the import wizard.</p>';
         setBulkImportDetailFooterState(detail);
-        var errorBtn = document.getElementById('bulk-detail-error-report-btn');
-        var reimportBtn = document.getElementById('bulk-detail-reimport-btn');
-        var reuploadBtn = document.getElementById('bulk-detail-reupload-btn');
-        if (errorBtn && !errorBtn._detailBound) {
-          errorBtn._detailBound = true;
-          errorBtn.addEventListener('click', function () {
-            window.location.href = '/ca-masters/bulk-import/history/' + encodeURIComponent(bulkImportDetailState.bulkActionId) + '/error-report.csv';
-          });
-        }
-        if (reimportBtn && !reimportBtn._detailBound) {
-          reimportBtn._detailBound = true;
-          reimportBtn.addEventListener('click', function () {
-            window.location.href = '/ca-masters/bulk-import/history/' + encodeURIComponent(bulkImportDetailState.bulkActionId) + '/reimport-template.csv';
-          });
-        }
-        if (reuploadBtn && !reuploadBtn._detailBound) {
-          reuploadBtn._detailBound = true;
-          reuploadBtn.addEventListener('click', function () {
-            closeModal(modal);
-            if (typeof window.openBulkImportWizard === 'function') window.openBulkImportWizard();
-            if (window.CA_CRM && typeof window.CA_CRM.initBulkImportWizard === 'function') {
-              var fileInput = document.getElementById('bulk-import-file');
-              if (fileInput) fileInput.click();
-            }
-            toast('Upload your corrected file to run the import wizard again', 'info');
-          });
-        }
         iconsIn(modal);
       })
       .catch(function (error) {
+        if (requestSeq !== bulkImportDetailState.requestSeq) return;
+        if (error && error.name === 'AbortError') return;
         if (String(bulkImportDetailState.bulkActionId) !== String(bulkActionId)) return;
+        bulkImportDetailState.error = error.message || 'Failed to load import details';
         if (content) {
-          content.innerHTML = '<p class="text-body text-rose-600">' + escapeHtml(error.message || 'Failed to load import details') + '</p>';
+          content.innerHTML = '<p class="text-body text-rose-600">' + escapeHtml(bulkImportDetailState.error) + '</p>';
         }
-        toast(error.message || 'Failed to load import details', 'error');
+        toast(bulkImportDetailState.error, 'error');
       })
       .finally(function () {
-        setBulkImportDetailLoading(false);
+        if (requestSeq !== bulkImportDetailState.requestSeq) return;
+        if (bulkImportDetailState.abortController === abortController) {
+          bulkImportDetailState.abortController = null;
+        }
+        if (String(bulkImportDetailState.bulkActionId) === String(bulkActionId)) {
+          setBulkImportDetailLoading(false);
+        }
       });
   }
 
@@ -21251,8 +21362,24 @@ window.CA_CRM = (function () {
     apiFetch('/admin/security-matrix')
       .then(function (body) {
         var data = body.data || {};
+        var summary = data.summary || {};
         window._securityMatrix = data.matrix || {};
         window._securityCanEdit = !!data.can_edit;
+
+        function setMetric(id, text) {
+          var el = document.getElementById(id);
+          if (el && text != null) el.textContent = text;
+        }
+
+        var roleCount = summary.role_count != null ? summary.role_count : Object.keys(data.roles || {}).length;
+        var userCount = summary.user_count != null ? summary.user_count : (data.users || []).length;
+        setMetric('security-metric-rbac', roleCount + ' roles · ' + userCount + ' users');
+        setMetric('security-metric-consent', (summary.consent_count != null ? summary.consent_count : '—') + ' consent records');
+        setMetric('security-metric-dnd', (summary.dnd_count != null ? summary.dnd_count : '—') + ' DND contacts');
+        setMetric('security-metric-encrypt', summary.encryption_label || 'AES-256 via Laravel APP_KEY');
+        setMetric('security-metric-locking', (summary.active_lock_count != null ? summary.active_lock_count : 0) + ' active locks');
+        setMetric('security-metric-api', summary.api_rate_summary || 'Rate limits enforced');
+
         var rbacBody = document.getElementById('security-rbac-matrix');
         var note = document.getElementById('security-matrix-note');
         if (note) {
@@ -21327,6 +21454,9 @@ window.CA_CRM = (function () {
   function init() {
     initLeadPickerDeps();
     bindCampaignLeadPickerEvents();
+    ensureBulkImportDetailCloseHandlers();
+    ensureBulkImportDetailModalRoot();
+    bindBulkImportDetailFooterActions();
     if (window.CrmLeadPicker) {
       window.CrmLeadPicker.bind('followup', {
         onSelectionChange: function () {

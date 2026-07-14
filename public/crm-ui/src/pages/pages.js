@@ -413,6 +413,38 @@ window.CAPages = (function () {
     '</div>';
   }
 
+  function summaryNavCards(items, opts) {
+    opts = opts || {};
+    var gridCls = opts.gridCls || 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-4 mb-6';
+    var idAttr = opts.id ? ' id="' + opts.id + '"' : '';
+    return '<div class="' + gridCls + '"' + idAttr + '>' +
+      items.map(function (w) {
+        var clickable = w.static !== true;
+        var activeCls = w.active ? ' is-active' : '';
+        var staticCls = w.static ? ' crm-summary-nav-card--static' : '';
+        var panelAttr = w.panel ? ' data-security-panel="' + w.panel + '"' : '';
+        var navAttr = w.page ? ' data-nav-page="' + w.page + '"' : '';
+        var tabAttr = w.tab ? ' data-consent-tab="' + w.tab + '"' : '';
+        var metricId = w.metricId ? ' id="' + w.metricId + '"' : '';
+        var roleAttrs = clickable
+          ? ' role="button" tabindex="0"'
+          : '';
+        var ariaLabel = ' aria-label="' + w.title + '"';
+        return '<div class="card-interactive p-4 crm-kpi-card crm-summary-nav-card security-card' +
+          (clickable ? ' crm-kpi-card--clickable' : '') + activeCls + staticCls + '"' +
+          panelAttr + navAttr + tabAttr + roleAttrs + ariaLabel + '>' +
+          '<div class="flex justify-between mb-2">' +
+            '<div class="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand">' +
+              '<i data-lucide="' + w.icon + '" class="h-5 w-5"></i>' +
+            '</div>' +
+            '<span class="stat-pill bg-emerald-50 text-emerald-700">' + w.badge + '</span>' +
+          '</div>' +
+          '<p class="crm-summary-nav-card__title">' + w.title + '</p>' +
+          '<p class="crm-summary-nav-card__metric text-caption text-slate-500 mt-1"' + metricId + '>' + (w.metric || '—') + '</p>' +
+        '</div>';
+      }).join('') + '</div>';
+  }
+
   function kpis(items, opts) {
     opts = opts || {};
     var compact = !!opts.compact;
@@ -891,10 +923,23 @@ window.CAPages = (function () {
   }
 
   function bulkBody() {
-    return '<div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">' +
-        ['Bulk Import', 'Bulk Assignment', 'Bulk Export', 'Bulk Status Update'].map(function (b) {
-          var icon = b === 'Bulk Assignment' ? 'user-check' : (b === 'Bulk Export' ? 'download' : (b === 'Bulk Status Update' ? 'refresh-cw' : 'layers'));
-          return '<div class="card-interactive p-5 text-center bulk-action-card" data-bulk="' + b + '"><i data-lucide="' + icon + '" class="h-10 w-10 text-brand mx-auto mb-3"></i><p class="text-card-heading">' + b + '</p></div>';
+    var bulkItems = [
+      { bulk: 'Bulk Import', icon: 'layers' },
+      { bulk: 'Bulk Assignment', icon: 'user-check' },
+      { bulk: 'Bulk Export', icon: 'download' },
+      { bulk: 'Bulk Status Update', icon: 'refresh-cw' },
+    ];
+    return '<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 bulk-tools-grid">' +
+        bulkItems.map(function (item) {
+          return '<div class="card-interactive p-4 crm-kpi-card crm-kpi-card--clickable bulk-action-card" data-bulk="' + item.bulk + '" role="button" tabindex="0" aria-label="' + item.bulk + '">' +
+            '<div class="flex justify-between mb-2">' +
+              '<div class="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand">' +
+                '<i data-lucide="' + item.icon + '" class="h-5 w-5"></i>' +
+              '</div>' +
+              '<span class="stat-pill bg-emerald-50 text-emerald-700">Ready</span>' +
+            '</div>' +
+            '<p class="bulk-action-card__title">' + item.bulk + '</p>' +
+          '</div>';
         }).join('') +
       '</div>' +
       '<div id="bulk-import-wizard" class="card p-5 mb-6 hidden">' +
@@ -1141,21 +1186,6 @@ window.CAPages = (function () {
             '<div class="ca-modal-footer-buttons">' +
             '<button type="button" class="btn-secondary" data-close-bulk-status-confirm>Cancel</button>' +
             '<button type="button" class="btn-primary" id="bulk-status-confirm-btn"><i data-lucide="check" class="h-4 w-4"></i> Confirm Update</button>' +
-            '</div>' +
-          '</div></div></div>' +
-      '<div id="modal-bulk-import-detail" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="bulk-import-detail-title" data-close-on-backdrop="true">' +
-        '<div class="ca-modal-panel ca-modal-panel-lg">' +
-          '<div class="ca-modal-header">' +
-            '<h3 id="bulk-import-detail-title" class="ca-modal-title"><span class="ca-modal-icon"><i data-lucide="file-text" class="h-5 w-5"></i></span> Import Details</h3>' +
-            '<button type="button" class="ca-modal-close" data-close-bulk-import-detail aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>' +
-          '</div>' +
-          '<div class="ca-modal-body space-y-4" id="bulk-import-detail-body"></div>' +
-          '<div class="ca-modal-footer">' +
-            '<div class="ca-modal-footer-buttons">' +
-            '<button type="button" class="btn-secondary" data-close-bulk-import-detail>Close</button>' +
-            actSecondary('Error Report', 'id="bulk-detail-error-report-btn"', 'download') +
-            actSecondary('Failed Rows CSV', 'id="bulk-detail-reimport-btn"', 'file-up') +
-            actPrimary('Re-upload Corrected File', 'id="bulk-detail-reupload-btn"', 'upload') +
             '</div>' +
           '</div></div></div>' +
       table(['', 'Reference', 'Type', 'File', 'Total', 'Success', 'Failed', 'Status', 'Performed By', 'Created', ''], [], { tbodyId: 'bulk-actions-data-table', tableId: 'bulk-actions-table', paginationId: 'bulk-operations-pagination-slot' });
@@ -1828,19 +1858,14 @@ window.CAPages = (function () {
   /* ─── Security ─── */
   function securityPage() {
     return hdr('Security & Compliance', 'Role access, consent, encryption, and API protection.', null) +
-      '<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6" id="security-nav">' +
-        [
-          { id: 'rbac', t: 'Role Access Control', i: 'shield-check', c: '6 roles · 24 users' },
-          { id: 'consent', t: 'Consent Tracking', i: 'fingerprint', c: 'WhatsApp · Email · DND' },
-          { id: 'dnd', t: 'DND Management', i: 'ban', c: '1,247 contacts' },
-          { id: 'encrypt', t: 'Encryption Keys', i: 'lock', c: 'AES-256 at rest' },
-          { id: 'locking', t: 'Lead Locking', i: 'key', c: '28 active locks' },
-          { id: 'api', t: 'API Protection', i: 'zap', c: '1,000 req/min' },
-        ].map(function (w) {
-          return '<div class="card p-4 security-card' + (w.id === 'rbac' ? ' active' : '') + '" data-security-panel="' + w.id + '">' +
-            '<div class="flex items-center gap-3 mb-2"><i data-lucide="' + w.i + '" class="h-5 w-5 text-brand"></i><p class="text-card-heading">' + w.t + '</p></div>' +
-            '<p class="text-caption text-slate-500 mt-2">' + w.c + '</p></div>';
-        }).join('') + '</div>' +
+      summaryNavCards([
+        { panel: 'rbac', title: 'Role Access Control', icon: 'shield-check', badge: 'Live', metric: 'Loading…', metricId: 'security-metric-rbac', active: true },
+        { page: 'consent-dnd', tab: 'consent-tab', title: 'Consent Tracking', icon: 'fingerprint', badge: 'Active', metric: 'Loading…', metricId: 'security-metric-consent' },
+        { page: 'consent-dnd', tab: 'dnd-tab', title: 'DND Management', icon: 'ban', badge: 'Active', metric: 'Loading…', metricId: 'security-metric-dnd' },
+        { title: 'Encryption Keys', icon: 'lock', badge: 'Protected', metric: 'Laravel app encryption', metricId: 'security-metric-encrypt', static: true },
+        { title: 'Lead Locking', icon: 'key', badge: 'Enabled', metric: 'Loading…', metricId: 'security-metric-locking', static: true },
+        { title: 'API Protection', icon: 'zap', badge: 'Enabled', metric: 'Loading…', metricId: 'security-metric-api', static: true },
+      ], { id: 'security-nav' }) +
       '<div id="security-content">' +
         panel('rbac', true,
           '<h3 class="text-card-heading mb-4">Permission Matrix</h3>' +

@@ -714,6 +714,24 @@
     </div>
   </div>
 
+  <div id="modal-bulk-import-detail" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="bulk-import-detail-title" data-close-on-backdrop="true" data-crm-modal-root="true">
+    <div class="ca-modal-panel ca-modal-panel-lg">
+      <div class="ca-modal-header">
+        <h3 id="bulk-import-detail-title" class="ca-modal-title"><span class="ca-modal-icon"><i data-lucide="file-text" class="h-5 w-5"></i></span> Import Details</h3>
+        <button type="button" class="ca-modal-close" data-close-bulk-import-detail aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
+      </div>
+      <div class="ca-modal-body space-y-4" id="bulk-import-detail-body"></div>
+      <div class="ca-modal-footer">
+        <div class="ca-modal-footer-buttons">
+          <button type="button" class="btn-secondary" data-close-bulk-import-detail>Close</button>
+          <button type="button" class="btn-secondary hidden" id="bulk-detail-error-report-btn" disabled><i data-lucide="download" class="h-4 w-4"></i> Error Report</button>
+          <button type="button" class="btn-secondary hidden" id="bulk-detail-reimport-btn" disabled><i data-lucide="file-up" class="h-4 w-4"></i> Failed Rows CSV</button>
+          <button type="button" class="btn-primary hidden" id="bulk-detail-reupload-btn" disabled><i data-lucide="upload" class="h-4 w-4"></i> Re-upload Corrected File</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Follow-up Modal — FOLLOW_UP_MANAGEMENT -->
   <div id="modal-followup" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="followup-title">
     <div class="ca-modal-panel ca-modal-panel-lg">

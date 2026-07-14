@@ -41,3 +41,18 @@
   };
 </script>
 <link rel="icon" href="{{ asset('crm-ui/assets/communication/logo-ca-clouddesk.png') }}" />
+<script>
+  (function () {
+    var isDesktop = window.matchMedia('(min-width: 1024px)').matches;
+    var collapsed = isDesktop;
+    try {
+      ['crm_sidebar_collapsed', 'sidebar-collapsed', 'crm-sidebar-collapsed'].forEach(function (key) {
+        localStorage.removeItem(key);
+      });
+      if (isDesktop) {
+        sessionStorage.setItem('crm_sidebar_collapsed', '1');
+      }
+    } catch (e) { /* ignore storage errors */ }
+    document.documentElement.setAttribute('data-sidebar-collapsed', collapsed ? '1' : '0');
+  })();
+</script>
