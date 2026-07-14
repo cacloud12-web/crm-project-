@@ -14,7 +14,7 @@ window.CrmDemoCalendarPage = (function () {
     view: 'month',
     anchor: new Date(),
     filter: 'all',
-    search: { q: '', status: '', priority: '', date: '', executive: '' },
+    search: { date: '' },
     editingId: null,
   };
 
@@ -217,17 +217,6 @@ window.CrmDemoCalendarPage = (function () {
   }
 
   function renderSearchFilters() {
-    var execSel = $('dcp-search-executive');
-    if (execSel && execSel.options.length <= 1) {
-      var execs = Data.getExecutives(Data.getAllDemos());
-      execSel.innerHTML = '<option value="">All Executives</option>' +
-        execs.map(function (e) { return '<option value="' + escapeHtml(e) + '">' + escapeHtml(e) + '</option>'; }).join('');
-      execSel.value = state.search.executive || '';
-    }
-    var q = $('dcp-search-q');
-    if (q) q.value = state.search.q || '';
-    var pr = $('dcp-search-priority');
-    if (pr) pr.value = state.search.priority || '';
     var dt = $('dcp-search-date');
     if (dt) dt.value = state.search.date || '';
   }
@@ -278,12 +267,6 @@ window.CrmDemoCalendarPage = (function () {
       return;
     }
     el.textContent = range.start.toLocaleDateString('en-IN') + ' – ' + range.end.toLocaleDateString('en-IN');
-  }
-
-  function syncMonthPicker() {
-    var picker = $('dcp-month-picker');
-    if (!picker) return;
-    picker.value = state.anchor.getFullYear() + '-' + pad(state.anchor.getMonth() + 1);
   }
 
   function monthStatusBadges(dayDemos) {
@@ -460,26 +443,11 @@ window.CrmDemoCalendarPage = (function () {
       renderSearchFilters();
       renderQueue();
       renderTitle();
-      syncMonthPicker();
       renderBody();
       document.querySelectorAll('[data-dcp-view]').forEach(function (btn) {
         btn.classList.toggle('active', btn.getAttribute('data-dcp-view') === state.view);
       });
     });
-  }
-
-  function navigate(step) {
-    var a = new Date(state.anchor);
-    if (state.view === 'month' || state.view === 'agenda') a.setMonth(a.getMonth() + step);
-    else if (state.view === 'week') a.setDate(a.getDate() + step * 7);
-    else a.setDate(a.getDate() + step);
-    state.anchor = a;
-    renderAll();
-  }
-
-  function goToday() {
-    state.anchor = new Date();
-    renderAll();
   }
 
   function findDemo(id) {
@@ -665,19 +633,6 @@ window.CrmDemoCalendarPage = (function () {
       });
     });
 
-    $('dcp-today')?.addEventListener('click', goToday);
-    $('dcp-back')?.addEventListener('click', function () { navigate(-1); });
-    $('dcp-next-nav')?.addEventListener('click', function () { navigate(1); });
-    $('dcp-prev-month')?.addEventListener('click', function () { state.anchor.setMonth(state.anchor.getMonth() - 1); renderAll(); });
-    $('dcp-next-month')?.addEventListener('click', function () { state.anchor.setMonth(state.anchor.getMonth() + 1); renderAll(); });
-    $('dcp-month-picker')?.addEventListener('change', function (e) {
-      var val = e.target.value;
-      if (!val) return;
-      var p = val.split('-');
-      state.anchor = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, 1);
-      renderAll();
-    });
-
     $('dcp-add-btn')?.addEventListener('click', function () {
       if (isSundayDate(new Date())) {
         toast(Data.RULES.messages.sunday, 'warning');
@@ -692,20 +647,14 @@ window.CrmDemoCalendarPage = (function () {
     });
 
     function applySearch() {
-      state.search.q = ($('dcp-search-q')?.value || '').trim();
-      state.search.priority = $('dcp-search-priority')?.value || '';
       state.search.date = $('dcp-search-date')?.value || '';
-      state.search.executive = $('dcp-search-executive')?.value || '';
       renderAll();
     }
 
     $('dcp-search-btn')?.addEventListener('click', applySearch);
-    $('dcp-search-q')?.addEventListener('keydown', function (e) { if (e.key === 'Enter') applySearch(); });
-    ['dcp-search-priority', 'dcp-search-date', 'dcp-search-executive'].forEach(function (id) {
-      $(id)?.addEventListener('change', applySearch);
-    });
+    $('dcp-search-date')?.addEventListener('change', applySearch);
     $('dcp-search-clear')?.addEventListener('click', function () {
-      state.search = { q: '', status: '', priority: '', date: '', executive: '' };
+      state.search = { date: '' };
       renderAll();
     });
 
@@ -781,7 +730,7 @@ window.CrmDemoCalendarPage = (function () {
     bound = false;
     state.view = 'month';
     state.filter = 'all';
-    state.search = { q: '', status: '', priority: '', date: '', executive: '' };
+    state.search = { date: '' };
     state.anchor = new Date();
     bindUi();
     renderAll();

@@ -7,6 +7,7 @@ use App\Models\DemoSchedule;
 use App\Models\DemoScheduleHistory;
 use App\Models\Employee;
 use App\Models\User;
+use App\Services\Cache\CrmCacheService;
 use App\Services\Notifications\NotificationService;
 use App\Services\Workflow\DemoReminderService;
 use App\Services\Workflow\LeadWorkflowService;
@@ -22,6 +23,7 @@ class DemoScheduleCalendarService
         private readonly LeadWorkflowService $workflowService,
         private readonly DemoReminderService $demoReminderService,
         private readonly NotificationService $notificationService,
+        private readonly CrmCacheService $cacheService,
     ) {}
 
     /**
@@ -150,6 +152,7 @@ class DemoScheduleCalendarService
             $this->demoReminderService->scheduleForDemo($schedule->fresh(['lead', 'employee']));
             $this->recordHistory($schedule, 'rescheduled', $before, $schedule->fresh()->toArray(), $actor);
             $this->notifyRescheduled($schedule->fresh(['employee', 'provider']), $actor);
+            $this->forgetDashboardCaches($schedule);
 
             return $schedule->fresh(['employee', 'provider', 'lead']);
         });
@@ -171,6 +174,7 @@ class DemoScheduleCalendarService
         $this->demoReminderService->cancelPendingForDemo($schedule->id);
         $this->recordHistory($schedule, 'cancelled', $before, $schedule->fresh()->toArray(), $actor, $reason);
         $this->notifyCancelled($schedule->fresh(['employee', 'provider']), $actor);
+        $this->forgetDashboardCaches($schedule);
 
         return $schedule->fresh(['employee', 'provider', 'lead']);
     }
@@ -188,6 +192,7 @@ class DemoScheduleCalendarService
             'updated_by_user_id' => $actor?->id,
         ]);
         $this->recordHistory($schedule, 'completed', $before, $schedule->fresh()->toArray(), $actor);
+        $this->forgetDashboardCaches($schedule);
 
         return $schedule->fresh(['employee', 'provider', 'lead']);
     }
@@ -205,6 +210,7 @@ class DemoScheduleCalendarService
             'updated_by_user_id' => $actor?->id,
         ]);
         $this->recordHistory($schedule, 'missed', $before, $schedule->fresh()->toArray(), $actor);
+        $this->forgetDashboardCaches($schedule);
 
         return $schedule->fresh(['employee', 'provider', 'lead']);
     }
@@ -277,5 +283,19 @@ class DemoScheduleCalendarService
         $this->notificationService->notifyManagement('demo_cancelled', 'Demo Cancelled', $message, [
             'demo_schedule_id' => $schedule->id,
         ]);
+    }
+
+    private function forgetDashboardCaches(DemoSchedule $schedule): void
+    {
+        $employeeId = $schedule->employee_id ? (int) $schedule->employee_id : null;
+        if ($employeeId) {
+            $this->cacheService->forgetDailyEmployeeTargets($employeeId);
+            $this->cacheService->forgetYearlyEmployeeTargets($employeeId);
+            $this->cacheService->forgetEmployeeDashboard($employeeId);
+        }
+        $this->cacheService->forgetDashboardMetrics();
+        $this->cacheService->forgetLeadSegmentCounts();
+        $this->cacheService->forgetPipelineStageCounts();
+        $this->cacheService->forgetEmployeeRankings();
     }
 }

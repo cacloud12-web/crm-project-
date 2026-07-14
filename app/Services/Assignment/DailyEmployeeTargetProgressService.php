@@ -5,14 +5,17 @@ namespace App\Services\Assignment;
 use App\Models\CallLog;
 use App\Models\CaMaster;
 use App\Models\DailyEmployeeTarget;
-use App\Models\DemoSchedule;
 use App\Models\EmailLog;
 use App\Models\FollowUp;
 use App\Models\SmsLog;
+use App\Services\Dashboard\DemoMetricsService;
 use Carbon\Carbon;
 
 class DailyEmployeeTargetProgressService
 {
+    public function __construct(
+        private readonly DemoMetricsService $demoMetrics,
+    ) {}
     private const COMPLETED_FOLLOWUP = ['Completed', 'Closed', 'Done'];
 
     private const EMAIL_SUCCESS = ['Sent', 'Delivered', 'Mapped', 'Queued'];
@@ -167,10 +170,7 @@ class DailyEmployeeTargetProgressService
 
     private function demoCompleted(int $employeeId, string $date): int
     {
-        return DemoSchedule::query()
-            ->where('employee_id', $employeeId)
-            ->whereDate('demo_at', $date)
-            ->count();
+        return $this->demoMetrics->demosScheduledCreatedOnDate($employeeId, $date);
     }
 
     private function followupCompleted(int $employeeId, string $date): int

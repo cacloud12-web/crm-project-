@@ -4,8 +4,6 @@ namespace App\Services\Dashboard;
 
 use App\Models\CallLog;
 use App\Models\CaMaster;
-use App\Models\DemoResult;
-use App\Models\DemoSchedule;
 use App\Models\EmailLog;
 use App\Models\Employee;
 use App\Models\FollowUp;
@@ -13,6 +11,7 @@ use App\Models\LeadAssignmentEngine;
 use App\Models\SmsLog;
 use App\Models\User;
 use App\Models\WaMessageLog;
+use App\Services\Assignment\EmployeeTargetService;
 use App\Services\Rbac\EmployeeDataScopeService;
 use App\Services\Rbac\RbacService;
 use App\Support\Database\SqlAggregate;
@@ -42,6 +41,9 @@ class ManagerEmployeeProductivityService
     public function __construct(
         private readonly RbacService $rbacService,
         private readonly EmployeeDataScopeService $employeeDataScope,
+        private readonly DemoMetricsService $demoMetricsService,
+        private readonly DashboardMetricsService $dashboardMetrics,
+        private readonly EmployeeTargetService $employeeTargetService,
     ) {}
 
     /**
@@ -63,6 +65,20 @@ class ManagerEmployeeProductivityService
                 'role' => $employee->role,
                 'city' => $employee->city?->city_name,
             ])
+            ->all();
+    }
+
+    /**
+     * @return list<int>
+     */
+    public function visibleEmployeeIds(?User $viewer = null): array
+    {
+        $viewer ??= auth()->user();
+        $this->assertCanViewSelector($viewer);
+
+        return $this->visibleEmployeesQuery($viewer)
+            ->pluck('employee_id')
+            ->map(fn ($id) => (int) $id)
             ->all();
     }
 
@@ -151,43 +167,21 @@ class ManagerEmployeeProductivityService
      */
     private function leadMetrics(?int $employeeId, Carbon $from, Carbon $to): array
     {
-        $query = CaMaster::query()->countableInStatistics();
-        $this->employeeDataScope->scopeCaMasterQuery($query, $employeeId);
-        $this->applyDateRange($query, 'ca_masters.created_at', $from, $to);
-
-        $pipelineList = $this->quotedList(self::PIPELINE_STATUSES);
-        $row = $query
-            ->selectRaw('COUNT(*) as total')
-            ->selectRaw(SqlAggregate::countFilter('*', "status = 'New' OR is_newly_established = true").' as new_leads')
-            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Hot'").' as hot')
-            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Warm'").' as warm')
-            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Cold'").' as cold')
-            ->selectRaw(SqlAggregate::countFilter('*', "status IN ({$pipelineList})").' as pipeline')
-            ->selectRaw(SqlAggregate::countFilter('*', "status IN ('Active', 'Won') OR software_purchased = true").' as converted')
-            ->selectRaw(SqlAggregate::countFilter('*', "status IN ('Lost', 'Inactive')").' as lost')
-            ->first();
-
-        $total = (int) ($row->total ?? 0);
-        $converted = (int) ($row->converted ?? 0);
-
-        $assignedQuery = LeadAssignmentEngine::query()
-            ->where('status', 'Active')
-            ->whereHas('caMaster', fn ($q) => $q->countableInStatistics());
-        if ($employeeId) {
-            $assignedQuery->where('employee_id', $employeeId);
-        }
-        $this->applyDateRange($assignedQuery, 'assigned_date', $from, $to);
-        $assigned = (int) $assignedQuery->distinct()->count('ca_id');
+        $snapshot = $this->dashboardMetrics->leadSnapshotCounts($employeeId);
+        $total = (int) ($snapshot['total'] ?? 0);
+        $converted = (int) ($snapshot['converted'] ?? 0);
+        $assigned = $this->dashboardMetrics->assignedLeadSnapshotCount($employeeId);
+        $newLeads = $this->dashboardMetrics->newLeadsInPeriod($employeeId, $from, $to);
 
         return [
             'total_assigned' => $assigned,
-            'new_leads' => (int) ($row->new_leads ?? 0),
-            'hot_leads' => (int) ($row->hot ?? 0),
-            'warm_leads' => (int) ($row->warm ?? 0),
-            'cold_leads' => (int) ($row->cold ?? 0),
-            'in_pipeline' => (int) ($row->pipeline ?? 0),
+            'new_leads' => $newLeads,
+            'hot_leads' => (int) ($snapshot['hot'] ?? 0),
+            'warm_leads' => (int) ($snapshot['warm'] ?? 0),
+            'cold_leads' => (int) ($snapshot['cold'] ?? 0),
+            'in_pipeline' => (int) ($snapshot['pipeline'] ?? 0),
             'converted' => $converted,
-            'lost' => (int) ($row->lost ?? 0),
+            'lost' => (int) ($snapshot['lost'] ?? 0),
             'conversion_rate' => $total > 0 ? round(($converted / $total) * 100, 1) : 0.0,
         ];
     }
@@ -233,41 +227,7 @@ class ManagerEmployeeProductivityService
      */
     private function demoMetrics(?int $employeeId, Carbon $from, Carbon $to): array
     {
-        $scheduleQuery = DemoSchedule::query();
-        $resultQuery = DemoResult::query();
-        $followUpQuery = FollowUp::query()->whereIn('followup_type', ['Demo Scheduled', 'Demo Completed']);
-
-        if ($employeeId) {
-            $scheduleQuery->where('employee_id', $employeeId);
-            $resultQuery->where('employee_id', $employeeId);
-            $followUpQuery->where('employee_id', $employeeId);
-        }
-
-        $this->applyDateRange($scheduleQuery, 'demo_at', $from, $to);
-        $this->applyDateRange($resultQuery, 'created_at', $from, $to);
-        $this->applyDateRange($followUpQuery, 'scheduled_date', $from, $to);
-
-        $scheduled = (int) (clone $scheduleQuery)->count();
-        if ($scheduled === 0) {
-            $scheduled = (int) (clone $followUpQuery)->where('followup_type', 'Demo Scheduled')->count();
-        }
-
-        $completed = (int) (clone $scheduleQuery)->where('status', DemoSchedule::STATUS_COMPLETED)->count();
-        if ($completed === 0) {
-            $completed = (int) (clone $resultQuery)->count();
-        }
-
-        $missed = (int) (clone $scheduleQuery)
-            ->where('status', DemoSchedule::STATUS_SCHEDULED)
-            ->where('demo_at', '<', now())
-            ->count();
-
-        return [
-            'demos_scheduled' => $scheduled,
-            'demos_completed' => $completed,
-            'demo_conversion_rate' => $scheduled > 0 ? round(($completed / $scheduled) * 100, 1) : 0.0,
-            'missed_demos' => $missed,
-        ];
+        return $this->demoMetricsService->aggregateForRange($employeeId, $from, $to);
     }
 
     /**
@@ -329,22 +289,27 @@ class ManagerEmployeeProductivityService
      */
     private function performanceMetrics(?int $employeeId, Carbon $from, Carbon $to): array
     {
-        $assignmentQuery = LeadAssignmentEngine::query()->where('status', 'Active');
-        if ($employeeId) {
-            $assignmentQuery->where('employee_id', $employeeId);
-        }
-        $this->applyDateRange($assignmentQuery, 'assigned_date', $from, $to);
+        unset($from, $to);
 
-        $target = (int) (clone $assignmentQuery)->sum('target_leads');
-        $achieved = (int) (clone $assignmentQuery)->sum('achieved_leads');
-        $pending = max(0, $target - $achieved);
-        $productivityPct = $target > 0 ? round(($achieved / $target) * 100, 1) : ($achieved > 0 ? 100.0 : 0.0);
+        if ($employeeId) {
+            $progress = $this->employeeTargetService->todayProgress($employeeId);
+
+            return [
+                'target_assigned' => (int) ($progress['today']['demo_target'] ?? 0),
+                'target_achieved' => (int) ($progress['today']['demo_achieved'] ?? 0),
+                'pending_target' => (int) ($progress['today']['demo_remaining'] ?? 0),
+                'productivity_pct' => (float) ($progress['today']['demo_pct'] ?? 0),
+            ];
+        }
+
+        $teamIds = $this->visibleEmployeeIds();
+        $totals = $this->employeeTargetService->organizationTodayTotals($teamIds);
 
         return [
-            'target_assigned' => $target,
-            'target_achieved' => $achieved,
-            'pending_target' => $pending,
-            'productivity_pct' => $productivityPct,
+            'target_assigned' => (int) ($totals['daily_demo_target_total'] ?? 0),
+            'target_achieved' => (int) ($totals['daily_demo_achieved_total'] ?? 0),
+            'pending_target' => (int) ($totals['daily_demo_remaining_total'] ?? 0),
+            'productivity_pct' => (float) ($totals['daily_demo_achievement_pct'] ?? 0),
         ];
     }
 

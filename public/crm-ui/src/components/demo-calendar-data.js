@@ -335,7 +335,6 @@ window.CrmDemoCalendarData = (function () {
     if (search.status && demo.status !== search.status) return false;
     if (search.priority && demo.priority !== search.priority) return false;
     if (search.date && demo.date !== search.date) return false;
-    if (search.executive && demo.executive !== search.executive) return false;
     return true;
   }
 

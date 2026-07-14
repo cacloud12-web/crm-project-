@@ -9,8 +9,10 @@ use App\Models\FollowUp;
 use App\Models\LeadAssignmentEngine;
 use App\Models\Task;
 use App\Services\Assignment\DailyEmployeeTargetService;
+use App\Services\Assignment\EmployeeTargetService;
 use App\Services\Assignment\YearlyEmployeeTargetService;
 use App\Services\Cache\CrmCacheService;
+use App\Services\Dashboard\DemoMetricsService;
 use App\Services\Rbac\EmployeeDataScopeService;
 use App\Services\Rbac\RbacService;
 use App\Services\Leads\EmployeeProductivityService;
@@ -33,6 +35,8 @@ class EmployeeDashboardService
         private readonly EmployeeProductivityService $employeeProductivity,
         private readonly DailyEmployeeTargetService $dailyEmployeeTargetService,
         private readonly YearlyEmployeeTargetService $yearlyEmployeeTargetService,
+        private readonly EmployeeTargetService $employeeTargetService,
+        private readonly DemoMetricsService $demoMetrics,
         private readonly CrmCacheService $cacheService,
     ) {}
 
@@ -58,6 +62,12 @@ class EmployeeDashboardService
         $today = now()->toDateString();
         $yearlyTarget = $this->yearlyEmployeeTargetService->currentYearForEmployee($user);
         $dailyTarget = $this->dailyEmployeeTargetService->todayForEmployee($user);
+        $targetProgress = $this->employeeTargetService->todayProgress($employeeId, $today);
+        $demoSnapshot = $this->demoMetrics->aggregateForRange(
+            $employeeId,
+            now()->startOfDay(),
+            now()->endOfDay(),
+        );
         $assignedLeads = $this->recentAssignedLeads($employeeId);
 
         Log::info('Employee dashboard metrics built', [
@@ -91,7 +101,7 @@ class EmployeeDashboardService
             'summary' => [
                 'my_leads' => (int) ($leadCounts['total'] ?? 0),
                 'my_followups' => $followUpCounts['total_open'],
-                'my_demos' => $followUpCounts['demos_total'],
+                'my_demos' => $demoSnapshot['demos_scheduled_today'],
                 'my_meetings' => $followUpCounts['meetings_today'],
                 'todays_calls' => $followUpCounts['calls_today'],
                 'todays_tasks' => $taskCounts['due_today'] + $taskCounts['overdue'],
@@ -103,12 +113,15 @@ class EmployeeDashboardService
                 'warm_leads' => (int) ($leadCounts['warm'] ?? 0),
                 'cold_leads' => (int) ($leadCounts['cold'] ?? 0),
                 'conversion_pct' => $this->conversionPct($employeeId, (int) ($leadCounts['total'] ?? 0)),
-                'todays_target' => $assignmentStats['target_today'],
-                'todays_achievement' => $assignmentStats['achieved_today'],
+                'todays_target' => (int) ($targetProgress['today']['demo_target'] ?? 0),
+                'todays_achievement' => (int) ($targetProgress['today']['demo_achieved'] ?? 0),
+                'demos_completed_today' => $demoSnapshot['demos_completed_today'],
             ],
             'productivity' => $productivity,
             'yearly_target' => $yearlyTarget,
             'daily_target' => $dailyTarget,
+            'target_progress' => $targetProgress,
+            'demo_metrics' => $demoSnapshot,
             'today_work' => [
                 'followups_due' => $followUpCounts['due_today'],
                 'followups_overdue' => $followUpCounts['overdue'],

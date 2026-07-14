@@ -6,6 +6,7 @@ use App\Models\CaMaster;
 use App\Models\Employee;
 use App\Models\LeadAssignmentEngine;
 use App\Models\User;
+use App\Models\YearlyEmployeeTarget;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
@@ -244,6 +245,31 @@ class EmployeeDashboardTest extends TestCase
         $responseB = $this->getJson('/dashboard/employee')->assertOk();
         $idsB = collect($responseB->json('data.assigned_leads') ?? [])->pluck('ca_id')->map(fn ($id) => (int) $id)->all();
         $this->assertContains((int) $caId, $idsB);
+    }
+
+    public function test_employee_dashboard_includes_yearly_target_when_assigned(): void
+    {
+        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $year = (int) now()->year;
+
+        YearlyEmployeeTarget::query()->updateOrCreate(
+            ['employee_id' => $employee->employee_id, 'target_year' => $year],
+            [
+                'lead_target' => 200,
+                'call_target' => 100,
+                'demo_target' => 5,
+                'followup_target' => 12,
+                'annual_leave_allowance' => 12,
+            ],
+        );
+
+        $this->actingAs($this->employeeUser());
+        $response = $this->getJson('/dashboard/employee')->assertOk();
+
+        $yearlyTarget = $response->json('data.yearly_target') ?? [];
+        $this->assertTrue($yearlyTarget['has_target'] ?? false);
+        $this->assertSame($year, (int) ($yearlyTarget['target_year'] ?? 0));
+        $this->assertSame(200, (int) ($yearlyTarget['target']['lead_target'] ?? 0));
     }
 
     public function test_employee_leads_listing_only_shows_assigned_leads(): void

@@ -19,6 +19,7 @@ use App\Models\SmsLog;
 use App\Models\SmsSetting;
 use App\Models\WaMessageLog;
 use App\Models\WhatsAppCampaign;
+use App\Services\Assignment\EmployeeTargetService;
 use App\Services\Cache\CrmCacheService;
 use App\Services\DemoConfirmation\DemoConfirmationService;
 use App\Services\FollowUp\ManagerFollowUpDashboardService;
@@ -43,6 +44,9 @@ class DashboardService
         private readonly ManagerFollowUpDashboardService $managerFollowUpDashboard,
         private readonly DuplicateAttemptService $duplicateAttemptService,
         private readonly ManagerEmployeeProductivityService $managerEmployeeProductivity,
+        private readonly DashboardMetricsService $dashboardMetrics,
+        private readonly DemoMetricsService $demoMetricsService,
+        private readonly EmployeeTargetService $employeeTargetService,
     ) {}
 
     private const PIPELINE_STATUSES = [
@@ -135,10 +139,12 @@ class DashboardService
     {
         $from = $range['from'];
         $to = $range['to'];
-        $leadCounts = $this->leadStatusCounts($employeeId, $from, $to);
+        $leadCounts = $this->dashboardMetrics->leadSnapshotCounts($employeeId);
         $totalLeads = (int) ($leadCounts['total'] ?? 0);
-        $assignedLeads = $this->assignedLeadCount($employeeId, $from, $to);
-        $followUpCounts = $this->followUpCounts($employeeId, $from, $to);
+        $assignedLeads = $this->dashboardMetrics->assignedLeadSnapshotCount($employeeId);
+        $followUpCounts = $this->dashboardMetrics->followUpCounts($employeeId, $from, $to);
+        $demoMetrics = $this->demoMetricsService->aggregateForRange($employeeId, $from, $to);
+        $organizationTarget = $this->buildOrganizationTargetSummary($employeeId);
         $whatsappMetrics = $this->whatsappMetrics($employeeId, $from, $to);
         $emailMetrics = $this->emailMetrics($employeeId, $from, $to);
         $smsMetrics = $this->smsMetrics($employeeId, $from, $to);
@@ -166,15 +172,15 @@ class DashboardService
             ],
             'employee_productivity' => $employeeProductivity,
             'total_leads' => $totalLeads,
-            'new_leads' => (int) ($leadCounts['new_established'] ?? 0),
+            'new_leads' => $this->dashboardMetrics->newLeadsInPeriod($employeeId, $from, $to),
             'hot_leads' => (int) ($leadCounts['hot'] ?? 0),
             'warm_leads' => (int) ($leadCounts['warm'] ?? 0),
             'cold_leads' => (int) ($leadCounts['cold'] ?? 0),
             'new_status_leads' => (int) ($leadCounts['status_new'] ?? 0),
             'pipeline_leads' => (int) ($leadCounts['pipeline'] ?? 0),
             'lost_leads' => (int) ($leadCounts['lost'] ?? 0),
-            'calls_total' => $this->callsTotal($employeeId, $from, $to),
-            'meetings_today' => $this->meetingsTodayCount($employeeId, $from, $to),
+            'calls_total' => $this->dashboardMetrics->callsInPeriod($employeeId, $from, $to),
+            'meetings_today' => $this->dashboardMetrics->meetingsInPeriod($employeeId, $from, $to),
             'active_employees' => $employeeId
                 ? 1
                 : Employee::query()->where('status', 'Active')->count(),
@@ -218,6 +224,10 @@ class DashboardService
             'consent_denied' => $safetyMetrics['consent_denied'],
             'skipped_due_to_dnd' => $safetyMetrics['skipped_due_to_dnd'],
             'skipped_due_to_no_consent' => $safetyMetrics['skipped_due_to_no_consent'],
+            'demo_metrics' => $demoMetrics,
+            'organization_target' => $organizationTarget,
+            'demos_scheduled_today' => $demoMetrics['demos_scheduled_today'],
+            'demos_completed_today' => $demoMetrics['demos_completed_today'],
             'demo_confirmations' => $this->demoConfirmationService->dashboardMetrics($employeeId),
             'reports' => $this->reportsService->dashboardInsights($reportParams),
             'productivity' => $this->employeeProductivity->managerDashboardWidgets(),
@@ -230,6 +240,36 @@ class DashboardService
             'activity_preview' => $this->activityPreview($employeeId, $from, $to),
             'generated_at' => now()->toIso8601String(),
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildOrganizationTargetSummary(?int $employeeId): array
+    {
+        if ($employeeId) {
+            $progress = $this->employeeTargetService->todayProgress($employeeId);
+
+            return [
+                'scope' => 'employee',
+                'employee_id' => $employeeId,
+                'target_date' => $progress['target_date'] ?? now()->toDateString(),
+                'daily_demo_target_total' => (int) ($progress['today']['demo_target'] ?? 0),
+                'daily_demo_achieved_total' => (int) ($progress['today']['demo_achieved'] ?? 0),
+                'daily_demo_remaining_total' => (int) ($progress['today']['demo_remaining'] ?? 0),
+                'daily_demo_achievement_pct' => (float) ($progress['today']['demo_pct'] ?? 0),
+                'demos_scheduled_today' => (int) ($progress['today']['demos_scheduled_today'] ?? 0),
+                'demos_completed_today' => (int) ($progress['today']['demos_completed_today'] ?? 0),
+                'yearly' => $progress['yearly'] ?? [],
+            ];
+        }
+
+        $teamIds = $this->managerEmployeeProductivity->visibleEmployeeIds();
+
+        return array_merge(
+            $this->employeeTargetService->organizationTodayTotals($teamIds),
+            ['scope' => 'organization'],
+        );
     }
 
     private function applyDateRange(Builder $query, string $column, Carbon $from, Carbon $to): Builder

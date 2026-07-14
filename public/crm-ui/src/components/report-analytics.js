@@ -639,6 +639,7 @@ window.CrmReportAnalytics = (function () {
     var slug = report.slug || state.slug;
     var meta = SLUG_META[slug] || {};
     var title = report.label || meta.title || fmtLabel(slug);
+    var subtitle = report.description || meta.description || '';
     var root = $('ra-root');
     if (!root) return;
 
@@ -646,7 +647,13 @@ window.CrmReportAnalytics = (function () {
       '<header class="ra-lc-header">' +
         '<button type="button" class="crm-toolbar-icon-btn" id="ra-back" title="Back" aria-label="Back"><i data-lucide="arrow-left" class="h-4 w-4"></i></button>' +
         '<div class="ra-lc-header__title">' +
-          '<div><i data-lucide="' + (meta.icon || 'file-text') + '" class="h-4 w-4 text-brand"></i><h2 id="ra-title">' + escapeHtml(title) + '</h2></div>' +
+          '<div class="ra-lc-header__brand">' +
+            '<span class="ra-lc-header__icon" aria-hidden="true"><i data-lucide="' + (meta.icon || 'file-text') + '" class="h-5 w-5"></i></span>' +
+            '<div class="ra-lc-header__text">' +
+              '<h2 id="ra-title">' + escapeHtml(title) + '</h2>' +
+              (subtitle ? '<p class="ra-lc-header__subtitle" id="ra-subtitle">' + escapeHtml(subtitle) + '</p>' : '') +
+            '</div>' +
+          '</div>' +
         '</div>' +
         '<div class="ra-lc-header__actions">' +
           '<div class="ra-export-menu">' +

@@ -2847,6 +2847,9 @@ window.CA_CRM = (function () {
       employeeDashboardPromise = null;
       employeeDashboardData = null;
     }
+    if (keys.indexOf('employee_dashboard') >= 0 && keys.indexOf('metrics') < 0) {
+      clearDashboardMetricsCache();
+    }
     if (keys.indexOf('leads') >= 0) {
       realLeadsLoaded = false;
       kanbanLeadsLoaded = false;
@@ -2967,6 +2970,11 @@ window.CA_CRM = (function () {
     if (window.CA_LISTING_SEARCH && (document.getElementById('leads-data-table') || document.getElementById('ca-master-data-table') || document.getElementById('cam-hub'))) {
       if (document.getElementById('leads-data-table')) {
         Object.assign(extra, CA_LISTING_SEARCH.readLeadDrawerFilters());
+        var leadFilters = CA_LISTING_SEARCH.getState('ca_masters').filters || {};
+        if (leadFilters.master_pipeline_stage) {
+          extra.master_pipeline_stage = leadFilters.master_pipeline_stage;
+        }
+        Object.assign(extra, readCaMasterColumnFilters());
       } else {
         Object.assign(extra, readCaMasterColumnFilters());
       }
@@ -3728,6 +3736,9 @@ window.CA_CRM = (function () {
       if (document.getElementById('assignment-page-root')) {
         refreshAssignmentDashboardWidgets();
       }
+      if (isEmployeeUser() && (window._currentPageId === 'dashboard' || document.getElementById('emp-assigned-leads'))) {
+        renderEmployeeDashboard();
+      }
     });
   }
 
@@ -4426,6 +4437,9 @@ window.CA_CRM = (function () {
       demo_confirmation_rescheduled: metrics && metrics.demo_confirmations ? metrics.demo_confirmations.demo_confirmation_rescheduled : 0,
       demo_confirmation_rejected_after_reschedule: metrics && metrics.demo_confirmations ? metrics.demo_confirmations.demo_confirmation_rejected_after_reschedule : 0,
       target_achievement: totalLeads ? Math.round((assignedLeads / totalLeads) * 100) + '%' : '0%',
+      organization_target: metrics ? metrics.organization_target : null,
+      demos_scheduled_today: metrics ? metrics.demos_scheduled_today : 0,
+      demos_completed_today: metrics ? metrics.demos_completed_today : 0,
       productivity: metrics ? metrics.productivity : null,
       duplicate_monitoring: metrics ? metrics.duplicate_monitoring : null,
     };
@@ -4942,6 +4956,56 @@ window.CA_CRM = (function () {
     'alternate_mobile_no', 'rating', 'is_newly_established', 'status', 'source_id',
   ];
 
+  var EMPLOYEE_LEAD_ADD_VISIBLE_FIELDS = [
+    'firm_name', 'ca_name', 'mobile_no', 'email_id', 'team_size', 'state_id', 'city_id',
+  ];
+
+  function setLeadFormFieldVisibility(form, visibleFieldNames) {
+    if (!form) return;
+    var body = form.querySelector('.ca-modal-body');
+    if (!body) return;
+    body.querySelectorAll('.grid > div, .grid > .sc-location-pair').forEach(function (wrap) {
+      if (wrap.id === 'form-lead-google-section') {
+        wrap.classList.add('hidden');
+        return;
+      }
+      if (wrap.classList.contains('sc-location-pair')) {
+        var showLocation = !visibleFieldNames
+          || visibleFieldNames.indexOf('state_id') >= 0
+          || visibleFieldNames.indexOf('city_id') >= 0;
+        wrap.classList.toggle('hidden', !showLocation);
+        return;
+      }
+      var field = wrap.querySelector('[name]');
+      if (!field || !field.name) return;
+      var show = !visibleFieldNames || visibleFieldNames.indexOf(field.name) >= 0;
+      wrap.classList.toggle('hidden', !show);
+    });
+  }
+
+  function applyEmployeeLeadAddFormRules(form, isAdd) {
+    if (!form || !isEmployeeUser()) {
+      if (form) {
+        delete form.dataset.employeeAddMode;
+        setLeadFormFieldVisibility(form, null);
+        if (form.elements.mobile_no) form.elements.mobile_no.required = false;
+        if (form.elements.city_id) form.elements.city_id.required = false;
+      }
+      return;
+    }
+    if (isAdd) {
+      form.dataset.employeeAddMode = '1';
+      setLeadFormFieldVisibility(form, EMPLOYEE_LEAD_ADD_VISIBLE_FIELDS);
+      if (form.elements.mobile_no) form.elements.mobile_no.required = true;
+      if (form.elements.city_id) form.elements.city_id.required = true;
+      return;
+    }
+    delete form.dataset.employeeAddMode;
+    setLeadFormFieldVisibility(form, null);
+    if (form.elements.mobile_no) form.elements.mobile_no.required = false;
+    if (form.elements.city_id) form.elements.city_id.required = false;
+  }
+
   function leadFieldLockTooltip(fieldName) {
     if (fieldName === 'mobile_no') {
       return 'Primary mobile cannot be changed once saved.';
@@ -5090,6 +5154,7 @@ window.CA_CRM = (function () {
     }
 
     setLeadLockBadge(lead);
+    applyEmployeeLeadAddFormRules(form, !isEdit);
     scheduleLeadMobileDuplicateCheck();
     icons();
   }
@@ -5288,8 +5353,8 @@ window.CA_CRM = (function () {
     {
       title: 'Performance',
       cards: [
-        { icon: 'award', label: 'Achievement', key: 'todays_achievement', nav: 'leads', source: 'summary', desc: 'Today\'s progress' },
-        { icon: 'target', label: 'Target', key: 'todays_target', nav: 'leads', source: 'summary', desc: 'Daily target' },
+        { icon: 'target', label: "Today's Target", key: 'todays_target', nav: 'followups', source: 'summary', desc: 'Daily demo target' },
+        { icon: 'award', label: "Today's Achieved", key: 'todays_achievement', nav: 'followups', source: 'summary', desc: 'Demos scheduled today' },
       ],
     },
   ];
@@ -5343,6 +5408,8 @@ window.CA_CRM = (function () {
         '</div>';
     }
 
+    renderEmployeeDailyTargetCard(data.target_progress || data.yearly_target || data.daily_target || {});
+
     renderDashboardKpiSections('emp-kpi-sections', EMPLOYEE_DASHBOARD_KPI_SECTIONS, function (card) {
       return card.source === 'today' ? todayWork[card.key] : summary[card.key];
     }, 'employee');
@@ -5352,7 +5419,6 @@ window.CA_CRM = (function () {
     renderEmployeeActivity(data.recent_activity || []);
     renderEmployeeQuickActions();
     renderEmployeeProductivityPanel(data.productivity || {});
-    renderEmployeeDailyTargetCard(data.daily_target || {}, data.daily_target_history || []);
     initEmployeeDashboardInteractions();
     loadEmployeeWorkflowLists();
     icons();
@@ -5927,6 +5993,7 @@ window.CA_CRM = (function () {
     }
 
     ensureManagerEmployeeFilter();
+    renderOrganizationTargetPanel(metrics.organization_target || m.organization_target);
     renderManagerEmployeeProductivityPanel(employeeFilter);
 
     renderDashboardKpiSections('mgr-kpi-sections', ADMIN_DASHBOARD_KPI_SECTIONS, function (card) {
@@ -6329,6 +6396,32 @@ window.CA_CRM = (function () {
     }, { force: true, employeeId: employeeId || null, dateFilter: dateFilter });
   }
 
+  function renderOrganizationTargetPanel(targetSummary) {
+    var panel = document.getElementById('mgr-organization-target-panel');
+    if (!panel) return;
+    if (!targetSummary) {
+      panel.classList.add('hidden');
+      panel.innerHTML = '';
+      return;
+    }
+    panel.classList.remove('hidden');
+    var scopeLabel = targetSummary.scope === 'employee' ? 'Employee Daily Target' : 'Organization Daily Target';
+    var pct = Math.min(100, Number(targetSummary.daily_demo_achievement_pct || 0));
+    panel.innerHTML =
+      '<div class="flex items-center justify-between gap-3 mb-3">' +
+        '<h2 class="text-card-heading">' + escapeHtml(scopeLabel) + '</h2>' +
+        '<span class="text-caption text-slate-500">' + escapeHtml(targetSummary.target_date || '') + '</span>' +
+      '</div>' +
+      '<div class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">' +
+        productivityStatCard('Daily Target', targetSummary.daily_demo_target_total) +
+        productivityStatCard('Achieved', targetSummary.daily_demo_achieved_total) +
+        productivityStatCard('Remaining', targetSummary.daily_demo_remaining_total) +
+        productivityStatCard('Achievement %', pct + '%') +
+        productivityStatCard('Demos Scheduled Today', targetSummary.demos_scheduled_today) +
+        productivityStatCard('Demos Completed Today', targetSummary.demos_completed_today) +
+      '</div>';
+  }
+
   function renderManagerEmployeeProductivityPanel(payload) {
     var panel = document.getElementById('mgr-employee-productivity-panel');
     if (!panel) return;
@@ -6393,9 +6486,14 @@ window.CA_CRM = (function () {
       ]) +
       section('Demo Metrics', [
         { label: 'Demos Scheduled', value: metrics.demos.demos_scheduled },
+        { label: 'Demos Scheduled Today', value: metrics.demos.demos_scheduled_today },
         { label: 'Demos Completed', value: metrics.demos.demos_completed },
+        { label: 'Demos Completed Today', value: metrics.demos.demos_completed_today },
         { label: 'Demo Conversion', value: metrics.demos.demo_conversion_rate + '%' },
         { label: 'Missed Demos', value: metrics.demos.missed_demos },
+        { label: 'Cancelled', value: metrics.demos.demos_cancelled },
+        { label: 'Rescheduled', value: metrics.demos.demos_rescheduled },
+        { label: 'Purchased', value: metrics.demos.demos_purchased },
       ]) +
       section('Communication', [
         { label: 'Emails Sent', value: metrics.communication.emails_sent },
@@ -6404,10 +6502,10 @@ window.CA_CRM = (function () {
         { label: 'Customer Replies', value: metrics.communication.customer_replies },
       ]) +
       section('Performance', [
-        { label: 'Target Assigned', value: metrics.performance.target_assigned },
+        { label: 'Daily Demo Target', value: metrics.performance.target_assigned },
         { label: 'Target Achieved', value: metrics.performance.target_achieved },
-        { label: 'Pending Target', value: metrics.performance.pending_target },
-        { label: 'Productivity %', value: metrics.performance.productivity_pct + '%' },
+        { label: 'Remaining Target', value: metrics.performance.pending_target },
+        { label: 'Achievement %', value: metrics.performance.productivity_pct + '%' },
       ]) +
       section('Follow-up', [
         { label: 'Pending', value: metrics.followups.pending },
@@ -7490,11 +7588,9 @@ window.CA_CRM = (function () {
     if (window.CA_LISTING_SEARCH) {
       CA_LISTING_SEARCH.setState('ca_masters', {
         page: 1,
-        filters: Object.assign(
-          {},
-          readCaMasterColumnFilters(),
-          { segment: !segmentId || segmentId === 'all' ? '' : segmentId },
-        ),
+        filters: buildLeadsListingFilters({
+          segment: !segmentId || segmentId === 'all' ? '' : segmentId,
+        }),
       });
     }
     if (isLeadsPipelineTabActive()) {
@@ -7509,13 +7605,13 @@ window.CA_CRM = (function () {
     var el = document.getElementById('leads-kpi-strip');
     if (!el) return;
     var activeSegment = getLeadFilter();
-    if (activeSegment === 'hot' || activeSegment === 'new') {
+    if (activeSegment === 'hot' || activeSegment === 'new' || activeSegment === 'pipeline' || activeSegment === 'lost') {
       activeSegment = 'all';
       window._leadSegmentFilter = 'all';
       if (window.CA_LISTING_SEARCH) {
         var state = CA_LISTING_SEARCH.getState('ca_masters');
         var filters = Object.assign({}, state.filters || {});
-        if (filters.segment === 'hot' || filters.segment === 'new') {
+        if (filters.segment === 'hot' || filters.segment === 'new' || filters.segment === 'pipeline' || filters.segment === 'lost') {
           delete filters.segment;
           CA_LISTING_SEARCH.setState('ca_masters', { filters: filters });
         }
@@ -7525,12 +7621,10 @@ window.CA_CRM = (function () {
     var items = [
       { kind: 'view', id: 'pipeline', label: 'Pipeline', icon: 'git-branch' },
       { kind: 'view', id: 'all', label: 'All Leads', icon: 'list' },
-      { kind: 'segment', id: 'pipeline', label: 'In Pipeline', icon: 'columns-3' },
     ];
     if (canViewSalesList()) {
       items.push({ kind: 'segment', id: 'negotiation', label: 'Negotiation', icon: 'handshake' });
     }
-    items.push({ kind: 'segment', id: 'lost', label: 'Lost', icon: 'user-x' });
     var chipsHtml = items.map(function (item) {
       var isActive = item.kind === 'view'
         ? activeView === item.id
@@ -7547,14 +7641,21 @@ window.CA_CRM = (function () {
         '<i data-lucide="' + item.icon + '" class="h-4 w-4"></i>' +
         '<span class="leads-kpi-label">' + item.label + '</span></button>';
     }).join('');
+    var actionHtml = '';
+    if (crmCanAction('leads', 'create')) {
+      actionHtml =
+        '<button type="button" class="crm-toolbar-icon-btn crm-toolbar-icon-btn--primary" data-open-modal="add-lead" id="leads-kpi-add-btn" title="Add Lead" aria-label="Add Lead">' +
+          '<i data-lucide="plus" class="h-4 w-4"></i></button>';
+    }
     el.innerHTML =
-      '<div class="leads-kpi-chips cam-control-chips">' + chipsHtml + '</div>' +
-      (crmCanAction('leads', 'create')
-        ? '<div class="leads-kpi-actions" role="toolbar" aria-label="Lead actions">' +
-            '<button type="button" class="crm-toolbar-icon-btn crm-toolbar-icon-btn--primary" data-open-modal="add-lead" id="leads-kpi-add-btn" title="Add Lead" aria-label="Add Lead">' +
-              '<i data-lucide="plus" class="h-4 w-4"></i></button>' +
-          '</div>'
+      '<div class="cam-control-primary">' +
+        '<div class="leads-kpi-chips cam-control-chips">' + chipsHtml + '</div>' +
+        (isEmployeeUser() ? leadsStatusFilterToolbarHtml() : '') +
+      '</div>' +
+      (actionHtml
+        ? '<div class="leads-kpi-actions" role="toolbar" aria-label="Lead actions">' + actionHtml + '</div>'
         : '');
+    syncLeadsStatusFilterFromState();
     if (!el._kpiStripBound) {
       el._kpiStripBound = true;
       el.addEventListener('click', function (e) {
@@ -7730,6 +7831,71 @@ window.CA_CRM = (function () {
     '</div>';
   }
 
+  function leadsStatusFilterToolbarHtml() {
+    return '<div class="leads-status-filter-toolbar" id="leads-status-filter-toolbar" aria-label="Lead status filter">' +
+      '<select id="leads-filter-pipeline-stage" class="input-field cam-filter-select cam-filter-pipeline-stage" aria-label="Lead status">' +
+        '<option value="">All Leads</option>' +
+        '<option value="New Lead">New Lead</option>' +
+        '<option value="Contacted">Contacted</option>' +
+        '<option value="Interested">Interested</option>' +
+        '<option value="Converted">Converted</option>' +
+      '</select>' +
+    '</div>';
+  }
+
+  function readLeadsPipelineStageFilter() {
+    var el = document.getElementById('leads-filter-pipeline-stage');
+    return el ? String(el.value || '').trim() : '';
+  }
+
+  function buildLeadsListingFilters(extraFilters) {
+    extraFilters = extraFilters || {};
+    var filters = Object.assign({}, readCaMasterColumnFilters(), extraFilters);
+    var stage = readLeadsPipelineStageFilter();
+    if (!stage && window.CA_LISTING_SEARCH && isEmployeeUser()) {
+      stage = String((CA_LISTING_SEARCH.getState('ca_masters').filters || {}).master_pipeline_stage || '').trim();
+    }
+    if (stage) {
+      filters.master_pipeline_stage = stage;
+    } else {
+      delete filters.master_pipeline_stage;
+    }
+    if (Object.prototype.hasOwnProperty.call(extraFilters, 'segment')) {
+      if (!extraFilters.segment) delete filters.segment;
+    } else {
+      var segment = getLeadFilter();
+      if (segment && segment !== 'all') filters.segment = segment;
+      else delete filters.segment;
+    }
+    return filters;
+  }
+
+  function syncLeadsStatusFilterFromState() {
+    if (!isEmployeeUser() || !window.CA_LISTING_SEARCH) return;
+    var el = document.getElementById('leads-filter-pipeline-stage');
+    if (!el) return;
+    var stage = String((CA_LISTING_SEARCH.getState('ca_masters').filters || {}).master_pipeline_stage || '');
+    el.value = stage;
+    var toolbar = document.getElementById('leads-status-filter-toolbar');
+    if (toolbar) toolbar.classList.toggle('leads-status-filter-toolbar--active', !!stage);
+  }
+
+  function getLeadsTableEmptyMessage() {
+    if (!isEmployeeUser()) return 'No leads yet. Click Add Lead to create one.';
+    var stage = readLeadsPipelineStageFilter();
+    if (!stage && window.CA_LISTING_SEARCH) {
+      stage = String((CA_LISTING_SEARCH.getState('ca_masters').filters || {}).master_pipeline_stage || '').trim();
+    }
+    if (stage) return 'No leads match the selected status filter.';
+    if (Object.keys(readCaMasterColumnFilters()).length > 0) {
+      return 'No leads match your current filters.';
+    }
+    if (window.CA_LISTING_SEARCH && String(CA_LISTING_SEARCH.getState('ca_masters').search || '').trim()) {
+      return 'No leads match your search.';
+    }
+    return 'No assigned leads yet. Leads assigned to you will appear here.';
+  }
+
   function renderCamKpis() {
     var el = document.getElementById('cam-kpi-strip');
     if (!el) return;
@@ -7811,20 +7977,27 @@ window.CA_CRM = (function () {
     if (!hub || hub._leadsColFilterBound) return;
     hub._leadsColFilterBound = true;
     var timer = null;
+    hub.addEventListener('change', function (e) {
+      if (e.target && e.target.id === 'leads-filter-pipeline-stage') {
+        var filters = buildLeadsListingFilters();
+        if (window.CA_LISTING_SEARCH) {
+          CA_LISTING_SEARCH.setState('ca_masters', { page: 1, filters: filters });
+        }
+        syncLeadsStatusFilterFromState();
+        if (isLeadsPipelineTabActive()) loadKanbanLeads();
+        else reloadListing('ca_masters');
+        return;
+      }
+    });
     hub.addEventListener('input', function (e) {
       var input = e.target.closest('.crm-col-filter-input[data-col-filter-group="ca_masters"]');
       if (!input) return;
       window.clearTimeout(timer);
       timer = window.setTimeout(function () {
-        var segment = getLeadFilter();
         if (window.CA_LISTING_SEARCH) {
           CA_LISTING_SEARCH.setState('ca_masters', {
             page: 1,
-            filters: Object.assign(
-              {},
-              readCaMasterColumnFilters(),
-              { segment: segment && segment !== 'all' ? segment : '' },
-            ),
+            filters: buildLeadsListingFilters(),
           });
           reloadListing('ca_masters');
         }
@@ -7906,9 +8079,7 @@ window.CA_CRM = (function () {
         renderLeadResearchQuickCell(l) +
         renderCrmRowActionsCell(l) +
       '</tr>';
-    }).join('') : emptyTableRow(15, isEmployeeUser()
-      ? 'No assigned leads yet. Leads assigned to you will appear here.'
-      : 'No leads yet. Click Add Lead to create one.');
+    }).join('') : emptyTableRow(15, getLeadsTableEmptyMessage());
     bindLeadRows(el);
     bindCrmRowActions(el);
     bindCrmActionsDismiss();
@@ -9494,35 +9665,61 @@ window.CA_CRM = (function () {
     return loadDailyEmployeeTargets();
   }
 
-  function renderEmployeeDailyTargetCard(dailyTarget) {
+  function renderEmployeeDailyTargetCard(targetData) {
     var panel = document.getElementById('emp-daily-targets-panel');
     if (!panel) return;
-    dailyTarget = dailyTarget || {};
-    var year = dailyTarget.target_year || new Date().getFullYear();
-    if (!dailyTarget.has_target) {
-      panel.innerHTML = '<div class="emp-daily-target-card"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="target" class="h-5 w-5 text-brand"></i> Yearly Targets (' + year + ')</h3></div><p class="text-slate-500">' + escapeHtml(dailyTarget.message || 'No yearly target has been assigned.') + '</p></div>';
+    targetData = targetData || {};
+    var year = (targetData.yearly && targetData.yearly.target_year) || targetData.target_year || new Date().getFullYear();
+    var today = targetData.today || {};
+    var yearly = targetData.yearly || {};
+    var hasToday = (today.demo_target || 0) > 0 || targetData.has_target;
+    var hasYearly = yearly.has_target;
+
+    if (!hasToday && !hasYearly) {
+      panel.innerHTML = '<div class="emp-daily-target-card"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="target" class="h-5 w-5 text-brand"></i> Daily Target (' + year + ')</h3></div><p class="text-slate-500">' + escapeHtml(yearly.message || targetData.message || 'No yearly target has been assigned.') + '</p></div>';
       iconsIn(panel);
       return;
     }
-    var target = dailyTarget.target || {};
-    var metrics = target.metrics || [];
-    var remaining = metrics.map(function (metric) {
-      if ((metric.remaining || 0) > 0) return (metric.remaining || 0) + ' ' + (metric.label || '');
-      return null;
-    }).filter(Boolean);
+
+    var todayPct = Math.min(100, Number(today.demo_pct || 0));
+    var todayBlock = hasToday
+      ? '<div class="emp-daily-target-grid mb-4">' +
+          '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">Today\'s Target</p><p class="emp-daily-target-item__value">' + (today.demo_target || 0) + '</p></article>' +
+          '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">Today\'s Achieved</p><p class="emp-daily-target-item__value">' + (today.demo_achieved || 0) + '</p></article>' +
+          '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">Remaining</p><p class="emp-daily-target-item__value">' + (today.demo_remaining || 0) + '</p></article>' +
+          '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">Achievement</p><p class="emp-daily-target-item__value">' + todayPct + '%</p>' +
+            '<div class="assign-daily-target-bar"><div class="assign-daily-target-bar__fill" style="width:' + todayPct + '%"></div></div></article>' +
+        '</div>'
+      : '';
+
+    var yearlyBlock = '';
+    if (hasYearly) {
+      var metrics = yearly.metrics || targetData.target?.metrics || [];
+      var ytdPct = Math.min(100, Number(yearly.ytd_demo_pct || yearly.overall_pct || 0));
+      yearlyBlock =
+        '<div class="mgr-panel-head mt-2"><h4 class="text-sm font-semibold text-slate-800">Year-to-Date (' + (yearly.target_year || year) + ')</h4>' +
+          (yearly.status_label ? '<span class="' + dailyTargetStatusClass(yearly.status) + '">' + escapeHtml(yearly.status_label) + '</span>' : '') +
+        '</div>' +
+        '<p class="text-caption text-slate-500 mb-3">Daily demo rate: ' + escapeHtml(String(yearly.daily_demo_target || '—')) +
+        ' · Yearly demo target: ' + escapeHtml(String(yearly.yearly_demo_target || '—')) +
+        ' · Working days: ' + escapeHtml(String(yearly.standard_countable_days || '—')) + '</p>' +
+        '<div class="emp-daily-target-grid mb-3">' +
+          '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">YTD Achieved</p><p class="emp-daily-target-item__value">' + (yearly.ytd_demo_achieved || 0) + '</p></article>' +
+          '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">YTD Remaining</p><p class="emp-daily-target-item__value">' + (yearly.ytd_demo_remaining || 0) + '</p></article>' +
+          '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">YTD Progress</p><p class="emp-daily-target-item__value">' + ytdPct + '%</p>' +
+            '<div class="assign-daily-target-bar"><div class="assign-daily-target-bar__fill" style="width:' + ytdPct + '%"></div></div></article>' +
+        '</div>' +
+        (metrics.length ? '<div class="emp-daily-target-grid">' + metrics.map(function (metric) {
+          var pct = Math.min(100, Number(metric.pct || 0));
+          return '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">' + escapeHtml(metric.label || '') + '</p><p class="emp-daily-target-item__value">' + (metric.completed || 0) + ' / ' + (metric.target || 0) + '</p>' +
+            '<div class="assign-daily-target-bar"><div class="assign-daily-target-bar__fill" style="width:' + pct + '%"></div></div></article>';
+        }).join('') + '</div>' : '');
+    }
+
     panel.innerHTML = '<div class="emp-daily-target-card">' +
-      '<div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="target" class="h-5 w-5 text-brand"></i> Yearly Targets (' + (target.target_year || year) + ')</h3><span class="' + dailyTargetStatusClass(target.status) + '">' + escapeHtml(target.status_label || '') + '</span></div>' +
-      '<p class="text-caption text-slate-500 mb-3">Standard countable days: ' + escapeHtml(String(target.standard_countable_days || '—')) +
-      ' · Actual effective days: ' + escapeHtml(String(target.actual_effective_working_days_elapsed || 0) + ' / ' + String(target.actual_effective_working_days_total || 0)) +
-      ' · Leave used: ' + escapeHtml(String(target.approved_leave_used || 0) + ' / ' + String(target.annual_leave_allowance || 12)) + '</p>' +
-      '<div class="emp-daily-target-grid">' + metrics.map(function (metric) {
-        var pct = Math.min(100, Number(metric.pct || 0));
-        return '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">' + escapeHtml(metric.label || '') + '</p><p class="emp-daily-target-item__value">' + (metric.completed || 0) + ' / ' + (metric.target || 0) + '</p>' +
-          '<div class="assign-daily-target-bar"><div class="assign-daily-target-bar__fill" style="width:' + pct + '%"></div></div></article>';
-      }).join('') + '</div>' +
-      '<p class="mt-3 text-sm"><strong>Overall YTD:</strong> ' + (target.overall_pct || 0) + '%</p>' +
-      (remaining.length ? '<p class="mt-2 text-sm text-slate-600"><strong>Remaining:</strong> ' + escapeHtml(remaining.join(' · ')) + '</p>' : '') +
-      (target.notes ? '<div class="emp-daily-target-notes"><strong>Manager instructions:</strong><br>' + escapeHtml(target.notes) + '</div>' : '') +
+      '<div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="target" class="h-5 w-5 text-brand"></i> Daily Target</h3></div>' +
+      todayBlock +
+      yearlyBlock +
     '</div>';
     iconsIn(panel);
   }
@@ -9530,7 +9727,7 @@ window.CA_CRM = (function () {
   function refreshEmployeeDailyTargetsFromDashboard(force) {
     if (!isEmployeeUser()) return Promise.resolve();
     return loadEmployeeDashboardFromDatabase(function (data) {
-      renderEmployeeDailyTargetCard((data || {}).yearly_target || (data || {}).daily_target || {});
+      renderEmployeeDailyTargetCard((data || {}).target_progress || (data || {}).yearly_target || (data || {}).daily_target || {});
     }, !!force);
   }
 
@@ -12170,6 +12367,7 @@ window.CA_CRM = (function () {
   function bindCaMasterTableRows(container) {
     if (!container) return;
     bindCaMasterActionMenus(container.closest('#cam-hub') || container.closest('.cam-page') || document);
+    bindLeadRows(container);
   }
 
   function renderLeaderboard() {
@@ -12546,11 +12744,10 @@ window.CA_CRM = (function () {
     if (!container) return;
     container.querySelectorAll('.ca-table-row[data-lead-id]').forEach(function (row) {
       if (row._leadRowClickBound) return;
-      if (row.classList.contains('cam-master-data-row') || row.closest('#cam-hub')) return;
       row._leadRowClickBound = true;
       row.addEventListener('click', function (e) {
-        if (e.target.closest('.crm-actions-cell, .crm-actions-menu, .lead-quick-cell, .lead-quick-actions-cell, [data-lead-quick], .crm-td-check, .crm-inbox-row-check')) return;
-        selectLead(row.dataset.leadId, true);
+        if (e.target.closest('.crm-actions-cell, .crm-actions-menu, .lead-quick-cell, .lead-quick-actions-cell, [data-lead-quick], .crm-td-check, .crm-inbox-row-check, [data-action-menu-trigger], [data-row-action]')) return;
+        selectLead(row.dataset.leadId, false);
       });
     });
   }
@@ -15206,6 +15403,15 @@ window.CA_CRM = (function () {
       });
     }
 
+    if (!editingId && isEmployeeUser()) {
+      fd.set('status', 'New');
+    }
+
+    var teamSizeValue = String(fd.get('team_size') || '').trim();
+    if (!teamSizeValue || Number(teamSizeValue) <= 0) {
+      fd.delete('team_size');
+    }
+
     if (!isEmployeeUser() && form.elements.executive_id && !form.elements.executive_id.disabled) {
       var executiveValue = form.elements.executive_id.value;
       if (executiveValue) {
@@ -15231,8 +15437,8 @@ window.CA_CRM = (function () {
           CA_LISTING_SEARCH.setState('ca_masters', { page: 1, filters: {}, search: '' });
         }
         return applyLeadMutationSuccess(body, {
-          toast: editingId ? 'Lead updated successfully' : 'Lead saved successfully',
-          cacheKeys: ['metrics', 'leads', 'assignments'],
+          toast: editingId ? 'Lead updated successfully' : 'Lead added successfully.',
+          cacheKeys: ['metrics', 'leads', 'assignments', 'employee_dashboard'],
           callback: function () {
             if (document.getElementById('mgr-kpi-sections')) {
               renderManagerDashboard();
@@ -22120,6 +22326,11 @@ window.CA_CRM = (function () {
       }
       if (onLeadsHub) {
         Object.assign(extra, CA_LISTING_SEARCH.readLeadDrawerFilters());
+        if (isEmployeeUser()) {
+          Object.assign(extra, readCaMasterColumnFilters());
+          var leadsStage = readLeadsPipelineStageFilter();
+          if (leadsStage) extra.master_pipeline_stage = leadsStage;
+        }
       }
       if (isMasterDataHub()) {
         syncCamSegmentState();

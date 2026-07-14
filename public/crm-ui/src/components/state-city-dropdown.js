@@ -564,6 +564,7 @@
     var jobs = [];
 
     root.querySelectorAll('.sc-location-pair').forEach(function (container) {
+<<<<<<< HEAD
       var isLead = !!container.closest('#form-add-lead');
       var isFilter = !!container.closest('#filter-drawer, #bulk-assignment-panel, #bulk-export-filters-wrap');
       jobs.push(initPairContainer(container, {
@@ -571,6 +572,17 @@
         allowAllCities: isFilter && !!container.closest('#bulk-assignment-panel'),
         stateEmptyOption: isLead ? 'Select state *' : (isFilter ? 'Any State' : 'Select state'),
         cityEmptyOption: isLead ? 'Select city' : (isFilter ? 'Any City' : 'Select city'),
+=======
+      var leadForm = container.closest('#form-add-lead');
+      var isLead = !!leadForm;
+      var isEmployeeLeadAdd = isLead && leadForm.dataset.employeeAddMode === '1';
+      var isFilter = !!container.closest('#filter-drawer');
+      jobs.push(initPairContainer(container, {
+        stateRequired: isLead || isEmployeeLeadAdd,
+        cityRequired: isEmployeeLeadAdd,
+        stateEmptyOption: isLead || isEmployeeLeadAdd ? 'Select state *' : (isFilter ? 'All states' : 'Select state'),
+        cityEmptyOption: isEmployeeLeadAdd ? 'Select city *' : (isLead ? 'Select city' : (isFilter ? 'All cities' : 'Select city')),
+>>>>>>> 269c72a (Add employee target metrics and dashboard improvements)
       }));
     });
 

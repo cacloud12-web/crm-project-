@@ -1077,33 +1077,12 @@
 
   function initTableRows() {
     document.querySelectorAll('.ca-table-row').forEach(function (row) {
-      row.addEventListener('click', function () {
+      row.addEventListener('click', function (e) {
+        if (e.target.closest('.crm-actions-cell, .crm-actions-menu, .lead-quick-cell, .lead-quick-actions-cell, [data-lead-quick], .crm-td-check, .crm-inbox-row-check, [data-action-menu-trigger], [data-row-action]')) return;
         document.querySelectorAll('.ca-table-row').forEach(function (r) { r.classList.remove('selected'); });
         row.classList.add('selected');
-        if (row.dataset.row) {
-          try {
-            const data = JSON.parse(row.dataset.row.replace(/&#39;/g, "'"));
-            openDetailDrawer({
-              firm: data.firm,
-              fields: [
-                { label: 'Reference', value: data.id },
-                { label: 'Firm Name', value: data.firm },
-                { label: 'CA Name', value: data.ca },
-                { label: 'Mobile', value: data.mobile },
-                { label: 'Email', value: data.email },
-                { label: 'GST No.', value: data.gst },
-                { label: 'State', value: data.state },
-                { label: 'City', value: data.city },
-                { label: 'Team Size', value: data.team },
-                { label: 'Existing Software', value: data.software },
-                { label: 'Website', value: data.website },
-                { label: 'Rating', value: data.rating + ' / 5' },
-                { label: 'Newly Established', value: data.newFirm ? 'Yes' : 'No' },
-                { label: 'Status', value: data.status },
-                { label: 'Source', value: data.source },
-              ],
-            });
-          } catch (e) { /* ignore */ }
+        if (row.dataset.leadId && window.CA_CRM && typeof window.CA_CRM.selectLead === 'function') {
+          window.CA_CRM.selectLead(row.dataset.leadId, false);
         }
       });
     });

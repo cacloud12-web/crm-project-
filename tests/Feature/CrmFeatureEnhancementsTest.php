@@ -111,26 +111,39 @@ class CrmFeatureEnhancementsTest extends TestCase
         $this->assertSame($alternateMobile, $lead->alternate_mobile_no);
     }
 
-    public function test_employee_cannot_create_new_lead(): void
+    public function test_employee_can_create_new_lead_and_see_it_assigned(): void
     {
+        app(\App\Services\Rbac\RbacDatabaseService::class)->resetRoleToDefault('employee');
+        app(\App\Services\Rbac\RbacMatrixService::class)->flushCache();
+
         $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
         $this->actingAs($employee);
 
         $stateId = CaMaster::query()->whereNotNull('state_id')->value('state_id');
+        $cityId = CaMaster::query()->where('state_id', $stateId)->whereNotNull('city_id')->value('city_id');
         $this->assertNotNull($stateId);
+        $this->assertNotNull($cityId);
         $ts = (string) microtime(true);
 
         $response = $this->postJson('/ca-masters', [
             'ca_name' => 'New CA '.$ts,
             'firm_name' => 'New Firm '.$ts,
-            'mobile_no' => '9123456789',
-            'alternate_mobile_no' => '9988776655',
+            'mobile_no' => '9'.random_int(100000000, 999999999),
             'email_id' => 'newlead'.$ts.'@gmail.com',
             'state_id' => $stateId,
+            'city_id' => $cityId,
             'status' => 'New',
         ]);
 
-        $response->assertForbidden();
+        $response->assertCreated();
+        $caId = (int) $response->json('data.ca_id');
+
+        $this->assertDatabaseHas('lead_assignment_engines', [
+            'ca_id' => $caId,
+            'employee_id' => $employeeModel->employee_id,
+            'status' => 'Active',
+        ]);
     }
 
     public function test_lead_lock_blocks_another_employee_from_editing(): void

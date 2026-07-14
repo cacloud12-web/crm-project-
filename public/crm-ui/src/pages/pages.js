@@ -278,7 +278,6 @@ window.CAPages = (function () {
       '<header class="dcp-header">' +
         '<div class="dcp-header__title">' +
           '<h2 class="dcp-header__heading"><i data-lucide="presentation" class="h-5 w-5 text-brand"></i> Demo Management Calendar</h2>' +
-          '<p class="dcp-header__sub">Track product demos across CA firms, executives, and follow-ups.</p>' +
         '</div>' +
         '<div class="dcp-top-actions">' +
           '<div class="dcp-export-icons" aria-label="Export actions">' +
@@ -293,32 +292,15 @@ window.CAPages = (function () {
       '<section class="dcp-summary" id="dcp-summary" aria-label="Demo summary"></section>' +
       '<div class="dcp-search-bar">' +
         '<div class="dcp-search-row">' +
-          '<input type="search" id="dcp-search-q" class="input-field input-field-sm dcp-search-input" placeholder="Search firm, CA, executive…" aria-label="Search demos" />' +
-          '<select id="dcp-search-priority" class="input-field input-field-sm dcp-search-select" aria-label="Filter by priority">' +
-            '<option value="">All Priorities</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>' +
-          '</select>' +
-          '<select id="dcp-search-executive" class="input-field input-field-sm dcp-search-select" aria-label="Filter by executive"><option value="">All Executives</option></select>' +
           '<input type="date" id="dcp-search-date" class="input-field input-field-sm dcp-search-date" aria-label="Filter by date" />' +
-          '<button type="button" class="btn-primary btn-sm" id="dcp-search-btn"><i data-lucide="search" class="h-4 w-4"></i> Search</button>' +
-          '<button type="button" class="btn-secondary btn-sm" id="dcp-search-clear">Clear</button>' +
+          '<button type="button" class="crm-toolbar-icon-btn crm-toolbar-icon-btn--primary" id="dcp-search-btn" aria-label="Search"><i data-lucide="search" class="h-4 w-4" aria-hidden="true"></i></button>' +
+          '<button type="button" class="crm-toolbar-icon-btn" id="dcp-search-clear" aria-label="Clear"><i data-lucide="x" class="h-4 w-4" aria-hidden="true"></i></button>' +
         '</div>' +
       '</div>' +
       '<div class="dcp-filters" id="dcp-filters" role="tablist" aria-label="Demo status filters"></div>' +
       '<div class="dcp-layout">' +
         '<div class="dcp-main">' +
-          '<div class="dcp-top">' +
-            '<div class="dcp-month-nav">' +
-              '<button type="button" class="btn-secondary btn-sm" id="dcp-prev-month" aria-label="Previous month"><i data-lucide="chevron-left" class="h-4 w-4"></i></button>' +
-              '<input type="month" id="dcp-month-picker" class="input-field input-field-sm dcp-month-input" aria-label="Select month and year" />' +
-              '<button type="button" class="btn-secondary btn-sm" id="dcp-next-month" aria-label="Next month"><i data-lucide="chevron-right" class="h-4 w-4"></i></button>' +
-            '</div>' +
-          '</div>' +
           '<div class="dcp-toolbar">' +
-            '<div class="dcp-toolbar-left">' +
-              '<button type="button" class="btn-secondary btn-sm" id="dcp-today">Today</button>' +
-              '<button type="button" class="btn-secondary btn-sm" id="dcp-back">Back</button>' +
-              '<button type="button" class="btn-secondary btn-sm" id="dcp-next-nav">Next</button>' +
-            '</div>' +
             '<div class="dcp-toolbar-title" id="dcp-title" aria-live="polite"></div>' +
             '<div class="dcp-view-tabs" role="tablist" aria-label="Calendar view">' +
               '<button type="button" class="dcp-view-tab active" data-dcp-view="month" role="tab">Month</button>' +
@@ -334,15 +316,14 @@ window.CAPages = (function () {
           '<div class="dcp-queue-list" id="dcp-queue-list"></div>' +
         '</aside>' +
       '</div>' +
-      '<div class="dcp-demo-foot"><span class="badge-brand">Demo Mode</span><span class="text-caption text-slate-500">Demo data is stored locally in your browser only.</span></div>' +
     '</div>';
   }
 
   function employeeDashboardPage() {
     return '<div class="emp-dashboard mgr-dashboard">' +
       '<header class="mgr-top card" id="emp-top-header"></header>' +
-      '<section class="dash-section" aria-label="Key metrics"><div class="dash-kpi-sections" id="emp-kpi-sections"></div></section>' +
       '<section class="mgr-panel card dash-section" id="emp-daily-targets-panel"></section>' +
+      '<section class="dash-section" aria-label="Key metrics"><div class="dash-kpi-sections" id="emp-kpi-sections"></div></section>' +
       '<div id="emp-productivity-panel" class="mgr-panel card dash-productivity-panel"></div>' +
       '<div class="dash-toolbar-row">' +
         '<section class="mgr-panel card dash-quick-actions-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="zap" class="h-5 w-5 text-brand"></i> Quick Actions</h3></div><div class="emp-quick-actions dash-quick-actions" id="emp-quick-actions"></div></section>' +
@@ -359,6 +340,7 @@ window.CAPages = (function () {
   function dashboardPage() {
     return '<div class="mgr-dashboard">' +
       '<header class="mgr-top card" id="mgr-top-header"></header>' +
+      '<div id="mgr-organization-target-panel" class="mgr-panel card dash-productivity-panel hidden"></div>' +
       '<div id="mgr-employee-productivity-panel" class="mgr-panel card dash-productivity-panel hidden"></div>' +
       '<section class="dash-section" aria-label="Key metrics"><div class="dash-kpi-sections" id="mgr-kpi-sections"></div></section>' +
       '<div class="dash-toolbar-row">' +

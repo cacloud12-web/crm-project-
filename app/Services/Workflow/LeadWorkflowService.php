@@ -896,6 +896,7 @@ class LeadWorkflowService
         if ($employeeId) {
             $this->cacheService->forgetDailyEmployeeTargets($employeeId);
             $this->cacheService->forgetYearlyEmployeeTargets($employeeId);
+            $this->cacheService->forgetEmployeeDashboard($employeeId);
         }
         $this->cacheService->forgetDashboardMetrics();
         $this->cacheService->forgetLeadSegmentCounts();

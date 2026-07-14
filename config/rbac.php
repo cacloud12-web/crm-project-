@@ -211,7 +211,7 @@ return [
 
         'employee' => [
             'dashboard' => ['view'],
-            'leads' => ['view', 'edit'],
+            'leads' => ['view', 'create', 'edit'],
             'followups' => ['view', 'create', 'edit', 'schedule_followup', 'schedule_demo', 'mark_completed'],
             'campaigns' => ['view', 'send_email', 'send_sms', 'campaigns'],
             'email_templates' => ['view'],
