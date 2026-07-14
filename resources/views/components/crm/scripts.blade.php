@@ -4,10 +4,10 @@
 <script src="{{ asset('crm-ui/src/constants/data.js') }}"></script>
 <script src="{{ asset('crm-ui/src/utils/listing-search.js') }}"></script>
 <script src="{{ asset('crm-ui/src/utils/employee-presence.js') }}"></script>
+{{-- Shared Reports shell + filter toolbar (must load before report-analytics.js) --}}
 <script src="{{ asset('crm-ui/src/utils/report-filter-toolbar.js') }}"></script>
 <script src="{{ asset('crm-ui/src/components/report-shell.js') }}"></script>
-<script src="{{ asset('crm-ui/vendor/flatpickr/flatpickr.min.js') }}"></script>
-<script src="{{ asset('crm-ui/vendor/flatpickr/plugins/confirmDate/confirmDate.js') }}"></script>
+{{-- Custom CRM date/time picker (replaces Flatpickr; CSS loaded in head.blade.php) --}}
 <script src="{{ asset('crm-ui/src/components/datetime-picker.js') }}"></script>
 <script src="{{ asset('crm-ui/src/components/action-dropdown.js') }}"></script>
 <script src="{{ asset('crm-ui/src/components/instant-tooltip.js') }}"></script>
@@ -34,6 +34,7 @@
 <script>window.CRM_FOLLOWUP_ACTIVITY_DEMO = @json((bool) config('crm_followups.demo_activity_enabled', false));</script>
 <script>window.__CRM_MASTER_PIPELINE__ = @json(config('crm_master_pipeline'));</script>
 <script>window.__CRM_SALES_PIPELINE__ = @json(config('crm_sales_pipeline'));</script>
+<script>window.__CRM_LEAD_STATUSES__ = @json(config('crm_statuses.allowed', []));</script>
 <script src="{{ asset('crm-ui/src/services/rbac.js') }}"></script>
 <script>window.__CRM_INITIAL_PAGE__ = @json($spaPage ?? null);</script>
 <script src="{{ asset('crm-ui/src/app.js') }}"></script>

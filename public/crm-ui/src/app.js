@@ -232,6 +232,10 @@
     state.sidebarMobileOpen = false;
     state.detailDrawerOpen = false;
     [notificationDrawer, filterDrawer, quickActionsMenu, shortcutsModal, detailDrawer].forEach(function (el) { el?.classList.remove('open'); });
+    document.querySelectorAll('.ca-modal.open').forEach(function (m) { m.classList.remove('open'); });
+    if (window.CrmDateTimePicker && typeof window.CrmDateTimePicker.close === 'function') {
+      window.CrmDateTimePicker.close({ focus: false });
+    }
     overlay?.classList.remove('active');
     fab?.classList.remove('fab-active');
     sidebar?.classList.remove('sidebar-mobile-open');
@@ -476,6 +480,7 @@
       }
     }
     state.currentPage = pageId;
+    closeAllOverlays();
     applyPageContent(pageId);
 
     document.querySelectorAll('[data-page]').forEach(function (link) {

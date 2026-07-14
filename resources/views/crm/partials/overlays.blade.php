@@ -1341,7 +1341,7 @@
       <div class="ca-modal-body space-y-4">
         <form id="form-employee-leave-request" class="space-y-3 hidden">
           <div class="grid sm:grid-cols-2 gap-3">
-            <div><label class="form-label">Leave Date</label><input type="date" id="employee-leave-date" class="input-field" required /></div>
+            <div><label class="form-label">Leave Date</label><input type="date" id="employee-leave-date" class="input-field" required data-crm-date-input data-allow-past /></div>
             <div><label class="form-label">Reason</label><input type="text" id="employee-leave-reason" class="input-field" placeholder="Optional" /></div>
           </div>
           <button type="submit" class="btn-primary btn-sm">Request Leave</button>
@@ -1469,7 +1469,7 @@
           <label class="dcp-form-field">CA Name<input type="text" id="dcp-form-ca" class="input-field" autocomplete="name" /></label>
           <label class="dcp-form-field">Assigned Executive<input type="text" id="dcp-form-executive" class="input-field" /></label>
           <label class="dcp-form-field">Phone<input type="tel" id="dcp-form-phone" class="input-field" autocomplete="tel" /></label>
-          <label class="dcp-form-field">Demo Date<input type="date" id="dcp-form-date" class="input-field" /></label>
+          <label class="dcp-form-field">Demo Date<input type="date" id="dcp-form-date" class="input-field" data-crm-date-input data-allow-past /></label>
           <label class="dcp-form-field">Start Time<select id="dcp-form-start" class="input-field"></select></label>
           <label class="dcp-form-field">End Time<select id="dcp-form-end" class="input-field"></select></label>
           <label class="dcp-form-field">Priority

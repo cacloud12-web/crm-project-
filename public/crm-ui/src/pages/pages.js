@@ -292,7 +292,7 @@ window.CAPages = (function () {
       '<section class="dcp-summary" id="dcp-summary" aria-label="Demo summary"></section>' +
       '<div class="dcp-search-bar">' +
         '<div class="dcp-search-row">' +
-          '<input type="date" id="dcp-search-date" class="input-field input-field-sm dcp-search-date" aria-label="Filter by date" />' +
+          '<input type="date" id="dcp-search-date" class="input-field input-field-sm dcp-search-date" data-crm-date-input data-allow-past data-hide-preview aria-label="Filter by date" />' +
           '<button type="button" class="crm-toolbar-icon-btn crm-toolbar-icon-btn--primary" id="dcp-search-btn" aria-label="Search"><i data-lucide="search" class="h-4 w-4" aria-hidden="true"></i></button>' +
           '<button type="button" class="crm-toolbar-icon-btn" id="dcp-search-clear" aria-label="Clear"><i data-lucide="x" class="h-4 w-4" aria-hidden="true"></i></button>' +
         '</div>' +
@@ -561,6 +561,7 @@ window.CAPages = (function () {
     } else if (filterType === 'date') {
       var dateId = c.filterId ? ' id="' + c.filterId + '"' : '';
       control = '<input type="date" class="' + inputCls + '"' + dateId + keyAttr + groupAttr +
+        ' data-crm-date-input data-allow-past data-hide-preview' +
         (c.filterAttrs ? ' ' + c.filterAttrs : '') +
         ' aria-label="' + escapeAttr(ariaLabel) + '" />';
     } else if (filterType === 'number') {
@@ -610,7 +611,7 @@ window.CAPages = (function () {
           ' aria-label="' + escapeAttr(f.label) + '">' + (f.options || '') + '</select>';
       } else if (f.type === 'date') {
         control = '<input type="date" id="' + f.id + '" class="' + inputCls + '"' + dataAttrs +
-          ' aria-label="' + escapeAttr(f.label) + '" />';
+          ' data-crm-date-input data-allow-past data-hide-preview aria-label="' + escapeAttr(f.label) + '" />';
       } else if (f.type === 'number-range') {
         var groupAttr = f.filterGroup ? ' data-col-filter-group="' + f.filterGroup + '"' : '';
         control = '<div class="crm-col-filter-range crm-listing-filter-range">' +
@@ -1240,9 +1241,9 @@ window.CAPages = (function () {
           '<select class="input-field input-field-sm" id="assign-heatmap-source" aria-label="Source"><option value="">All Sources</option></select>' +
         '</div>' +
         '<div class="assign-heatmap-custom hidden" id="assign-heatmap-custom-range">' +
-          '<input type="date" class="input-field input-field-sm" id="assign-heatmap-from" aria-label="From date" />' +
+          '<input type="date" class="input-field input-field-sm" id="assign-heatmap-from" data-crm-date-input data-allow-past data-hide-preview aria-label="From date" />' +
           '<span class="assign-heatmap-custom__sep">to</span>' +
-          '<input type="date" class="input-field input-field-sm" id="assign-heatmap-to" aria-label="To date" />' +
+          '<input type="date" class="input-field input-field-sm" id="assign-heatmap-to" data-crm-date-input data-allow-past data-hide-preview aria-label="To date" />' +
         '</div>' +
         '<div class="assign-heatmap-summary" id="assign-heatmap-summary"></div>' +
         '<div class="assign-heatmap-list" id="assign-heatmap-list">' +

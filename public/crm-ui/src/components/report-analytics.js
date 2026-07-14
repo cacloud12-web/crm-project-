@@ -632,7 +632,27 @@ window.CrmReportAnalytics = (function () {
 
   function buildFilterBar(slug) {
     var toolbar = window.CrmReportFilterToolbar;
-    if (!toolbar) return '<div class="ra-lc-toolbar crm-report-filter-toolbar"></div>';
+    if (!toolbar) {
+      /* Fallback if shared toolbar script failed to load — preserves date/employee/status/search filters. */
+      var filters = FILTER_PRESETS[slug] || ['date', 'employee', 'search'];
+      var parts = [];
+      if (filters.indexOf('date') >= 0) {
+        parts.push('<label class="ra-lc-filter" title="Date From"><i data-lucide="calendar" class="h-3.5 w-3.5"></i><input type="text" id="ra-filter-from" class="input-field input-field-sm" data-crm-date-input data-allow-past data-hide-preview data-optional aria-label="Date From" /></label>');
+        parts.push('<label class="ra-lc-filter" title="Date To"><i data-lucide="calendar-range" class="h-3.5 w-3.5"></i><input type="text" id="ra-filter-to" class="input-field input-field-sm" data-crm-date-input data-allow-past data-hide-preview data-optional aria-label="Date To" /></label>');
+      }
+      if (filters.indexOf('employee') >= 0) {
+        parts.push('<label class="ra-lc-filter ra-lc-filter--grow" title="Employee"><i data-lucide="user" class="h-3.5 w-3.5"></i><select id="ra-filter-employee" class="input-field input-field-sm" aria-label="Employee"><option value="">All employees</option></select></label>');
+      }
+      if (filters.indexOf('status') >= 0) {
+        parts.push('<label class="ra-lc-filter" title="Status"><i data-lucide="filter" class="h-3.5 w-3.5"></i><select id="ra-filter-status" class="input-field input-field-sm" aria-label="Status"><option value="">All statuses</option><option>Hot</option><option>Warm</option><option>New</option><option>Demo Scheduled</option><option>Lost</option></select></label>');
+      }
+      if (filters.indexOf('search') >= 0) {
+        parts.push('<label class="ra-lc-filter ra-lc-filter--grow" title="Search table"><i data-lucide="search" class="h-3.5 w-3.5"></i><input type="search" id="ra-filter-source" class="input-field input-field-sm" placeholder="Search table…" aria-label="Search table" /></label>');
+      }
+      parts.push('<button type="button" class="btn-primary btn-sm ra-lc-apply" id="ra-filter-apply">Apply</button>');
+      parts.push('<button type="button" class="crm-toolbar-icon-btn" id="ra-filter-reset" title="Reset filters" aria-label="Reset filters"><i data-lucide="rotate-ccw" class="h-4 w-4"></i></button>');
+      return '<div class="ra-lc-toolbar"><div class="ra-lc-filters">' + parts.join('') + '</div></div>';
+    }
     var enabled = FILTER_PRESETS[slug] || ['date', 'employee', 'search'];
     return toolbar.build({
       wrapperClass: 'ra-lc-toolbar',
@@ -684,6 +704,7 @@ window.CrmReportAnalytics = (function () {
       window.CrmReportFilterToolbar.initToolbar(root);
     }
     loadEmployeeOptions();
+    if (window.CrmDateTimePicker) window.CrmDateTimePicker.initAll(root);
     iconsIn(root);
   }
 

@@ -80,6 +80,7 @@ class UatResetService
         'queue_jobs',
         'bounce_handlings',
         'spam_protections',
+        'ocr_documents',
         'ca_masters',
     ];
 
@@ -133,16 +134,16 @@ class UatResetService
      *     verification: array<string, mixed>,
      * }
      */
-    public function reset(): array
+    public function reset(bool $preserveEmployees = false): array
     {
         $deleted = [];
 
-        DB::transaction(function () use (&$deleted): void {
+        DB::transaction(function () use (&$deleted, $preserveEmployees): void {
             foreach (self::TRANSACTIONAL_TABLES as $table) {
                 $deleted[$table] = $this->deleteAllFrom($table);
             }
 
-            $deleted['employees'] = $this->deleteAllEmployees();
+            $deleted['employees'] = $preserveEmployees ? 0 : $this->deleteAllEmployees();
         });
 
         $storage = $this->clearUploadedFiles();
@@ -154,7 +155,8 @@ class UatResetService
             'remaining_users' => $this->remainingUsers(),
             'remaining_employees' => $this->remainingEmployees(),
             'remaining_config' => $this->remainingConfigCounts(),
-            'verification' => $this->verify(),
+            'verification' => $this->verify($preserveEmployees),
+            'employees_preserved' => $preserveEmployees,
         ];
     }
 
@@ -280,7 +282,7 @@ class UatResetService
     /**
      * @return array<string, mixed>
      */
-    private function verify(): array
+    private function verify(bool $preserveEmployees = false): array
     {
         $zeroChecks = [
             'ca_masters' => $this->tableCount('ca_masters'),
@@ -301,10 +303,14 @@ class UatResetService
             'daily_employee_targets' => $this->tableCount('daily_employee_targets'),
             'yearly_employee_targets' => $this->tableCount('yearly_employee_targets'),
             'employee_assignments' => $this->tableCount('employee_assignments'),
-            'employees' => $this->tableCount('employees'),
             'activity_logs' => $this->tableCount('activity_logs'),
             'admin_dashboard_metrics' => $this->tableCount('admin_dashboard_metrics'),
+            'ocr_documents' => $this->tableCount('ocr_documents'),
         ];
+
+        if (! $preserveEmployees) {
+            $zeroChecks['employees'] = $this->tableCount('employees');
+        }
 
         $orphans = [
             'assignments_without_lead' => $this->orphanCount(

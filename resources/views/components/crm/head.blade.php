@@ -2,9 +2,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>@yield('title', 'CA Cloud Desk — CRM Dashboard')</title>
-<link rel="stylesheet" href="{{ asset('crm-ui/vendor/flatpickr/flatpickr.min.css') }}" />
-<link rel="stylesheet" href="{{ asset('crm-ui/vendor/flatpickr/plugins/confirmDate/confirmDate.css') }}" />
-<link rel="stylesheet" href="{{ asset('crm-ui/vendor/flatpickr/flatpickr-crm-theme.css') }}" />
+<link rel="stylesheet" href="{{ asset('crm-ui/src/components/crm-datetime-picker.css') }}" />
 <link rel="stylesheet" href="{{ asset('crm-ui/src/styles.css') }}" />
 <script src="https://cdn.tailwindcss.com"></script>
 <script>

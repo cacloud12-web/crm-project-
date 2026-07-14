@@ -643,6 +643,35 @@ body.crm-scroll-locked {
   height: var(--crm-table-row-h, 30px);
 }
 
+/* Empty / loading rows need full height — compact row rules clip the message */
+.crm-table tbody tr.cam-empty-row,
+.crm-table tbody tr.cam-loading-row,
+.crm-table tbody tr.crm-table-empty-row,
+.crm-table tbody tr.crm-table-loading-row,
+.ca-table--enterprise tbody tr.cam-empty-row,
+.ca-table--enterprise tbody tr.cam-loading-row,
+.ca-table--enterprise tbody tr.crm-table-empty-row,
+.ca-table--enterprise tbody tr.crm-table-loading-row {
+  height: auto;
+}
+
+.crm-table tbody tr.cam-empty-row td,
+.crm-table tbody tr.cam-loading-row td,
+.crm-table tbody tr.crm-table-empty-row td,
+.crm-table tbody tr.crm-table-loading-row td,
+.ca-table--enterprise tbody tr.cam-empty-row td,
+.ca-table--enterprise tbody tr.cam-loading-row td,
+.ca-table--enterprise tbody tr.crm-table-empty-row td,
+.ca-table--enterprise tbody tr.crm-table-loading-row td {
+  height: auto;
+  min-height: 8rem;
+  max-height: none;
+  overflow: visible;
+  white-space: normal;
+  vertical-align: middle;
+  text-align: center;
+}
+
 .crm-table td.crm-actions-cell,
 .ca-table--enterprise td.crm-actions-cell,
 .crm-table td.sticky-right.crm-actions-cell,
@@ -11596,7 +11625,7 @@ body.rw-open {
   }
 }
 
-/* Date/time picker — see public/crm-ui/vendor/flatpickr/flatpickr-crm-theme.css */
+/* Date/time picker — see public/crm-ui/src/components/crm-datetime-picker.css */
 
 /* Unified Campaign Hub */
 .cam-unified-card {

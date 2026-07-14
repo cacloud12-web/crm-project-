@@ -500,6 +500,10 @@ window.CrmDemoCalendarPage = (function () {
     populateTimeSelects(demo ? demo.startTime : Data.RULES.startTime, demo ? demo.endTime : null);
     var err = $('dcp-form-error');
     if (err) err.textContent = '';
+    if (window.CrmDateTimePicker) {
+      window.CrmDateTimePicker.initAll(modal);
+      window.CrmDateTimePicker.syncInput($('dcp-form-date'));
+    }
     openModal(modal);
   }
 
@@ -734,6 +738,7 @@ window.CrmDemoCalendarPage = (function () {
     state.anchor = new Date();
     bindUi();
     renderAll();
+    if (window.CrmDateTimePicker) window.CrmDateTimePicker.initAll($('dcp-root'));
     iconsIn($('dcp-root'));
   }
 

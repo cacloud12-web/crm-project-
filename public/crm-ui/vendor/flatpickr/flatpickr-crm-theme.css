@@ -43,13 +43,21 @@
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-months {
-  padding: 0.6rem 0.65rem 0.2rem;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.35rem;
+  padding: 0.55rem 2.15rem 0.15rem;
   background: #fff;
   flex-shrink: 0;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-months .flatpickr-month {
   height: auto;
+  flex: 1 1 auto;
+  width: 100%;
+  overflow: visible;
   color: #0f172a;
 }
 
@@ -58,25 +66,47 @@
   font-weight: 700;
   padding: 0;
   height: auto;
+  min-height: 1.5rem;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.2rem;
+  position: relative;
+  left: auto;
   letter-spacing: -0.01em;
+}
+
+.flatpickr-calendar.crm-fp-theme .crm-fp-month-title {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  text-align: center;
+  pointer-events: none;
+  user-select: none;
+}
+
+.flatpickr-calendar.crm-fp-theme .flatpickr-current-month .flatpickr-monthDropdown-months,
+.flatpickr-calendar.crm-fp-theme .flatpickr-current-month .numInputWrapper {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-current-month .flatpickr-monthDropdown-months,
 .flatpickr-calendar.crm-fp-theme .flatpickr-current-month .numInputWrapper {
   font-weight: 700;
   color: #0f172a;
-}
-
-.flatpickr-calendar.crm-fp-theme .flatpickr-current-month .flatpickr-monthDropdown-months {
-  appearance: none;
-  background: transparent;
-  border: none;
-  padding: 0 0.15rem;
-  pointer-events: none;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-current-month input.cur-year {
@@ -87,11 +117,23 @@
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-prev-month,
 .flatpickr-calendar.crm-fp-theme .flatpickr-next-month {
-  top: 0.75rem;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
   padding: 0.35rem;
   border-radius: 8px;
   fill: #64748b;
   transition: background 0.15s, fill 0.15s;
+  z-index: 3;
+  height: auto;
+}
+
+.flatpickr-calendar.crm-fp-theme .flatpickr-prev-month {
+  left: 0.45rem;
+}
+
+.flatpickr-calendar.crm-fp-theme .flatpickr-next-month {
+  right: 0.45rem;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-prev-month:hover,
@@ -435,10 +477,34 @@
   padding: 0.35rem 0.7rem;
   font-size: 0.8125rem;
   white-space: nowrap;
+  border-radius: 8px;
 }
 
 .crm-fp-footer .btn-primary {
   min-width: 4.25rem;
+  background: #25b7a7;
+  border-color: #25b7a7;
+  box-shadow: 0 2px 8px rgba(37, 183, 167, 0.28);
+}
+
+.crm-fp-footer .btn-primary:hover {
+  background: #1e9688;
+  border-color: #1e9688;
+}
+
+.crm-col-filter-th .crm-datetime-field {
+  min-width: 7.5rem;
+}
+
+.crm-col-filter-th .crm-datetime-field__input-wrap .crm-datetime-field__trigger {
+  min-height: 34px;
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+  font-size: 0.75rem;
+}
+
+.crm-col-filter-th .crm-datetime-field__icon-wrap {
+  right: 0.45rem;
 }
 
 .flatpickr-calendar.crm-fp-theme .flatpickr-confirm {

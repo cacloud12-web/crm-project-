@@ -10,23 +10,29 @@ use Illuminate\Support\Facades\Schema;
 class CrmProductionCleanupCommand extends Command
 {
     protected $signature = 'crm:production-cleanup
-                            {--force : Required to delete all dummy/sample transactional CRM data}';
+                            {--force : Required to delete all dummy/sample transactional CRM data}
+                            {--keep-employees : Keep employee records; only remove leads, assignments, and other transactional data}';
 
     protected $description = 'Remove all dummy/sample transactional CRM data for production use (preserves users, roles, and master configuration)';
 
     public function handle(UatResetService $resetService): int
     {
+        $keepEmployees = (bool) $this->option('keep-employees');
+
         if (! $this->option('force')) {
-            $this->error('This command permanently deletes all leads, employees, assignments, campaigns, demos, and related transactional data.');
+            $this->error('This command permanently deletes all leads, assignments, campaigns, demos, and related transactional data.'
+                .($keepEmployees ? ' Employee records are preserved with --keep-employees.' : ' Employee records are also deleted unless you pass --keep-employees.'));
             $this->line('Users, roles, permissions, and master configuration are preserved.');
             $this->line('Re-run with --force to continue.');
 
             return self::FAILURE;
         }
 
-        $this->warn('Preparing CRM for production — removing all transactional data...');
+        $this->warn($keepEmployees
+            ? 'Removing all transactional CRM data while preserving employee records...'
+            : 'Preparing CRM for production — removing all transactional data...');
 
-        $report = $resetService->reset();
+        $report = $resetService->reset($keepEmployees);
 
         $this->newLine();
         $this->info('=== Records Deleted ===');
