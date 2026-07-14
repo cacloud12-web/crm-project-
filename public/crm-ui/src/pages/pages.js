@@ -1961,14 +1961,29 @@ window.CAPages = (function () {
       table(['Reference', 'Queue', 'Job', 'Failed At', 'Exception'], [], { tbodyId: 'queue-failed-body' });
   }
 
+  function buildReportToolbar(cfg) {
+    var toolbar = window.CrmReportFilterToolbar;
+    if (!toolbar) return '';
+    return toolbar.build(cfg);
+  }
+
   function auditBody() {
-    return listingFilterBar([
-      { label: 'Module', id: 'audit-filter-module', type: 'select', options: '<option value="">All modules</option>' },
-      { label: 'Action', id: 'audit-filter-action', type: 'select', options: '<option value="">All actions</option>' },
-      { label: 'From', id: 'audit-filter-from', type: 'date', attrs: 'data-crm-date-input data-allow-past data-hide-preview' },
-      { label: 'To', id: 'audit-filter-to', type: 'date', attrs: 'data-crm-date-input data-allow-past data-hide-preview' },
-      { label: 'User', id: 'audit-filter-user', type: 'search', placeholder: 'search' },
-    ], actPrimary('Apply', 'id="audit-filter-apply"', 'filter') + actSecondary('Clear', 'id="audit-filter-clear"', 'x'), { id: 'audit-filter-bar', actionsInline: true }) +
+    var toolbar = window.CrmReportFilterToolbar;
+    var filters = toolbar ? buildReportToolbar({
+      wrapperId: 'audit-filter-bar',
+      wrapperClass: 'card mb-4',
+      errorId: 'audit-filter-date-error',
+      applyId: 'audit-filter-apply',
+      resetId: 'audit-filter-reset',
+      fields: toolbar.buildFieldsFromPreset(['date', 'type', 'status', 'search'], {
+        fromId: 'audit-filter-from',
+        toId: 'audit-filter-to',
+        type: { id: 'audit-filter-module', options: '<option value="">All modules</option>' },
+        status: { id: 'audit-filter-action', options: '<option value="">All actions</option>' },
+        search: { id: 'audit-filter-user', label: 'SEARCH', placeholder: 'Search user…' },
+      }),
+    }) : '';
+    return filters +
       '<div class="card p-5"><div class="overflow-x-auto scrollbar-thin">' +
         '<table class="ca-table w-full"><thead><tr>' +
           '<th>Timestamp</th><th>User</th><th>Module</th><th>Record ID</th><th>Action</th>' +
@@ -1978,12 +1993,20 @@ window.CAPages = (function () {
   }
 
   function activityBody() {
-    return listingFilterBar([
-      { label: 'Module', id: 'activity-filter-module', type: 'select', options: '<option value="">All modules</option>' },
-      { label: 'Action', id: 'activity-filter-action', type: 'select', options: '<option value="">All actions</option>' },
-      { label: 'Date', id: 'activity-filter-date', type: 'date', attrs: 'data-crm-date-input data-allow-past data-hide-preview' },
-      { label: 'User', id: 'activity-filter-user', type: 'search', placeholder: 'search' },
-    ], actPrimary('Apply', 'id="activity-filter-apply"', 'filter') + actSecondary('Clear', 'id="activity-filter-clear"', 'x'), { id: 'activity-filter-bar', actionsInline: true }) +
+    var toolbar = window.CrmReportFilterToolbar;
+    var filters = toolbar ? buildReportToolbar({
+      wrapperId: 'activity-filter-bar',
+      wrapperClass: 'card mb-4',
+      applyId: 'activity-filter-apply',
+      resetId: 'activity-filter-reset',
+      fields: toolbar.buildFieldsFromPreset(['singleDate', 'type', 'status', 'search'], {
+        dateId: 'activity-filter-date',
+        type: { id: 'activity-filter-module', options: '<option value="">All modules</option>' },
+        status: { id: 'activity-filter-action', options: '<option value="">All actions</option>' },
+        search: { id: 'activity-filter-user', label: 'SEARCH', placeholder: 'Search user…' },
+      }),
+    }) : '';
+    return filters +
       '<div class="card p-6 mb-4"><div id="activity-timeline"></div></div>' +
       '<div class="card p-5"><div class="flex items-center justify-between gap-3 mb-3">' +
         '<h3 class="text-card-heading">Activity Logs</h3></div>' +
@@ -2009,9 +2032,12 @@ window.CAPages = (function () {
     var reportCards = '<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">' +
       reportDefs.map(function (r) {
         var navAttr = r.nav ? ' data-nav-page="' + r.nav + '"' : ' data-report="' + r.card + '" data-report-slug="' + r.slug + '"';
-        return '<div class="card-interactive p-4 flex items-center gap-3 report-card"' + navAttr + '>' +
+        return '<div class="card-interactive report-card flex items-center gap-3"' + navAttr + '>' +
           '<div class="report-card__icon flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand"><i data-lucide="' + (r.icon || 'file-text') + '" class="h-5 w-5"></i></div>' +
-          '<div><p class="text-card-heading report-card__title">' + r.card + '</p><p class="text-caption text-slate-500 report-card-meta" data-report-slug="' + r.slug + '">Open report</p></div></div>';
+          '<div class="report-card__content min-w-0 flex-1">' +
+            '<p class="text-card-heading report-card__title">' + r.card + '</p>' +
+            '<p class="text-caption text-slate-500 report-card-meta" data-report-slug="' + r.slug + '">Open report</p>' +
+          '</div></div>';
       }).join('') + '</div>';
     var analyticsCharts = [
       { label: 'Daily Calls', key: 'daily_calls' },
@@ -2176,25 +2202,67 @@ window.CAPages = (function () {
   }
 
   function duplicateAttemptsPage() {
-    return hdr(
-      'Duplicate Attempts',
-      'Employee duplicate phone attempts and suspicious similar-number entries for fraud monitoring.',
-      null,
-      actSecondary('Export', 'id="dup-attempts-export-btn"', 'download')
-    ) +
-      listingFilterBar([
-        { label: 'Search', id: 'dup-attempts-search', type: 'search', placeholder: 'search' },
-        { label: 'Type', id: 'dup-attempts-type', type: 'select', options: '<option value="">All types</option><option value="duplicate">Duplicate</option><option value="potential_duplicate">Potential Duplicate</option>' },
-        { label: 'Status', id: 'dup-attempts-status', type: 'select', options: '<option value="">All statuses</option><option value="open">Open</option><option value="changed_number">Changed</option><option value="resolved">Resolved</option>' },
-        { label: 'From', id: 'dup-attempts-from', type: 'date', attrs: 'data-crm-date-input data-allow-past data-hide-preview' },
-        { label: 'To', id: 'dup-attempts-to', type: 'date', attrs: 'data-crm-date-input data-allow-past data-hide-preview' },
-      ], actPrimary('Apply', 'id="dup-attempts-apply"', 'filter') + actSecondary('Clear', 'id="dup-attempts-clear"', 'x'), { id: 'dup-attempts-filter-bar', actionsInline: true }) +
+    var toolbar = window.CrmReportFilterToolbar;
+    var filters = toolbar ? buildReportToolbar({
+      wrapperId: 'dup-attempts-filter-bar',
+      wrapperClass: '',
+      errorId: 'dup-attempts-date-error',
+      applyId: 'dup-attempts-apply',
+      resetId: 'dup-attempts-reset',
+      fields: toolbar.buildFieldsFromPreset(['date', 'employeeSearch', 'type', 'status'], {
+        fromId: 'dup-attempts-from',
+        toId: 'dup-attempts-to',
+        employeeSearch: { id: 'dup-attempts-search', placeholder: 'Search employee or number…' },
+        type: {
+          id: 'dup-attempts-type',
+          options:
+            '<option value="">All types</option>' +
+            '<option value="duplicate">Duplicate</option>' +
+            '<option value="potential_duplicate">Potential Duplicate</option>',
+        },
+        status: {
+          id: 'dup-attempts-status',
+          options:
+            '<option value="">All statuses</option>' +
+            '<option value="open">Open</option>' +
+            '<option value="changed_number">Changed</option>' +
+            '<option value="resolved">Resolved</option>',
+        },
+      }),
+    }) : '';
+
+    var bodyHtml =
       '<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4" id="dup-attempts-metrics"></div>' +
       table(
         ['Employee', 'Duplicate Number', 'Existing Lead', 'Saved Number', 'Attempt Time', 'Attempt Type', 'Status', 'Actions'],
         [],
         { tbodyId: 'dup-attempts-table', paginationId: 'dup-attempts-pagination', cls: 'mb-4' }
       );
+
+    if (window.CrmReportShell) {
+      return window.CrmReportShell.buildStandalonePage({
+        title: 'Duplicate Attempts',
+        subtitle: 'Employee duplicate phone attempts and suspicious similar-number entries for fraud monitoring.',
+        icon: 'shield-alert',
+        backId: 'dup-attempts-back',
+        backNav: 'reports',
+        actionsHtml:
+          '<button type="button" class="crm-toolbar-icon-btn" id="dup-attempts-export-btn" data-crm-tip="Download Report" aria-label="Download Report">' +
+            '<i data-lucide="download" class="h-4 w-4" aria-hidden="true"></i>' +
+          '</button>',
+        filtersHtml: filters,
+        bodyHtml: bodyHtml,
+      });
+    }
+
+    return hdr(
+      'Duplicate Attempts',
+      'Employee duplicate phone attempts and suspicious similar-number entries for fraud monitoring.',
+      null,
+      actSecondary('Download Report', 'id="dup-attempts-export-btn"', 'download')
+    ) +
+      filters +
+      bodyHtml;
   }
 
   /* ─── Email Configuration (Super Admin) ─── */

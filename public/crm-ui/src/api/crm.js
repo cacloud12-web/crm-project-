@@ -2482,8 +2482,13 @@ window.CA_CRM = (function () {
   }
 
   function initActivityLogsPage() {
+    var filterBar = document.getElementById('activity-filter-bar');
+    if (filterBar && window.CrmReportFilterToolbar) {
+      window.CrmReportFilterToolbar.initToolbar(filterBar);
+    }
+
     var applyBtn = document.getElementById('activity-filter-apply');
-    var clearBtn = document.getElementById('activity-filter-clear');
+    var clearBtn = document.getElementById('activity-filter-reset');
     if (applyBtn && !applyBtn._activityBound) {
       applyBtn._activityBound = true;
       applyBtn.addEventListener('click', function () {
@@ -2515,6 +2520,9 @@ window.CA_CRM = (function () {
         if (actionSel) actionSel.value = '';
         if (dateInput) dateInput.value = '';
         if (userInput) userInput.value = '';
+        if (filterBar && window.CrmDateTimePicker) {
+          window.CrmDateTimePicker.syncAll(filterBar);
+        }
         if (window.CA_LISTING_SEARCH) {
           CA_LISTING_SEARCH.clearFilters('activity_logs');
           reloadListing('activity_logs').then(function () {
@@ -10132,11 +10140,20 @@ window.CA_CRM = (function () {
   }
 
   function initAuditPage() {
+    var filterBar = document.getElementById('audit-filter-bar');
+    if (filterBar && window.CrmReportFilterToolbar) {
+      window.CrmReportFilterToolbar.initToolbar(filterBar);
+    }
+
     var applyBtn = document.getElementById('audit-filter-apply');
-    var clearBtn = document.getElementById('audit-filter-clear');
+    var clearBtn = document.getElementById('audit-filter-reset');
     if (applyBtn && !applyBtn._auditBound) {
       applyBtn._auditBound = true;
       applyBtn.addEventListener('click', function () {
+        if (window.CrmReportFilterToolbar &&
+          !window.CrmReportFilterToolbar.validateDateRange('audit-filter-from', 'audit-filter-to', 'audit-filter-date-error')) {
+          return;
+        }
         if (window.CA_LISTING_SEARCH) {
           CA_LISTING_SEARCH.setState('activity_logs', { page: 1, filters: readAuditFiltersFromForm() });
           reloadListing('activity_logs').then(function () {
@@ -10149,10 +10166,18 @@ window.CA_CRM = (function () {
     if (clearBtn && !clearBtn._auditBound) {
       clearBtn._auditBound = true;
       clearBtn.addEventListener('click', function () {
-        ['audit-filter-module', 'audit-filter-action', 'audit-filter-from', 'audit-filter-to', 'audit-filter-user'].forEach(function (id) {
+        ['audit-filter-module', 'audit-filter-action', 'audit-filter-user'].forEach(function (id) {
           var el = document.getElementById(id);
           if (el) el.value = '';
         });
+        if (window.CrmReportFilterToolbar) {
+          window.CrmReportFilterToolbar.clearDateFields('audit-filter-from', 'audit-filter-to', 'audit-filter-date-error');
+        } else {
+          ['audit-filter-from', 'audit-filter-to'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.value = '';
+          });
+        }
         if (window.CA_LISTING_SEARCH) {
           CA_LISTING_SEARCH.clearFilters('activity_logs');
           reloadListing('activity_logs').then(function () {
@@ -10181,6 +10206,52 @@ window.CA_CRM = (function () {
       from: (document.getElementById('dup-attempts-from') || {}).value || '',
       to: (document.getElementById('dup-attempts-to') || {}).value || '',
     };
+  }
+
+  function writeDuplicateAttemptFiltersToFields(filters) {
+    filters = filters || {};
+    var search = document.getElementById('dup-attempts-search');
+    var type = document.getElementById('dup-attempts-type');
+    var status = document.getElementById('dup-attempts-status');
+    var from = document.getElementById('dup-attempts-from');
+    var to = document.getElementById('dup-attempts-to');
+    if (search) search.value = filters.search || '';
+    if (type) type.value = filters.attempt_type || '';
+    if (status) status.value = filters.status || '';
+    if (from) from.value = filters.from || '';
+    if (to) to.value = filters.to || '';
+    var bar = document.getElementById('dup-attempts-filter-bar');
+    if (bar && window.CrmReportFilterToolbar) {
+      window.CrmReportFilterToolbar.initToolbar(bar);
+    }
+  }
+
+  function refreshDuplicateAttemptsMetrics() {
+    return apiFetch('/duplicate-attempts/metrics')
+      .then(function (body) {
+        renderDuplicateAttemptsMetrics(body.data || {});
+      })
+      .catch(function () {});
+  }
+
+  function applyDuplicateAttemptsFilters() {
+    if (window.CrmReportFilterToolbar &&
+      !window.CrmReportFilterToolbar.validateDateRange('dup-attempts-from', 'dup-attempts-to', 'dup-attempts-date-error')) {
+      return;
+    }
+    duplicateAttemptsState.filters = readDuplicateAttemptFilters();
+    loadDuplicateAttemptsPage(1);
+    refreshDuplicateAttemptsMetrics();
+  }
+
+  function resetDuplicateAttemptsFilters() {
+    writeDuplicateAttemptFiltersToFields({});
+    if (window.CrmReportFilterToolbar) {
+      window.CrmReportFilterToolbar.hideDateRangeError('dup-attempts-date-error');
+    }
+    duplicateAttemptsState.filters = {};
+    loadDuplicateAttemptsPage(1);
+    refreshDuplicateAttemptsMetrics();
   }
 
   function duplicateAttemptTypeBadge(type) {
@@ -10297,35 +10368,48 @@ window.CA_CRM = (function () {
 
     duplicateAttemptsState.filters = readDuplicateAttemptFilters();
 
-    apiFetch('/duplicate-attempts/metrics')
-      .then(function (body) {
-        renderDuplicateAttemptsMetrics(body.data || {});
-      })
-      .catch(function () {});
+    var filterBar = document.getElementById('dup-attempts-filter-bar');
+    if (filterBar && window.CrmReportFilterToolbar) {
+      window.CrmReportFilterToolbar.initToolbar(filterBar);
+    }
 
+    var pageRoot = document.querySelector('.crm-report-page');
+    if (pageRoot && window.CrmReportShell) {
+      window.CrmReportShell.init(pageRoot);
+    }
+
+    var backBtn = document.getElementById('dup-attempts-back');
+    if (backBtn && !backBtn._dupBackBound) {
+      backBtn._dupBackBound = true;
+      backBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        if (typeof navigateTo === 'function') navigateTo('reports');
+      });
+    }
+
+    refreshDuplicateAttemptsMetrics();
     loadDuplicateAttemptsPage(1);
 
     var applyBtn = document.getElementById('dup-attempts-apply');
-    var clearBtn = document.getElementById('dup-attempts-clear');
+    var clearBtn = document.getElementById('dup-attempts-reset');
     var exportBtn = document.getElementById('dup-attempts-export-btn');
 
-    if (applyBtn) {
-      applyBtn.addEventListener('click', function () {
-        duplicateAttemptsState.filters = readDuplicateAttemptFilters();
-        loadDuplicateAttemptsPage(1);
+    if (applyBtn && !applyBtn._dupFilterBound) {
+      applyBtn._dupFilterBound = true;
+      applyBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        applyDuplicateAttemptsFilters();
       });
     }
-    if (clearBtn) {
-      clearBtn.addEventListener('click', function () {
-        ['dup-attempts-search', 'dup-attempts-type', 'dup-attempts-status', 'dup-attempts-from', 'dup-attempts-to'].forEach(function (id) {
-          var el = document.getElementById(id);
-          if (el) el.value = '';
-        });
-        duplicateAttemptsState.filters = {};
-        loadDuplicateAttemptsPage(1);
+    if (clearBtn && !clearBtn._dupFilterBound) {
+      clearBtn._dupFilterBound = true;
+      clearBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        resetDuplicateAttemptsFilters();
       });
     }
-    if (exportBtn) {
+    if (exportBtn && !exportBtn._dupExportBound) {
+      exportBtn._dupExportBound = true;
       exportBtn.addEventListener('click', function () {
         fetchExportResponse('/duplicate-attempts/export?' + buildDuplicateAttemptsQuery(duplicateAttemptsState.page).replace(/page=\d+&?/, ''))
           .then(function (result) {
@@ -19356,6 +19440,12 @@ window.CA_CRM = (function () {
   }
 
   function getReportsFilterQuery() {
+    if (window.CrmReportAnalytics && typeof window.CrmReportAnalytics.getFilterQuery === 'function') {
+      var drawer = document.getElementById('report-analytics-drawer');
+      if (drawer && drawer.classList.contains('open')) {
+        return window.CrmReportAnalytics.getFilterQuery();
+      }
+    }
     var from = document.getElementById('reports-filter-from');
     var to = document.getElementById('reports-filter-to');
     var range = defaultReportsDateRange();

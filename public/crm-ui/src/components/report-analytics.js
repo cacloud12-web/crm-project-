@@ -39,6 +39,17 @@ window.CrmReportAnalytics = (function () {
     campaign_analytics: ['date'],
   };
 
+  var DRAWER_FIELD_DEFS = {
+    fromId: 'ra-filter-from',
+    toId: 'ra-filter-to',
+    employee: { id: 'ra-filter-employee', grow: true },
+    status: {
+      id: 'ra-filter-status',
+      options: '<option value="">All statuses</option><option>Hot</option><option>Warm</option><option>New</option><option>Demo Scheduled</option><option>Lost</option>',
+    },
+    search: { id: 'ra-filter-source', placeholder: 'Search table…' },
+  };
+
   function $(id) { return document.getElementById(id); }
 
   function toast(msg, type) {
@@ -128,14 +139,28 @@ window.CrmReportAnalytics = (function () {
   }
 
   function validateDateRange() {
+    if (window.CrmReportFilterToolbar) {
+      return window.CrmReportFilterToolbar.validateDateRange('ra-filter-from', 'ra-filter-to', 'ra-filter-date-error');
+    }
     var fromEl = $('ra-filter-from');
     var toEl = $('ra-filter-to');
-    if (!fromEl || !toEl || !fromEl.value || !toEl.value) return true;
-    if (fromEl.value > toEl.value) {
-      toast('Date From cannot be after Date To.', 'error');
+    if (!fromEl || !toEl) return true;
+    hideDateRangeError();
+    if (fromEl.value && toEl.value && fromEl.value > toEl.value) {
+      toast('From Date cannot be later than To Date.', 'error');
+      return false;
+    }
+    if ((fromEl.value && !toEl.value) || (!fromEl.value && toEl.value)) {
+      toast('Please complete the date range with both From Date and To Date.', 'warning');
       return false;
     }
     return true;
+  }
+
+  function hideDateRangeError() {
+    if (window.CrmReportFilterToolbar) {
+      window.CrmReportFilterToolbar.hideDateRangeError('ra-filter-date-error');
+    }
   }
 
   function apiFetch(url) {
@@ -606,27 +631,16 @@ window.CrmReportAnalytics = (function () {
   }
 
   function buildFilterBar(slug) {
-    var filters = FILTER_PRESETS[slug] || ['date', 'employee', 'search'];
-    var parts = [];
-
-    if (filters.indexOf('date') >= 0) {
-      parts.push('<label class="ra-lc-filter" title="Date From"><i data-lucide="calendar" class="h-3.5 w-3.5"></i><input type="date" id="ra-filter-from" class="input-field input-field-sm" aria-label="Date From" /></label>');
-      parts.push('<label class="ra-lc-filter" title="Date To"><i data-lucide="calendar-range" class="h-3.5 w-3.5"></i><input type="date" id="ra-filter-to" class="input-field input-field-sm" aria-label="Date To" /></label>');
-    }
-    if (filters.indexOf('employee') >= 0) {
-      parts.push('<label class="ra-lc-filter ra-lc-filter--grow" title="Employee"><i data-lucide="user" class="h-3.5 w-3.5"></i><select id="ra-filter-employee" class="input-field input-field-sm" aria-label="Employee"><option value="">All employees</option></select></label>');
-    }
-    if (filters.indexOf('status') >= 0) {
-      parts.push('<label class="ra-lc-filter" title="Status"><i data-lucide="filter" class="h-3.5 w-3.5"></i><select id="ra-filter-status" class="input-field input-field-sm" aria-label="Status"><option value="">All statuses</option><option>Hot</option><option>Warm</option><option>New</option><option>Demo Scheduled</option><option>Lost</option></select></label>');
-    }
-    if (filters.indexOf('search') >= 0) {
-      parts.push('<label class="ra-lc-filter ra-lc-filter--grow" title="Search table"><i data-lucide="search" class="h-3.5 w-3.5"></i><input type="search" id="ra-filter-source" class="input-field input-field-sm" placeholder="Search table…" aria-label="Search table" /></label>');
-    }
-
-    parts.push('<button type="button" class="btn-primary btn-sm ra-lc-apply" id="ra-filter-apply">Apply</button>');
-    parts.push('<button type="button" class="crm-toolbar-icon-btn" id="ra-filter-reset" title="Reset filters" aria-label="Reset filters"><i data-lucide="rotate-ccw" class="h-4 w-4"></i></button>');
-
-    return '<div class="ra-lc-toolbar"><div class="ra-lc-filters">' + parts.join('') + '</div></div>';
+    var toolbar = window.CrmReportFilterToolbar;
+    if (!toolbar) return '<div class="ra-lc-toolbar crm-report-filter-toolbar"></div>';
+    var enabled = FILTER_PRESETS[slug] || ['date', 'employee', 'search'];
+    return toolbar.build({
+      wrapperClass: 'ra-lc-toolbar',
+      errorId: 'ra-filter-date-error',
+      applyId: 'ra-filter-apply',
+      resetId: 'ra-filter-reset',
+      fields: toolbar.buildFieldsFromPreset(enabled, DRAWER_FIELD_DEFS),
+    });
   }
 
   function buildNotice(slug) {
@@ -644,32 +658,17 @@ window.CrmReportAnalytics = (function () {
     if (!root) return;
 
     root.innerHTML =
-      '<header class="ra-lc-header">' +
-        '<button type="button" class="crm-toolbar-icon-btn" id="ra-back" title="Back" aria-label="Back"><i data-lucide="arrow-left" class="h-4 w-4"></i></button>' +
-        '<div class="ra-lc-header__title">' +
-          '<div class="ra-lc-header__brand">' +
-            '<span class="ra-lc-header__icon" aria-hidden="true"><i data-lucide="' + (meta.icon || 'file-text') + '" class="h-5 w-5"></i></span>' +
-            '<div class="ra-lc-header__text">' +
-              '<h2 id="ra-title">' + escapeHtml(title) + '</h2>' +
-              (subtitle ? '<p class="ra-lc-header__subtitle" id="ra-subtitle">' + escapeHtml(subtitle) + '</p>' : '') +
-            '</div>' +
-          '</div>' +
-        '</div>' +
-        '<div class="ra-lc-header__actions">' +
-          '<div class="ra-export-menu">' +
-            '<button type="button" class="crm-toolbar-icon-btn" id="ra-export-toggle" title="Export" aria-label="Export"><i data-lucide="download" class="h-4 w-4"></i></button>' +
-            '<div class="ra-export-menu__list hidden" id="ra-export-list">' +
-              '<button type="button" data-ra-export="pdf">PDF</button>' +
-              '<button type="button" data-ra-export="csv">Excel / CSV</button>' +
-              '<button type="button" data-ra-export="print">Print</button>' +
-            '</div>' +
-          '</div>' +
-          '<button type="button" class="crm-toolbar-icon-btn" id="ra-refresh" title="Refresh" aria-label="Refresh"><i data-lucide="refresh-cw" class="h-4 w-4"></i></button>' +
-          '<button type="button" class="crm-toolbar-icon-btn" id="ra-share" title="Share" aria-label="Share"><i data-lucide="share-2" class="h-4 w-4"></i></button>' +
-          '<button type="button" class="crm-toolbar-icon-btn" id="ra-print" title="Print" aria-label="Print"><i data-lucide="printer" class="h-4 w-4"></i></button>' +
-          '<button type="button" class="crm-toolbar-icon-btn" id="ra-close" title="Close" aria-label="Close"><i data-lucide="x" class="h-4 w-4"></i></button>' +
-        '</div>' +
-      '</header>' +
+      (window.CrmReportShell
+        ? window.CrmReportShell.buildHeader({
+          title: title,
+          subtitle: subtitle,
+          icon: meta.icon || 'file-text',
+          titleId: 'ra-title',
+          backId: 'ra-back',
+          showBack: true,
+          actionsHtml: window.CrmReportShell.buildDrawerActions(),
+        })
+        : '') +
       buildFilterBar(slug) +
       '<main class="ra-lc-main">' +
         buildNotice(slug) +
@@ -679,6 +678,11 @@ window.CrmReportAnalytics = (function () {
       '</main>';
 
     seedFilters();
+    if (window.CrmReportShell) {
+      window.CrmReportShell.init(root);
+    } else if (window.CrmReportFilterToolbar) {
+      window.CrmReportFilterToolbar.initToolbar(root);
+    }
     loadEmployeeOptions();
     iconsIn(root);
   }
@@ -795,6 +799,7 @@ window.CrmReportAnalytics = (function () {
 
   function loadReport(slug, opts) {
     opts = opts || {};
+    if (state.loading && !opts.force) return Promise.resolve();
     var isRefresh = slug === state.slug;
     state.slug = slug;
     if (!isRefresh || !opts.preserveSearch) {
@@ -825,7 +830,9 @@ window.CrmReportAnalytics = (function () {
   }
 
   function applyFilters() {
+    if (state.loading) return;
     if (!validateDateRange()) return;
+    hideDateRangeError();
     syncHubFilters();
     var source = $('ra-filter-source');
     var status = $('ra-filter-status');
@@ -844,14 +851,14 @@ window.CrmReportAnalytics = (function () {
       var el = $(id);
       if (el) el.value = '';
     });
-    var from = $('ra-filter-from');
-    var to = $('ra-filter-to');
-    if (from) {
-      var start = new Date();
-      start.setDate(start.getDate() - 30);
-      from.value = start.toISOString().slice(0, 10);
+    if (window.CrmReportFilterToolbar) {
+      window.CrmReportFilterToolbar.clearDateFields('ra-filter-from', 'ra-filter-to', 'ra-filter-date-error');
+    } else {
+      var from = $('ra-filter-from');
+      var to = $('ra-filter-to');
+      if (from) from.value = '';
+      if (to) to.value = '';
     }
-    if (to) to.value = new Date().toISOString().slice(0, 10);
     syncHubFilters();
     refreshReport();
   }
@@ -965,5 +972,6 @@ window.CrmReportAnalytics = (function () {
     open: loadReport,
     close: closeDrawer,
     refresh: refreshReport,
+    getFilterQuery: getFilterQuery,
   };
 })();

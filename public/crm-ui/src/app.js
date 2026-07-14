@@ -628,6 +628,8 @@
       var activityPanel = document.querySelector('.ca-tab-panel[data-panel="activity"].active #activity-timeline');
       if (activityPanel && window.CA_CRM && CA_CRM.initActivityLogsPage) CA_CRM.initActivityLogsPage();
       else if (activityPanel) renderActivityTimeline();
+      var auditPanel = document.querySelector('.ca-tab-panel[data-panel="audit"].active #audit-logs-table');
+      if (auditPanel && window.CA_CRM && CA_CRM.initAuditPage) CA_CRM.initAuditPage();
     }
     if (window.CA_CRM) CA_CRM.onPage(pageId);
     if (window.CrmDateTimePicker) {
