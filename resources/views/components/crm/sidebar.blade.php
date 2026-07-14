@@ -58,7 +58,7 @@
       <button type="button" class="ca-sidebar-footer-btn" id="settings-btn" aria-label="Settings" data-crm-tip="Settings" data-page="settings">
         <i data-lucide="settings" class="h-5 w-5"></i>
       </button>
-      <button type="button" class="ca-sidebar-footer-btn" id="sidebar-security-btn" aria-label="Security" data-crm-tip="Security" data-page="security">
+      <button type="button" class="ca-sidebar-footer-btn" id="sidebar-security-btn" aria-label="Security" data-crm-tip="Security">
         <i data-lucide="lock" class="h-5 w-5"></i>
       </button>
       <button type="button" class="ca-sidebar-footer-btn" id="logout-btn" aria-label="Logout" data-crm-tip="Logout">

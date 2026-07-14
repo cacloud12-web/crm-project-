@@ -34,6 +34,7 @@ window.CAPages = (function () {
     'Apply': 'filter',
     'Apply Filters': 'filter',
     'Reset': 'rotate-ccw',
+    'Reset Filters': 'rotate-ccw',
     'Clear': 'x',
     'Clear Selection': 'x',
     'Save': 'save',
@@ -931,10 +932,10 @@ window.CAPages = (function () {
     ];
     return '<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 bulk-tools-grid">' +
         bulkItems.map(function (item) {
-          return '<div class="card-interactive p-4 crm-kpi-card crm-kpi-card--clickable bulk-action-card" data-bulk="' + item.bulk + '" role="button" tabindex="0" aria-label="' + item.bulk + '">' +
-            '<div class="flex justify-between mb-2">' +
-              '<div class="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand">' +
-                '<i data-lucide="' + item.icon + '" class="h-5 w-5"></i>' +
+          return '<div class="card-interactive crm-kpi-card crm-kpi-card--clickable bulk-action-card" data-bulk="' + item.bulk + '" role="button" tabindex="0" aria-label="' + item.bulk + '">' +
+            '<div class="bulk-action-card__top">' +
+              '<div class="bulk-action-card__icon" aria-hidden="true">' +
+                '<i data-lucide="' + item.icon + '"></i>' +
               '</div>' +
               '<span class="stat-pill bg-emerald-50 text-emerald-700">Ready</span>' +
             '</div>' +
@@ -942,12 +943,15 @@ window.CAPages = (function () {
           '</div>';
         }).join('') +
       '</div>' +
-      '<div id="bulk-import-wizard" class="card p-5 mb-6 hidden">' +
-        '<div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-5">' +
-          '<div class="shrink-0"><h3 class="text-card-heading flex items-center gap-2"><i data-lucide="upload" class="h-5 w-5 text-brand"></i> Bulk Import Wizard</h3></div>' +
-          '<div class="bulk-wizard-steps" id="bulk-wizard-steps">' +
+      '<div id="bulk-import-wizard" class="card p-5 mb-6 hidden bulk-import-wizard">' +
+        '<div class="bulk-import-wizard__head flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-5">' +
+          '<div class="shrink-0"><h2 class="text-section-heading flex items-center gap-2"><i data-lucide="upload" class="h-5 w-5 text-brand" aria-hidden="true"></i> Bulk Import Wizard</h2></div>' +
+          '<div class="bulk-wizard-steps" id="bulk-wizard-steps" role="list" aria-label="Import steps">' +
             ['Upload File', 'Map Columns', 'Preview Results', 'Confirm Import', 'Import Summary'].map(function (label, idx) {
-              return '<div class="bulk-wizard-step' + (idx === 0 ? ' active' : '') + '" data-step="' + (idx + 1) + '"><span class="bulk-wizard-step-no">' + (idx + 1) + '</span><span>' + label + '</span></div>';
+              return '<div class="bulk-wizard-step' + (idx === 0 ? ' active' : '') + '" data-step="' + (idx + 1) + '" role="listitem" aria-current="' + (idx === 0 ? 'step' : 'false') + '">' +
+                '<span class="bulk-wizard-step-no">' + (idx + 1) + '</span>' +
+                '<span class="bulk-wizard-step-label">' + label + '</span>' +
+              '</div>';
             }).join('') +
           '</div></div>' +
         '<div id="bulk-wizard-panel-1" class="bulk-wizard-panel">' +
@@ -956,9 +960,9 @@ window.CAPages = (function () {
             '<p class="text-body font-medium">Drop CSV / Excel here or click to browse</p>' +
             '<p class="text-caption text-slate-500 mt-1">Supported: .csv, .xlsx · Max 10,000 rows · UTF-8</p></div>' +
           '<div id="bulk-upload-meta" class="hidden mt-4 grid sm:grid-cols-3 gap-3">' +
-            '<div class="card p-4"><p class="text-caption text-slate-500">File Name</p><p id="bulk-file-name" class="font-medium text-slate-900 truncate">—</p></div>' +
-            '<div class="card p-4"><p class="text-caption text-slate-500">Total Rows</p><p id="bulk-file-rows" class="font-medium text-slate-900">—</p></div>' +
-            '<div class="card p-4"><p class="text-caption text-slate-500">File Size</p><p id="bulk-file-size" class="font-medium text-slate-900">—</p></div>' +
+            '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">File Name</p><p id="bulk-file-name" class="text-body font-medium text-slate-900 truncate">—</p></div>' +
+            '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Total Rows</p><p id="bulk-file-rows" class="text-body font-medium text-slate-900">—</p></div>' +
+            '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">File Size</p><p id="bulk-file-size" class="text-body font-medium text-slate-900">—</p></div>' +
           '</div>' +
           '<div class="flex flex-wrap gap-2 mt-4 items-center">' +
             actSecondary('Re-upload', 'id="bulk-reupload-btn"', 'refresh-cw') +
@@ -981,14 +985,14 @@ window.CAPages = (function () {
             '<div id="bulk-validation-progress-steps" class="text-caption text-slate-500 mt-2">Upload received</div>' +
           '</div>' +
           '<div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="bulk-preview-summary">' +
-            '<div class="card p-4"><p class="text-caption text-slate-500">Total Rows</p><p id="bulk-total-count" class="text-2xl font-semibold text-slate-900">0</p></div>' +
-            '<div class="card p-4"><p class="text-caption text-slate-500">Valid Rows</p><p id="bulk-valid-count" class="text-2xl font-semibold text-emerald-600">0</p></div>' +
-            '<div class="card p-4"><p class="text-caption text-slate-500">Duplicate Rows</p><p id="bulk-duplicate-count" class="text-2xl font-semibold text-amber-600">0</p></div>' +
-            '<div class="card p-4"><p class="text-caption text-slate-500">Invalid Rows</p><p id="bulk-invalid-count" class="text-2xl font-semibold text-rose-600">0</p></div>' +
-            '<div class="card p-4"><p class="text-caption text-slate-500">Missing Mobile</p><p id="bulk-missing-mobile-count" class="text-2xl font-semibold text-slate-700">0</p></div>' +
-            '<div class="card p-4"><p class="text-caption text-slate-500">Missing Email</p><p id="bulk-missing-email-count" class="text-2xl font-semibold text-slate-700">0</p></div>' +
-            '<div class="card p-4"><p class="text-caption text-slate-500">Landline Rows</p><p id="bulk-landline-count" class="text-2xl font-semibold text-sky-700">0</p></div>' +
-            '<div class="card p-4"><p class="text-caption text-slate-500">Rows Ready To Import</p><p id="bulk-ready-count" class="text-2xl font-semibold text-brand">0</p></div>' +
+            '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Total Rows</p><p id="bulk-total-count" class="text-stat-number text-slate-900">0</p></div>' +
+            '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Valid Rows</p><p id="bulk-valid-count" class="text-stat-number text-emerald-600">0</p></div>' +
+            '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Duplicate Rows</p><p id="bulk-duplicate-count" class="text-stat-number text-amber-600">0</p></div>' +
+            '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Invalid Rows</p><p id="bulk-invalid-count" class="text-stat-number text-rose-600">0</p></div>' +
+            '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Missing Mobile</p><p id="bulk-missing-mobile-count" class="text-stat-number text-slate-700">0</p></div>' +
+            '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Missing Email</p><p id="bulk-missing-email-count" class="text-stat-number text-slate-700">0</p></div>' +
+            '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Landline Rows</p><p id="bulk-landline-count" class="text-stat-number text-sky-700">0</p></div>' +
+            '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Rows Ready To Import</p><p id="bulk-ready-count" class="text-stat-number text-brand">0</p></div>' +
           '</div>' +
           '<div class="overflow-x-auto scrollbar-thin max-h-[420px]"><table class="ca-table w-full"><thead><tr><th>Row</th><th>Status</th><th>CA Name</th><th>Firm</th><th>Mobile</th><th>Email</th><th>GST</th><th>State</th><th>City</th><th>Issues</th></tr></thead><tbody id="bulk-validation-table"></tbody></table></div>' +
           '<div class="flex flex-wrap gap-2 mt-4 items-center hidden" id="bulk-validation-downloads">' +
@@ -999,10 +1003,10 @@ window.CAPages = (function () {
         '<div id="bulk-wizard-panel-4" class="bulk-wizard-panel hidden">' +
           '<p class="text-caption text-slate-500 mb-3">Review duplicates before import. Blank mobile/email rows can still import. Duplicates are skipped unless Super Admin chooses Import Anyway, Merge, or Replace.</p>' +
           '<div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="bulk-confirm-summary">' +
-            '<div class="card p-4"><p class="text-caption text-slate-500">Rows Ready To Import</p><p id="bulk-confirm-ready-count" class="text-2xl font-semibold text-brand">0</p></div>' +
-            '<div class="card p-4"><p class="text-caption text-slate-500">Duplicate Rows</p><p id="bulk-confirm-duplicate-count" class="text-2xl font-semibold text-amber-600">0</p></div>' +
-            '<div class="card p-4"><p class="text-caption text-slate-500">Missing Mobile</p><p id="bulk-confirm-missing-mobile-count" class="text-2xl font-semibold text-slate-700">0</p></div>' +
-            '<div class="card p-4"><p class="text-caption text-slate-500">Missing Email</p><p id="bulk-confirm-missing-email-count" class="text-2xl font-semibold text-slate-700">0</p></div>' +
+            '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Rows Ready To Import</p><p id="bulk-confirm-ready-count" class="text-stat-number text-brand">0</p></div>' +
+            '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Duplicate Rows</p><p id="bulk-confirm-duplicate-count" class="text-stat-number text-amber-600">0</p></div>' +
+            '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Missing Mobile</p><p id="bulk-confirm-missing-mobile-count" class="text-stat-number text-slate-700">0</p></div>' +
+            '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Missing Email</p><p id="bulk-confirm-missing-email-count" class="text-stat-number text-slate-700">0</p></div>' +
           '</div>' +
           '<p id="bulk-duplicate-report-note" class="text-caption text-slate-500 mb-3 hidden"></p>' +
           '<div id="bulk-import-progress-wrap" class="hidden mb-4">' +
@@ -1029,7 +1033,7 @@ window.CAPages = (function () {
           '</div></div></div>' +
       '<div id="bulk-assignment-panel" class="card p-5 mb-6 hidden bulk-assign-panel">' +
         '<div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-5">' +
-          '<h3 class="text-card-heading flex items-center gap-2"><i data-lucide="user-check" class="h-5 w-5 text-brand"></i> Bulk Assignment</h3>' +
+          '<h2 class="text-section-heading flex items-center gap-2"><i data-lucide="user-check" class="h-5 w-5 text-brand" aria-hidden="true"></i> Bulk Assignment</h2>' +
           '<div class="flex flex-wrap items-center gap-2">' +
             '<span id="bulk-assign-selected-count" class="text-caption text-slate-500 hidden">0 leads selected</span>' +
             '<span id="bulk-assign-employee-count" class="text-caption text-slate-500 hidden">· 0 employees</span>' +
@@ -1047,15 +1051,18 @@ window.CAPages = (function () {
             '<div class="bulk-assign-card-head">' +
               '<h4 class="bulk-assign-card-title">Available Lead Batches</h4>' +
               '<div class="flex flex-wrap gap-2">' +
+                actSecondary('Reset Filters', 'id="bulk-assign-filters-reset"', 'rotate-ccw') +
                 actSecondary('Clear Selection', 'id="bulk-assign-batch-clear"', 'x') +
               '</div>' +
             '</div>' +
             '<div class="grid sm:grid-cols-3 gap-2 mb-3">' +
-              '<select class="input-field" id="bulk-assign-batch-state" name="state_id"><option value="">Any state</option></select>' +
-              '<select class="input-field" id="bulk-assign-batch-city" name="city_id" disabled><option value="">Any city</option></select>' +
-              '<select class="input-field" id="bulk-assign-batch-source"><option value="">Any source</option></select>' +
+              '<div class="sc-location-pair sm:col-span-2 grid sm:grid-cols-2 gap-2">' +
+                '<select class="input-field" id="bulk-assign-batch-state" name="state_id" data-sc-role="state"><option value="">Any State</option></select>' +
+                '<select class="input-field" id="bulk-assign-batch-city" name="city_id" data-sc-role="city"><option value="">Any City</option></select>' +
+              '</div>' +
+              '<select class="input-field" id="bulk-assign-batch-source"><option value="">Any Source</option></select>' +
             '</div>' +
-            '<div class="mb-3"><select class="input-field" id="bulk-assign-batch-assignment"><option value="">All leads in batch</option><option value="unassigned">Unassigned only</option><option value="assigned">Assigned only</option></select></div>' +
+            '<div class="mb-3"><select class="input-field" id="bulk-assign-batch-assignment"><option value="">All Leads</option><option value="unassigned">Unassigned Only</option><option value="assigned">Assigned Only</option></select></div>' +
             '<div id="bulk-assign-batches-list" class="bulk-assign-scroll-list"><div class="bulk-assign-skeleton">Loading import batches…</div></div>' +
             '<div class="crm-table-footer bulk-assign-pagination" id="bulk-assign-batches-pagination"></div>' +
           '</div>' +
@@ -1111,7 +1118,7 @@ window.CAPages = (function () {
       '</div>' +
       '<div id="bulk-export-panel" class="card p-5 mb-6 hidden">' +
         '<div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-5">' +
-          '<div class="shrink-0"><h3 class="text-card-heading flex items-center gap-2"><i data-lucide="download" class="h-5 w-5 text-brand"></i> Bulk Export</h3></div>' +
+          '<div class="shrink-0"><h2 class="text-section-heading flex items-center gap-2"><i data-lucide="download" class="h-5 w-5 text-brand" aria-hidden="true"></i> Bulk Export</h2></div>' +
         '</div>' +
         '<div class="grid lg:grid-cols-2 gap-4 mb-4">' +
           '<div><label class="form-label">Export Scope</label>' +
@@ -1143,9 +1150,9 @@ window.CAPages = (function () {
         '</div>' +
         '<div class="mb-4"><label class="form-label">Columns</label><div id="bulk-export-columns" class="flex flex-wrap gap-2"></div></div>' +
         '<div id="bulk-export-preview-meta" class="hidden grid sm:grid-cols-3 gap-3 mb-4">' +
-          '<div class="card p-4"><p class="text-caption text-slate-500">Matching Rows</p><p id="bulk-export-preview-count" class="text-2xl font-semibold text-slate-900">0</p></div>' +
-          '<div class="card p-4"><p class="text-caption text-slate-500">Background Job</p><p id="bulk-export-preview-bg" class="font-medium text-slate-900">—</p></div>' +
-          '<div class="card p-4"><p class="text-caption text-slate-500">Format</p><p id="bulk-export-preview-format" class="font-medium text-slate-900">—</p></div>' +
+          '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Matching Rows</p><p id="bulk-export-preview-count" class="text-stat-number text-slate-900">0</p></div>' +
+          '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Background Job</p><p id="bulk-export-preview-bg" class="text-body font-medium text-slate-900">—</p></div>' +
+          '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Format</p><p id="bulk-export-preview-format" class="text-body font-medium text-slate-900">—</p></div>' +
         '</div>' +
         '<div id="bulk-export-progress-wrap" class="hidden mb-4">' +
           '<div class="flex items-center justify-between mb-2"><p class="text-caption text-slate-500">Export progress</p><p id="bulk-export-progress-label" class="text-caption font-medium text-slate-700">0%</p></div>' +
@@ -1158,16 +1165,16 @@ window.CAPages = (function () {
         '</div>' +
       '</div>' +
       '<div id="bulk-status-update-panel" class="card p-5 mb-6 hidden">' +
-        '<h3 class="text-card-heading mb-4 flex items-center gap-2"><i data-lucide="refresh-cw" class="h-5 w-5 text-brand"></i> Bulk Status Update</h3>' +
+        '<h2 class="text-section-heading mb-4 flex items-center gap-2"><i data-lucide="refresh-cw" class="h-5 w-5 text-brand" aria-hidden="true"></i> Bulk Status Update</h2>' +
         '<div class="grid lg:grid-cols-2 gap-4 mb-4">' +
           '<div><label class="form-label">Select Records</label><select multiple class="input-field min-h-[160px]" id="bulk-status-leads" size="8"></select><p class="text-caption text-slate-500 mt-1">Hold Ctrl/Cmd to select multiple firms</p></div>' +
           '<div><label class="form-label">New Status</label><select class="input-field" id="bulk-status-target"><option value="">Choose status…</option></select>' +
             '<p class="text-caption text-slate-500 mt-2">All selected records will be updated to this status in a single transaction.</p></div>' +
         '</div>' +
         '<div id="bulk-status-preview-meta" class="hidden grid sm:grid-cols-3 gap-3 mb-4">' +
-          '<div class="card p-4"><p class="text-caption text-slate-500">Will Update</p><p id="bulk-status-preview-update" class="text-2xl font-semibold text-emerald-600">0</p></div>' +
-          '<div class="card p-4"><p class="text-caption text-slate-500">Already at Status</p><p id="bulk-status-preview-skip" class="text-2xl font-semibold text-amber-600">0</p></div>' +
-          '<div class="card p-4"><p class="text-caption text-slate-500">Target Status</p><p id="bulk-status-preview-target" class="font-medium text-slate-900">—</p></div>' +
+          '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Will Update</p><p id="bulk-status-preview-update" class="text-stat-number text-emerald-600">0</p></div>' +
+          '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Already at Status</p><p id="bulk-status-preview-skip" class="text-stat-number text-amber-600">0</p></div>' +
+          '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">Target Status</p><p id="bulk-status-preview-target" class="text-body font-medium text-slate-900">—</p></div>' +
         '</div>' +
         '<div class="flex flex-wrap gap-2 mb-4 items-center">' +
           actSecondary('Preview Changes', 'id="bulk-status-preview-btn"', 'eye') +
@@ -1535,7 +1542,7 @@ window.CAPages = (function () {
       ], { compact: true }) +
       '<div class="card p-4 lg:p-5 mb-6 followups-table-card">' +
         '<div class="followups-table-card__head">' +
-          '<h3 class="text-card-heading">Follow-Up Types</h3>' +
+          '<h2 class="text-section-heading">Follow-Up Types</h2>' +
         '</div>' +
         '<div class="flex flex-wrap gap-2 mb-3" id="followup-type-chips">' + types.map(function (t) {
           return '<button type="button" class="ca-chip" data-fu-type="' + t + '" aria-pressed="false">' + t + '</button>';
@@ -1544,6 +1551,7 @@ window.CAPages = (function () {
         table([
           { label: 'Type', colCls: 'crm-col-status', thCls: 'crm-th-status' },
           { label: 'Firm', colCls: 'crm-col-firm', thCls: 'crm-th-firm', sticky: 'left' },
+          { label: 'Mobile Number', colCls: 'crm-col-mobile', thCls: 'crm-th-mobile' },
           { label: 'Employee', colCls: 'crm-col-person', thCls: 'crm-th-person' },
           { label: 'Remarks', colCls: 'crm-col-remarks', thCls: 'crm-th-remarks' },
           { label: 'Scheduled', colCls: 'crm-col-date', thCls: 'crm-th-date' },
@@ -1554,7 +1562,7 @@ window.CAPages = (function () {
         '</div>' +
         '<div id="demo-history-panel" class="hidden mt-2">' +
           '<div class="flex items-center justify-between gap-3 mb-3">' +
-            '<h4 class="text-sm font-semibold text-slate-800">Demo History</h4>' +
+            '<h3 class="text-card-heading">Demo History</h3>' +
             '<span class="text-caption text-slate-500" id="demo-history-count">0 records</span>' +
           '</div>' +
           '<div class="overflow-x-auto">' +
@@ -1569,7 +1577,7 @@ window.CAPages = (function () {
           '<div class="followup-history-panel__header">' +
             '<div class="min-w-0">' +
               '<div class="flex items-center gap-2 flex-wrap">' +
-                '<h3 class="text-card-heading">Activity History</h3>' +
+                '<h2 class="text-section-heading">Activity History</h2>' +
                 '<span class="followup-history-count" id="followup-activity-count" aria-live="polite"></span>' +
               '</div>' +
               '<p class="text-caption text-slate-500 mt-1">Calls, follow-ups, demos, communication, and outcomes for your leads</p>' +
@@ -1868,9 +1876,40 @@ window.CAPages = (function () {
       ], { id: 'security-nav' }) +
       '<div id="security-content">' +
         panel('rbac', true,
-          '<h3 class="text-card-heading mb-4">Permission Matrix</h3>' +
-          '<p id="security-matrix-note" class="text-caption text-slate-500 mb-3">Loading permissions…</p>' +
-          '<div class="card overflow-hidden mb-4"><div class="overflow-x-auto"><table class="ca-table w-full"><thead><tr><th>Role</th><th>Module</th><th>Permission</th><th>Enabled</th></tr></thead><tbody id="security-rbac-matrix"></tbody></table></div></div>' +
+          '<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">' +
+            '<div>' +
+              '<h3 class="text-card-heading mb-1">Permission Matrix</h3>' +
+              '<p id="security-matrix-note" class="text-caption text-slate-500">Loading permissions…</p>' +
+            '</div>' +
+            '<div class="roles-perm-toolbar">' +
+              '<label class="roles-perm-role-label" for="security-perm-role-select">Role</label>' +
+              '<select id="security-perm-role-select" class="input-field roles-perm-role-select" aria-label="Select role">' +
+                '<option value="manager">Manager</option>' +
+                '<option value="employee">Employee</option>' +
+                '<option value="admin">Admin</option>' +
+              '</select>' +
+            '</div>' +
+          '</div>' +
+          '<div id="security-perm-stats" class="roles-perm-stats mb-3" aria-live="polite">' +
+            '<div class="roles-perm-stat"><span class="roles-perm-stat-label">Modules</span><strong id="security-perm-stat-modules">—</strong></div>' +
+            '<div class="roles-perm-stat"><span class="roles-perm-stat-label">Enabled</span><strong id="security-perm-stat-enabled">—</strong></div>' +
+            '<div class="roles-perm-stat"><span class="roles-perm-stat-label">Disabled</span><strong id="security-perm-stat-disabled">—</strong></div>' +
+          '</div>' +
+          '<div class="roles-perm-filters mb-3">' +
+            '<div class="roles-perm-search-wrap">' +
+              '<i data-lucide="search" class="h-4 w-4 roles-perm-search-icon" aria-hidden="true"></i>' +
+              '<input type="search" id="security-perm-search" class="input-field roles-perm-search" placeholder="Search modules…" autocomplete="off" aria-label="Search modules" />' +
+            '</div>' +
+          '</div>' +
+          '<div class="card overflow-hidden mb-4 roles-perm-matrix-card">' +
+            '<div class="roles-perm-matrix-wrap scrollbar-thin" id="security-perm-matrix-scroll">' +
+              '<table class="ca-table roles-perm-matrix" id="security-perm-matrix-table">' +
+                '<thead id="security-perm-matrix-head"><tr><th>Module</th></tr></thead>' +
+                '<tbody id="security-rbac-matrix"><tr><td class="text-center text-slate-500 p-6">Loading…</td></tr></tbody>' +
+              '</table>' +
+            '</div>' +
+            '<div id="security-perm-mobile" class="roles-perm-mobile hidden"></div>' +
+          '</div>' +
           '<h4 class="text-card-heading mb-3">Users</h4>' +
           '<div class="overflow-x-auto"><table class="ca-table w-full"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Modules</th></tr></thead><tbody id="security-users-table"></tbody></table></div>', 'security') +
       '</div>';
@@ -2333,10 +2372,10 @@ window.CAPages = (function () {
       '<div id="roles-permissions-page" class="roles-permissions-page">' +
         settingsSubPageHero(
           'Roles & Permissions',
-          'Control module and action access for Manager and Employee roles. Only Super Admin can edit permissions.',
+          'Enterprise role permission matrix. Edit one role at a time. Only Super Admin can change access.',
           '<div class="roles-perm-toolbar">' +
             '<label class="roles-perm-role-label" for="roles-perm-role-select">Role</label>' +
-            '<select id="roles-perm-role-select" class="input-field roles-perm-role-select">' +
+            '<select id="roles-perm-role-select" class="input-field roles-perm-role-select" aria-label="Select role">' +
               '<option value="manager">Manager</option>' +
               '<option value="employee">Employee</option>' +
               '<option value="admin">Admin</option>' +
@@ -2346,13 +2385,27 @@ window.CAPages = (function () {
           '</div>'
         ) +
         '<div id="roles-perm-status" class="roles-perm-status hidden" role="status"></div>' +
-        '<section class="card p-0 overflow-hidden">' +
-          '<div class="roles-perm-matrix-wrap overflow-x-auto scrollbar-thin">' +
+        '<div id="roles-perm-stats" class="roles-perm-stats" aria-live="polite">' +
+          '<div class="roles-perm-stat"><span class="roles-perm-stat-label">Roles</span><strong id="roles-perm-stat-roles">—</strong></div>' +
+          '<div class="roles-perm-stat"><span class="roles-perm-stat-label">Modules</span><strong id="roles-perm-stat-modules">—</strong></div>' +
+          '<div class="roles-perm-stat"><span class="roles-perm-stat-label">Permissions Enabled</span><strong id="roles-perm-stat-enabled">—</strong></div>' +
+          '<div class="roles-perm-stat"><span class="roles-perm-stat-label">Permissions Disabled</span><strong id="roles-perm-stat-disabled">—</strong></div>' +
+        '</div>' +
+        '<div class="roles-perm-filters">' +
+          '<div class="roles-perm-search-wrap">' +
+            '<i data-lucide="search" class="h-4 w-4 roles-perm-search-icon" aria-hidden="true"></i>' +
+            '<input type="search" id="roles-perm-search" class="input-field roles-perm-search" placeholder="Search modules…" autocomplete="off" aria-label="Search modules" />' +
+          '</div>' +
+          '<p class="roles-perm-filter-hint text-caption text-slate-500">One row per module · toggles save with Save Permissions</p>' +
+        '</div>' +
+        '<section class="card p-0 overflow-hidden roles-perm-matrix-card">' +
+          '<div class="roles-perm-matrix-wrap scrollbar-thin" id="roles-perm-matrix-scroll">' +
             '<table class="ca-table roles-perm-matrix" id="roles-perm-matrix-table">' +
               '<thead id="roles-perm-matrix-head"><tr><th>Module</th></tr></thead>' +
               '<tbody id="roles-perm-matrix-body"><tr><td class="text-center text-slate-500 p-6">Loading permissions…</td></tr></tbody>' +
             '</table>' +
           '</div>' +
+          '<div id="roles-perm-mobile" class="roles-perm-mobile" aria-live="polite"></div>' +
         '</section>' +
         '<p class="text-caption text-slate-500 mt-3" id="roles-perm-note">Super Admin always has full access and cannot be edited here.</p>' +
       '</div>';

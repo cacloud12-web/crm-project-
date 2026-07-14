@@ -168,6 +168,11 @@ class RbacService
 
     public function canAccessSpaPage(?User $user, string $page): bool
     {
+        // Employee footer shortcut: Recycle Bin is always available (scoped by existing lead rules).
+        if ($page === 'recycle-bin' && $this->roleKey($user) === 'employee') {
+            return $this->can($user, 'leads', 'view');
+        }
+
         $rule = config("rbac.spa_pages.{$page}");
 
         if (! $rule) {

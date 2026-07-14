@@ -114,13 +114,16 @@
   }
 
   function loadCitiesForState(stateId, force) {
-    if (!stateId) return Promise.resolve([]);
-    var key = String(stateId);
+    var key = stateId ? String(stateId) : 'all';
     if (!force && cityCache[key] && cityCache[key].length) {
       return Promise.resolve(cityCache[key]);
     }
 
-    return fetchJson(CITIES_URL + '?state_id=' + encodeURIComponent(key))
+    var url = stateId
+      ? (CITIES_URL + '?state_id=' + encodeURIComponent(key))
+      : CITIES_URL;
+
+    return fetchJson(url)
       .then(function (body) {
         var cities = unwrapItems(body);
         cityCache[key] = cities;
@@ -400,6 +403,8 @@
     pairOptions = pairOptions || {};
     if (!stateSelect || !citySelect) return null;
 
+    var allowAllCities = !!pairOptions.allowAllCities;
+
     var reloadStates = function () {
       return loadStates(true).then(function (states) {
         populateStateBox(stateBox, states, stateSelect.value);
@@ -421,63 +426,80 @@
       emptyOption: pairOptions.cityEmptyOption || 'Select city',
       allowEmpty: pairOptions.cityRequired !== true,
       loadingLabel: 'Loading cities...',
-      retryLabel: 'Select a state first',
-      disabled: true,
+      retryLabel: allowAllCities ? 'Could not load cities — click to retry' : 'Select a state first',
+      disabled: !allowAllCities,
     });
 
-    cityBox.setDisabled(true);
+    if (!allowAllCities) {
+      cityBox.setDisabled(true);
+    }
+
+    function loadCitiesForCurrentState(selectedCityId) {
+      var stateId = stateSelect.value || '';
+      if (!stateId && !allowAllCities) {
+        cityBox.setItems([], '');
+        cityBox.setDisabled(true);
+        return Promise.resolve([]);
+      }
+
+      cityBox.setLoading(true);
+      return loadCitiesForState(stateId || null, true).then(function (cities) {
+        cityBox.setLoading(false);
+        cityBox.setItems((cities || []).map(function (c) {
+          return { value: c.city_id, label: c.city_name };
+        }), selectedCityId || '');
+        cityBox.setDisabled(false);
+        return cities;
+      }).catch(function () {
+        cityBox.setLoading(false);
+        cityBox.setItems([], '');
+        if (!allowAllCities) cityBox.setDisabled(true);
+        return [];
+      });
+    }
 
     function onStateChange() {
-      var stateId = stateSelect.value;
       cityBox.clear();
-      if (!stateId) {
+      if (!stateSelect.value && !allowAllCities) {
         cityBox.setItems([], '');
         cityBox.setDisabled(true);
         return;
       }
-
-      cityBox.setLoading(true);
-      loadCitiesForState(stateId, true).then(function (cities) {
-        cityBox.setLoading(false);
-        cityBox.setItems(cities.map(function (c) {
-          return { value: c.city_id, label: c.city_name };
-        }), '');
-        cityBox.setDisabled(false);
-      }).catch(function () {
-        cityBox.setLoading(false);
-        cityBox.setItems([], '');
-        cityBox.setDisabled(true);
-      });
+      loadCitiesForCurrentState('');
     }
 
     stateSelect.addEventListener('change', onStateChange);
 
-    reloadStates().catch(function () { /* shown on open */ });
+    reloadStates().then(function () {
+      if (allowAllCities || stateSelect.value) {
+        return loadCitiesForCurrentState(citySelect.value || '');
+      }
+    }).catch(function () { /* shown on open */ });
 
     return {
       setValues: function (stateId, cityId) {
         return loadStates().then(function (states) {
           populateStateBox(stateBox, states, stateId || '');
 
-          if (!stateId) {
+          if (!stateId && !allowAllCities) {
             cityBox.setItems([], '');
             cityBox.setDisabled(true);
             return;
           }
 
-          return loadCitiesForState(stateId, true).then(function (cities) {
-            cityBox.setItems(cities.map(function (c) {
-              return { value: c.city_id, label: c.city_name };
-            }), cityId || '');
-            cityBox.setDisabled(false);
-          });
+          return loadCitiesForCurrentState(cityId || '');
         });
       },
       refreshStates: reloadStates,
       reset: function () {
         stateSelect.value = '';
         citySelect.value = '';
+        if (stateBox && stateBox.setValue) stateBox.setValue('');
+        if (cityBox && cityBox.clear) cityBox.clear();
         reloadStates().then(function () {
+          if (allowAllCities) {
+            return loadCitiesForCurrentState('');
+          }
           cityBox.setItems([], '');
           cityBox.setDisabled(true);
         });
@@ -543,11 +565,12 @@
 
     root.querySelectorAll('.sc-location-pair').forEach(function (container) {
       var isLead = !!container.closest('#form-add-lead');
-      var isFilter = !!container.closest('#filter-drawer');
+      var isFilter = !!container.closest('#filter-drawer, #bulk-assignment-panel, #bulk-export-filters-wrap');
       jobs.push(initPairContainer(container, {
         stateRequired: isLead,
-        stateEmptyOption: isLead ? 'Select state *' : (isFilter ? 'All states' : 'Select state'),
-        cityEmptyOption: isLead ? 'Select city' : (isFilter ? 'All cities' : 'Select city'),
+        allowAllCities: isFilter && !!container.closest('#bulk-assignment-panel'),
+        stateEmptyOption: isLead ? 'Select state *' : (isFilter ? 'Any State' : 'Select state'),
+        cityEmptyOption: isLead ? 'Select city' : (isFilter ? 'Any City' : 'Select city'),
       }));
     });
 

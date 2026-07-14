@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Services\Auth\LoginRateLimiterService;
+use App\Services\Presence\EmployeePresenceService;
 use App\Services\Rbac\RbacService;
 use App\Support\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -18,6 +19,7 @@ class CrmAuthController extends Controller
     public function __construct(
         private readonly RbacService $rbacService,
         private readonly LoginRateLimiterService $loginRateLimiter,
+        private readonly EmployeePresenceService $presenceService,
     ) {}
 
     public function showLogin(): View|RedirectResponse
@@ -64,6 +66,8 @@ class CrmAuthController extends Controller
 
         $request->session()->regenerate();
 
+        $this->presenceService->touchSafely($user);
+
         if ($this->wantsApiResponse($request)) {
             return ApiResponse::success(
                 $this->rbacService->userPayload($user),
@@ -76,6 +80,9 @@ class CrmAuthController extends Controller
 
     public function logout(Request $request): JsonResponse|RedirectResponse
     {
+        $user = Auth::user();
+        $this->presenceService->markOfflineSafely($user);
+
         Auth::guard('web')->logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();

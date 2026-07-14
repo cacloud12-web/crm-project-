@@ -102,6 +102,64 @@ class SecurityMatrixTest extends TestCase
         ])->assertForbidden();
     }
 
+    public function test_employee_cannot_view_security_matrix(): void
+    {
+        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $this->actingAs($employee);
+
+        $this->getJson('/admin/security-matrix')->assertForbidden();
+    }
+
+    public function test_employee_cannot_open_security_spa_page(): void
+    {
+        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $this->actingAs($employee);
+
+        $this->get('/security')->assertForbidden();
+    }
+
+    public function test_employee_cannot_open_roles_permissions_spa_page(): void
+    {
+        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $this->actingAs($employee);
+
+        $this->get('/settings/roles-permissions')->assertForbidden();
+    }
+
+    public function test_super_admin_can_open_security_spa_page(): void
+    {
+        $superAdmin = User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
+        $this->actingAs($superAdmin);
+
+        $this->get('/security')->assertOk();
+    }
+
+    public function test_employee_can_open_recycle_bin_spa_page(): void
+    {
+        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $this->actingAs($employee);
+
+        $this->get('/recycle-bin')->assertOk();
+    }
+
+    public function test_employee_can_list_scoped_recycle_bin(): void
+    {
+        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $this->actingAs($employee);
+
+        $this->getJson('/ca-masters/trashed')
+            ->assertOk()
+            ->assertJsonPath('success', true);
+    }
+
+    public function test_employee_still_cannot_open_security_spa_page_after_recycle_fix(): void
+    {
+        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $this->actingAs($employee);
+
+        $this->get('/security')->assertForbidden();
+    }
+
     public function test_admin_cannot_modify_super_admin_role(): void
     {
         $superAdmin = User::query()->where('email', 'superadmin@ca.local')->firstOrFail();

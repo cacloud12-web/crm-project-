@@ -451,4 +451,132 @@ class BulkAssignmentTest extends TestCase
         $this->assertSame('manual', $history->assignment_mode);
         $this->assertNotNull($history->ip_address);
     }
+
+    public function test_bulk_batches_endpoint_filters_by_state_city_source_and_assignment(): void
+    {
+        $this->actingAsAdmin();
+
+        $stateA = State::query()->firstOrFail();
+        $stateB = State::query()->where('state_id', '!=', $stateA->state_id)->firstOrFail();
+        $cityA = City::query()->where('state_id', $stateA->state_id)->firstOrFail();
+        $cityB = City::query()->where('state_id', $stateB->state_id)->firstOrFail();
+        $sourceA = \App\Models\SourceLead::query()->firstOrCreate(['source_name' => 'Bulk Filter Website']);
+        $sourceB = \App\Models\SourceLead::query()->firstOrCreate(['source_name' => 'Bulk Filter Referral']);
+        $employee = $this->createEmployee('Batch Filter Catalog Exec', $cityA->city_id);
+
+        $batchMatch = BulkAction::query()->create([
+            'action_type' => 'ca_master_import',
+            'file_name' => 'filter_match_batch.csv',
+            'total_records' => 3,
+            'processed_records' => 3,
+            'success_records' => 3,
+            'imported_by' => 'Super Admin',
+            'status' => 'Completed',
+            'completed_at' => now(),
+        ]);
+        $batchOther = BulkAction::query()->create([
+            'action_type' => 'ca_master_import',
+            'file_name' => 'filter_other_batch.csv',
+            'total_records' => 1,
+            'processed_records' => 1,
+            'success_records' => 1,
+            'imported_by' => 'Super Admin',
+            'status' => 'Completed',
+            'completed_at' => now(),
+        ]);
+
+        $unassignedMatch = $this->createLead($cityA->city_id, $stateA->state_id, 'filter-u');
+        $assignedMatch = $this->createLead($cityA->city_id, $stateA->state_id, 'filter-a');
+        $otherCityLead = $this->createLead($cityA->city_id, $stateA->state_id, 'filter-city');
+        $unassignedMatch->update([
+            'bulk_action_id' => $batchMatch->bulk_action_id,
+            'source_id' => $sourceA->source_id,
+        ]);
+        $assignedMatch->update([
+            'bulk_action_id' => $batchMatch->bulk_action_id,
+            'source_id' => $sourceA->source_id,
+        ]);
+        $otherCityLead->update([
+            'bulk_action_id' => $batchMatch->bulk_action_id,
+            'city_id' => $cityB->city_id,
+            'state_id' => $stateB->state_id,
+            'source_id' => $sourceB->source_id,
+        ]);
+
+        $otherBatchLead = $this->createLead($cityB->city_id, $stateB->state_id, 'filter-o');
+        $otherBatchLead->update([
+            'bulk_action_id' => $batchOther->bulk_action_id,
+            'source_id' => $sourceB->source_id,
+        ]);
+
+        LeadAssignmentEngine::query()->create([
+            'ca_id' => $assignedMatch->ca_id,
+            'employee_id' => $employee->employee_id,
+            'status' => 'Active',
+            'assigned_date' => now()->toDateString(),
+            'assignment_type' => 'Manual',
+            'reason' => 'MANUAL_ASSIGN',
+        ]);
+
+        $all = $this->getJson('/lead-assignments/bulk/batches?per_page=50')->assertOk();
+        $allNames = collect($all->json('data.items'))->pluck('file_name')->all();
+        $this->assertContains('filter_match_batch.csv', $allNames);
+        $this->assertContains('filter_other_batch.csv', $allNames);
+
+        $byState = $this->getJson('/lead-assignments/bulk/batches?per_page=50&state_id='.$stateA->state_id)
+            ->assertOk();
+        $stateItems = collect($byState->json('data.items'));
+        $this->assertTrue($stateItems->contains(fn ($row) => $row['file_name'] === 'filter_match_batch.csv'));
+        $this->assertFalse($stateItems->contains(fn ($row) => $row['file_name'] === 'filter_other_batch.csv'));
+        $matchState = $stateItems->firstWhere('file_name', 'filter_match_batch.csv');
+        $this->assertSame(2, $matchState['total_leads']);
+        $this->assertSame(1, $matchState['assigned_leads']);
+        $this->assertSame(1, $matchState['unassigned_leads']);
+        $this->assertSame(2, $matchState['matching_leads']);
+
+        $byCity = $this->getJson('/lead-assignments/bulk/batches?per_page=50&city_id='.$cityA->city_id)
+            ->assertOk();
+        $cityMatch = collect($byCity->json('data.items'))->firstWhere('file_name', 'filter_match_batch.csv');
+        $this->assertNotNull($cityMatch);
+        $this->assertSame(2, $cityMatch['matching_leads']);
+
+        $bySource = $this->getJson('/lead-assignments/bulk/batches?per_page=50&source_id='.$sourceA->source_id)
+            ->assertOk();
+        $sourceItems = collect($bySource->json('data.items'));
+        $this->assertTrue($sourceItems->contains(fn ($row) => $row['file_name'] === 'filter_match_batch.csv'));
+        $this->assertFalse($sourceItems->contains(fn ($row) => $row['file_name'] === 'filter_other_batch.csv'));
+        $this->assertSame('Bulk Filter Website', $sourceItems->firstWhere('file_name', 'filter_match_batch.csv')['source']);
+
+        $unassigned = $this->getJson('/lead-assignments/bulk/batches?per_page=50&state_id='.$stateA->state_id.'&city_id='.$cityA->city_id.'&source_id='.$sourceA->source_id.'&assignment=unassigned')
+            ->assertOk();
+        $unassignedMatchRow = collect($unassigned->json('data.items'))->firstWhere('file_name', 'filter_match_batch.csv');
+        $this->assertNotNull($unassignedMatchRow);
+        $this->assertSame(1, $unassignedMatchRow['matching_leads']);
+
+        $assigned = $this->getJson('/lead-assignments/bulk/batches?per_page=50&state_id='.$stateA->state_id.'&assignment=assigned')
+            ->assertOk();
+        $assignedMatchRow = collect($assigned->json('data.items'))->firstWhere('file_name', 'filter_match_batch.csv');
+        $this->assertNotNull($assignedMatchRow);
+        $this->assertSame(1, $assignedMatchRow['matching_leads']);
+
+        $none = $this->getJson('/lead-assignments/bulk/batches?per_page=50&state_id='.$stateA->state_id.'&city_id='.$cityB->city_id.'&source_id='.$sourceA->source_id)
+            ->assertOk();
+        $this->assertFalse(collect($none->json('data.items'))->contains(fn ($row) => $row['file_name'] === 'filter_match_batch.csv'));
+
+        $invalid = $this->getJson('/lead-assignments/bulk/batches?per_page=50&state_id=abc&city_id=-3&source_id=0&assignment=maybe')
+            ->assertOk();
+        $this->assertIsArray($invalid->json('data.items'));
+    }
+
+    public function test_lookup_cities_without_state_returns_all_active_cities(): void
+    {
+        $this->actingAsAdmin();
+
+        $response = $this->getJson('/lookups/cities')->assertOk();
+        $items = $response->json('data');
+        $this->assertIsArray($items);
+        $this->assertGreaterThan(1, count($items));
+        $this->assertArrayHasKey('city_id', $items[0]);
+        $this->assertArrayHasKey('city_name', $items[0]);
+    }
 }

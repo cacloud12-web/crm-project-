@@ -29,10 +29,7 @@ class ListingQueryApplier
             ];
         }
 
-        $perPage = min(
-            max((int) ($params['per_page'] ?? $config['default_per_page'] ?? config('listing.default_per_page', 25)), 1),
-            (int) ($config['max_per_page'] ?? config('listing.max_per_page', 100)),
-        );
+        $perPage = self::resolvePerPage($params, $config);
         $page = max((int) ($params['page'] ?? 1), 1);
 
         $paginator = $query->paginate($perPage, ['*'], 'page', $page);
@@ -65,6 +62,35 @@ class ListingQueryApplier
     public static function config(string $key): array
     {
         return config("listing.{$key}", []);
+    }
+
+    /**
+     * Resolve per-page size for a listing config.
+     * When allowed_per_page is configured, only those values are accepted;
+     * anything else falls back to default_per_page (or 10).
+     */
+    public static function resolvePerPage(array $params, array $config): int
+    {
+        $default = (int) ($config['default_per_page'] ?? config('listing.default_per_page', 10));
+        if ($default < 1) {
+            $default = 10;
+        }
+
+        $requested = (int) ($params['per_page'] ?? $default);
+        $allowed = $config['allowed_per_page'] ?? null;
+
+        if (is_array($allowed) && $allowed !== []) {
+            $allowed = array_values(array_map('intval', $allowed));
+            if (in_array($requested, $allowed, true)) {
+                return $requested;
+            }
+
+            return in_array($default, $allowed, true) ? $default : $allowed[0];
+        }
+
+        $max = (int) ($config['max_per_page'] ?? config('listing.max_per_page', 100));
+
+        return min(max($requested, 1), max(1, $max));
     }
 
     public static function applyColumnProjection(Builder $query, array $config): void

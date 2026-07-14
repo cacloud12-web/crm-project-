@@ -108,6 +108,14 @@
     return perms.indexOf(permission) >= 0;
   }
 
+  /** Footer / SPA shortcut: Employees always get Recycle Bin; others need ca_master.delete. */
+  function canAccessRecycleBin() {
+    var u = user();
+    if (!u.authenticated) return false;
+    if (u.role === 'employee') return true;
+    return can('ca_master', 'delete');
+  }
+
   function currentPageModule() {
     var page = window.__CRM_CURRENT_PAGE__ || 'dashboard';
     return PAGE_MODULE[page] || 'dashboard';
@@ -224,8 +232,21 @@
     }
     var recycleBtn = document.getElementById('sidebar-recycle-btn');
     if (recycleBtn) {
-      if (!can('ca_master', 'delete')) hideElement(recycleBtn);
-      else recycleBtn.classList.remove('hidden');
+      if (!canAccessRecycleBin()) hideElement(recycleBtn);
+      else {
+        recycleBtn.classList.remove('hidden');
+        recycleBtn.removeAttribute('aria-hidden');
+        recycleBtn.removeAttribute('data-rbac-hidden');
+      }
+    }
+    var securityBtn = document.getElementById('sidebar-security-btn');
+    if (securityBtn) {
+      if (!can('security', 'view')) hideElement(securityBtn);
+      else {
+        securityBtn.classList.remove('hidden');
+        securityBtn.removeAttribute('aria-hidden');
+        securityBtn.removeAttribute('data-rbac-hidden');
+      }
     }
     if (passwordLabel && isCredentialAdmin) passwordLabel.textContent = 'Change Password';
   }
@@ -247,6 +268,9 @@
   }
 
   function logout() {
+    if (typeof window.stopCrmPresenceHeartbeat === 'function') {
+      window.stopCrmPresenceHeartbeat();
+    }
     var token = document.querySelector('meta[name="csrf-token"]')?.content || '';
     fetch('/logout', {
       method: 'POST',
@@ -275,7 +299,14 @@
       securityBtn._securityBound = true;
       securityBtn.addEventListener('click', function (e) {
         e.preventDefault();
-        if (can('security', 'view') && window.navigateTo) window.navigateTo('security');
+        e.stopImmediatePropagation();
+        if (can('security', 'view') && window.navigateTo) {
+          window.navigateTo('security');
+          return;
+        }
+        if (typeof window.showToast === 'function') {
+          window.showToast('You do not have permission to open Security.', 'warning');
+        }
       });
     }
   }
@@ -287,6 +318,7 @@
 
   window.CA_RBAC = {
     can: can,
+    canAccessRecycleBin: canAccessRecycleBin,
     enforce: enforce,
     onPageChange: onPageChange,
     applySettingsHubAccess: applySettingsHubAccess,

@@ -63,16 +63,22 @@ body.crm-layout .ecfg-settings-hero .text-page-title + p {
   margin-top: -12px !important;
 }
 
-/* Section heading — H2 */
+/* Section heading — major module sections (Wizard, Activity History, Follow-Up Types) */
 body.crm-layout h2,
 body.crm-layout .text-section-heading,
-body.crm-layout .text-xl,
 body.crm-layout .section-title,
 body.crm-layout .dash-kpi-section-title {
-  font-size: var(--crm-font-size-subheading) !important;
+  font-size: var(--crm-font-size-section) !important;
   font-weight: var(--crm-font-weight-section) !important;
-  line-height: var(--crm-line-height-subheading) !important;
-  color: #334155 !important;
+  line-height: var(--crm-line-height-section) !important;
+  color: var(--crm-color-heading) !important;
+}
+
+/* KPI / secondary emphasis — not page-section scale */
+body.crm-layout .text-xl {
+  font-size: var(--crm-font-size-kpi-value) !important;
+  font-weight: var(--crm-font-weight-kpi-value) !important;
+  line-height: var(--crm-line-height-kpi-value) !important;
 }
 
 body.crm-layout .mgr-kpi-desc {
@@ -91,7 +97,7 @@ body.crm-layout .mgr-panel-subtitle {
   font-weight: 400 !important;
 }
 
-/* Card heading — H3 */
+/* Card heading — H3 / modal titles */
 body.crm-layout h3,
 body.crm-layout .text-card-heading,
 body.crm-layout .text-lg,
@@ -102,6 +108,15 @@ body.crm-layout .ecfg-section-title {
   font-size: var(--crm-font-size-card-title) !important;
   font-weight: var(--crm-font-weight-card-title) !important;
   line-height: var(--crm-line-height-card-title) !important;
+}
+
+/* Explicit section class wins over generic h3 (Bulk Import Wizard) */
+body.crm-layout h3.text-section-heading,
+body.crm-layout .text-section-heading {
+  font-size: var(--crm-font-size-section) !important;
+  font-weight: var(--crm-font-weight-section) !important;
+  line-height: var(--crm-line-height-section) !important;
+  color: var(--crm-color-heading) !important;
 }
 
 /* Sub heading */
@@ -185,7 +200,7 @@ body.crm-layout label,
 body.crm-layout .form-label,
 body.crm-layout .ecfg-form-label,
 body.crm-layout .crm-listing-filter-label {
-  font-size: var(--crm-font-size-body) !important;
+  font-size: var(--crm-font-size-label) !important;
   font-weight: var(--crm-font-weight-label) !important;
 }
 
@@ -230,10 +245,17 @@ body.crm-layout .stat-pill,
 body.crm-layout .mgr-chip,
 body.crm-layout .mgr-kpi-trend,
 body.crm-layout .ca-tab-count,
-body.crm-layout .manager-role-badge,
-body.crm-layout .text-caption {
+body.crm-layout .manager-role-badge {
   font-size: var(--crm-font-size-badge) !important;
   font-weight: var(--crm-font-weight-badge) !important;
+}
+
+/* Helper / caption copy */
+body.crm-layout .text-caption,
+body.crm-layout .text-helper {
+  font-size: var(--crm-font-size-helper) !important;
+  font-weight: var(--crm-font-weight-helper) !important;
+  line-height: var(--crm-line-height-body) !important;
 }
 
 /* Pagination */
@@ -348,7 +370,7 @@ body:not(.crm-layout) .page-title {
 
 body:not(.crm-layout) .form-label,
 body:not(.crm-layout) label {
-  font-size: var(--crm-font-size-body) !important;
+  font-size: var(--crm-font-size-label) !important;
   font-weight: var(--crm-font-weight-label) !important;
 }
 

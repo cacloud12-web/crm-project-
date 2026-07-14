@@ -3,6 +3,7 @@
 <script>window.__CRM_GOOGLE_MAPS_KEY__ = @json(config('services.google.maps_js_api_key'));</script>
 <script src="{{ asset('crm-ui/src/constants/data.js') }}"></script>
 <script src="{{ asset('crm-ui/src/utils/listing-search.js') }}"></script>
+<script src="{{ asset('crm-ui/src/utils/employee-presence.js') }}"></script>
 <script src="{{ asset('crm-ui/vendor/flatpickr/flatpickr.min.js') }}"></script>
 <script src="{{ asset('crm-ui/vendor/flatpickr/plugins/confirmDate/confirmDate.js') }}"></script>
 <script src="{{ asset('crm-ui/src/components/datetime-picker.js') }}"></script>

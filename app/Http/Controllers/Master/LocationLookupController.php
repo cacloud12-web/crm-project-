@@ -42,16 +42,18 @@ class LocationLookupController extends Controller
     public function cities(Request $request): JsonResponse
     {
         $stateId = (int) $request->query('state_id');
+        $cacheKey = $stateId > 0 ? 'lookup_cities:'.$stateId : 'lookup_cities:all';
 
-        if ($stateId <= 0) {
-            return ApiResponse::success([], 'Cities loaded');
-        }
-
-        $cities = $this->cacheService->rememberMasterListing('lookup_cities:'.$stateId, function () use ($stateId) {
-            return City::query()
+        $cities = $this->cacheService->rememberMasterListing($cacheKey, function () use ($stateId) {
+            $query = City::query()
                 ->active()
-                ->where('state_id', $stateId)
-                ->orderBy('city_name')
+                ->orderBy('city_name');
+
+            if ($stateId > 0) {
+                $query->where('state_id', $stateId);
+            }
+
+            return $query
                 ->get(['city_id', 'city_name', 'state_id'])
                 ->map(fn (City $city) => [
                     'city_id' => $city->city_id,

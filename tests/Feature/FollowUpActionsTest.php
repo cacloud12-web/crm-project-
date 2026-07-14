@@ -28,6 +28,37 @@ class FollowUpActionsTest extends TestCase
         $this->assertNotEmpty($items[0]['followup_id']);
     }
 
+    public function test_follow_ups_list_includes_mobile_number_from_related_lead(): void
+    {
+        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $this->actingAs($manager);
+
+        $followUp = FollowUp::query()
+            ->with('caMaster:ca_id,mobile_no')
+            ->whereHas('caMaster', function ($query) {
+                $query->whereNotNull('mobile_no')->where('mobile_no', '!=', '');
+            })
+            ->first();
+
+        if (! $followUp) {
+            $this->markTestSkipped('No follow-ups with lead mobile numbers in database');
+        }
+
+        $response = $this->getJson('/follow-ups?per_page=50');
+        $response->assertOk();
+
+        $items = collect($response->json('data.items') ?? []);
+        $match = $items->firstWhere('followup_id', $followUp->followup_id);
+
+        $this->assertNotNull($match, 'Expected follow-up in listing response');
+        $this->assertArrayHasKey('mobile_no', $match);
+        $this->assertSame($followUp->caMaster?->mobile_no, $match['mobile_no']);
+
+        $this->getJson('/follow-ups/'.$followUp->followup_id)
+            ->assertOk()
+            ->assertJsonPath('data.mobile_no', $followUp->caMaster?->mobile_no);
+    }
+
     public function test_manager_can_view_single_follow_up(): void
     {
         $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
@@ -41,6 +72,30 @@ class FollowUpActionsTest extends TestCase
         $this->getJson('/follow-ups/'.$followUp->followup_id)
             ->assertOk()
             ->assertJsonPath('data.followup_id', $followUp->followup_id);
+    }
+
+    public function test_follow_ups_per_page_only_allows_standard_sizes(): void
+    {
+        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $this->actingAs($manager);
+
+        foreach ([10, 25, 50, 100, 200] as $size) {
+            $this->getJson('/follow-ups?per_page='.$size)
+                ->assertOk()
+                ->assertJsonPath('data.pagination.per_page', $size);
+        }
+
+        $this->getJson('/follow-ups?per_page=500')
+            ->assertOk()
+            ->assertJsonPath('data.pagination.per_page', 10);
+
+        $this->getJson('/follow-ups?per_page=1000')
+            ->assertOk()
+            ->assertJsonPath('data.pagination.per_page', 10);
+
+        $this->getJson('/follow-ups?per_page=7')
+            ->assertOk()
+            ->assertJsonPath('data.pagination.per_page', 10);
     }
 
     public function test_employee_can_view_own_follow_up(): void

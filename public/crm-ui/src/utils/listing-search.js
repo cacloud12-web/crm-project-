@@ -122,12 +122,23 @@
     }
 
     var state = getState(key);
+    var perPageOptions = key === 'follow_ups' && window.CATablePagination && CATablePagination.FOLLOWUP_PER_PAGE_OPTIONS
+      ? CATablePagination.FOLLOWUP_PER_PAGE_OPTIONS
+      : null;
+    var perPage = state.per_page || pagination.per_page || CATablePagination.DEFAULT_PER_PAGE;
+    if (perPageOptions && CATablePagination.normalizePerPage) {
+      perPage = CATablePagination.normalizePerPage(perPage, perPageOptions);
+      if (state.per_page !== perPage) {
+        setState(key, { per_page: perPage });
+      }
+    }
     CATablePagination.renderInto(slot || slotId, {
       tableId: tableId,
       wrapId: wrapId,
       listingKey: key,
       pagination: pagination,
-      perPage: state.per_page || pagination.per_page || CATablePagination.DEFAULT_PER_PAGE,
+      perPage: perPage,
+      perPageOptions: perPageOptions,
       showPerPage: true,
     });
 

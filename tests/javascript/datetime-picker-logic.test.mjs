@@ -31,7 +31,14 @@ function parseInputValue(value, mode) {
   var normalized = raw.length === 16 && raw.indexOf('T') === 10 ? raw + ':00' : raw;
   var d = new Date(normalized);
   if (!Number.isNaN(d.getTime())) return d;
-  return null;
+  var match = raw.match(/^(\d{2})\/(\d{2})\/(\d{4}),?\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!match) return null;
+  var hour = parseInt(match[4], 10);
+  var minute = parseInt(match[5], 10);
+  var ampm = match[6].toUpperCase();
+  if (ampm === 'PM' && hour < 12) hour += 12;
+  if (ampm === 'AM' && hour === 12) hour = 0;
+  return new Date(parseInt(match[3], 10), parseInt(match[2], 10) - 1, parseInt(match[1], 10), hour, minute, 0, 0);
 }
 
 function convert12To24(hour12, isPM) {
@@ -40,9 +47,35 @@ function convert12To24(hour12, isPM) {
   return hour12 === 12 ? 0 : hour12;
 }
 
-function toLocalInputValue(date) {
+function toLocalInputValue(date, mode) {
+  if (mode === 'date') {
+    return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+  }
   return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) +
     'T' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+}
+
+function formatDisplay(date, mode) {
+  if (!date || Number.isNaN(date.getTime())) return '';
+  var dd = pad(date.getDate());
+  var mm = pad(date.getMonth() + 1);
+  var yyyy = date.getFullYear();
+  if (mode === 'date') return dd + '/' + mm + '/' + yyyy;
+  var hour = date.getHours();
+  var ampm = hour >= 12 ? 'PM' : 'AM';
+  var h12 = hour % 12;
+  if (h12 === 0) h12 = 12;
+  return dd + '/' + mm + '/' + yyyy + ', ' + pad(h12) + ':' + pad(date.getMinutes()) + ' ' + ampm;
+}
+
+function validateTimeParts(hour12, minute) {
+  if (Number.isNaN(hour12) || hour12 < 1 || hour12 > 12) {
+    return { valid: false, message: 'Hour must be between 1 and 12.' };
+  }
+  if (Number.isNaN(minute) || minute < 0 || minute > 59) {
+    return { valid: false, message: 'Minute must be between 00 and 59.' };
+  }
+  return { valid: true, hour12: hour12, minute: minute };
 }
 
 function assert(condition, message) {
@@ -72,5 +105,19 @@ assert(convert12To24(0, false) === null, 'reject hour 0');
 
 var roundTrip = toLocalInputValue(parseInputValue('2026-07-15T23:59', 'datetime'));
 assert(roundTrip === '2026-07-15T23:59', 'round trip 11:59 PM');
+
+var display = formatDisplay(parseInputValue('2026-07-14T12:44', 'datetime'), 'datetime');
+assert(display === '14/07/2026, 12:44 PM', 'display format datetime');
+
+var displayDate = formatDisplay(parseInputValue('2026-07-14', 'date'), 'date');
+assert(displayDate === '14/07/2026', 'display format date');
+
+var parsedDisplay = parseInputValue('14/07/2026, 12:44 PM', 'datetime');
+assert(parsedDisplay && parsedDisplay.getHours() === 12 && parsedDisplay.getMinutes() === 44, 'parse display format');
+
+assert(validateTimeParts(12, 30).valid, 'valid noon');
+assert(!validateTimeParts(13, 30).valid, 'reject hour 13');
+assert(!validateTimeParts(0, 30).valid, 'reject hour 0');
+assert(!validateTimeParts(10, 60).valid, 'reject minute 60');
 
 console.log('datetime-picker-logic: all checks passed');

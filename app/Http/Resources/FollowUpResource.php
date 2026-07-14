@@ -26,6 +26,7 @@ class FollowUpResource extends JsonResource
             'rescheduled_at' => $this->rescheduled_at,
             'reschedule_reason' => $this->reschedule_reason,
             'firm_name' => $this->caMaster?->firm_name,
+            'mobile_no' => $this->caMaster?->mobile_no,
             'executive' => $this->employee?->name,
             'employee_name' => $this->employee?->name,
             'remarks' => $this->remarks,

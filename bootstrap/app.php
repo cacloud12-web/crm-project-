@@ -4,6 +4,7 @@ use App\Http\Middleware\EnsureActiveUser;
 use App\Http\Middleware\EnsureBulkExportPermission;
 use App\Http\Middleware\EnsureRbacPermission;
 use App\Http\Middleware\EnsureSpaPageAccess;
+use App\Http\Middleware\RecordEmployeePresence;
 use App\Http\Middleware\ServeSpaForBrowser;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
@@ -31,6 +32,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->appendToGroup('web', [
             EnsureActiveUser::class,
+            RecordEmployeePresence::class,
         ]);
 
         $middleware->redirectGuestsTo(fn () => route('crm.login'));

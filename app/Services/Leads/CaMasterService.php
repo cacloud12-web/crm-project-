@@ -500,10 +500,20 @@ class CaMasterService
      */
     public function listTrashed(int $limit = 100): array
     {
-        $this->assertCanManageRecycleBin();
+        $this->assertCanViewRecycleBin();
 
-        return CaMaster::onlyTrashed()
-            ->with(['city:city_id,city_name', 'state:state_id,state_name'])
+        $query = CaMaster::onlyTrashed()
+            ->with(['city:city_id,city_name', 'state:state_id,state_name']);
+
+        $user = auth()->user();
+        if ($user && $this->employeeDataScope->shouldScopeToEmployee($user)) {
+            $this->employeeDataScope->scopeCaMasterQuery(
+                $query,
+                $this->employeeDataScope->scopedEmployeeId($user),
+            );
+        }
+
+        return $query
             ->orderByDesc('deleted_at')
             ->limit($limit)
             ->get()
@@ -617,6 +627,14 @@ class CaMasterService
             'deleted_count' => count($deleted),
             'deleted_ids' => $deleted,
         ];
+    }
+
+    private function assertCanViewRecycleBin(): void
+    {
+        $user = auth()->user();
+        if (! $user) {
+            throw new AuthorizationException('You do not have permission to view the recycle bin.');
+        }
     }
 
     private function assertCanManageRecycleBin(): void

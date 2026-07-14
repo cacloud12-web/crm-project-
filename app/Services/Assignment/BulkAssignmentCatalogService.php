@@ -7,6 +7,8 @@ use App\Models\CaMaster;
 use App\Models\Employee;
 use App\Models\FollowUp;
 use App\Models\LeadAssignmentEngine;
+use App\Models\SourceLead;
+use App\Services\Presence\EmployeePresenceService;
 use App\Support\Database\SqlAggregate;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -21,6 +23,7 @@ class BulkAssignmentCatalogService
 
     public function listLeads(array $params): array
     {
+        $params = $this->sanitizeFilterParams($params);
         $page = max(1, (int) ($params['page'] ?? 1));
         $perPage = min(100, max(10, (int) ($params['per_page'] ?? 25)));
         $search = trim((string) ($params['search'] ?? ''));
@@ -74,6 +77,7 @@ class BulkAssignmentCatalogService
 
     public function listLeadIds(array $params): array
     {
+        $params = $this->sanitizeFilterParams($params);
         $search = trim((string) ($params['search'] ?? ''));
         $searchField = (string) ($params['search_field'] ?? 'all');
         $max = (int) config('listing.max_all', 5000);
@@ -101,6 +105,7 @@ class BulkAssignmentCatalogService
 
     public function listBatches(array $params): array
     {
+        $params = $this->sanitizeFilterParams($params);
         $page = max(1, (int) ($params['page'] ?? 1));
         $perPage = min(50, max(5, (int) ($params['per_page'] ?? 10)));
 
@@ -120,14 +125,16 @@ class BulkAssignmentCatalogService
 
         $batchIds = $batches->pluck('bulk_action_id')->all();
         $stats = $this->batchLeadStats($batchIds, $params);
+        $filterSourceName = $this->resolveFilterSourceName($params);
 
-        $items = $batches->map(function (BulkAction $batch) use ($stats) {
+        $items = $batches->map(function (BulkAction $batch) use ($stats, $filterSourceName) {
             $id = (int) $batch->bulk_action_id;
             $stat = $stats[$id] ?? [
                 'total_leads' => 0,
                 'assigned_leads' => 0,
                 'unassigned_leads' => 0,
                 'matching_leads' => 0,
+                'source' => null,
             ];
             $importedAt = $batch->completed_at ?? $batch->created_at;
 
@@ -139,7 +146,7 @@ class BulkAssignmentCatalogService
                 'assigned_leads' => $stat['assigned_leads'],
                 'unassigned_leads' => $stat['unassigned_leads'],
                 'matching_leads' => $stat['matching_leads'],
-                'source' => 'Bulk Import',
+                'source' => $filterSourceName ?: ($stat['source'] ?: 'Bulk Import'),
                 'imported_by' => $batch->imported_by,
                 'imported_at' => $importedAt?->toIso8601String(),
                 'imported_at_label' => $importedAt?->format('d M Y, H:i'),
@@ -158,8 +165,29 @@ class BulkAssignmentCatalogService
         ];
     }
 
+    public function sanitizeFilterParams(array $params): array
+    {
+        $assignment = strtolower(trim((string) ($params['assignment'] ?? '')));
+        if (! in_array($assignment, ['assigned', 'unassigned'], true)) {
+            $assignment = '';
+        }
+
+        $stateId = (int) ($params['state_id'] ?? 0);
+        $cityId = (int) ($params['city_id'] ?? 0);
+        $sourceId = (int) ($params['source_id'] ?? 0);
+
+        $params['state_id'] = $stateId > 0 ? $stateId : null;
+        $params['city_id'] = $cityId > 0 ? $cityId : null;
+        $params['source_id'] = $sourceId > 0 ? $sourceId : null;
+        $params['assignment'] = $assignment;
+
+        return $params;
+    }
+
     public function resolveBatchLeadIds(int $bulkActionId, array $params = []): array
     {
+        $params = $this->sanitizeFilterParams($params);
+
         $batch = BulkAction::query()
             ->where('action_type', 'ca_master_import')
             ->where('bulk_action_id', $bulkActionId)
@@ -193,26 +221,18 @@ class BulkAssignmentCatalogService
 
     private function applyBatchListFilters(Builder $query, array $params): void
     {
-        $stateId = (int) ($params['state_id'] ?? 0);
-        $cityId = (int) ($params['city_id'] ?? 0);
-        $sourceId = (int) ($params['source_id'] ?? 0);
+        $hasFilters = ! empty($params['state_id'])
+            || ! empty($params['city_id'])
+            || ! empty($params['source_id'])
+            || ! empty($params['assignment']);
 
-        if ($stateId > 0 || $cityId > 0 || $sourceId > 0) {
-            $query->whereHas('importedLeads', function (Builder $leadQuery) use ($stateId, $cityId, $sourceId) {
-                if ($stateId > 0) {
-                    $leadQuery->where(function (Builder $q) use ($stateId) {
-                        $q->where('ca_masters.state_id', $stateId)
-                            ->orWhereHas('city', fn (Builder $city) => $city->where('state_id', $stateId));
-                    });
-                }
-                if ($cityId > 0) {
-                    $leadQuery->where('ca_masters.city_id', $cityId);
-                }
-                if ($sourceId > 0) {
-                    $leadQuery->where('ca_masters.source_id', $sourceId);
-                }
-            });
+        if (! $hasFilters) {
+            return;
         }
+
+        $query->whereHas('importedLeads', function (Builder $leadQuery) use ($params) {
+            $this->applyLeadFilters($leadQuery, $params);
+        });
     }
 
     private function batchLeadStats(array $batchIds, array $params): array
@@ -221,37 +241,69 @@ class BulkAssignmentCatalogService
             return [];
         }
 
-        $totals = DB::table('ca_masters')
+        // Universe counts: location + source filters (exclude assignment so cards still show assigned/unassigned split).
+        $universeParams = array_merge($params, ['assignment' => '']);
+        $universeQuery = CaMaster::query()
+            ->from('ca_masters')
             ->leftJoin('lead_assignment_engines', function ($join) {
                 $join->on('ca_masters.ca_id', '=', 'lead_assignment_engines.ca_id')
                     ->where('lead_assignment_engines.status', '=', 'Active');
             })
-            ->whereIn('ca_masters.bulk_action_id', $batchIds)
+            ->leftJoin('source_leads', 'source_leads.source_id', '=', 'ca_masters.source_id')
+            ->whereIn('ca_masters.bulk_action_id', $batchIds);
+
+        $this->applyLeadFilters($universeQuery, $universeParams);
+
+        $totals = $universeQuery
             ->groupBy('ca_masters.bulk_action_id')
             ->selectRaw('ca_masters.bulk_action_id')
             ->selectRaw('COUNT(ca_masters.ca_id) as total_leads')
             ->selectRaw('COUNT(lead_assignment_engines.ca_id) as assigned_leads')
+            ->selectRaw('MIN(source_leads.source_name) as source_name')
+            ->get()
+            ->keyBy('bulk_action_id');
+
+        $matchingParams = $params;
+        $matchingQuery = CaMaster::query()
+            ->from('ca_masters')
+            ->whereIn('ca_masters.bulk_action_id', $batchIds);
+        $this->applyLeadFilters($matchingQuery, $matchingParams);
+
+        $matching = $matchingQuery
+            ->groupBy('ca_masters.bulk_action_id')
+            ->selectRaw('ca_masters.bulk_action_id')
+            ->selectRaw('COUNT(ca_masters.ca_id) as matching_leads')
             ->get()
             ->keyBy('bulk_action_id');
 
         $stats = [];
         foreach ($batchIds as $batchId) {
             $row = $totals->get($batchId);
+            $matchRow = $matching->get($batchId);
             $total = (int) ($row->total_leads ?? 0);
             $assigned = (int) ($row->assigned_leads ?? 0);
             $stats[$batchId] = [
                 'total_leads' => $total,
                 'assigned_leads' => $assigned,
                 'unassigned_leads' => max(0, $total - $assigned),
-                'matching_leads' => 0,
+                'matching_leads' => (int) ($matchRow->matching_leads ?? 0),
+                'source' => $row->source_name ?? null,
             ];
         }
 
-        foreach ($batchIds as $batchId) {
-            $stats[$batchId]['matching_leads'] = $this->batchLeadsQuery((int) $batchId, $params)->count('ca_masters.ca_id');
+        return $stats;
+    }
+
+    private function resolveFilterSourceName(array $params): ?string
+    {
+        $sourceId = (int) ($params['source_id'] ?? 0);
+        if ($sourceId <= 0) {
+            return null;
         }
 
-        return $stats;
+        return SourceLead::query()
+            ->where('source_id', $sourceId)
+            ->value('source_name');
     }
 
     private function filteredLeadsQuery(array $params, string $search, string $searchField): Builder
@@ -275,33 +327,48 @@ class BulkAssignmentCatalogService
         $search = trim((string) ($params['search'] ?? ''));
         $page = max(1, (int) ($params['page'] ?? 1));
         $perPage = min(100, max(10, (int) ($params['per_page'] ?? 25)));
+        $presenceService = app(EmployeePresenceService::class);
+        $hasPresence = $presenceService->hasLastSeenColumn();
 
         $query = Employee::query()
-            ->with('city.state')
+            ->with(array_merge(['city.state'], $presenceService->employeeUserWith()))
             ->whereNull('deleted_at');
 
         if ($search !== '') {
             $like = '%'.$search.'%';
             $query->where(function (Builder $q) use ($like) {
-                $q->where('name', 'ilike', $like)
-                    ->orWhere('email_id', 'ilike', $like)
-                    ->orWhere('mobile_no', 'ilike', $like)
-                    ->orWhere('role', 'ilike', $like);
+                $q->where('employees.name', 'ilike', $like)
+                    ->orWhere('employees.email_id', 'ilike', $like)
+                    ->orWhere('employees.mobile_no', 'ilike', $like)
+                    ->orWhere('employees.role', 'ilike', $like);
             });
         }
 
-        $total = (clone $query)->count('employee_id');
+        $total = (clone $query)->count('employees.employee_id');
 
-        $employees = $query
-            ->orderBy('name')
-            ->forPage($page, $perPage)
-            ->get();
+        if ($hasPresence) {
+            $threshold = $presenceService->onlineThreshold()->toDateTimeString();
+            $employees = $query
+                ->leftJoin('users', 'employees.user_id', '=', 'users.id')
+                ->orderByRaw(
+                    'CASE WHEN users.last_seen_at IS NOT NULL AND users.last_seen_at >= ? THEN 0 ELSE 1 END',
+                    [$threshold]
+                )
+                ->orderBy('employees.name')
+                ->select('employees.*')
+                ->forPage($page, $perPage)
+                ->get();
+        } else {
+            $employees = $query
+                ->orderBy('employees.name')
+                ->forPage($page, $perPage)
+                ->get();
+        }
 
         $employeeIds = $employees->pluck('employee_id')->all();
         $stats = $this->employeeWorkloadStats($employeeIds);
-        $today = now()->toDateString();
 
-        $items = $employees->map(function (Employee $employee) use ($stats) {
+        $items = $employees->map(function (Employee $employee) use ($stats, $presenceService) {
             $row = $stats[$employee->employee_id] ?? [
                 'active_leads' => 0,
                 'assigned_today' => 0,
@@ -309,6 +376,7 @@ class BulkAssignmentCatalogService
             ];
             $activeLeads = (int) $row['active_leads'];
             $workloadPct = min(100, (int) round(($activeLeads / self::WORKLOAD_CAP) * 100));
+            $presence = $presenceService->payloadForEmployee($employee);
 
             return [
                 'employee_id' => $employee->employee_id,
@@ -325,6 +393,9 @@ class BulkAssignmentCatalogService
                 'followups_today' => (int) $row['followups_today'],
                 'workload_pct' => $workloadPct,
                 'assignable' => $this->isAssignable($employee),
+                'is_online' => (bool) ($presence['is_online'] ?? false),
+                'last_seen_at' => $presence['last_seen_at'] ?? null,
+                'last_seen_human' => $presence['last_seen_human'] ?? 'Absent',
             ];
         })->values()->all();
 

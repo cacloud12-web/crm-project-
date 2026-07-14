@@ -141,6 +141,7 @@ class AppServiceProvider extends ServiceProvider
         $this->registerUserActionLimiter('campaign', 'campaign');
         $this->registerUserActionLimiter('follow-up', 'follow_up');
         $this->registerUserActionLimiter('lead-action', 'lead_action');
+        $this->registerUserActionLimiter('presence-heartbeat', 'presence_heartbeat');
     }
 
     private function registerUserActionLimiter(string $name, string $configKey): void

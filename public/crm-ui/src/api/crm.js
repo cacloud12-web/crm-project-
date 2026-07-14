@@ -10520,6 +10520,7 @@ window.CA_CRM = (function () {
       scope: 'followup-activity',
       pagination: meta,
       perPage: meta.per_page,
+      perPageOptions: window.CATablePagination.FOLLOWUP_PER_PAGE_OPTIONS || [10, 25, 50, 100, 200],
       showPerPage: true,
     });
     if (typeof iconsIn === 'function') iconsIn(slot);
@@ -10540,7 +10541,10 @@ window.CA_CRM = (function () {
       },
       onPerPageChange: function (perPage) {
         if (followupActivityLoading) return;
-        followupActivityPageSize = perPage;
+        var allowed = (window.CATablePagination && CATablePagination.FOLLOWUP_PER_PAGE_OPTIONS) || [10, 25, 50, 100, 200];
+        followupActivityPageSize = (window.CATablePagination && CATablePagination.normalizePerPage)
+          ? CATablePagination.normalizePerPage(perPage, allowed)
+          : (allowed.indexOf(perPage) >= 0 ? perPage : 10);
         followupActivityPage = 1;
         if (followupActivityIsDemo) {
           renderFollowupActivityDemoPage();
@@ -10648,7 +10652,10 @@ window.CA_CRM = (function () {
           followupActivityPage = pagination.current_page;
         }
         if (pagination && pagination.per_page) {
-          followupActivityPageSize = pagination.per_page;
+          var allowedSizes = (window.CATablePagination && CATablePagination.FOLLOWUP_PER_PAGE_OPTIONS) || [10, 25, 50, 100, 200];
+          followupActivityPageSize = (window.CATablePagination && CATablePagination.normalizePerPage)
+            ? CATablePagination.normalizePerPage(pagination.per_page, allowedSizes)
+            : (allowedSizes.indexOf(pagination.per_page) >= 0 ? pagination.per_page : 10);
         }
         window._followupActivityTimeline = items;
 
@@ -11172,6 +11179,7 @@ window.CA_CRM = (function () {
       renderInboxCheckCell('followups-data-table', f.followup_id) +
       '<td class="crm-td-status">' + compactTextCell(f.followup_type) + outcomeBadge + rescheduled + '</td>' +
       '<td class="sticky-left-2 crm-td-firm font-medium">' + firmNameCell(f.firm_name) + '</td>' +
+      '<td class="crm-td-mobile">' + camPhoneCell(f.mobile_no) + '</td>' +
       '<td class="crm-td-person">' + compactTextCell(f.executive || f.employee_name) + '</td>' +
       '<td class="crm-td-remarks">' + compactTextCell(remarksText) + '</td>' +
       '<td class="crm-td-date"><span class="cam-cell-text cam-cell-mono">' + escapeHtml(formatDateTime(f.scheduled_date)) + '</span></td>' +
@@ -11202,7 +11210,7 @@ window.CA_CRM = (function () {
     var row = el.querySelector('tr[data-followup-id="' + followupId + '"]');
     if (row) row.remove();
     if (!el.querySelector('tr[data-followup-id]')) {
-      el.innerHTML = '<tr><td colspan="9" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
+      el.innerHTML = '<tr><td colspan="10" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
     }
     renderFollowupKpis();
   }
@@ -11216,7 +11224,7 @@ window.CA_CRM = (function () {
     }
     var followups = pageFollowups || window.realFollowUps || [];
     rebuildFollowupIndex(followups);
-    el.innerHTML = followups.length ? followups.map(buildFollowupRowHtml).join('') : '<tr><td colspan="9" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
+    el.innerHTML = followups.length ? followups.map(buildFollowupRowHtml).join('') : '<tr><td colspan="10" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
     bindCrmRowActions(el);
     syncInboxChecks('followups-data-table');
     iconsIn(el);
@@ -16560,6 +16568,7 @@ window.CA_CRM = (function () {
     employeePagination: {},
     previewSummary: null,
     batchesLoading: false,
+    batchesRequestSeq: 0,
     employeesLoading: false,
     employeeSearchTimer: null,
   };
@@ -16576,12 +16585,21 @@ window.CA_CRM = (function () {
   }
 
   function bulkAssignBatchFilterParams() {
-    return {
-      state_id: (document.getElementById('bulk-assign-batch-state') || {}).value || '',
-      city_id: (document.getElementById('bulk-assign-batch-city') || {}).value || '',
-      source_id: (document.getElementById('bulk-assign-batch-source') || {}).value || '',
-      assignment: (document.getElementById('bulk-assign-batch-assignment') || {}).value || '',
-    };
+    var params = {};
+    var stateId = (document.getElementById('bulk-assign-batch-state') || {}).value || '';
+    var cityId = (document.getElementById('bulk-assign-batch-city') || {}).value || '';
+    var sourceId = (document.getElementById('bulk-assign-batch-source') || {}).value || '';
+    var assignment = (document.getElementById('bulk-assign-batch-assignment') || {}).value || '';
+    if (stateId) params.state_id = stateId;
+    if (cityId) params.city_id = cityId;
+    if (sourceId) params.source_id = sourceId;
+    if (assignment) params.assignment = assignment;
+    return params;
+  }
+
+  function bulkAssignHasActiveFilters() {
+    var filters = bulkAssignBatchFilterParams();
+    return !!(filters.state_id || filters.city_id || filters.source_id || filters.assignment);
   }
 
   function bulkAssignUpdateCounts() {
@@ -16693,11 +16711,14 @@ window.CA_CRM = (function () {
     var availClass = (emp.availability || '').toLowerCase().replace(/\s+/g, '-');
     var disabled = emp.assignable === false ? ' bulk-assign-emp-disabled' : '';
     var disabledAttr = emp.assignable === false ? ' disabled' : '';
+    var presence = (window.CAEmployeePresence && typeof window.CAEmployeePresence.indicatorHtml === 'function')
+      ? window.CAEmployeePresence.indicatorHtml(!!(emp && emp.is_online === true))
+      : '';
     return '<label class="bulk-assign-emp-card' + (selected ? ' is-selected' : '') + disabled + '">' +
       '<input type="checkbox" class="bulk-assign-emp-check" data-employee-id="' + emp.employee_id + '"' + (selected ? ' checked' : '') + disabledAttr + ' />' +
       '<div class="bulk-assign-emp-avatar">' + escapeHtml((emp.name || '?').charAt(0).toUpperCase()) + '</div>' +
       '<div class="bulk-assign-emp-body">' +
-        '<p class="bulk-assign-emp-name">' + escapeHtml(emp.name || '—') + '</p>' +
+        '<p class="bulk-assign-emp-name">' + presence + '<span class="bulk-assign-emp-name-text">' + escapeHtml(emp.name || '—') + '</span></p>' +
         '<p class="bulk-assign-emp-role">' + escapeHtml(emp.designation || '—') + ' · ' + escapeHtml(emp.city || '—') + '</p>' +
         '<div class="bulk-assign-emp-stats">' +
           '<span>Today: ' + (emp.assigned_today || 0) + '</span>' +
@@ -16760,9 +16781,9 @@ window.CA_CRM = (function () {
   }
 
   function loadBulkAssignBatches(page) {
-    if (bulkAssignmentState.batchesLoading) return;
-    bulkAssignmentState.batchesLoading = true;
     bulkAssignmentState.batchPage = page || bulkAssignmentState.batchPage || 1;
+    var requestSeq = ++bulkAssignmentState.batchesRequestSeq;
+    bulkAssignmentState.batchesLoading = true;
     var list = document.getElementById('bulk-assign-batches-list');
     if (list && !list.querySelector('.bulk-assign-batch-card')) {
       list.innerHTML = '<div class="bulk-assign-skeleton">Loading import batches…</div>';
@@ -16771,21 +16792,33 @@ window.CA_CRM = (function () {
       page: String(bulkAssignmentState.batchPage),
       per_page: '10',
     }, bulkAssignBatchFilterParams()));
+    var preservedEmployees = Object.assign({}, bulkAssignmentState.selectedEmployeeIds);
     apiFetch('/lead-assignments/bulk/batches?' + params.toString())
       .then(function (body) {
+        if (requestSeq !== bulkAssignmentState.batchesRequestSeq) return;
         var data = body.data || {};
         bulkAssignmentState.batchItems = data.items || [];
         bulkAssignmentState.batchPagination = data.pagination || {};
+        bulkAssignmentState.selectedEmployeeIds = preservedEmployees;
+
         if (bulkAssignmentState.selectedBatchId) {
           var selected = bulkAssignmentState.batchItems.find(function (item) {
-            return String(item.bulk_action_id) === bulkAssignmentState.selectedBatchId;
+            return String(item.bulk_action_id) === String(bulkAssignmentState.selectedBatchId);
           });
-          if (selected) bulkAssignmentState.selectedBatch = selected;
+          if (selected) {
+            bulkAssignmentState.selectedBatch = selected;
+          } else if (Number(bulkAssignmentState.batchPage) === 1) {
+            bulkAssignmentState.selectedBatchId = null;
+            bulkAssignmentState.selectedBatch = null;
+          }
         }
+
         var listEl = document.getElementById('bulk-assign-batches-list');
         if (!listEl) return;
         if (!bulkAssignmentState.batchItems.length) {
-          listEl.innerHTML = '<div class="bulk-assign-empty">No import batches found. Import leads first, then assign by batch.</div>';
+          listEl.innerHTML = bulkAssignHasActiveFilters()
+            ? '<div class="bulk-assign-empty">No lead batches found matching your filters.</div>'
+            : '<div class="bulk-assign-empty">No import batches found. Import leads first, then assign by batch.</div>';
         } else {
           listEl.innerHTML = bulkAssignmentState.batchItems.map(bulkAssignBatchCardHtml).join('');
         }
@@ -16794,11 +16827,14 @@ window.CA_CRM = (function () {
         bulkAssignUpdateCounts();
       })
       .catch(function (err) {
+        if (requestSeq !== bulkAssignmentState.batchesRequestSeq) return;
         var listEl = document.getElementById('bulk-assign-batches-list');
         if (listEl) listEl.innerHTML = '<div class="bulk-assign-empty text-rose-600">' + escapeHtml(err.message || 'Failed to load batches') + '</div>';
       })
       .finally(function () {
-        bulkAssignmentState.batchesLoading = false;
+        if (requestSeq === bulkAssignmentState.batchesRequestSeq) {
+          bulkAssignmentState.batchesLoading = false;
+        }
       });
   }
 
@@ -16896,18 +16932,46 @@ window.CA_CRM = (function () {
 
   function populateBulkAssignFilters() {
     ensureFormSelectData(function () {
-      var wrap = document.querySelector('#bulk-assignment-panel .bulk-assign-card');
-      if (wrap && window.CA_STATE_CITY) {
-        window.CA_STATE_CITY.initAllPairs(wrap);
+      var panel = document.getElementById('bulk-assignment-panel');
+      if (panel && window.CA_STATE_CITY) {
+        window.CA_STATE_CITY.initAllPairs(panel);
       }
+
       var sourceSel = document.getElementById('bulk-assign-batch-source');
-      if (sourceSel && sourceSel.options.length <= 1 && window.realSources) {
-        sourceSel.innerHTML = '<option value="">Any source</option>' +
-          window.realSources.map(function (s) {
+      if (sourceSel) {
+        var sources = activeMasterRecords(window.realSourceLeads || window.realSources || []);
+        var current = sourceSel.value || '';
+        sourceSel.innerHTML = '<option value="">Any Source</option>' +
+          sources.map(function (s) {
             return '<option value="' + s.source_id + '">' + escapeHtml(s.source_name) + '</option>';
           }).join('');
+        if (current) setSelectValueIfValid(sourceSel, current);
       }
     });
+  }
+
+  function resetBulkAssignFilters() {
+    var panel = document.getElementById('bulk-assignment-panel');
+    var locationPair = panel ? panel.querySelector('.sc-location-pair') : null;
+    if (locationPair && locationPair._scPair && typeof locationPair._scPair.reset === 'function') {
+      locationPair._scPair.reset();
+    } else {
+      var stateSel = document.getElementById('bulk-assign-batch-state');
+      var citySel = document.getElementById('bulk-assign-batch-city');
+      if (stateSel) stateSel.value = '';
+      if (citySel) {
+        citySel.value = '';
+        citySel.disabled = false;
+      }
+    }
+
+    var sourceSel = document.getElementById('bulk-assign-batch-source');
+    if (sourceSel) sourceSel.value = '';
+    var assignmentSel = document.getElementById('bulk-assign-batch-assignment');
+    if (assignmentSel) assignmentSel.value = '';
+
+    bulkAssignInvalidatePreview();
+    loadBulkAssignBatches(1);
   }
 
   function initBulkAssignmentPanel() {
@@ -16997,6 +17061,12 @@ window.CA_CRM = (function () {
     if (clearBatch && !clearBatch._bulkAssignBound) {
       clearBatch._bulkAssignBound = true;
       clearBatch.addEventListener('click', bulkAssignClearBatchSelection);
+    }
+
+    var resetFilters = document.getElementById('bulk-assign-filters-reset');
+    if (resetFilters && !resetFilters._bulkAssignBound) {
+      resetFilters._bulkAssignBound = true;
+      resetFilters.addEventListener('click', resetBulkAssignFilters);
     }
 
     var clearEmployees = document.getElementById('bulk-assign-employees-clear');
@@ -17948,11 +18018,11 @@ window.CA_CRM = (function () {
         { label: 'Total Rows', value: summary.total_rows || 0, cls: 'text-slate-900' },
       ];
       el.innerHTML = cards.map(function (card) {
-        return '<div class="card p-5"><p class="text-caption text-slate-500">' + card.label + '</p>' +
-          '<p class="text-2xl font-semibold ' + card.cls + '">' + card.value + '</p></div>';
+        return '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">' + card.label + '</p>' +
+          '<p class="text-stat-number ' + card.cls + '">' + card.value + '</p></div>';
       }).join('') +
-        '<div class="card p-5 sm:col-span-2 lg:col-span-3"><p class="text-caption text-slate-500">Import Reference</p>' +
-        '<p class="font-medium">' + (summary.bulk_action_id || '—') + ' · ' + escapeHtml(summary.file_name || '—') + '</p></div>';
+        '<div class="card p-4 sm:col-span-2 lg:col-span-3 crm-metric-card crm-metric-card--wide"><p class="text-caption text-slate-500">Import Reference</p>' +
+        '<p class="text-body font-medium">' + (summary.bulk_action_id || '—') + ' · ' + escapeHtml(summary.file_name || '—') + '</p></div>';
     }
 
     zone.addEventListener('click', function () { fileInput.click(); });
@@ -18655,7 +18725,7 @@ window.CA_CRM = (function () {
             ['Failed', detail.failed_rows || 0],
             ['Status', detail.status || '—'],
           ].map(function (pair) {
-            return '<div class="card p-4"><p class="text-caption text-slate-500">' + pair[0] + '</p><p class="font-medium text-slate-900">' + escapeHtml(String(pair[1])) + '</p></div>';
+            return '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">' + pair[0] + '</p><p class="text-body font-medium text-slate-900">' + escapeHtml(String(pair[1])) + '</p></div>';
           }).join('') +
         '</div>';
     }
@@ -18707,7 +18777,7 @@ window.CA_CRM = (function () {
               ['Status', detail.status || '—'],
               ['Progress', (detail.progress_percent || 0) + '%'],
             ].map(function (pair) {
-              return '<div class="card p-4"><p class="text-caption text-slate-500">' + pair[0] + '</p><p class="font-medium text-slate-900">' + escapeHtml(String(pair[1])) + '</p></div>';
+              return '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">' + pair[0] + '</p><p class="text-body font-medium text-slate-900">' + escapeHtml(String(pair[1])) + '</p></div>';
             }).join('') +
           '</div>' +
           '<p class="text-caption text-slate-500">Download the export file when status is Completed.</p>';
@@ -18793,7 +18863,7 @@ window.CA_CRM = (function () {
               ['Status', detail.status || '—'],
               ['Error Rows', detail.error_row_count || 0],
             ].map(function (pair) {
-              return '<div class="card p-4"><p class="text-caption text-slate-500">' + pair[0] + '</p><p class="font-medium text-slate-900">' + escapeHtml(String(pair[1])) + '</p></div>';
+              return '<div class="card p-4 crm-metric-card"><p class="text-caption text-slate-500">' + pair[0] + '</p><p class="text-body font-medium text-slate-900">' + escapeHtml(String(pair[1])) + '</p></div>';
             }).join('') +
           '</div>' +
           '<p class="text-caption text-slate-500">Download failed rows, correct them using the sample template format, then re-upload via the import wizard.</p>';
@@ -21194,12 +21264,22 @@ window.CA_CRM = (function () {
     if (!root || root._rolesPermBound) return;
     root._rolesPermBound = true;
 
+    var ROLE_PERM_SECTIONS = [
+      { id: 'crm', label: 'CRM', modules: ['dashboard', 'ca_master', 'leads', 'assignment', 'followups', 'sales_list'] },
+      { id: 'communication', label: 'Communication', modules: ['campaigns', 'email_configuration', 'whatsapp_templates', 'email_templates'] },
+      { id: 'reports', label: 'Reports', modules: ['reports'] },
+      { id: 'masters', label: 'Master Tables', modules: ['sources', 'team_size', 'lead_status'] },
+      { id: 'security', label: 'Security & Settings', modules: ['roles_permissions', 'settings', 'google_api'] },
+    ];
+
     var roleSelect = document.getElementById('roles-perm-role-select');
     var matrixHead = document.getElementById('roles-perm-matrix-head');
     var matrixBody = document.getElementById('roles-perm-matrix-body');
+    var mobileEl = document.getElementById('roles-perm-mobile');
     var statusEl = document.getElementById('roles-perm-status');
     var saveBtn = document.getElementById('roles-perm-save-btn');
     var resetBtn = document.getElementById('roles-perm-reset-btn');
+    var searchInput = document.getElementById('roles-perm-search');
     var state = {
       modules: [],
       permissions: [],
@@ -21207,6 +21287,10 @@ window.CA_CRM = (function () {
       permissionLabels: {},
       matrix: {},
       dirty: {},
+      editableRoles: ['manager', 'employee', 'admin'],
+      collapsed: {},
+      search: '',
+      autosaveTimer: null,
     };
 
     function showStatus(message, type) {
@@ -21224,6 +21308,14 @@ window.CA_CRM = (function () {
       return roleSelect ? roleSelect.value : 'manager';
     }
 
+    function moduleLabel(module) {
+      return state.moduleLabels[module] || activityModuleLabel(module);
+    }
+
+    function permissionLabel(permission) {
+      return state.permissionLabels[permission] || rbacPermissionLabel(permission);
+    }
+
     function roleGrants(role) {
       var grants = {};
       var roleMatrix = state.matrix[role] || {};
@@ -21236,32 +21328,87 @@ window.CA_CRM = (function () {
     function isGranted(role, module, permission) {
       var grants = state.dirty[role] || roleGrants(role);
       var moduleGrants = grants[module] || [];
-      return moduleGrants.indexOf(permission) >= 0;
+      return moduleGrants.indexOf(permission) >= 0 || moduleGrants.indexOf('*') >= 0;
     }
 
-    function renderMatrix() {
-      if (!matrixHead || !matrixBody) return;
+    function matchesSearch(module) {
+      var q = (state.search || '').trim().toLowerCase();
+      if (!q) return true;
+      var label = moduleLabel(module).toLowerCase();
+      return label.indexOf(q) >= 0 || String(module).toLowerCase().indexOf(q) >= 0;
+    }
+
+    function orderedModules() {
+      var seen = {};
+      var ordered = [];
+      ROLE_PERM_SECTIONS.forEach(function (section) {
+        section.modules.forEach(function (module) {
+          if (state.modules.indexOf(module) >= 0 && !seen[module]) {
+            seen[module] = true;
+            ordered.push(module);
+          }
+        });
+      });
+      state.modules.forEach(function (module) {
+        if (!seen[module]) {
+          seen[module] = true;
+          ordered.push(module);
+        }
+      });
+      return ordered.filter(matchesSearch);
+    }
+
+    function sectionsForRender() {
+      var filtered = orderedModules();
+      var used = {};
+      var sections = [];
+      ROLE_PERM_SECTIONS.forEach(function (section) {
+        var mods = section.modules.filter(function (module) {
+          return filtered.indexOf(module) >= 0;
+        });
+        mods.forEach(function (m) { used[m] = true; });
+        if (mods.length) {
+          sections.push({ id: section.id, label: section.label, modules: mods });
+        }
+      });
+      var other = filtered.filter(function (module) { return !used[module]; });
+      if (other.length) {
+        sections.push({ id: 'other', label: 'Other', modules: other });
+      }
+      return sections;
+    }
+
+    function updateStats() {
       var role = selectedRole();
-      matrixHead.innerHTML = '<tr><th class="sticky-left roles-perm-module-col">Module</th>' +
-        state.permissions.map(function (permission) {
-          var label = state.permissionLabels[permission] || rbacPermissionLabel(permission);
-          return '<th class="roles-perm-action-col" title="' + escapeHtml(label) + '">' + escapeHtml(label) + '</th>';
-        }).join('') + '</tr>';
+      var enabled = 0;
+      var total = state.modules.length * state.permissions.length;
+      state.modules.forEach(function (module) {
+        state.permissions.forEach(function (permission) {
+          if (isGranted(role, module, permission)) enabled += 1;
+        });
+      });
+      var set = function (id, value) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = String(value);
+      };
+      set('roles-perm-stat-roles', (state.editableRoles || []).length || 3);
+      set('roles-perm-stat-modules', state.modules.length);
+      set('roles-perm-stat-enabled', enabled);
+      set('roles-perm-stat-disabled', Math.max(0, total - enabled));
+    }
 
-      matrixBody.innerHTML = state.modules.map(function (module) {
-        var moduleLabel = state.moduleLabels[module] || activityModuleLabel(module);
-        var cells = state.permissions.map(function (permission) {
-          var granted = isGranted(role, module, permission);
-          return '<td class="roles-perm-action-col text-center">' +
-            '<label class="roles-perm-toggle">' +
-              '<input type="checkbox" class="roles-perm-checkbox" data-module="' + escapeHtml(module) + '" data-permission="' + escapeHtml(permission) + '"' + (granted ? ' checked' : '') + ' />' +
-              '<span class="roles-perm-toggle-ui" aria-hidden="true"></span>' +
-            '</label></td>';
-        }).join('');
-        return '<tr class="ca-table-row"><th scope="row" class="sticky-left roles-perm-module-col font-medium text-slate-800">' + escapeHtml(moduleLabel) + '</th>' + cells + '</tr>';
-      }).join('') || '<tr><td colspan="99" class="text-center text-slate-500 p-6">No modules configured.</td></tr>';
+    function toggleHtml(module, permission, granted) {
+      return '<label class="roles-perm-toggle" title="' + escapeHtml(permissionLabel(permission)) + '">' +
+        '<input type="checkbox" class="roles-perm-checkbox" data-module="' + escapeHtml(module) + '" data-permission="' + escapeHtml(permission) + '"' + (granted ? ' checked' : '') + ' aria-label="' + escapeHtml(permissionLabel(permission) + ' for ' + moduleLabel(module)) + '" />' +
+        '<span class="roles-perm-toggle-ui" aria-hidden="true"></span>' +
+      '</label>';
+    }
 
-      matrixBody.querySelectorAll('.roles-perm-checkbox').forEach(function (input) {
+    function bindToggleInputs(rootEl) {
+      if (!rootEl) return;
+      rootEl.querySelectorAll('.roles-perm-checkbox').forEach(function (input) {
+        if (input._rolesPermBound) return;
+        input._rolesPermBound = true;
         input.addEventListener('change', function () {
           var r = selectedRole();
           if (!state.dirty[r]) state.dirty[r] = roleGrants(r);
@@ -21274,9 +21421,151 @@ window.CA_CRM = (function () {
             list = list.filter(function (item) { return item !== permission; });
           }
           state.dirty[r][module] = list;
-          showStatus('Unsaved changes for ' + rbacRoleLabel(r) + '.', 'info');
+          updateStats();
+          showStatus('Unsaved changes for ' + rbacRoleLabel(r) + '. Click Save Permissions to apply.', 'info');
+          scheduleAutosave();
         });
       });
+    }
+
+    function renderDesktopMatrix(sections, role) {
+      if (!matrixHead || !matrixBody) return;
+      matrixHead.innerHTML = '<tr>' +
+        '<th class="roles-perm-module-col roles-perm-sticky-col" scope="col">Module</th>' +
+        state.permissions.map(function (permission) {
+          var label = permissionLabel(permission);
+          return '<th class="roles-perm-action-col" scope="col" title="' + escapeHtml(label) + '"><span>' + escapeHtml(label) + '</span></th>';
+        }).join('') +
+      '</tr>';
+
+      if (!sections.length) {
+        matrixBody.innerHTML = '<tr><td colspan="' + (state.permissions.length + 1) + '" class="text-center text-slate-500 p-6">No modules match your search.</td></tr>';
+        return;
+      }
+
+      matrixBody.innerHTML = sections.map(function (section) {
+        var collapsed = !!state.collapsed[section.id];
+        var header = '<tr class="roles-perm-section-row" data-section="' + escapeHtml(section.id) + '">' +
+          '<th scope="colgroup" colspan="' + (state.permissions.length + 1) + '" class="roles-perm-section-cell">' +
+            '<button type="button" class="roles-perm-section-toggle" data-section-toggle="' + escapeHtml(section.id) + '" aria-expanded="' + (collapsed ? 'false' : 'true') + '">' +
+              '<i data-lucide="' + (collapsed ? 'chevron-right' : 'chevron-down') + '" class="h-4 w-4" aria-hidden="true"></i>' +
+              '<span>' + escapeHtml(section.label) + '</span>' +
+              '<span class="roles-perm-section-count">' + section.modules.length + '</span>' +
+            '</button>' +
+          '</th></tr>';
+        if (collapsed) return header;
+        var rows = section.modules.map(function (module) {
+          var cells = state.permissions.map(function (permission) {
+            return '<td class="roles-perm-action-col text-center">' + toggleHtml(module, permission, isGranted(role, module, permission)) + '</td>';
+          }).join('');
+          return '<tr class="ca-table-row roles-perm-module-row" data-module-row="' + escapeHtml(module) + '">' +
+            '<th scope="row" class="roles-perm-module-col roles-perm-sticky-col font-medium text-slate-800">' + escapeHtml(moduleLabel(module)) + '</th>' +
+            cells +
+          '</tr>';
+        }).join('');
+        return header + rows;
+      }).join('');
+
+      matrixBody.querySelectorAll('[data-section-toggle]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var id = btn.getAttribute('data-section-toggle');
+          state.collapsed[id] = !state.collapsed[id];
+          renderMatrix();
+        });
+      });
+      bindToggleInputs(matrixBody);
+    }
+
+    function renderMobileCards(sections, role) {
+      if (!mobileEl) return;
+      if (!sections.length) {
+        mobileEl.innerHTML = '<div class="roles-perm-empty">No modules match your search.</div>';
+        return;
+      }
+      mobileEl.innerHTML = sections.map(function (section) {
+        var collapsed = !!state.collapsed[section.id];
+        return '<div class="roles-perm-mobile-section" data-section="' + escapeHtml(section.id) + '">' +
+          '<button type="button" class="roles-perm-section-toggle" data-section-toggle="' + escapeHtml(section.id) + '" aria-expanded="' + (collapsed ? 'false' : 'true') + '">' +
+            '<i data-lucide="' + (collapsed ? 'chevron-right' : 'chevron-down') + '" class="h-4 w-4"></i>' +
+            '<span>' + escapeHtml(section.label) + '</span>' +
+            '<span class="roles-perm-section-count">' + section.modules.length + '</span>' +
+          '</button>' +
+          (collapsed ? '' : section.modules.map(function (module) {
+            return '<article class="roles-perm-module-card">' +
+              '<h4 class="roles-perm-module-card-title">' + escapeHtml(moduleLabel(module)) + '</h4>' +
+              '<div class="roles-perm-module-card-grid">' +
+                state.permissions.map(function (permission) {
+                  return '<div class="roles-perm-module-card-item">' +
+                    '<span>' + escapeHtml(permissionLabel(permission)) + '</span>' +
+                    toggleHtml(module, permission, isGranted(role, module, permission)) +
+                  '</div>';
+                }).join('') +
+              '</div></article>';
+          }).join('')) +
+        '</div>';
+      }).join('');
+
+      mobileEl.querySelectorAll('[data-section-toggle]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var id = btn.getAttribute('data-section-toggle');
+          state.collapsed[id] = !state.collapsed[id];
+          renderMatrix();
+        });
+      });
+      bindToggleInputs(mobileEl);
+    }
+
+    function renderMatrix() {
+      var role = selectedRole();
+      var sections = sectionsForRender();
+      renderDesktopMatrix(sections, role);
+      renderMobileCards(sections, role);
+      updateStats();
+      if (typeof icons === 'function') icons();
+      else if (typeof iconsIn === 'function') iconsIn(root);
+    }
+
+    function saveCurrentRole(opts) {
+      opts = opts || {};
+      var role = selectedRole();
+      var grants = state.dirty[role] || roleGrants(role);
+      if (saveBtn) saveBtn.disabled = true;
+      if (!opts.silent) showStatus('Saving permissions…', 'info');
+      return apiFetch('/admin/role-permissions', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: role, grants: grants }),
+      }).then(function (body) {
+        state.matrix = (body.data && body.data.matrix) || state.matrix;
+        delete state.dirty[role];
+        renderMatrix();
+        showStatus('Permissions saved successfully.', 'success');
+        if (!opts.silent) toast('Permissions saved successfully', 'success');
+      }).catch(function (err) {
+        showStatus(err.message || 'Unable to save permissions.', 'error');
+        if (!opts.silent) toast(err.message || 'Unable to save permissions', 'error');
+        throw err;
+      }).finally(function () {
+        if (saveBtn) saveBtn.disabled = false;
+      });
+    }
+
+    function scheduleAutosave() {
+      clearTimeout(state.autosaveTimer);
+      state.autosaveTimer = setTimeout(function () {
+        if (!state.dirty[selectedRole()]) return;
+        saveCurrentRole({ silent: true }).catch(function () { /* status already set */ });
+      }, 450);
+    }
+
+    function populateRoleSelect(roles) {
+      if (!roleSelect || !roles || !roles.length) return;
+      var current = roleSelect.value;
+      roleSelect.innerHTML = roles.map(function (role) {
+        return '<option value="' + escapeHtml(role) + '">' + escapeHtml(rbacRoleLabel(role)) + '</option>';
+      }).join('');
+      if (roles.indexOf(current) >= 0) roleSelect.value = current;
+      else roleSelect.value = roles[0];
     }
 
     function loadMatrix() {
@@ -21289,7 +21578,9 @@ window.CA_CRM = (function () {
           state.moduleLabels = data.module_labels || {};
           state.permissionLabels = data.permission_labels || {};
           state.matrix = data.matrix || {};
+          state.editableRoles = data.editable_roles || ['manager', 'employee', 'admin'];
           state.dirty = {};
+          populateRoleSelect(state.editableRoles);
           renderMatrix();
           showStatus('', '');
         })
@@ -21300,33 +21591,23 @@ window.CA_CRM = (function () {
 
     if (roleSelect) {
       roleSelect.addEventListener('change', function () {
+        clearTimeout(state.autosaveTimer);
         renderMatrix();
         showStatus('', '');
       });
     }
 
+    if (searchInput) {
+      searchInput.addEventListener('input', function () {
+        state.search = searchInput.value || '';
+        renderMatrix();
+      });
+    }
+
     if (saveBtn) {
       saveBtn.addEventListener('click', function () {
-        var role = selectedRole();
-        var grants = state.dirty[role] || roleGrants(role);
-        saveBtn.disabled = true;
-        showStatus('Saving permissions…', 'info');
-        apiFetch('/admin/role-permissions', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ role: role, grants: grants }),
-        }).then(function (body) {
-          state.matrix = (body.data && body.data.matrix) || state.matrix;
-          delete state.dirty[role];
-          renderMatrix();
-          showStatus('Permissions saved successfully.', 'success');
-          toast('Permissions saved successfully', 'success');
-        }).catch(function (err) {
-          showStatus(err.message || 'Unable to save permissions.', 'error');
-          toast(err.message || 'Unable to save permissions', 'error');
-        }).finally(function () {
-          saveBtn.disabled = false;
-        });
+        clearTimeout(state.autosaveTimer);
+        saveCurrentRole();
       });
     }
 
@@ -21334,6 +21615,7 @@ window.CA_CRM = (function () {
       resetBtn.addEventListener('click', function () {
         var role = selectedRole();
         if (!window.confirm('Reset ' + rbacRoleLabel(role) + ' permissions to default values?')) return;
+        clearTimeout(state.autosaveTimer);
         resetBtn.disabled = true;
         showStatus('Resetting permissions…', 'info');
         apiFetch('/admin/role-permissions/reset', {
@@ -21380,63 +21662,252 @@ window.CA_CRM = (function () {
         setMetric('security-metric-locking', (summary.active_lock_count != null ? summary.active_lock_count : 0) + ' active locks');
         setMetric('security-metric-api', summary.api_rate_summary || 'Rate limits enforced');
 
+        var SEC_PERM_SECTIONS = [
+          { id: 'crm', label: 'CRM', modules: ['dashboard', 'ca_master', 'leads', 'employees', 'assignment', 'followups', 'sales_list', 'bulk'] },
+          { id: 'communication', label: 'Communication', modules: ['campaigns', 'email_configuration', 'whatsapp_templates', 'email_templates'] },
+          { id: 'reports', label: 'Reports', modules: ['reports', 'activity'] },
+          { id: 'security', label: 'Security', modules: ['consent', 'security', 'roles_permissions', 'admin'] },
+          { id: 'settings', label: 'Settings', modules: ['settings', 'google_api', 'sources', 'team_size', 'lead_status'] },
+        ];
+
         var rbacBody = document.getElementById('security-rbac-matrix');
+        var secHead = document.getElementById('security-perm-matrix-head');
+        var secMobile = document.getElementById('security-perm-mobile');
         var note = document.getElementById('security-matrix-note');
+        var roleSelect = document.getElementById('security-perm-role-select');
+        var searchInput = document.getElementById('security-perm-search');
+        var secState = {
+          modules: data.modules || [],
+          permissions: data.permissions || [],
+          editableRoles: data.editable_roles || ['manager', 'employee', 'admin'],
+          collapsed: {},
+          search: '',
+        };
+
         if (note) {
           note.textContent = data.can_edit
-            ? 'Toggle permissions for manager, employee, and admin roles. Changes save immediately.'
+            ? 'Select a role, then toggle permissions. Changes save immediately.'
             : 'Read-only view. Only Super Admin can edit permissions.';
         }
-        if (rbacBody) {
-          var rows = [];
-          (data.editable_roles || []).forEach(function (role) {
-            (data.modules || []).forEach(function (module) {
-              (data.permissions || []).forEach(function (permission) {
-                var rolePerms = (data.matrix[role] && data.matrix[role][module]) || (data.matrix[role] && data.matrix[role]['*']) || [];
-                var granted = rolePerms.indexOf('*') >= 0 || rolePerms.indexOf(permission) >= 0;
-                rows.push('<tr class="ca-table-row">' +
-                  '<td>' + escapeHtml(rbacRoleLabel(role)) + '</td>' +
-                  '<td>' + escapeHtml(activityModuleLabel(module)) + '</td>' +
-                  '<td>' + escapeHtml(rbacPermissionLabel(permission)) + '</td>' +
-                  '<td><button type="button" class="perm-check' + (granted ? ' on' : ' off') + '" ' +
-                    'data-security-toggle="1" data-role="' + escapeHtml(role) + '" data-module="' + escapeHtml(module) + '" data-permission="' + escapeHtml(permission) + '" ' +
-                    (data.can_edit ? '' : 'disabled') + ' aria-label="Toggle ' + permission + ' for ' + role + ' on ' + module + '">' +
-                    '<i data-lucide="' + (granted ? 'check' : 'x') + '" class="h-4 w-4"></i></button></td>' +
-                '</tr>');
-              });
+
+        if (roleSelect) {
+          roleSelect.innerHTML = secState.editableRoles.map(function (role) {
+            return '<option value="' + escapeHtml(role) + '">' + escapeHtml(rbacRoleLabel(role)) + '</option>';
+          }).join('');
+        }
+
+        function secIsGranted(role, module, permission) {
+          var rolePerms = (window._securityMatrix[role] && window._securityMatrix[role][module])
+            || (window._securityMatrix[role] && window._securityMatrix[role]['*'])
+            || [];
+          return rolePerms.indexOf('*') >= 0 || rolePerms.indexOf(permission) >= 0;
+        }
+
+        function secMatches(module) {
+          var q = (secState.search || '').trim().toLowerCase();
+          if (!q) return true;
+          var label = activityModuleLabel(module).toLowerCase();
+          return label.indexOf(q) >= 0 || String(module).toLowerCase().indexOf(q) >= 0;
+        }
+
+        function secOrderedModules() {
+          var seen = {};
+          var ordered = [];
+          SEC_PERM_SECTIONS.forEach(function (section) {
+            section.modules.forEach(function (module) {
+              if (secState.modules.indexOf(module) >= 0 && !seen[module]) {
+                seen[module] = true;
+                ordered.push(module);
+              }
             });
           });
-          rbacBody.innerHTML = rows.join('') || '<tr><td colspan="4" class="text-center text-slate-500 p-4">No editable roles configured.</td></tr>';
-          rbacBody.querySelectorAll('[data-security-toggle]').forEach(function (btn) {
-            if (btn._secToggleBound) return;
-            btn._secToggleBound = true;
-            btn.addEventListener('click', function () {
-              if (!window._securityCanEdit) return;
-              var granted = !btn.classList.contains('on');
+          secState.modules.forEach(function (module) {
+            if (!seen[module]) {
+              seen[module] = true;
+              ordered.push(module);
+            }
+          });
+          return ordered.filter(secMatches);
+        }
+
+        function secSections() {
+          var filtered = secOrderedModules();
+          var used = {};
+          var sections = [];
+          SEC_PERM_SECTIONS.forEach(function (section) {
+            var mods = section.modules.filter(function (module) { return filtered.indexOf(module) >= 0; });
+            mods.forEach(function (m) { used[m] = true; });
+            if (mods.length) sections.push({ id: section.id, label: section.label, modules: mods });
+          });
+          var other = filtered.filter(function (module) { return !used[module]; });
+          if (other.length) sections.push({ id: 'other', label: 'Other', modules: other });
+          return sections;
+        }
+
+        function updateSecStats(role) {
+          var enabled = 0;
+          var total = secState.modules.length * secState.permissions.length;
+          secState.modules.forEach(function (module) {
+            secState.permissions.forEach(function (permission) {
+              if (secIsGranted(role, module, permission)) enabled += 1;
+            });
+          });
+          var set = function (id, value) {
+            var el = document.getElementById(id);
+            if (el) el.textContent = String(value);
+          };
+          set('security-perm-stat-modules', secState.modules.length);
+          set('security-perm-stat-enabled', enabled);
+          set('security-perm-stat-disabled', Math.max(0, total - enabled));
+        }
+
+        function secToggleHtml(role, module, permission, granted) {
+          return '<label class="roles-perm-toggle' + (data.can_edit ? '' : ' is-disabled') + '" title="' + escapeHtml(rbacPermissionLabel(permission)) + '">' +
+            '<input type="checkbox" class="roles-perm-checkbox security-perm-checkbox" data-security-toggle="1" data-role="' + escapeHtml(role) + '" data-module="' + escapeHtml(module) + '" data-permission="' + escapeHtml(permission) + '"' +
+              (granted ? ' checked' : '') + (data.can_edit ? '' : ' disabled') +
+              ' aria-label="' + escapeHtml(rbacPermissionLabel(permission) + ' for ' + activityModuleLabel(module)) + '" />' +
+            '<span class="roles-perm-toggle-ui" aria-hidden="true"></span>' +
+          '</label>';
+        }
+
+        function bindSecToggles(rootEl) {
+          if (!rootEl) return;
+          rootEl.querySelectorAll('.security-perm-checkbox').forEach(function (input) {
+            if (input._secToggleBound) return;
+            input._secToggleBound = true;
+            input.addEventListener('change', function () {
+              if (!window._securityCanEdit) {
+                input.checked = !input.checked;
+                return;
+              }
+              var role = input.getAttribute('data-role');
+              var module = input.getAttribute('data-module');
+              var permission = input.getAttribute('data-permission');
+              var granted = !!input.checked;
+              input.disabled = true;
               apiFetch('/admin/security-matrix', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  role: btn.getAttribute('data-role'),
-                  module: btn.getAttribute('data-module'),
-                  permission: btn.getAttribute('data-permission'),
-                  granted: granted,
-                }),
+                body: JSON.stringify({ role: role, module: module, permission: permission, granted: granted }),
               }).then(function (resp) {
-                var matrix = (resp.data && resp.data.matrix) || {};
-                window._securityMatrix = matrix;
-                btn.classList.toggle('on', granted);
-                btn.classList.toggle('off', !granted);
-                var icon = btn.querySelector('[data-lucide]');
-                if (icon) icon.setAttribute('data-lucide', granted ? 'check' : 'x');
-                icons();
+                window._securityMatrix = (resp.data && resp.data.matrix) || window._securityMatrix;
+                updateSecStats(role);
                 toast('Permission updated', 'success');
               }).catch(function (err) {
+                input.checked = !granted;
                 toast(err.message || 'Unable to update permission', 'error');
+              }).finally(function () {
+                input.disabled = !window._securityCanEdit;
               });
             });
           });
         }
+
+        function renderSecurityMatrix() {
+          var role = roleSelect ? roleSelect.value : (secState.editableRoles[0] || 'manager');
+          var sections = secSections();
+          var colSpan = secState.permissions.length + 1;
+
+          if (secHead) {
+            secHead.innerHTML = '<tr>' +
+              '<th class="roles-perm-module-col roles-perm-sticky-col" scope="col">Module</th>' +
+              secState.permissions.map(function (permission) {
+                var label = rbacPermissionLabel(permission);
+                return '<th class="roles-perm-action-col" scope="col" title="' + escapeHtml(label) + '"><span>' + escapeHtml(label) + '</span></th>';
+              }).join('') +
+            '</tr>';
+          }
+
+          if (rbacBody) {
+            if (!sections.length) {
+              rbacBody.innerHTML = '<tr><td colspan="' + colSpan + '" class="text-center text-slate-500 p-6">No modules match your search.</td></tr>';
+            } else {
+              rbacBody.innerHTML = sections.map(function (section) {
+                var collapsed = !!secState.collapsed[section.id];
+                var header = '<tr class="roles-perm-section-row"><th scope="colgroup" colspan="' + colSpan + '" class="roles-perm-section-cell">' +
+                  '<button type="button" class="roles-perm-section-toggle" data-sec-section="' + escapeHtml(section.id) + '" aria-expanded="' + (collapsed ? 'false' : 'true') + '">' +
+                    '<i data-lucide="' + (collapsed ? 'chevron-right' : 'chevron-down') + '" class="h-4 w-4"></i>' +
+                    '<span>' + escapeHtml(section.label) + '</span>' +
+                    '<span class="roles-perm-section-count">' + section.modules.length + '</span>' +
+                  '</button></th></tr>';
+                if (collapsed) return header;
+                return header + section.modules.map(function (module) {
+                  var cells = secState.permissions.map(function (permission) {
+                    return '<td class="roles-perm-action-col text-center">' +
+                      secToggleHtml(role, module, permission, secIsGranted(role, module, permission)) +
+                    '</td>';
+                  }).join('');
+                  return '<tr class="ca-table-row roles-perm-module-row">' +
+                    '<th scope="row" class="roles-perm-module-col roles-perm-sticky-col font-medium text-slate-800">' + escapeHtml(activityModuleLabel(module)) + '</th>' +
+                    cells + '</tr>';
+                }).join('');
+              }).join('');
+            }
+            rbacBody.querySelectorAll('[data-sec-section]').forEach(function (btn) {
+              btn.addEventListener('click', function () {
+                var id = btn.getAttribute('data-sec-section');
+                secState.collapsed[id] = !secState.collapsed[id];
+                renderSecurityMatrix();
+              });
+            });
+            bindSecToggles(rbacBody);
+          }
+
+          if (secMobile) {
+            if (!sections.length) {
+              secMobile.innerHTML = '<div class="roles-perm-empty">No modules match your search.</div>';
+            } else {
+              secMobile.innerHTML = sections.map(function (section) {
+                var collapsed = !!secState.collapsed[section.id];
+                return '<div class="roles-perm-mobile-section">' +
+                  '<button type="button" class="roles-perm-section-toggle" data-sec-section="' + escapeHtml(section.id) + '" aria-expanded="' + (collapsed ? 'false' : 'true') + '">' +
+                    '<i data-lucide="' + (collapsed ? 'chevron-right' : 'chevron-down') + '" class="h-4 w-4"></i>' +
+                    '<span>' + escapeHtml(section.label) + '</span>' +
+                    '<span class="roles-perm-section-count">' + section.modules.length + '</span>' +
+                  '</button>' +
+                  (collapsed ? '' : section.modules.map(function (module) {
+                    return '<article class="roles-perm-module-card">' +
+                      '<h4 class="roles-perm-module-card-title">' + escapeHtml(activityModuleLabel(module)) + '</h4>' +
+                      '<div class="roles-perm-module-card-grid">' +
+                        secState.permissions.map(function (permission) {
+                          return '<div class="roles-perm-module-card-item">' +
+                            '<span>' + escapeHtml(rbacPermissionLabel(permission)) + '</span>' +
+                            secToggleHtml(role, module, permission, secIsGranted(role, module, permission)) +
+                          '</div>';
+                        }).join('') +
+                      '</div></article>';
+                  }).join('')) +
+                '</div>';
+              }).join('');
+            }
+            secMobile.querySelectorAll('[data-sec-section]').forEach(function (btn) {
+              btn.addEventListener('click', function () {
+                var id = btn.getAttribute('data-sec-section');
+                secState.collapsed[id] = !secState.collapsed[id];
+                renderSecurityMatrix();
+              });
+            });
+            bindSecToggles(secMobile);
+          }
+
+          updateSecStats(role);
+          icons();
+        }
+
+        if (roleSelect && !roleSelect._secPermBound) {
+          roleSelect._secPermBound = true;
+          roleSelect.addEventListener('change', renderSecurityMatrix);
+        }
+        if (searchInput && !searchInput._secPermBound) {
+          searchInput._secPermBound = true;
+          searchInput.addEventListener('input', function () {
+            secState.search = searchInput.value || '';
+            renderSecurityMatrix();
+          });
+        }
+
+        renderSecurityMatrix();
+
         var usersBody = document.getElementById('security-users-table');
         if (usersBody) {
           usersBody.innerHTML = (data.users || []).map(function (user) {

@@ -75,12 +75,15 @@ return [
         'table' => 'follow_ups',
         'primary_key' => 'followup_id',
         'employee_scope' => 'employee_id',
+        'default_per_page' => 10,
+        'max_per_page' => 200,
+        'allowed_per_page' => [10, 25, 50, 100, 200],
         'default_sort' => 'created_at',
         'default_sort_dir' => 'desc',
         'sortable' => ['followup_id', 'followup_type', 'status', 'scheduled_date', 'next_followup_date', 'created_at'],
         'search_columns' => ['followup_type', 'remarks', 'status'],
         'search_relations' => [
-            'caMaster' => ['firm_name', 'ca_name'],
+            'caMaster' => ['firm_name', 'ca_name', 'mobile_no'],
             'employee' => ['name'],
         ],
         'filters' => [

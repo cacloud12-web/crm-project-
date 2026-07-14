@@ -67,7 +67,7 @@ class FollowUpService
     private function listingRelations(): array
     {
         return [
-            'caMaster:ca_id,firm_name',
+            'caMaster:ca_id,firm_name,mobile_no',
             'employee:employee_id,name',
         ];
     }
@@ -98,7 +98,7 @@ class FollowUpService
             'source' => $data['source'] ?? 'manual',
         ]);
 
-        $followUp->load('caMaster:ca_id,firm_name');
+        $followUp->load($this->listingRelations());
         $firm = $followUp->caMaster?->firm_name ?? 'Lead #'.$followUp->ca_id;
 
         $this->activityLogService->log(

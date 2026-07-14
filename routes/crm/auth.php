@@ -4,6 +4,7 @@ use App\Http\Controllers\Auth\CrmAuthController;
 use App\Http\Controllers\Auth\LoginEmailChangeController;
 use App\Http\Controllers\Auth\PasswordController;
 use App\Http\Controllers\Auth\PasswordResetController;
+use App\Http\Controllers\Auth\PresenceController;
 use App\Http\Controllers\Auth\ProfileController;
 use Illuminate\Support\Facades\Route;
 
@@ -25,6 +26,9 @@ Route::get('auth/verify-login-email/{token}', [LoginEmailChangeController::class
     ->name('auth.verify-login-email');
 
 Route::post('logout', [CrmAuthController::class, 'logout'])->middleware('auth')->name('crm.logout');
+
+Route::post('auth/presence/heartbeat', [PresenceController::class, 'heartbeat'])
+    ->middleware(['auth', 'throttle:presence-heartbeat']);
 
 Route::middleware(['auth', 'rbac'])->group(function () {
     Route::get('auth/me', [CrmAuthController::class, 'me']);

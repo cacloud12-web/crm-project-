@@ -216,9 +216,12 @@
     '</button>';
   }
 
-  function renderEmployeeItem(emp, active) {
+  function renderEmployeeItem(emp, active, showPresence) {
+    var presence = showPresence && window.CAEmployeePresence && typeof window.CAEmployeePresence.indicatorHtml === 'function'
+      ? window.CAEmployeePresence.indicatorHtml(!!(emp && emp.is_online === true))
+      : '';
     return '<button type="button" class="crm-entity-lookup__option' + (active ? ' is-active' : '') + '" role="option" data-value="' + escapeHtml(emp.employee_id) + '" aria-selected="' + (active ? 'true' : 'false') + '">' +
-      '<span class="crm-entity-lookup__option-title">' + escapeHtml(emp.name || '—') + '</span>' +
+      '<span class="crm-entity-lookup__option-title">' + presence + escapeHtml(emp.name || '—') + '</span>' +
       '<span class="crm-entity-lookup__option-meta">' + escapeHtml(emp.role || 'Employee') + (emp.email_id && emp.email_id !== '—' ? ' · ' + escapeHtml(emp.email_id) : '') + '</span>' +
       (emp.city && emp.city !== '—' ? '<span class="crm-entity-lookup__option-meta">City: ' + escapeHtml(emp.city) + '</span>' : '') +
     '</button>';
@@ -233,6 +236,14 @@
 
     var type = selectEl.dataset.crmEntityLookup || options.type || 'lead';
     var config = getTypeConfig(type);
+    var showPresence = selectEl.dataset.crmLookupShowPresence === 'true' || options.showPresence === true;
+    if (type === 'employee' && showPresence) {
+      config = Object.assign({}, config, {
+        renderItem: function (emp, active) {
+          return renderEmployeeItem(emp, active, true);
+        },
+      });
+    }
     var compact = selectEl.dataset.crmLookupCompact === 'true' || options.compact;
     var extraParams = {};
     try {
@@ -360,7 +371,24 @@
         state.page = page;
         state.total = result.total || 0;
         state.hasMore = !!result.hasMore;
-        state.items = append ? state.items.concat(result.items || []) : (result.items || []);
+        var nextItems = result.items || [];
+        if (showPresence && type === 'employee') {
+          nextItems = nextItems.slice().sort(function (a, b) {
+            var ao = a && a.is_online ? 0 : 1;
+            var bo = b && b.is_online ? 0 : 1;
+            if (ao !== bo) return ao - bo;
+            return String(a.name || '').localeCompare(String(b.name || ''));
+          });
+        }
+        state.items = append ? state.items.concat(nextItems) : nextItems;
+        if (showPresence && type === 'employee' && append) {
+          state.items = state.items.slice().sort(function (a, b) {
+            var ao = a && a.is_online ? 0 : 1;
+            var bo = b && b.is_online ? 0 : 1;
+            if (ao !== bo) return ao - bo;
+            return String(a.name || '').localeCompare(String(b.name || ''));
+          });
+        }
         state.loading = false;
         renderList(append);
       }).catch(function () {

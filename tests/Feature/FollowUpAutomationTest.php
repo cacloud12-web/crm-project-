@@ -371,6 +371,26 @@ class FollowUpAutomationTest extends TestCase
         $this->assertGreaterThanOrEqual(1, $month['pagination']['total']);
     }
 
+    public function test_activity_timeline_rejects_oversized_per_page(): void
+    {
+        $this->actingAsAdmin();
+        $lead = $this->createLead();
+
+        foreach ([10, 25, 50, 100, 200] as $size) {
+            $this->getJson('/follow-ups/activity-timeline?ca_id='.$lead->ca_id.'&per_page='.$size)
+                ->assertOk()
+                ->assertJsonPath('data.pagination.per_page', $size);
+        }
+
+        $this->getJson('/follow-ups/activity-timeline?ca_id='.$lead->ca_id.'&per_page=500')
+            ->assertOk()
+            ->assertJsonPath('data.pagination.per_page', 10);
+
+        $this->getJson('/follow-ups/activity-timeline?ca_id='.$lead->ca_id.'&per_page=1000')
+            ->assertOk()
+            ->assertJsonPath('data.pagination.per_page', 10);
+    }
+
     public function test_activity_timeline_admin_feed_uses_batch_loader(): void
     {
         $this->actingAsAdmin();

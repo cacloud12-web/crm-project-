@@ -70,7 +70,7 @@ class LeadActivityTimelineService
     {
         $user ??= auth()->user();
         $sort = ($filters['sort'] ?? 'desc') === 'asc' ? 'asc' : 'desc';
-        $perPage = min(1000, max(10, (int) ($filters['per_page'] ?? 10)));
+        $perPage = $this->normalizeFeedPerPage($filters['per_page'] ?? 10);
         $page = max(1, (int) ($filters['page'] ?? 1));
         $period = $this->normalizePeriod((string) ($filters['period'] ?? 'all'));
 
@@ -714,6 +714,14 @@ class LeadActivityTimelineService
             str_contains($type, 'Status') => 'git-branch',
             default => 'activity',
         };
+    }
+
+    private function normalizeFeedPerPage(mixed $perPage): int
+    {
+        $allowed = [10, 25, 50, 100, 200];
+        $requested = (int) $perPage;
+
+        return in_array($requested, $allowed, true) ? $requested : 10;
     }
 
     private function normalizePeriod(string $period): string

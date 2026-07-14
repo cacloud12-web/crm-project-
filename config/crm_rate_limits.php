@@ -28,4 +28,9 @@ return [
         'decay_minutes' => (int) env('CRM_RATE_LEAD_ACTION_DECAY', 1),
     ],
 
+    'presence_heartbeat' => [
+        'max_attempts' => (int) env('CRM_RATE_PRESENCE_HEARTBEAT_MAX', 30),
+        'decay_minutes' => (int) env('CRM_RATE_PRESENCE_HEARTBEAT_DECAY', 1),
+    ],
+
 ];

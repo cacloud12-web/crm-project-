@@ -194,7 +194,7 @@
             <div><label class="form-label">New Firm?</label><select name="is_newly_established" class="input-field"><option value="" selected>—</option><option value="no">No</option><option value="yes">Yes</option></select></div>
             <div><label class="form-label">Source</label><select name="source_id" class="input-field" id="form-lead-source-id"><option value="">Select source</option></select></div>
             <div><label class="form-label">Status</label><select name="status" class="input-field"><option>New</option><option>Hot</option><option>Warm</option><option>Pipeline</option><option>Demo Scheduled</option><option>Active</option><option>Inactive</option><option>Lost</option></select></div>
-            <div><label class="form-label">Assign Employee</label><select name="executive_id" class="input-field" id="form-executive-select" data-crm-entity-lookup="employee" data-crm-lookup-empty-label="Auto assign later" data-crm-lookup-placeholder="Search employee…"><option value="">Auto assign later</option></select></div>
+            <div><label class="form-label">Assign Employee</label><select name="executive_id" class="input-field" id="form-executive-select" data-crm-entity-lookup="employee" data-crm-lookup-show-presence="true" data-crm-lookup-empty-label="Auto assign later" data-crm-lookup-placeholder="Search employee…"><option value="">Auto assign later</option></select></div>
             <div id="form-lead-google-section" class="hidden sm:col-span-2 border border-slate-200 rounded-xl p-4 bg-slate-50">
               <p class="text-card-heading text-sm mb-3">Saved Google Places Data</p>
               <div class="grid sm:grid-cols-2 gap-3 text-caption" id="form-lead-google-fields"></div>
@@ -678,7 +678,7 @@
       <form id="form-assign-lead" class="ca-modal-body space-y-4">
         <div id="assign-bulk-summary" class="hidden rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-sm text-slate-700"></div>
         <div id="assign-lead-select-wrap"><label class="form-label">Select Lead</label><select name="ca_id" class="input-field" id="form-assign-lead-select" data-crm-entity-lookup="lead" data-crm-lookup-empty-label="Select lead" data-crm-lookup-placeholder="Search firm, CA, mobile, city…" required><option value="">Select lead</option></select></div>
-        <div><label class="form-label">Assign Employee</label><select name="executive_id" class="input-field" id="form-assign-executive" data-crm-entity-lookup="employee" data-crm-lookup-empty-label="Select employee" data-crm-lookup-placeholder="Search employee…" required><option value="">Select employee</option></select></div>
+        <div><label class="form-label">Assign Employee</label><select name="executive_id" class="input-field" id="form-assign-executive" data-crm-entity-lookup="employee" data-crm-lookup-show-presence="true" data-crm-lookup-empty-label="Select employee" data-crm-lookup-placeholder="Search employee…" required><option value="">Select employee</option></select></div>
         <div><label class="form-label">Assignment Type</label><select name="assignment_type" class="input-field"><option>Manual</option><option>Auto</option></select></div>
         <div><label class="form-label">Reason</label><select name="reason" class="input-field"><option value="MANUAL_ASSIGN">Manual Assignment</option><option value="WORKLOAD_BALANCE">Workload Balance</option><option value="HOT_LEAD_AUTO">Hot Lead Auto</option><option value="CITY_MATCH">City Match</option></select></div>
       </form>

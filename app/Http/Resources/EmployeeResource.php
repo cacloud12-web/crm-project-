@@ -3,6 +3,7 @@
 namespace App\Http\Resources;
 
 use App\Services\Employee\EmployeeCredentialService;
+use App\Services\Presence\EmployeePresenceService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -11,6 +12,8 @@ class EmployeeResource extends JsonResource
     public function toArray(Request $request): array
     {
         $credentialService = app(EmployeeCredentialService::class);
+        $presence = app(EmployeePresenceService::class)
+            ->payloadForEmployee($this->resource);
 
         return [
             'employee_id' => $this->employee_id,
@@ -30,6 +33,9 @@ class EmployeeResource extends JsonResource
             'login_status_label' => $credentialService->loginStatusLabel($this->resource),
             'date_of_joining' => $this->date_of_joining,
             'status' => $this->status,
+            'is_online' => (bool) ($presence['is_online'] ?? false),
+            'last_seen_at' => $presence['last_seen_at'] ?? null,
+            'last_seen_human' => $presence['last_seen_human'] ?? 'Absent',
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];
