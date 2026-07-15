@@ -388,14 +388,19 @@ class AssignmentReportsE2ETest extends TestCase
 
         $this->flushCrmCachesForTesting();
         $metrics = app(DashboardService::class)->metrics();
+
+        // total_leads is a full countable snapshot (not "created today").
+        $dbTotal = CaMaster::query()->countableInStatistics()->count();
+        $this->assertSame($dbTotal, (int) $metrics['total_leads']);
+
+        // new_leads respects the default "today" date range.
         $today = now()->toDateString();
-        $dbTotal = CaMaster::query()
+        $dbNewToday = CaMaster::query()
             ->countableInStatistics()
             ->whereDate('created_at', $today)
             ->count();
+        $this->assertSame($dbNewToday, (int) ($metrics['new_leads'] ?? 0));
 
-        $this->assertSame($dbTotal, (int) $metrics['total_leads']);
-        $this->assertGreaterThanOrEqual(1, (int) ($metrics['new_status_leads'] ?? 0));
         $this->assertGreaterThanOrEqual(1, (int) ($metrics['assigned_leads'] ?? 0));
     }
 

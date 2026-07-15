@@ -24,7 +24,12 @@ class EmployeePresenceTest extends TestCase
     public function test_login_marks_user_online(): void
     {
         $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeUser->forceFill(['last_seen_at' => null])->save();
+        // Local DBs may have rotated demo passwords — set a known hash inside this transaction.
+        $employeeUser->forceFill([
+            'last_seen_at' => null,
+            'password' => bcrypt('password'),
+            'is_active' => true,
+        ])->save();
 
         $this->postJson('/login', [
             'email' => 'employee@ca.local',

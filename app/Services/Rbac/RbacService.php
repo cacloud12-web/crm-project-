@@ -362,6 +362,19 @@ class RbacService
             return ['module' => 'assignment', 'permission' => 'edit'];
         }
 
+        // Single assign uses POST /lead-assignments — managers have "assign", not "create".
+        if ($path === 'lead-assignments' && $method === 'POST') {
+            return ['module' => 'assignment', 'permission' => 'assign'];
+        }
+
+        if (preg_match('#^lead-assignments/\d+$#', $path) && in_array($method, ['PUT', 'PATCH'], true)) {
+            return ['module' => 'assignment', 'permission' => 'reassign'];
+        }
+
+        if (preg_match('#^lead-assignments/\d+$#', $path) && $method === 'DELETE') {
+            return ['module' => 'assignment', 'permission' => 'reassign'];
+        }
+
         if (str_contains($path, 'bulk-import')) {
             return ['module' => 'bulk', 'permission' => $method === 'GET' ? 'view' : 'import'];
         }
