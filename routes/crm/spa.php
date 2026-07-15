@@ -27,7 +27,6 @@ Route::middleware(['auth', 'rbac'])->group(function () {
         'campaigns',
         'notifications',
         'activity',
-        'security',
         'queue',
         'demo-calendar',
     ];
@@ -63,4 +62,13 @@ Route::middleware(['auth', 'rbac'])->group(function () {
 
     Route::redirect('payments', '/dashboard');
     Route::redirect('reception', '/communication');
+    // Legacy Security module URL — keep bookmarks/open tabs from 404ing.
+    Route::get('security', function (Request $request) {
+        $role = strtolower((string) ($request->user()?->crm_role ?? ''));
+        if ($role === 'super_admin') {
+            return redirect('/settings/roles-permissions');
+        }
+
+        return redirect('/settings');
+    });
 });

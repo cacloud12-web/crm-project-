@@ -47,6 +47,13 @@ class RbacDatabaseService
                 $roleMatrix[$module] = array_values(array_unique($actions));
             }
 
+            // Never expose legacy action tokens in the UI/API matrix payload.
+            $roleMatrix = app(RbacGrantNormalizer::class)->normalizeModuleGrants(
+                $roleMatrix,
+                config('rbac.modules', []),
+                config('rbac.matrix_permissions', config('rbac.permissions', [])),
+            );
+
             $matrix[$role->key] = $roleMatrix;
         }
 
@@ -63,6 +70,8 @@ class RbacDatabaseService
         if (! $role->is_editable || $role->key === 'super_admin') {
             throw new \InvalidArgumentException('This role cannot be modified.');
         }
+
+        $moduleGrants = app(RbacGrantNormalizer::class)->normalizeModuleGrants($moduleGrants);
 
         $permissionMap = CrmPermission::query()
             ->get(['id', 'module', 'action'])

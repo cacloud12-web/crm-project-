@@ -49,6 +49,7 @@ return [
         'Not Interested',
         'Next Week',
         'Next Month',
+        'Left in between',
         'Hold',
     ],
 

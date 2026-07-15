@@ -78,7 +78,6 @@ return [
         'lead_status',
         'roles_permissions',
         'admin',
-        'security',
     ],
 
     'module_labels' => [
@@ -104,17 +103,20 @@ return [
         'lead_status' => 'Lead Status',
         'roles_permissions' => 'Roles & Permissions',
         'admin' => 'Admin Tools',
-        'security' => 'Security',
     ],
 
     'matrix_modules' => [
         'dashboard',
         'ca_master',
         'leads',
+        'employees',
         'assignment',
         'campaigns',
         'followups',
         'sales_list',
+        'bulk',
+        'consent',
+        'activity',
         'reports',
         'settings',
         'email_configuration',
@@ -125,6 +127,7 @@ return [
         'team_size',
         'lead_status',
         'roles_permissions',
+        'admin',
     ],
 
     'matrix_permissions' => [
@@ -166,7 +169,6 @@ return [
         'reports' => ['module' => 'reports', 'permission' => 'view_reports'],
         'duplicate-attempts' => ['module' => 'reports', 'permission' => 'view_reports'],
         'activity' => ['module' => 'activity', 'permission' => 'view'],
-        'security' => ['module' => 'security', 'permission' => 'view'],
         'queue' => ['module' => 'admin', 'permission' => 'view'],
         'db-health' => ['module' => 'admin', 'permission' => 'manage_settings'],
         'settings' => ['module' => 'settings', 'permission' => 'view'],
@@ -187,7 +189,6 @@ return [
         'admin' => [
             '*' => ['view', 'create', 'edit', 'delete', 'import', 'export', 'assign', 'reassign', 'approve', 'reject', 'send_email', 'send_sms', 'schedule_followup', 'schedule_demo', 'mark_completed', 'mark_purchased', 'view_reports', 'manage_settings', 'campaigns', 'reports'],
             'roles_permissions' => ['view'],
-            'security' => ['view', 'edit'],
             'admin' => ['view', 'view_reports'],
         ],
 
@@ -196,10 +197,11 @@ return [
             'ca_master' => ['view', 'edit', 'export'],
             'leads' => ['view', 'edit', 'assign', 'export'],
             'assignment' => ['view', 'assign', 'reassign'],
-            'campaigns' => ['view', 'send_email', 'send_sms', 'campaigns'],
+            // Communication — use canonical actions only (no legacy "campaigns" action).
+            'campaigns' => ['view', 'send_email', 'send_sms'],
             'followups' => ['view', 'schedule_followup', 'schedule_demo', 'mark_completed', 'edit'],
             'sales_list' => ['view', 'edit', 'export'],
-            'reports' => ['view', 'view_reports', 'export', 'reports'],
+            'reports' => ['view', 'view_reports', 'export'],
             'settings' => ['view'],
             'email_templates' => ['view', 'create', 'edit', 'delete'],
             'whatsapp_templates' => ['view', 'create', 'edit', 'delete'],
@@ -213,7 +215,8 @@ return [
             'dashboard' => ['view'],
             'leads' => ['view', 'create', 'edit'],
             'followups' => ['view', 'create', 'edit', 'schedule_followup', 'schedule_demo', 'mark_completed'],
-            'campaigns' => ['view', 'send_email', 'send_sms', 'campaigns'],
+            // Communication — canonical actions only so Role UI / validator can save without 422.
+            'campaigns' => ['view', 'send_email', 'send_sms'],
             'email_templates' => ['view'],
             'whatsapp_templates' => ['view'],
         ],

@@ -10,20 +10,23 @@ return [
     ],
 
     'demo_results' => [
-        'Interested',
-        'Thinking',
-        'Purchasing',
-        'Purchased',
-        'Not Interested',
-        'Next Week',
-        'Next Month',
-        'Hold',
-    ],
+    'Interested',
+    'Thinking',
+    'Purchasing',
+    'Purchased',
+    'Not Interested',
+    'Next Week',
+    'Next Month',
+    'Left in between',
+    'Hold',
+],
 
     'followup_offsets' => [
         'Next Week' => 7,
         'Next Month' => 30,
+        'Left in between' => 15,
         'Hold' => 14,
+
         'Thinking' => 7,
         'Call Back Later' => 1,
         'Busy' => 1,

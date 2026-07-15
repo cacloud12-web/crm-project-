@@ -18,7 +18,6 @@
     'consent-dnd': { module: 'consent', permission: 'view' },
     reports: { module: 'reports', permission: 'view_reports' },
     activity: { module: 'activity', permission: 'view' },
-    security: { module: 'security', permission: 'view' },
     queue: { module: 'admin', permission: 'view' },
     'db-health': { module: 'admin', permission: 'reports' },
     settings: { module: 'settings', permission: 'view' },
@@ -47,7 +46,6 @@
     'consent-dnd': 'consent',
     reports: 'reports',
     activity: 'activity',
-    security: 'security',
     queue: 'admin',
     'db-health': 'admin',
     settings: 'settings',
@@ -79,10 +77,10 @@
     { selector: '.bulk-action-card[data-bulk="Bulk Status Update"]', module: 'bulk', permission: 'edit' },
     { selector: '.bulk-action-card[data-bulk="Bulk Assignment"]', module: 'bulk', permission: 'edit' },
     { selector: '[data-page-action*="Delete"]', permission: 'delete', usePageModule: true },
-    { selector: 'button[data-open-modal="whatsapp-campaign"]', module: 'campaigns', permission: 'campaigns' },
-    { selector: 'button[data-open-modal="email-campaign"]', module: 'campaigns', permission: 'campaigns' },
-    { selector: 'button[data-open-modal="sms-campaign"]', module: 'campaigns', permission: 'campaigns' },
-    { selector: '[data-open-modal="add-campaign"]', module: 'campaigns', permission: 'campaigns' },
+    { selector: 'button[data-open-modal="whatsapp-campaign"]', module: 'campaigns', permission: 'send_sms' },
+    { selector: 'button[data-open-modal="email-campaign"]', module: 'campaigns', permission: 'send_email' },
+    { selector: 'button[data-open-modal="sms-campaign"]', module: 'campaigns', permission: 'send_sms' },
+    { selector: '[data-open-modal="add-campaign"]', module: 'campaigns', permission: 'send_email' },
     { selector: '[data-manager-schedule-followup]', module: 'followups', permission: 'schedule_followup' },
     { selector: '[data-inbox-action="assign"]', module: 'assignment', permission: 'create' },
     { selector: '[data-inbox-action="import"]', permission: 'import', usePageModule: true },
@@ -100,12 +98,39 @@
     return window.__CRM_USER__ || { authenticated: false, permissions: {} };
   }
 
+  var PERMISSION_ALIASES = {
+    campaigns: ['campaigns', 'send_email', 'send_sms', 'view'],
+    send_email: ['campaigns', 'send_email'],
+    send_sms: ['campaigns', 'send_sms'],
+    reports: ['reports', 'view_reports'],
+    view_reports: ['reports', 'view_reports'],
+  };
+
+  function listAllows(perms, permission) {
+    if (!perms || !perms.length) return false;
+    if (perms.indexOf('*') >= 0 || perms.indexOf(permission) >= 0) return true;
+    var aliases = PERMISSION_ALIASES[permission] || [permission];
+    for (var i = 0; i < aliases.length; i += 1) {
+      if (perms.indexOf(aliases[i]) >= 0) return true;
+    }
+    return false;
+  }
+
   function can(module, permission) {
     var u = user();
     if (!u.authenticated) return false;
     if (u.role === 'super_admin') return true;
     var perms = (u.permissions && u.permissions[module]) || [];
-    return perms.indexOf(permission) >= 0;
+    if (!listAllows(perms, permission)) return false;
+    // Parent view required for child actions (mirrors backend).
+    if (permission !== 'view' && !listAllows(perms, 'view')) return false;
+    return true;
+  }
+
+  function canAccessPage(pageId) {
+    var rule = PAGE_ACCESS[pageId];
+    if (!rule) return can('dashboard', 'view');
+    return can(rule.module, rule.permission);
   }
 
   /** Footer / SPA shortcut: Employees always get Recycle Bin; others need ca_master.delete. */
@@ -126,6 +151,20 @@
     el.classList.add('hidden');
     el.setAttribute('aria-hidden', 'true');
     el.setAttribute('data-rbac-hidden', '1');
+  }
+
+  function showElement(el) {
+    if (!el) return;
+    if (el.getAttribute('data-rbac-hidden') !== '1') return;
+    el.classList.remove('hidden');
+    el.removeAttribute('aria-hidden');
+    el.removeAttribute('data-rbac-hidden');
+  }
+
+  function resetRbacHidden(scope) {
+    (scope || document).querySelectorAll('[data-rbac-hidden="1"]').forEach(function (el) {
+      showElement(el);
+    });
   }
 
   function applyNavAccess() {
@@ -239,15 +278,6 @@
         recycleBtn.removeAttribute('data-rbac-hidden');
       }
     }
-    var securityBtn = document.getElementById('sidebar-security-btn');
-    if (securityBtn) {
-      if (!can('security', 'view')) hideElement(securityBtn);
-      else {
-        securityBtn.classList.remove('hidden');
-        securityBtn.removeAttribute('aria-hidden');
-        securityBtn.removeAttribute('data-rbac-hidden');
-      }
-    }
     if (passwordLabel && isCredentialAdmin) passwordLabel.textContent = 'Change Password';
   }
 
@@ -260,11 +290,21 @@
   }
 
   function enforce() {
+    resetRbacHidden(document);
     applyNavAccess();
     applySettingsHubAccess();
     applyActionAccess();
     applyProfileAccess();
+    applyCommunicationCardAccess();
     updateUserPill();
+  }
+
+  function applyCommunicationCardAccess() {
+    document.querySelectorAll('[data-comm-page], .comm-hub-card[data-page], [data-open-comm]').forEach(function (card) {
+      var page = card.getAttribute('data-comm-page') || card.getAttribute('data-page') || '';
+      if (!page) return;
+      if (!canAccessPage(page) && !can('campaigns', 'view')) hideElement(card);
+    });
   }
 
   function logout() {
@@ -293,22 +333,6 @@
         logout();
       });
     }
-
-    var securityBtn = document.getElementById('sidebar-security-btn');
-    if (securityBtn && !securityBtn._securityBound) {
-      securityBtn._securityBound = true;
-      securityBtn.addEventListener('click', function (e) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        if (can('security', 'view') && window.navigateTo) {
-          window.navigateTo('security');
-          return;
-        }
-        if (typeof window.showToast === 'function') {
-          window.showToast('You do not have permission to open Security.', 'warning');
-        }
-      });
-    }
   }
 
   function onPageChange(pageId) {
@@ -318,12 +342,14 @@
 
   window.CA_RBAC = {
     can: can,
+    canAccessPage: canAccessPage,
     canAccessRecycleBin: canAccessRecycleBin,
     enforce: enforce,
     onPageChange: onPageChange,
     applySettingsHubAccess: applySettingsHubAccess,
     logout: logout,
     user: user,
+    PAGE_ACCESS: PAGE_ACCESS,
   };
 
   document.addEventListener('DOMContentLoaded', function () {

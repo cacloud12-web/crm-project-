@@ -340,7 +340,6 @@
     '/campaigns': 'campaigns',
     '/notifications': 'notifications',
     '/activity': 'activity',
-    '/security': 'security',
     '/queue': 'queue',
     '/admin/database-health': 'db-health',
     '/demo-calendar': 'demo-calendar',
@@ -372,7 +371,6 @@
     campaigns: '/campaigns',
     notifications: '/notifications',
     activity: '/activity',
-    security: '/security',
     queue: '/queue',
     'db-health': '/admin/database-health',
     'demo-calendar': '/demo-calendar',
@@ -508,14 +506,11 @@
       window._leadSegmentFilter = window._leadSegmentFilter || 'hot';
     }
     pageId = resolveLeadHubPage(pageId);
-    if (pageId === 'security') {
-      var canSecurity = window.CA_RBAC && typeof CA_RBAC.can === 'function'
-        ? CA_RBAC.can('security', 'view')
-        : false;
-      if (!canSecurity) {
-        showToast('You do not have permission to open Security.', 'warning');
-        pageId = state.currentPage && state.currentPage !== 'security' ? state.currentPage : 'dashboard';
-      }
+    if (window.CA_RBAC && typeof CA_RBAC.canAccessPage === 'function' && !CA_RBAC.canAccessPage(pageId)) {
+      showToast('You do not have permission to open this page.', 'warning');
+      pageId = state.currentPage && CA_RBAC.canAccessPage(state.currentPage)
+        ? state.currentPage
+        : 'dashboard';
     }
     state.currentPage = pageId;
     closeAllOverlays();
@@ -535,10 +530,6 @@
     var settingsBtn = document.getElementById('settings-btn');
     if (settingsBtn) {
       settingsBtn.classList.toggle('active', SETTINGS_PAGES.indexOf(pageId) >= 0);
-    }
-    var securityBtn = document.getElementById('sidebar-security-btn');
-    if (securityBtn) {
-      securityBtn.classList.toggle('active', pageId === 'security');
     }
 
     if (window.innerWidth < 1024) closeAllOverlays();
@@ -659,10 +650,8 @@
   function initPageWidgets(pageId) {
     initTabPanels();
     initChips();
-    initSecurityPanels();
     initBulkActions();
     initActionButtons();
-    initPermMatrix();
     initReportCards();
     initCommunicationCards();
     if (pageId === 'reports' || pageId === 'analytics' || document.querySelector('[data-chart-key]')) {
@@ -1022,48 +1011,6 @@
         }
       });
     });
-  }
-
-  function initSecurityPanels() {
-    document.querySelectorAll('#security-nav .security-card').forEach(function (card) {
-      if (card._securityPanelBound) return;
-      card._securityPanelBound = true;
-
-      function activatePanel(panelId) {
-        document.querySelectorAll('#security-nav .security-card').forEach(function (c) {
-          c.classList.remove('active', 'is-active');
-        });
-        card.classList.add('active', 'is-active');
-        document.querySelectorAll('.ca-tab-panel[data-tab-group="security"]').forEach(function (p) {
-          p.classList.toggle('active', p.dataset.panel === panelId);
-        });
-        icons();
-      }
-
-      card.addEventListener('click', function () {
-        if (card.classList.contains('crm-summary-nav-card--static')) return;
-        var navPage = card.dataset.navPage;
-        if (navPage && typeof navigateTo === 'function') {
-          if (card.dataset.consentTab) window._consentDndTab = card.dataset.consentTab;
-          navigateTo(navPage);
-          return;
-        }
-        var panelId = card.dataset.securityPanel;
-        if (!panelId) return;
-        activatePanel(panelId);
-      });
-
-      card.addEventListener('keydown', function (e) {
-        if (card.classList.contains('crm-summary-nav-card--static')) return;
-        if (e.key !== 'Enter' && e.key !== ' ') return;
-        e.preventDefault();
-        card.click();
-      });
-    });
-  }
-
-  function initPermMatrix() {
-    // Permission matrix toggles are loaded and persisted via CA_CRM.initSecurityPage().
   }
 
   function initCommunicationCards() {

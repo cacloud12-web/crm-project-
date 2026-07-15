@@ -1202,16 +1202,17 @@
         <p id="demo-result-context" class="text-sm text-slate-600 hidden"></p>
         <div><label class="form-label">Demo Result / Remark</label>
           <select name="result" id="demo-result-select" class="input-field" required>
-            <option value="">Select result…</option>
-            <option value="Interested">Interested</option>
-            <option value="Thinking">Thinking</option>
-            <option value="Purchasing">Purchasing</option>
-            <option value="Purchased">Purchased</option>
-            <option value="Not Interested">Not Interested</option>
-            <option value="Next Week">Next Week</option>
-            <option value="Next Month">Next Month</option>
-            <option value="Hold">Hold</option>
-          </select>
+  <option value="">Select result…</option>
+  <option value="Interested">Interested</option>
+  <option value="Thinking">Thinking</option>
+  <option value="Purchasing">Purchasing</option>
+  <option value="Purchased">Purchased</option>
+  <option value="Not Interested">Not Interested</option>
+  <option value="Next Week">Next Week</option>
+  <option value="Next Month">Next Month</option>
+  <option value="Left">Left in between</option>
+  <option value="Hold">Hold</option>
+</select>
         </div>
         <div id="demo-result-purchase-wrap" class="hidden space-y-4">
           <p class="text-sm font-medium text-slate-700">Purchase details</p>

@@ -7904,7 +7904,7 @@ window.CA_CRM = (function () {
     var filters = buildCaMasterListingFilters();
     var current = CA_LISTING_SEARCH.getState('ca_masters');
     CA_LISTING_SEARCH.setState('ca_masters', {
-      page: 1,
+      page: current.page || 1,
       per_page: current.per_page,
       sort_by: current.sort_by,
       sort_dir: current.sort_dir,
@@ -17174,11 +17174,6 @@ window.CA_CRM = (function () {
       icons();
       return;
     }
-    if (pageId === 'security') {
-      initSecurityPage();
-      icons();
-      return;
-    }
     if (pageId === 'duplicate-attempts' || document.getElementById('dup-attempts-table')) {
       initDuplicateAttemptsPage();
       icons();
@@ -21922,14 +21917,20 @@ window.CA_CRM = (function () {
     root._rolesPermBound = true;
 
     var ROLE_PERM_SECTIONS = [
-      { id: 'crm', label: 'CRM', modules: ['dashboard', 'ca_master', 'leads', 'assignment', 'followups', 'sales_list'] },
-      { id: 'communication', label: 'Communication', modules: ['campaigns', 'email_configuration', 'whatsapp_templates', 'email_templates'] },
-      { id: 'reports', label: 'Reports', modules: ['reports'] },
+      { id: 'crm', label: 'CRM', modules: ['dashboard', 'ca_master', 'leads', 'employees', 'assignment', 'followups', 'sales_list', 'bulk'] },
+      { id: 'communication', label: 'Communication', modules: ['campaigns', 'consent', 'email_configuration', 'whatsapp_templates', 'email_templates'] },
+      { id: 'reports', label: 'Reports & Audit', modules: ['reports', 'activity'] },
       { id: 'masters', label: 'Master Tables', modules: ['sources', 'team_size', 'lead_status'] },
-      { id: 'security', label: 'Security & Settings', modules: ['roles_permissions', 'settings', 'google_api'] },
+      { id: 'security', label: 'Security & Settings', modules: ['roles_permissions', 'settings', 'google_api', 'admin'] },
     ];
 
     var roleSelect = document.getElementById('roles-perm-role-select');
+    var userSelect = document.getElementById('roles-perm-user-select');
+    var roleControls = document.getElementById('roles-perm-role-controls');
+    var userControls = document.getElementById('roles-perm-user-controls');
+    var userMeta = document.getElementById('roles-perm-user-meta');
+    var scopeRoleBtn = document.getElementById('roles-perm-scope-role');
+    var scopeUserBtn = document.getElementById('roles-perm-scope-user');
     var matrixHead = document.getElementById('roles-perm-matrix-head');
     var matrixBody = document.getElementById('roles-perm-matrix-body');
     var mobileEl = document.getElementById('roles-perm-mobile');
@@ -21938,6 +21939,7 @@ window.CA_CRM = (function () {
     var resetBtn = document.getElementById('roles-perm-reset-btn');
     var searchInput = document.getElementById('roles-perm-search');
     var state = {
+      scope: 'role',
       modules: [],
       permissions: [],
       moduleLabels: {},
@@ -21948,6 +21950,13 @@ window.CA_CRM = (function () {
       collapsed: {},
       search: '',
       autosaveTimer: null,
+      selectedUserId: null,
+      userProfile: null,
+      roleGrantsForUser: {},
+      allows: {},
+      denies: {},
+      dirtyUser: false,
+      employeesLoaded: false,
     };
 
     function showStatus(message, type) {
@@ -21973,19 +21982,61 @@ window.CA_CRM = (function () {
       return state.permissionLabels[permission] || rbacPermissionLabel(permission);
     }
 
+    function allowedAction(permission) {
+      return state.permissions.indexOf(permission) >= 0;
+    }
+
+    function sanitizeModuleGrants(grants) {
+      var clean = {};
+      state.modules.forEach(function (module) {
+        var list = (grants && grants[module]) || [];
+        clean[module] = list.filter(function (action) {
+          return typeof action === 'string' && allowedAction(action);
+        });
+      });
+      return clean;
+    }
+
     function roleGrants(role) {
       var grants = {};
       var roleMatrix = state.matrix[role] || {};
       state.modules.forEach(function (module) {
-        grants[module] = (roleMatrix[module] || []).slice();
+        grants[module] = ((roleMatrix[module] || []).filter(function (action) {
+          return allowedAction(action);
+        })).slice();
       });
       return grants;
     }
 
+    function listHas(list, permission) {
+      return (list || []).indexOf(permission) >= 0 || (list || []).indexOf('*') >= 0;
+    }
+
+    function roleHasPermission(roleKey, module, permission) {
+      return listHas((state.matrix[roleKey] || {})[module], permission);
+    }
+
+    function userRoleKey() {
+      return (state.userProfile && state.userProfile.role) || 'employee';
+    }
+
+    function sourceFor(module, permission) {
+      if (state.scope !== 'user') {
+        return isGranted(selectedRole(), module, permission) ? 'role' : 'default';
+      }
+      if (listHas(state.denies[module], permission)) return 'deny';
+      if (listHas(state.allows[module], permission)) return 'allow';
+      if (roleHasPermission(userRoleKey(), module, permission)) return 'role';
+      return 'default';
+    }
+
     function isGranted(role, module, permission) {
+      if (state.scope === 'user') {
+        var src = sourceFor(module, permission);
+        return src === 'allow' || src === 'role';
+      }
       var grants = state.dirty[role] || roleGrants(role);
-      var moduleGrants = grants[module] || [];
-      return moduleGrants.indexOf(permission) >= 0 || moduleGrants.indexOf('*') >= 0;
+      return listHas(grants[module], permission);
     }
 
     function matchesSearch(module) {
@@ -22035,10 +22086,18 @@ window.CA_CRM = (function () {
       return sections;
     }
 
+    function countMapActions(map) {
+      var n = 0;
+      Object.keys(map || {}).forEach(function (module) {
+        n += (map[module] || []).length;
+      });
+      return n;
+    }
+
     function updateStats() {
-      var role = selectedRole();
       var enabled = 0;
       var total = state.modules.length * state.permissions.length;
+      var role = state.scope === 'user' ? userRoleKey() : selectedRole();
       state.modules.forEach(function (module) {
         state.permissions.forEach(function (permission) {
           if (isGranted(role, module, permission)) enabled += 1;
@@ -22052,13 +22111,83 @@ window.CA_CRM = (function () {
       set('roles-perm-stat-modules', state.modules.length);
       set('roles-perm-stat-enabled', enabled);
       set('roles-perm-stat-disabled', Math.max(0, total - enabled));
+      if (userMeta) {
+        if (state.scope === 'user' && state.userProfile) {
+          userMeta.classList.remove('hidden');
+          userMeta.innerHTML =
+            '<strong>' + escapeHtml(state.userProfile.name) + '</strong> · ' +
+            escapeHtml(state.userProfile.role_label || state.userProfile.role) +
+            ' · Inherited role grants apply unless overridden' +
+            ' · Allows: <strong>' + countMapActions(state.allows) + '</strong>' +
+            ' · Denies: <strong>' + countMapActions(state.denies) + '</strong>';
+        } else {
+          userMeta.classList.add('hidden');
+          userMeta.textContent = '';
+        }
+      }
+    }
+
+    function sourceBadge(module, permission) {
+      if (state.scope !== 'user') return '';
+      var src = sourceFor(module, permission);
+      var label = src === 'allow' ? 'User Allow' : src === 'deny' ? 'User Deny' : src === 'role' ? 'Role' : 'Default Deny';
+      return '<span class="roles-perm-source roles-perm-source-' + src + '">' + label + '</span>';
     }
 
     function toggleHtml(module, permission, granted) {
-      return '<label class="roles-perm-toggle" title="' + escapeHtml(permissionLabel(permission)) + '">' +
-        '<input type="checkbox" class="roles-perm-checkbox" data-module="' + escapeHtml(module) + '" data-permission="' + escapeHtml(permission) + '"' + (granted ? ' checked' : '') + ' aria-label="' + escapeHtml(permissionLabel(permission) + ' for ' + moduleLabel(module)) + '" />' +
+      var disabled = state.scope === 'user' && !state.selectedUserId;
+      return '<label class="roles-perm-toggle' + (disabled ? ' is-disabled' : '') + '" title="' + escapeHtml(permissionLabel(permission)) + '">' +
+        '<input type="checkbox" class="roles-perm-checkbox" data-module="' + escapeHtml(module) + '" data-permission="' + escapeHtml(permission) + '"' +
+          (granted ? ' checked' : '') + (disabled ? ' disabled' : '') +
+          ' aria-label="' + escapeHtml(permissionLabel(permission) + ' for ' + moduleLabel(module)) + '" />' +
         '<span class="roles-perm-toggle-ui" aria-hidden="true"></span>' +
+        sourceBadge(module, permission) +
       '</label>';
+    }
+
+    function ensureModuleLists(map, module) {
+      if (!map[module]) map[module] = [];
+      return map[module];
+    }
+
+    function addAction(map, module, permission) {
+      var list = ensureModuleLists(map, module);
+      if (list.indexOf(permission) < 0) list.push(permission);
+      // Child actions require parent view when allowing.
+      if (permission !== 'view' && list.indexOf('view') < 0 && state.scope === 'user') {
+        list.push('view');
+      }
+    }
+
+    function removeAction(map, module, permission) {
+      map[module] = (map[module] || []).filter(function (item) { return item !== permission; });
+    }
+
+    function applyUserToggle(module, permission, checked) {
+      var roleKey = userRoleKey();
+      var roleGranted = roleHasPermission(roleKey, module, permission);
+      removeAction(state.denies, module, permission);
+      removeAction(state.allows, module, permission);
+      if (checked) {
+        if (!roleGranted) addAction(state.allows, module, permission);
+        // If enabling a child while view missing on role, ensure view allow.
+        if (permission !== 'view' && !roleHasPermission(roleKey, module, 'view') && !listHas(state.allows[module], 'view')) {
+          addAction(state.allows, module, 'view');
+        }
+      } else {
+        if (roleGranted) addAction(state.denies, module, permission);
+        // Denying parent view also denies children by enforcement; mark child denies optional.
+        if (permission === 'view') {
+          state.permissions.forEach(function (child) {
+            if (child === 'view') return;
+            if (roleHasPermission(roleKey, module, child) || listHas(state.allows[module], child)) {
+              removeAction(state.allows, module, child);
+              if (roleHasPermission(roleKey, module, child)) addAction(state.denies, module, child);
+            }
+          });
+        }
+      }
+      state.dirtyUser = true;
     }
 
     function bindToggleInputs(rootEl) {
@@ -22067,17 +22196,31 @@ window.CA_CRM = (function () {
         if (input._rolesPermBound) return;
         input._rolesPermBound = true;
         input.addEventListener('change', function () {
-          var r = selectedRole();
-          if (!state.dirty[r]) state.dirty[r] = roleGrants(r);
           var module = input.getAttribute('data-module');
           var permission = input.getAttribute('data-permission');
+          if (state.scope === 'user') {
+            if (!state.selectedUserId) {
+              input.checked = !input.checked;
+              return;
+            }
+            applyUserToggle(module, permission, input.checked);
+            renderMatrix();
+            showStatus('Unsaved employee overrides. Click Save Permissions to apply.', 'info');
+            return;
+          }
+          var r = selectedRole();
+          if (!state.dirty[r]) state.dirty[r] = roleGrants(r);
           var list = state.dirty[r][module] || [];
           if (input.checked) {
             if (list.indexOf(permission) < 0) list.push(permission);
+            if (permission !== 'view' && list.indexOf('view') < 0) list.push('view');
           } else {
             list = list.filter(function (item) { return item !== permission; });
+            if (permission === 'view') {
+              list = [];
+            }
           }
-          state.dirty[r][module] = list;
+          state.dirty[r][module] = list.filter(allowedAction);
           updateStats();
           showStatus('Unsaved changes for ' + rbacRoleLabel(r) + '. Click Save Permissions to apply.', 'info');
           scheduleAutosave();
@@ -22173,7 +22316,7 @@ window.CA_CRM = (function () {
     }
 
     function renderMatrix() {
-      var role = selectedRole();
+      var role = state.scope === 'user' ? userRoleKey() : selectedRole();
       var sections = sectionsForRender();
       renderDesktopMatrix(sections, role);
       renderMobileCards(sections, role);
@@ -22182,10 +22325,21 @@ window.CA_CRM = (function () {
       else if (typeof iconsIn === 'function') iconsIn(root);
     }
 
+    function refreshCurrentUserPermissions() {
+      return apiFetch('/auth/me').then(function (body) {
+        var data = body.data || {};
+        if (!window.__CRM_USER__) window.__CRM_USER__ = {};
+        Object.keys(data).forEach(function (key) {
+          window.__CRM_USER__[key] = data[key];
+        });
+        if (window.CA_RBAC && typeof CA_RBAC.enforce === 'function') CA_RBAC.enforce();
+      }).catch(function () { /* non-blocking */ });
+    }
+
     function saveCurrentRole(opts) {
       opts = opts || {};
       var role = selectedRole();
-      var grants = state.dirty[role] || roleGrants(role);
+      var grants = sanitizeModuleGrants(state.dirty[role] || roleGrants(role));
       if (saveBtn) saveBtn.disabled = true;
       if (!opts.silent) showStatus('Saving permissions…', 'info');
       return apiFetch('/admin/role-permissions', {
@@ -22198,6 +22352,7 @@ window.CA_CRM = (function () {
         renderMatrix();
         showStatus('Permissions saved successfully.', 'success');
         if (!opts.silent) toast('Permissions saved successfully', 'success');
+        return refreshCurrentUserPermissions();
       }).catch(function (err) {
         showStatus(err.message || 'Unable to save permissions.', 'error');
         if (!opts.silent) toast(err.message || 'Unable to save permissions', 'error');
@@ -22207,7 +22362,42 @@ window.CA_CRM = (function () {
       });
     }
 
+    function saveUserOverrides(opts) {
+      opts = opts || {};
+      if (!state.selectedUserId) {
+        showStatus('Select an employee first.', 'error');
+        return Promise.reject(new Error('Select an employee first.'));
+      }
+      if (saveBtn) saveBtn.disabled = true;
+      if (!opts.silent) showStatus('Saving employee overrides…', 'info');
+      return apiFetch('/admin/role-permissions/users', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: state.selectedUserId,
+          allows: sanitizeModuleGrants(state.allows),
+          denies: sanitizeModuleGrants(state.denies),
+        }),
+      }).then(function (body) {
+        var data = body.data || {};
+        state.allows = (data.overrides && data.overrides.allows) || {};
+        state.denies = (data.overrides && data.overrides.denies) || {};
+        state.dirtyUser = false;
+        renderMatrix();
+        showStatus('Permissions saved successfully.', 'success');
+        if (!opts.silent) toast('Employee overrides saved successfully', 'success');
+        return refreshCurrentUserPermissions();
+      }).catch(function (err) {
+        showStatus(err.message || 'Unable to save employee overrides.', 'error');
+        if (!opts.silent) toast(err.message || 'Unable to save employee overrides', 'error');
+        throw err;
+      }).finally(function () {
+        if (saveBtn) saveBtn.disabled = false;
+      });
+    }
+
     function scheduleAutosave() {
+      if (state.scope !== 'role') return;
       clearTimeout(state.autosaveTimer);
       state.autosaveTimer = setTimeout(function () {
         if (!state.dirty[selectedRole()]) return;
@@ -22223,6 +22413,65 @@ window.CA_CRM = (function () {
       }).join('');
       if (roles.indexOf(current) >= 0) roleSelect.value = current;
       else roleSelect.value = roles[0];
+    }
+
+    function setScope(scope) {
+      state.scope = scope === 'user' ? 'user' : 'role';
+      if (scopeRoleBtn) scopeRoleBtn.classList.toggle('is-active', state.scope === 'role');
+      if (scopeUserBtn) scopeUserBtn.classList.toggle('is-active', state.scope === 'user');
+      if (roleControls) roleControls.classList.toggle('hidden', state.scope !== 'role');
+      if (userControls) userControls.classList.toggle('hidden', state.scope !== 'user');
+      clearTimeout(state.autosaveTimer);
+      if (state.scope === 'user') {
+        ensureEmployeesLoaded();
+        if (state.selectedUserId) loadUserOverrides(state.selectedUserId);
+        else {
+          state.userProfile = null;
+          state.allows = {};
+          state.denies = {};
+          renderMatrix();
+          showStatus('Select an employee to manage overrides.', 'info');
+        }
+      } else {
+        renderMatrix();
+        showStatus('', '');
+      }
+    }
+
+    function ensureEmployeesLoaded() {
+      if (state.employeesLoaded || !userSelect) return;
+      apiFetch('/admin/role-permissions/employees')
+        .then(function (body) {
+          var items = (body.data && body.data.items) || [];
+          var current = userSelect.value;
+          userSelect.innerHTML = '<option value="">Search &amp; select employee…</option>' + items.map(function (item) {
+            return '<option value="' + item.id + '">' + escapeHtml(item.name + ' · ' + item.email + ' · ' + (item.role_label || item.role)) + '</option>';
+          }).join('');
+          if (current) userSelect.value = current;
+          state.employeesLoaded = true;
+        })
+        .catch(function (err) {
+          showStatus(err.message || 'Unable to load employees.', 'error');
+        });
+    }
+
+    function loadUserOverrides(userId) {
+      showStatus('Loading employee overrides…', 'info');
+      return apiFetch('/admin/role-permissions/users/' + userId)
+        .then(function (body) {
+          var data = body.data || {};
+          state.selectedUserId = userId;
+          state.userProfile = data.user || null;
+          state.roleGrantsForUser = data.role_grants || {};
+          state.allows = (data.overrides && data.overrides.allows) || {};
+          state.denies = (data.overrides && data.overrides.denies) || {};
+          state.dirtyUser = false;
+          renderMatrix();
+          showStatus('', '');
+        })
+        .catch(function (err) {
+          showStatus(err.message || 'Unable to load employee overrides.', 'error');
+        });
     }
 
     function loadMatrix() {
@@ -22246,11 +22495,34 @@ window.CA_CRM = (function () {
         });
     }
 
+    if (scopeRoleBtn) {
+      scopeRoleBtn.addEventListener('click', function () { setScope('role'); });
+    }
+    if (scopeUserBtn) {
+      scopeUserBtn.addEventListener('click', function () { setScope('user'); });
+    }
+
     if (roleSelect) {
       roleSelect.addEventListener('change', function () {
         clearTimeout(state.autosaveTimer);
         renderMatrix();
         showStatus('', '');
+      });
+    }
+
+    if (userSelect) {
+      userSelect.addEventListener('change', function () {
+        var id = parseInt(userSelect.value, 10);
+        if (!id) {
+          state.selectedUserId = null;
+          state.userProfile = null;
+          state.allows = {};
+          state.denies = {};
+          renderMatrix();
+          showStatus('Select an employee to manage overrides.', 'info');
+          return;
+        }
+        loadUserOverrides(id);
       });
     }
 
@@ -22264,15 +22536,45 @@ window.CA_CRM = (function () {
     if (saveBtn) {
       saveBtn.addEventListener('click', function () {
         clearTimeout(state.autosaveTimer);
-        saveCurrentRole();
+        if (state.scope === 'user') saveUserOverrides();
+        else saveCurrentRole();
       });
     }
 
     if (resetBtn) {
       resetBtn.addEventListener('click', function () {
+        clearTimeout(state.autosaveTimer);
+        if (state.scope === 'user') {
+          if (!state.selectedUserId) {
+            showStatus('Select an employee first.', 'error');
+            return;
+          }
+          if (!window.confirm('Reset overrides for this employee to role defaults?')) return;
+          resetBtn.disabled = true;
+          showStatus('Resetting employee overrides…', 'info');
+          apiFetch('/admin/role-permissions/users/' + state.selectedUserId + '/reset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          }).then(function (body) {
+            var data = body.data || {};
+            state.allows = (data.overrides && data.overrides.allows) || {};
+            state.denies = (data.overrides && data.overrides.denies) || {};
+            state.dirtyUser = false;
+            renderMatrix();
+            showStatus('Employee overrides reset to role defaults.', 'success');
+            toast('Employee overrides reset to role defaults', 'success');
+            return refreshCurrentUserPermissions();
+          }).catch(function (err) {
+            showStatus(err.message || 'Unable to reset overrides.', 'error');
+            toast(err.message || 'Unable to reset overrides', 'error');
+          }).finally(function () {
+            resetBtn.disabled = false;
+          });
+          return;
+        }
         var role = selectedRole();
         if (!window.confirm('Reset ' + rbacRoleLabel(role) + ' permissions to default values?')) return;
-        clearTimeout(state.autosaveTimer);
         resetBtn.disabled = true;
         showStatus('Resetting permissions…', 'info');
         apiFetch('/admin/role-permissions/reset', {
@@ -22285,6 +22587,7 @@ window.CA_CRM = (function () {
           renderMatrix();
           showStatus('Permissions reset to default.', 'success');
           toast('Permissions reset to default', 'success');
+          return refreshCurrentUserPermissions();
         }).catch(function (err) {
           showStatus(err.message || 'Unable to reset permissions.', 'error');
           toast(err.message || 'Unable to reset permissions', 'error');
@@ -22295,288 +22598,6 @@ window.CA_CRM = (function () {
     }
 
     loadMatrix();
-  }
-
-  function initSecurityPage() {
-    apiFetch('/admin/security-matrix')
-      .then(function (body) {
-        var data = body.data || {};
-        var summary = data.summary || {};
-        window._securityMatrix = data.matrix || {};
-        window._securityCanEdit = !!data.can_edit;
-
-        function setMetric(id, text) {
-          var el = document.getElementById(id);
-          if (el && text != null) el.textContent = text;
-        }
-
-        var roleCount = summary.role_count != null ? summary.role_count : Object.keys(data.roles || {}).length;
-        var userCount = summary.user_count != null ? summary.user_count : (data.users || []).length;
-        setMetric('security-metric-rbac', roleCount + ' roles · ' + userCount + ' users');
-        setMetric('security-metric-consent', (summary.consent_count != null ? summary.consent_count : '—') + ' consent records');
-        setMetric('security-metric-dnd', (summary.dnd_count != null ? summary.dnd_count : '—') + ' DND contacts');
-        setMetric('security-metric-encrypt', summary.encryption_label || 'AES-256 via Laravel APP_KEY');
-        setMetric('security-metric-locking', (summary.active_lock_count != null ? summary.active_lock_count : 0) + ' active locks');
-        setMetric('security-metric-api', summary.api_rate_summary || 'Rate limits enforced');
-
-        var SEC_PERM_SECTIONS = [
-          { id: 'crm', label: 'CRM', modules: ['dashboard', 'ca_master', 'leads', 'employees', 'assignment', 'followups', 'sales_list', 'bulk'] },
-          { id: 'communication', label: 'Communication', modules: ['campaigns', 'email_configuration', 'whatsapp_templates', 'email_templates'] },
-          { id: 'reports', label: 'Reports', modules: ['reports', 'activity'] },
-          { id: 'security', label: 'Security', modules: ['consent', 'security', 'roles_permissions', 'admin'] },
-          { id: 'settings', label: 'Settings', modules: ['settings', 'google_api', 'sources', 'team_size', 'lead_status'] },
-        ];
-
-        var rbacBody = document.getElementById('security-rbac-matrix');
-        var secHead = document.getElementById('security-perm-matrix-head');
-        var secMobile = document.getElementById('security-perm-mobile');
-        var note = document.getElementById('security-matrix-note');
-        var roleSelect = document.getElementById('security-perm-role-select');
-        var searchInput = document.getElementById('security-perm-search');
-        var secState = {
-          modules: data.modules || [],
-          permissions: data.permissions || [],
-          editableRoles: data.editable_roles || ['manager', 'employee', 'admin'],
-          collapsed: {},
-          search: '',
-        };
-
-        if (note) {
-          note.textContent = data.can_edit
-            ? 'Select a role, then toggle permissions. Changes save immediately.'
-            : 'Read-only view. Only Super Admin can edit permissions.';
-        }
-
-        if (roleSelect) {
-          roleSelect.innerHTML = secState.editableRoles.map(function (role) {
-            return '<option value="' + escapeHtml(role) + '">' + escapeHtml(rbacRoleLabel(role)) + '</option>';
-          }).join('');
-        }
-
-        function secIsGranted(role, module, permission) {
-          var rolePerms = (window._securityMatrix[role] && window._securityMatrix[role][module])
-            || (window._securityMatrix[role] && window._securityMatrix[role]['*'])
-            || [];
-          return rolePerms.indexOf('*') >= 0 || rolePerms.indexOf(permission) >= 0;
-        }
-
-        function secMatches(module) {
-          var q = (secState.search || '').trim().toLowerCase();
-          if (!q) return true;
-          var label = activityModuleLabel(module).toLowerCase();
-          return label.indexOf(q) >= 0 || String(module).toLowerCase().indexOf(q) >= 0;
-        }
-
-        function secOrderedModules() {
-          var seen = {};
-          var ordered = [];
-          SEC_PERM_SECTIONS.forEach(function (section) {
-            section.modules.forEach(function (module) {
-              if (secState.modules.indexOf(module) >= 0 && !seen[module]) {
-                seen[module] = true;
-                ordered.push(module);
-              }
-            });
-          });
-          secState.modules.forEach(function (module) {
-            if (!seen[module]) {
-              seen[module] = true;
-              ordered.push(module);
-            }
-          });
-          return ordered.filter(secMatches);
-        }
-
-        function secSections() {
-          var filtered = secOrderedModules();
-          var used = {};
-          var sections = [];
-          SEC_PERM_SECTIONS.forEach(function (section) {
-            var mods = section.modules.filter(function (module) { return filtered.indexOf(module) >= 0; });
-            mods.forEach(function (m) { used[m] = true; });
-            if (mods.length) sections.push({ id: section.id, label: section.label, modules: mods });
-          });
-          var other = filtered.filter(function (module) { return !used[module]; });
-          if (other.length) sections.push({ id: 'other', label: 'Other', modules: other });
-          return sections;
-        }
-
-        function updateSecStats(role) {
-          var enabled = 0;
-          var total = secState.modules.length * secState.permissions.length;
-          secState.modules.forEach(function (module) {
-            secState.permissions.forEach(function (permission) {
-              if (secIsGranted(role, module, permission)) enabled += 1;
-            });
-          });
-          var set = function (id, value) {
-            var el = document.getElementById(id);
-            if (el) el.textContent = String(value);
-          };
-          set('security-perm-stat-modules', secState.modules.length);
-          set('security-perm-stat-enabled', enabled);
-          set('security-perm-stat-disabled', Math.max(0, total - enabled));
-        }
-
-        function secToggleHtml(role, module, permission, granted) {
-          return '<label class="roles-perm-toggle' + (data.can_edit ? '' : ' is-disabled') + '" title="' + escapeHtml(rbacPermissionLabel(permission)) + '">' +
-            '<input type="checkbox" class="roles-perm-checkbox security-perm-checkbox" data-security-toggle="1" data-role="' + escapeHtml(role) + '" data-module="' + escapeHtml(module) + '" data-permission="' + escapeHtml(permission) + '"' +
-              (granted ? ' checked' : '') + (data.can_edit ? '' : ' disabled') +
-              ' aria-label="' + escapeHtml(rbacPermissionLabel(permission) + ' for ' + activityModuleLabel(module)) + '" />' +
-            '<span class="roles-perm-toggle-ui" aria-hidden="true"></span>' +
-          '</label>';
-        }
-
-        function bindSecToggles(rootEl) {
-          if (!rootEl) return;
-          rootEl.querySelectorAll('.security-perm-checkbox').forEach(function (input) {
-            if (input._secToggleBound) return;
-            input._secToggleBound = true;
-            input.addEventListener('change', function () {
-              if (!window._securityCanEdit) {
-                input.checked = !input.checked;
-                return;
-              }
-              var role = input.getAttribute('data-role');
-              var module = input.getAttribute('data-module');
-              var permission = input.getAttribute('data-permission');
-              var granted = !!input.checked;
-              input.disabled = true;
-              apiFetch('/admin/security-matrix', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ role: role, module: module, permission: permission, granted: granted }),
-              }).then(function (resp) {
-                window._securityMatrix = (resp.data && resp.data.matrix) || window._securityMatrix;
-                updateSecStats(role);
-                toast('Permission updated', 'success');
-              }).catch(function (err) {
-                input.checked = !granted;
-                toast(err.message || 'Unable to update permission', 'error');
-              }).finally(function () {
-                input.disabled = !window._securityCanEdit;
-              });
-            });
-          });
-        }
-
-        function renderSecurityMatrix() {
-          var role = roleSelect ? roleSelect.value : (secState.editableRoles[0] || 'manager');
-          var sections = secSections();
-          var colSpan = secState.permissions.length + 1;
-
-          if (secHead) {
-            secHead.innerHTML = '<tr>' +
-              '<th class="roles-perm-module-col roles-perm-sticky-col" scope="col">Module</th>' +
-              secState.permissions.map(function (permission) {
-                var label = rbacPermissionLabel(permission);
-                return '<th class="roles-perm-action-col" scope="col" title="' + escapeHtml(label) + '"><span>' + escapeHtml(label) + '</span></th>';
-              }).join('') +
-            '</tr>';
-          }
-
-          if (rbacBody) {
-            if (!sections.length) {
-              rbacBody.innerHTML = '<tr><td colspan="' + colSpan + '" class="text-center text-slate-500 p-6">No modules match your search.</td></tr>';
-            } else {
-              rbacBody.innerHTML = sections.map(function (section) {
-                var collapsed = !!secState.collapsed[section.id];
-                var header = '<tr class="roles-perm-section-row"><th scope="colgroup" colspan="' + colSpan + '" class="roles-perm-section-cell">' +
-                  '<button type="button" class="roles-perm-section-toggle" data-sec-section="' + escapeHtml(section.id) + '" aria-expanded="' + (collapsed ? 'false' : 'true') + '">' +
-                    '<i data-lucide="' + (collapsed ? 'chevron-right' : 'chevron-down') + '" class="h-4 w-4"></i>' +
-                    '<span>' + escapeHtml(section.label) + '</span>' +
-                    '<span class="roles-perm-section-count">' + section.modules.length + '</span>' +
-                  '</button></th></tr>';
-                if (collapsed) return header;
-                return header + section.modules.map(function (module) {
-                  var cells = secState.permissions.map(function (permission) {
-                    return '<td class="roles-perm-action-col text-center">' +
-                      secToggleHtml(role, module, permission, secIsGranted(role, module, permission)) +
-                    '</td>';
-                  }).join('');
-                  return '<tr class="ca-table-row roles-perm-module-row">' +
-                    '<th scope="row" class="roles-perm-module-col roles-perm-sticky-col font-medium text-slate-800">' + escapeHtml(activityModuleLabel(module)) + '</th>' +
-                    cells + '</tr>';
-                }).join('');
-              }).join('');
-            }
-            rbacBody.querySelectorAll('[data-sec-section]').forEach(function (btn) {
-              btn.addEventListener('click', function () {
-                var id = btn.getAttribute('data-sec-section');
-                secState.collapsed[id] = !secState.collapsed[id];
-                renderSecurityMatrix();
-              });
-            });
-            bindSecToggles(rbacBody);
-          }
-
-          if (secMobile) {
-            if (!sections.length) {
-              secMobile.innerHTML = '<div class="roles-perm-empty">No modules match your search.</div>';
-            } else {
-              secMobile.innerHTML = sections.map(function (section) {
-                var collapsed = !!secState.collapsed[section.id];
-                return '<div class="roles-perm-mobile-section">' +
-                  '<button type="button" class="roles-perm-section-toggle" data-sec-section="' + escapeHtml(section.id) + '" aria-expanded="' + (collapsed ? 'false' : 'true') + '">' +
-                    '<i data-lucide="' + (collapsed ? 'chevron-right' : 'chevron-down') + '" class="h-4 w-4"></i>' +
-                    '<span>' + escapeHtml(section.label) + '</span>' +
-                    '<span class="roles-perm-section-count">' + section.modules.length + '</span>' +
-                  '</button>' +
-                  (collapsed ? '' : section.modules.map(function (module) {
-                    return '<article class="roles-perm-module-card">' +
-                      '<h4 class="roles-perm-module-card-title">' + escapeHtml(activityModuleLabel(module)) + '</h4>' +
-                      '<div class="roles-perm-module-card-grid">' +
-                        secState.permissions.map(function (permission) {
-                          return '<div class="roles-perm-module-card-item">' +
-                            '<span>' + escapeHtml(rbacPermissionLabel(permission)) + '</span>' +
-                            secToggleHtml(role, module, permission, secIsGranted(role, module, permission)) +
-                          '</div>';
-                        }).join('') +
-                      '</div></article>';
-                  }).join('')) +
-                '</div>';
-              }).join('');
-            }
-            secMobile.querySelectorAll('[data-sec-section]').forEach(function (btn) {
-              btn.addEventListener('click', function () {
-                var id = btn.getAttribute('data-sec-section');
-                secState.collapsed[id] = !secState.collapsed[id];
-                renderSecurityMatrix();
-              });
-            });
-            bindSecToggles(secMobile);
-          }
-
-          updateSecStats(role);
-          icons();
-        }
-
-        if (roleSelect && !roleSelect._secPermBound) {
-          roleSelect._secPermBound = true;
-          roleSelect.addEventListener('change', renderSecurityMatrix);
-        }
-        if (searchInput && !searchInput._secPermBound) {
-          searchInput._secPermBound = true;
-          searchInput.addEventListener('input', function () {
-            secState.search = searchInput.value || '';
-            renderSecurityMatrix();
-          });
-        }
-
-        renderSecurityMatrix();
-
-        var usersBody = document.getElementById('security-users-table');
-        if (usersBody) {
-          usersBody.innerHTML = (data.users || []).map(function (user) {
-            var moduleCount = Object.keys(user.permissions || {}).length;
-            return '<tr class="ca-table-row"><td>' + escapeHtml(user.name) + '</td><td>' + escapeHtml(user.email) + '</td><td>' + escapeHtml(user.role_label || user.role) + '</td><td>' + moduleCount + ' modules</td></tr>';
-          }).join('') || '<tr><td colspan="4" class="text-center text-slate-500 p-4">No users</td></tr>';
-        }
-        icons();
-      })
-      .catch(function (err) {
-        toast(err.message || 'Unable to load security matrix', 'error');
-      });
   }
 
   function init() {
@@ -23293,7 +23314,6 @@ window.CA_CRM = (function () {
     initSettingsWhatsAppTemplatesPage: initSettingsWhatsAppTemplatesPage,
     initSettingsGoogleApiPage: initSettingsGoogleApiPage,
     initDemoProvidersSettingsPage: initDemoProvidersSettingsPage,
-    initSecurityPage: initSecurityPage,
     initQuickActions: initQuickActions,
     openEmployeeFormForEdit: openEmployeeFormForEdit,
     initActivityLogsPage: initActivityLogsPage,

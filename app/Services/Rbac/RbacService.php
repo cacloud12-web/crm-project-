@@ -28,7 +28,45 @@ class RbacService
 
     public function can(?User $user, string $module, string $permission): bool
     {
+        if (! $this->canWithoutParent($user, $module, $permission)) {
+            return false;
+        }
+
+        // Parent module view required for child actions (deny cannot be bypassed by child allow alone).
+        if ($permission !== 'view' && $this->moduleRequiresParentView($module)) {
+            return $this->canWithoutParent($user, $module, 'view');
+        }
+
+        return true;
+    }
+
+    /**
+     * Precedence without parent-view dependency:
+     * 1. super_admin allow
+     * 2. user DENY
+     * 3. user ALLOW
+     * 4. role matrix
+     * 5. default deny
+     */
+    public function canWithoutParent(?User $user, string $module, string $permission): bool
+    {
+        if (! $user) {
+            return false;
+        }
+
         $role = $this->roleKey($user);
+        if ($role === 'super_admin') {
+            return true;
+        }
+
+        $override = app(RbacUserOverrideService::class)->effectFor($user, $module, $permission);
+        if ($override === 'deny') {
+            return false;
+        }
+        if ($override === 'allow') {
+            return true;
+        }
+
         $matrix = app(RbacMatrixService::class)->effectiveMatrix();
         $roleMatrix = $matrix[$role] ?? [];
 
@@ -45,6 +83,29 @@ class RbacService
         return $this->permissionAliasGranted($permission, $modulePermissions);
     }
 
+    private function moduleRequiresParentView(string $module): bool
+    {
+        return in_array($module, [
+            'campaigns',
+            'ca_master',
+            'leads',
+            'assignment',
+            'followups',
+            'sales_list',
+            'bulk',
+            'reports',
+            'consent',
+            'email_templates',
+            'whatsapp_templates',
+            'email_configuration',
+            'settings',
+            'employees',
+            'roles_permissions',
+            'admin',
+            'activity',
+        ], true);
+    }
+
     /**
      * @param  list<string>  $modulePermissions
      */
@@ -53,7 +114,8 @@ class RbacService
         $aliases = [
             'reports' => ['view_reports', 'reports'],
             'view_reports' => ['reports', 'view_reports'],
-            'campaigns' => ['campaigns', 'send_email', 'send_sms'],
+            // Legacy "campaigns" action still counts as any send / view for old DB rows.
+            'campaigns' => ['campaigns', 'send_email', 'send_sms', 'view'],
             'send_email' => ['campaigns', 'send_email'],
             'send_sms' => ['campaigns', 'send_sms'],
             'assign' => ['assign', 'create'],
@@ -81,11 +143,12 @@ class RbacService
         $matrix = app(RbacMatrixService::class)->effectiveMatrix();
         $roleMatrix = $matrix[$role] ?? [];
         $modules = config('rbac.modules', []);
+        $allActions = config('rbac.permissions', []);
         $result = [];
 
-        if ($this->roleHasWildcard($roleMatrix)) {
+        if ($this->roleHasWildcard($roleMatrix) || $role === 'super_admin') {
             foreach ($modules as $module) {
-                $result[$module] = config('rbac.permissions', []);
+                $result[$module] = $allActions;
             }
 
             return $result;
@@ -95,7 +158,44 @@ class RbacService
             $result[$module] = array_values(array_unique($roleMatrix[$module] ?? $roleMatrix['*'] ?? []));
         }
 
+        if (! $user) {
+            return $result;
+        }
+
+        // Apply user overrides for frontend payload (effective permissions).
+        $overrides = app(RbacUserOverrideService::class)->overridesForUser($user);
+        foreach ($overrides['allows'] as $module => $actions) {
+            $result[$module] = array_values(array_unique(array_merge($result[$module] ?? [], $actions)));
+        }
+        foreach ($overrides['denies'] as $module => $actions) {
+            $result[$module] = array_values(array_filter(
+                $result[$module] ?? [],
+                fn (string $action) => ! in_array($action, $actions, true) && $action !== '*',
+            ));
+        }
+
+        // Parent view gate: without view, child actions are not effective.
+        foreach ($result as $module => $actions) {
+            if (! $this->moduleRequiresParentView($module)) {
+                continue;
+            }
+            if (! in_array('view', $actions, true) && ! in_array('*', $actions, true)) {
+                $result[$module] = [];
+            }
+        }
+
         return $result;
+    }
+
+    /**
+     * Effective permission check used by controllers/services.
+     * Preferred entry point: PermissionService style.
+     */
+    public function authorize(?User $user, string $module, string $permission): void
+    {
+        if (! $this->can($user, $module, $permission)) {
+            abort(403, 'You do not have permission to access this action.');
+        }
     }
 
     public function userPayload(?User $user): array
@@ -117,6 +217,7 @@ class RbacService
             'role' => $this->roleKey($user),
             'role_label' => $this->roleLabel($user),
             'permissions' => $this->permissionsFor($user),
+            'permission_overrides' => app(RbacUserOverrideService::class)->overridesForUser($user),
             'employee_id' => $this->resolveEmployeeRecordId($user),
             'designation' => $this->resolveEmployeeDesignation($user),
             'mobile' => $this->resolveEmployeeMobile($user),
@@ -249,13 +350,6 @@ class RbacService
 
         if (str_starts_with($path, 'admin/queue-status')) {
             return ['module' => 'admin', 'permission' => 'reports'];
-        }
-
-        if (str_starts_with($path, 'admin/security-matrix')) {
-            return [
-                'module' => 'security',
-                'permission' => $method === 'GET' ? 'view' : 'manage_settings',
-            ];
         }
 
         if (str_starts_with($path, 'admin/role-permissions')) {
@@ -408,8 +502,24 @@ class RbacService
             || str_starts_with($path, 'wa-message-logs')
             || str_starts_with($path, 'email-logs')
             || str_starts_with($path, 'sms-logs')
+            || str_starts_with($path, 'email-inbox')
+            || str_starts_with($path, 'email-templates')
+            || str_starts_with($path, 'message-templates')
+            || str_starts_with($path, 'template-variables')
         ) {
-            return ['module' => 'campaigns', 'permission' => $method === 'GET' ? 'view' : 'campaigns'];
+            if ($method === 'GET') {
+                return ['module' => 'campaigns', 'permission' => 'view'];
+            }
+
+            if (str_starts_with($path, 'sms-campaigns') || str_starts_with($path, 'sms-')) {
+                return ['module' => 'campaigns', 'permission' => 'send_sms'];
+            }
+
+            if (str_starts_with($path, 'whatsapp-campaigns') || str_starts_with($path, 'wa-')) {
+                return ['module' => 'campaigns', 'permission' => 'send_sms'];
+            }
+
+            return ['module' => 'campaigns', 'permission' => 'send_email'];
         }
 
         if (str_starts_with($path, 'consent-trackings') || str_starts_with($path, 'dnd-management')) {

@@ -6,7 +6,7 @@ use App\Services\Rbac\RbacGrantNormalizer;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
-class UpdateRolePermissionsRequest extends FormRequest
+class UpdateUserPermissionOverridesRequest extends FormRequest
 {
     public function authorize(): bool
     {
@@ -15,18 +15,26 @@ class UpdateRolePermissionsRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
-        $grants = $this->input('grants', []);
+        $normalizer = app(RbacGrantNormalizer::class);
+        $this->merge([
+            'allows' => $this->expandOnly($this->input('allows', []), $normalizer),
+            'denies' => $this->expandOnly($this->input('denies', []), $normalizer),
+        ]);
+    }
+
+    /**
+     * @param  mixed  $grants
+     * @return array<string, list<string>>
+     */
+    private function expandOnly(mixed $grants, RbacGrantNormalizer $normalizer): array
+    {
         if (! is_array($grants)) {
-            return;
+            return [];
         }
 
-        // Expand legacy aliases only — leave unknown keys for Rule::in validation.
-        $normalizer = app(RbacGrantNormalizer::class);
         $expanded = [];
         foreach ($grants as $module => $actions) {
             if (! is_string($module) || ! is_array($actions)) {
-                $expanded[$module] = $actions;
-
                 continue;
             }
             $clean = [];
@@ -41,28 +49,21 @@ class UpdateRolePermissionsRequest extends FormRequest
             $expanded[$module] = array_values(array_unique($clean));
         }
 
-        $this->merge(['grants' => $expanded]);
+        return $expanded;
     }
 
     public function rules(): array
     {
-        $modules = config('rbac.matrix_modules', []);
         $actions = config('rbac.matrix_permissions', []);
 
         return [
-            'role' => ['required', 'string', Rule::in(['manager', 'employee', 'admin'])],
-            'grants' => ['required', 'array'],
-            'grants.*' => ['array'],
-            'grants.*.*' => ['string', Rule::in($actions)],
-        ] + collect($modules)->mapWithKeys(function (string $module) {
-            return ["grants.{$module}" => ['sometimes', 'array']];
-        })->all();
-    }
-
-    public function messages(): array
-    {
-        return [
-            'grants.*.*.in' => 'Invalid permission action ":input". Use only matrix permission keys from the Roles & Permissions registry.',
+            'user_id' => ['required', 'integer', 'exists:users,id'],
+            'allows' => ['nullable', 'array'],
+            'denies' => ['nullable', 'array'],
+            'allows.*' => ['array'],
+            'denies.*' => ['array'],
+            'allows.*.*' => ['string', Rule::in($actions)],
+            'denies.*.*' => ['string', Rule::in($actions)],
         ];
     }
 }

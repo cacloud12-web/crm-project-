@@ -1846,58 +1846,6 @@ window.CAPages = (function () {
         '</tr></thead><tbody id="dnd-records-table"></tbody></table></div><div class="crm-table-footer" id="dnd-pagination-slot"></div></div>');
   }
 
-  /* ─── Security ─── */
-  function securityPage() {
-    return hdr('Security & Compliance', 'Role access, consent, encryption, and API protection.', null) +
-      summaryNavCards([
-        { panel: 'rbac', title: 'Role Access Control', icon: 'shield-check', badge: 'Live', metric: 'Loading…', metricId: 'security-metric-rbac', active: true },
-        { page: 'consent-dnd', tab: 'consent-tab', title: 'Consent Tracking', icon: 'fingerprint', badge: 'Active', metric: 'Loading…', metricId: 'security-metric-consent' },
-        { page: 'consent-dnd', tab: 'dnd-tab', title: 'DND Management', icon: 'ban', badge: 'Active', metric: 'Loading…', metricId: 'security-metric-dnd' },
-        { title: 'Encryption Keys', icon: 'lock', badge: 'Protected', metric: 'Laravel app encryption', metricId: 'security-metric-encrypt', static: true },
-        { title: 'Lead Locking', icon: 'key', badge: 'Enabled', metric: 'Loading…', metricId: 'security-metric-locking', static: true },
-        { title: 'API Protection', icon: 'zap', badge: 'Enabled', metric: 'Loading…', metricId: 'security-metric-api', static: true },
-      ], { id: 'security-nav' }) +
-      '<div id="security-content">' +
-        panel('rbac', true,
-          '<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">' +
-            '<div>' +
-              '<h3 class="text-card-heading mb-1">Permission Matrix</h3>' +
-              '<p id="security-matrix-note" class="text-caption text-slate-500">Loading permissions…</p>' +
-            '</div>' +
-            '<div class="roles-perm-toolbar">' +
-              '<label class="roles-perm-role-label" for="security-perm-role-select">Role</label>' +
-              '<select id="security-perm-role-select" class="input-field roles-perm-role-select" aria-label="Select role">' +
-                '<option value="manager">Manager</option>' +
-                '<option value="employee">Employee</option>' +
-                '<option value="admin">Admin</option>' +
-              '</select>' +
-            '</div>' +
-          '</div>' +
-          '<div id="security-perm-stats" class="roles-perm-stats mb-3" aria-live="polite">' +
-            '<div class="roles-perm-stat"><span class="roles-perm-stat-label">Modules</span><strong id="security-perm-stat-modules">—</strong></div>' +
-            '<div class="roles-perm-stat"><span class="roles-perm-stat-label">Enabled</span><strong id="security-perm-stat-enabled">—</strong></div>' +
-            '<div class="roles-perm-stat"><span class="roles-perm-stat-label">Disabled</span><strong id="security-perm-stat-disabled">—</strong></div>' +
-          '</div>' +
-          '<div class="roles-perm-filters mb-3">' +
-            '<div class="roles-perm-search-wrap">' +
-              '<i data-lucide="search" class="h-4 w-4 roles-perm-search-icon" aria-hidden="true"></i>' +
-              '<input type="search" id="security-perm-search" class="input-field roles-perm-search" placeholder="Search modules…" autocomplete="off" aria-label="Search modules" />' +
-            '</div>' +
-          '</div>' +
-          '<div class="card overflow-hidden mb-4 roles-perm-matrix-card">' +
-            '<div class="roles-perm-matrix-wrap scrollbar-thin" id="security-perm-matrix-scroll">' +
-              '<table class="ca-table roles-perm-matrix" id="security-perm-matrix-table">' +
-                '<thead id="security-perm-matrix-head"><tr><th>Module</th></tr></thead>' +
-                '<tbody id="security-rbac-matrix"><tr><td class="text-center text-slate-500 p-6">Loading…</td></tr></tbody>' +
-              '</table>' +
-            '</div>' +
-            '<div id="security-perm-mobile" class="roles-perm-mobile hidden"></div>' +
-          '</div>' +
-          '<h4 class="text-card-heading mb-3">Users</h4>' +
-          '<div class="overflow-x-auto"><table class="ca-table w-full"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Modules</th></tr></thead><tbody id="security-users-table"></tbody></table></div>', 'security') +
-      '</div>';
-  }
-
   /* ─── Employees ─── */
   function employeesPage() {
     return hdr('Employee Management', 'Manage team members, roles, and performance.', null,
@@ -1916,7 +1864,7 @@ window.CAPages = (function () {
           { label: 'Actions', colCls: 'crm-col-actions', thCls: 'crm-th-actions', sticky: 'right' },
         ], [], { tbodyId: 'employees-data-table', tableId: 'employees-table-main', enterprise: true, inbox: true, inboxKey: 'employees-data-table', inboxModule: 'employees', paginationId: 'employees-pagination-slot' })) +
       panel('roles', false,
-        '<div class="card p-5"><p class="text-caption text-slate-500">Role definitions are managed via the security matrix. Open Settings → Permissions to review access.</p></div>') +
+        '<div class="card p-5"><p class="text-caption text-slate-500">Role definitions are managed in Settings → Roles &amp; Permissions.</p></div>') +
       panel('performance', false,
         '<div id="leaderboard" class="card p-5 mb-4"></div>' +
         '<div class="card overflow-hidden"><div class="overflow-x-auto"><table class="ca-table w-full"><thead><tr><th>Employee</th><th>Daily Calls</th><th>Demos</th><th>Conversion</th><th>Revenue</th><th>Target %</th></tr></thead><tbody id="employees-performance-table"><tr><td colspan="6" class="text-center text-slate-500 p-4">Loading performance data…</td></tr></tbody></table></div></div>');
@@ -2423,19 +2371,32 @@ window.CAPages = (function () {
       '<div id="roles-permissions-page" class="roles-permissions-page">' +
         settingsSubPageHero(
           'Roles & Permissions',
-          'Enterprise role permission matrix. Edit one role at a time. Only Super Admin can change access.',
+          'Role-level grants and individual employee allow/deny overrides. Only Super Admin can change access.',
           '<div class="roles-perm-toolbar">' +
-            '<label class="roles-perm-role-label" for="roles-perm-role-select">Role</label>' +
-            '<select id="roles-perm-role-select" class="input-field roles-perm-role-select" aria-label="Select role">' +
-              '<option value="manager">Manager</option>' +
-              '<option value="employee">Employee</option>' +
-              '<option value="admin">Admin</option>' +
-            '</select>' +
+            '<div class="roles-perm-scope" role="group" aria-label="Permission scope">' +
+              '<button type="button" class="roles-perm-scope-btn is-active" id="roles-perm-scope-role" data-perm-scope="role">Entire Role</button>' +
+              '<button type="button" class="roles-perm-scope-btn" id="roles-perm-scope-user" data-perm-scope="user">Specific Employee</button>' +
+            '</div>' +
+            '<div id="roles-perm-role-controls" class="roles-perm-controls">' +
+              '<label class="roles-perm-role-label" for="roles-perm-role-select">Role</label>' +
+              '<select id="roles-perm-role-select" class="input-field roles-perm-role-select" aria-label="Select role">' +
+                '<option value="manager">Manager</option>' +
+                '<option value="employee">Employee</option>' +
+                '<option value="admin">Admin</option>' +
+              '</select>' +
+            '</div>' +
+            '<div id="roles-perm-user-controls" class="roles-perm-controls hidden">' +
+              '<label class="roles-perm-role-label" for="roles-perm-user-select">Employee</label>' +
+              '<select id="roles-perm-user-select" class="input-field roles-perm-role-select" aria-label="Select employee">' +
+                '<option value="">Search &amp; select employee…</option>' +
+              '</select>' +
+            '</div>' +
             actPrimary('Save Permissions', 'id="roles-perm-save-btn"', 'save') +
-            actSecondary('Reset to Default', 'id="roles-perm-reset-btn"', 'rotate-ccw') +
+            actSecondary('Reset', 'id="roles-perm-reset-btn"', 'rotate-ccw') +
           '</div>'
         ) +
         '<div id="roles-perm-status" class="roles-perm-status hidden" role="status"></div>' +
+        '<div id="roles-perm-user-meta" class="roles-perm-user-meta hidden text-caption text-slate-600 mb-3"></div>' +
         '<div id="roles-perm-stats" class="roles-perm-stats" aria-live="polite">' +
           '<div class="roles-perm-stat"><span class="roles-perm-stat-label">Roles</span><strong id="roles-perm-stat-roles">—</strong></div>' +
           '<div class="roles-perm-stat"><span class="roles-perm-stat-label">Modules</span><strong id="roles-perm-stat-modules">—</strong></div>' +
@@ -2447,7 +2408,7 @@ window.CAPages = (function () {
             '<i data-lucide="search" class="h-4 w-4 roles-perm-search-icon" aria-hidden="true"></i>' +
             '<input type="search" id="roles-perm-search" class="input-field roles-perm-search" placeholder="Search modules…" autocomplete="off" aria-label="Search modules" />' +
           '</div>' +
-          '<p class="roles-perm-filter-hint text-caption text-slate-500">One row per module · toggles save with Save Permissions</p>' +
+          '<p class="roles-perm-filter-hint text-caption text-slate-500">Role mode saves role grants. Employee mode saves allow/deny overrides (deny wins).</p>' +
         '</div>' +
         '<section class="card p-0 overflow-hidden roles-perm-matrix-card">' +
           '<div class="roles-perm-matrix-wrap scrollbar-thin" id="roles-perm-matrix-scroll">' +
@@ -2458,7 +2419,7 @@ window.CAPages = (function () {
           '</div>' +
           '<div id="roles-perm-mobile" class="roles-perm-mobile" aria-live="polite"></div>' +
         '</section>' +
-        '<p class="text-caption text-slate-500 mt-3" id="roles-perm-note">Super Admin always has full access and cannot be edited here.</p>' +
+        '<p class="text-caption text-slate-500 mt-3" id="roles-perm-note">Super Admin always has full access and cannot be edited. Communication module key is <code>campaigns</code>.</p>' +
       '</div>';
     return settingsHubLayout('roles', content);
   }
@@ -2684,7 +2645,6 @@ window.CAPages = (function () {
     'duplicate-attempts': { title: 'Duplicate Attempts', breadcrumb: 'Reports / Duplicate Attempts', er: 'CA_MASTER', html: duplicateAttemptsPage() },
     bulk: { title: 'Bulk Operations', breadcrumb: 'Master Data / Bulk', er: 'BULK_ACTIONS', html: caMasterPage('bulk') },
     employees: { title: 'Team', breadcrumb: 'Assignment / Team', er: 'EMPLOYEE_MASTER', html: assignmentPage('team') },
-    security: { title: 'Security', breadcrumb: 'Security', er: 'Security Module', html: securityPage() },
     queue: { title: 'System Health', breadcrumb: 'Queue', er: 'QUEUE_SYSTEM', html: queuePage() },
     'db-health': { title: 'Database Health', breadcrumb: 'Admin / Database Health', er: 'DEV_DB_HEALTH', html: dbHealthPage() },
     'email-configuration': { title: 'Settings — Email Configuration', breadcrumb: 'Settings / Email Configuration', er: 'ENTERPRISE_EMAIL', html: emailConfigurationPage() },

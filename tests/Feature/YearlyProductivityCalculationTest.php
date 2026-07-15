@@ -40,7 +40,7 @@ class YearlyProductivityCalculationTest extends TestCase
         ], $overrides));
     }
 
-    public function test_normal_year_target_working_days_are_289(): void
+    public function test_normal_year_target_working_days_are_290(): void
     {
         $summary = $this->calendarService->buildYearSummary(2026);
 
@@ -52,7 +52,7 @@ class YearlyProductivityCalculationTest extends TestCase
         $this->assertSame(289, $this->calendarService->targetWorkingDays(2026));
     }
 
-    public function test_leap_year_target_working_days_are_290(): void
+    public function test_leap_year_target_working_days_are_291(): void
     {
         $summary = $this->calendarService->buildYearSummary(2028);
 

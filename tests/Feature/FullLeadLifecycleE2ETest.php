@@ -126,8 +126,7 @@ class FullLeadLifecycleE2ETest extends TestCase
             'reason' => 'SHOULD_FAIL',
         ])->assertForbidden();
 
-        $this->get('/security')->assertForbidden();
-        $this->getJson('/admin/security-matrix')->assertForbidden();
+        $this->getJson('/admin/role-permissions')->assertForbidden();
 
         // Employee can open recycle-bin SPA page if allowed by RbacService
         $recycle = $this->get('/recycle-bin');
