@@ -5612,11 +5612,17 @@ body:has(#modal-dcp-detail.open) #overlay.active {
   border-radius: 0.45rem;
 }
 
-/* Shared compact single-row filter toolbar (Reports module) */
+/* Shared report page chrome inside #page-container (CRM shell stays visible) */
 .crm-report-page {
   display: flex;
   flex-direction: column;
   gap: 0;
+}
+
+#page-container > .crm-report-page#ra-root,
+#page-container > .crm-report-page {
+  width: 100%;
+  min-width: 0;
 }
 
 .crm-report-page .crm-report-filter-toolbar {
@@ -9267,6 +9273,29 @@ body.rw-open {
   max-height: var(--crm-table-row-h);
   box-sizing: border-box;
   vertical-align: middle;
+}
+
+/* Empty / loading rows must win over the compact 32px body-cell clamp above */
+#cam-hub.cam-hub--compact .crm-table tbody tr.cam-empty-row,
+#cam-hub.cam-hub--compact .crm-table tbody tr.cam-loading-row,
+#cam-hub.cam-hub--compact .ca-table--enterprise tbody tr.cam-empty-row,
+#cam-hub.cam-hub--compact .ca-table--enterprise tbody tr.cam-loading-row {
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+}
+
+#cam-hub.cam-hub--compact .crm-table tbody tr.cam-empty-row td,
+#cam-hub.cam-hub--compact .crm-table tbody tr.cam-loading-row td,
+#cam-hub.cam-hub--compact .ca-table--enterprise tbody tr.cam-empty-row td,
+#cam-hub.cam-hub--compact .ca-table--enterprise tbody tr.cam-loading-row td {
+  height: auto !important;
+  min-height: 8rem !important;
+  max-height: none !important;
+  overflow: visible !important;
+  white-space: normal !important;
+  vertical-align: middle !important;
+  text-align: center !important;
 }
 
 #cam-hub.cam-hub--compact .crm-table thead tr:first-child th {

@@ -296,4 +296,34 @@ class EmployeeDashboardTest extends TestCase
             $this->assertContains($caId, $allowed, 'Employee must only see assigned leads.');
         }
     }
+
+    public function test_orphan_employee_user_gets_profile_and_dashboard(): void
+    {
+        $email = 'orphan-employee-'.uniqid('', true).'@test.local';
+        $user = User::query()->create([
+            'name' => 'Orphan Employee',
+            'email' => $email,
+            'password' => Hash::make('password'),
+            'crm_role' => 'employee',
+            'is_active' => true,
+        ]);
+
+        $this->assertNull(
+            Employee::query()->where('user_id', $user->id)->orWhere('email_id', $email)->value('employee_id')
+        );
+
+        $this->actingAs($user);
+
+        $response = $this->getJson('/dashboard/employee')->assertOk();
+
+        $employeeId = (int) $response->json('data.employee_id');
+        $this->assertGreaterThan(0, $employeeId);
+        $this->assertDatabaseHas('employees', [
+            'employee_id' => $employeeId,
+            'user_id' => $user->id,
+            'email_id' => $email,
+            'status' => 'Active',
+        ]);
+        $this->assertSame('Orphan Employee', $response->json('data.welcome.name'));
+    }
 }

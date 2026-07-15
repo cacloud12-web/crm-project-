@@ -1,6 +1,7 @@
 /**
- * Shared report page header shell for the Reports module.
- * Used by the analytics drawer and standalone report pages (e.g. Duplicate Attempts).
+ * Shared report page chrome for the Reports module.
+ * Mounts inside the CRM `#page-container` (sidebar + top navbar stay visible).
+ * Used by analytics report detail pages and Duplicate Attempts.
  */
 window.CrmReportShell = (function () {
   'use strict';
@@ -61,7 +62,7 @@ window.CrmReportShell = (function () {
     );
   }
 
-  function buildDrawerActions() {
+  function buildPageActions() {
     return (
       '<div class="ra-export-menu">' +
         '<button type="button" class="crm-toolbar-icon-btn" id="ra-export-toggle" title="Export" aria-label="Export">' +
@@ -81,11 +82,13 @@ window.CrmReportShell = (function () {
       '</button>' +
       '<button type="button" class="crm-toolbar-icon-btn" id="ra-print" title="Print" aria-label="Print">' +
         '<i data-lucide="printer" class="h-4 w-4" aria-hidden="true"></i>' +
-      '</button>' +
-      '<button type="button" class="crm-toolbar-icon-btn" id="ra-close" title="Close" aria-label="Close">' +
-        '<i data-lucide="x" class="h-4 w-4" aria-hidden="true"></i>' +
       '</button>'
     );
+  }
+
+  /** @deprecated Use buildPageActions — kept for callers that still use the old name. */
+  function buildDrawerActions() {
+    return buildPageActions();
   }
 
   /**
@@ -120,6 +123,7 @@ window.CrmReportShell = (function () {
   return {
     buildHeader: buildHeader,
     buildDrawerActions: buildDrawerActions,
+    buildPageActions: buildPageActions,
     buildStandalonePage: buildStandalonePage,
     init: init,
   };

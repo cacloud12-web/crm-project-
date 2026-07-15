@@ -145,13 +145,13 @@ class EmployeeDashboardService
             abort(403, 'Employee dashboard is only available to employees.');
         }
 
-        $employeeId = $this->employeeDataScope->scopedEmployeeId($user);
+        $employeeId = $this->employeeDataScope->ensureEmployeeProfile($user);
 
         if (! $employeeId || $employeeId <= 0) {
-            abort(403, 'No employee profile is linked to this account.');
+            abort(403, 'No employee profile is linked to this account. Ask an admin to recreate your employee login.');
         }
 
-        return $employeeId;
+        return (int) $employeeId;
     }
 
     private function leadStatusCounts(int $employeeId): array

@@ -153,15 +153,6 @@
     </div>
   </div>
 
-  <!-- Report Analytics Drawer (full BI dashboard) -->
-  <div id="report-analytics-drawer" class="ra-drawer ca-modal" role="dialog" aria-modal="true" aria-labelledby="ra-title" aria-hidden="true">
-    <div class="ra-drawer__backdrop" data-ra-close aria-hidden="true"></div>
-    <div class="ra-drawer__panel">
-      <div id="ra-root" class="ra-drawer__content"></div>
-    </div>
-  </div>
-
-
   <div id="modal-add-lead" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="add-lead-title">
     <div class="ca-modal-panel ca-modal-panel-lg">
       <div class="ca-modal-header">

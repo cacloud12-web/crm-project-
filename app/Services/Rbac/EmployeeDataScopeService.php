@@ -50,6 +50,68 @@ class EmployeeDataScopeService
         return $employeeId ? (int) $employeeId : null;
     }
 
+    /**
+     * Employee-role login accounts must have an employees row for scoping + dashboard.
+     * Auto-heal orphan users (login without linked employee record) and restore soft-deleted matches.
+     */
+    public function ensureEmployeeProfile(?User $user): ?int
+    {
+        if (! $user || ! $this->shouldScopeToEmployee($user)) {
+            return $this->resolveEmployeeId($user);
+        }
+
+        $existing = $this->resolveEmployeeId($user);
+        if ($existing) {
+            return $existing;
+        }
+
+        $candidate = Employee::withTrashed()
+            ->where(function ($query) use ($user) {
+                $query->where('user_id', $user->id)
+                    ->orWhere('email_id', $user->email);
+            })
+            ->orderByDesc('employee_id')
+            ->first();
+
+        if ($candidate) {
+            if ($candidate->trashed()) {
+                $candidate->restore();
+            }
+
+            $candidate->forceFill([
+                'user_id' => $user->id,
+                'email_id' => $user->email,
+                'name' => $candidate->name ?: ($user->name ?: 'Employee'),
+                'status' => $candidate->status ?: 'Active',
+                'role' => $candidate->role ?: 'Sales Executive',
+            ])->save();
+
+            Log::info('Restored employee profile link for CRM user', [
+                'user_id' => $user->id,
+                'email' => $user->email,
+                'employee_id' => $candidate->employee_id,
+            ]);
+
+            return (int) $candidate->employee_id;
+        }
+
+        $employee = Employee::query()->create([
+            'user_id' => $user->id,
+            'name' => $user->name ?: 'Employee',
+            'email_id' => $user->email,
+            'role' => 'Sales Executive',
+            'status' => 'Active',
+        ]);
+
+        Log::info('Provisioned missing employee profile for CRM user', [
+            'user_id' => $user->id,
+            'email' => $user->email,
+            'employee_id' => $employee->employee_id,
+        ]);
+
+        return (int) $employee->employee_id;
+    }
+
     public function scopedEmployeeId(?User $user): ?int
     {
         if (! $user) {
@@ -60,7 +122,7 @@ class EmployeeDataScopeService
             return null;
         }
 
-        $employeeId = $this->resolveEmployeeId($user);
+        $employeeId = $this->ensureEmployeeProfile($user);
 
         if (! $employeeId) {
             $this->logDenied('employee_record_missing', $user, []);

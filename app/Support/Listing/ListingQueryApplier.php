@@ -162,19 +162,37 @@ class ListingQueryApplier
         $query->where(function (Builder $outer) use ($columns, $relations, $escaped, $table) {
             foreach ($columns as $column) {
                 $qualified = str_contains($column, '.') ? $column : $table.'.'.$column;
-                $outer->orWhere($qualified, 'ilike', $escaped);
+                self::whereIlike($outer, $qualified, $escaped, 'or');
             }
 
             foreach ($relations as $relation => $relationColumns) {
                 $outer->orWhereHas($relation, function (Builder $relationQuery) use ($relationColumns, $escaped) {
                     $relationQuery->where(function (Builder $inner) use ($relationColumns, $escaped) {
                         foreach ($relationColumns as $column) {
-                            $inner->orWhere($column, 'ilike', $escaped);
+                            self::whereIlike($inner, $column, $escaped, 'or');
                         }
                     });
                 });
             }
         });
+    }
+
+    /**
+     * Case-insensitive LIKE that works on MySQL, SQLite, and PostgreSQL
+     * even when the custom ILIKE query grammar is not registered yet.
+     */
+    private static function whereIlike(Builder $query, string $column, string $likeValue, string $boolean = 'and'): void
+    {
+        $driver = $query->getConnection()->getDriverName();
+        $method = $boolean === 'or' ? 'orWhereRaw' : 'whereRaw';
+
+        if ($driver === 'pgsql') {
+            $query->{$method}($column.' ILIKE ?', [$likeValue]);
+
+            return;
+        }
+
+        $query->{$method}('LOWER('.$column.') LIKE LOWER(?)', [$likeValue]);
     }
 
     private static function applyColumnFilters(Builder $query, array $params, array $config): void
@@ -205,15 +223,25 @@ class ListingQueryApplier
                 'rating_min' => $query->where('rating', '>=', (int) $value),
                 'rating_max' => $query->where('rating', '<=', (int) $value),
                 'boolean' => $query->where($key, filter_var($value, FILTER_VALIDATE_BOOLEAN)),
-                'ilike' => $query->where($key, 'ilike', '%'.addcslashes((string) $value, '%_\\').'%'),
-                'performed_by_ilike' => $query->where('performed_by', 'ilike', '%'.$value.'%'),
+                'ilike' => self::whereIlike($query, $key, '%'.addcslashes((string) $value, '%_\\').'%'),
+                'performed_by_ilike' => self::whereIlike($query, 'performed_by', '%'.$value.'%'),
                 'date_exact' => $query->whereDate($config['date_column'] ?? 'created_at', $value),
-                'city_name' => $query->whereHas('city', fn (Builder $q) => $q->where('city_name', 'ilike', '%'.addcslashes((string) $value, '%_\\').'%')),
-                'state_name' => $query->whereHas('state', fn (Builder $q) => $q->where('state_name', 'ilike', '%'.addcslashes((string) $value, '%_\\').'%')),
-                'source_name' => $query->whereHas('sourceLead', fn (Builder $q) => $q->where('source_name', 'ilike', '%'.addcslashes((string) $value, '%_\\').'%')),
-                'executive_name' => $query->whereHas('activeAssignment.employee', fn (Builder $q) => $q->where('name', 'ilike', '%'.addcslashes((string) $value, '%_\\').'%')),
+                'city_name' => $query->whereHas('city', function (Builder $q) use ($value) {
+                    self::whereIlike($q, 'city_name', '%'.addcslashes((string) $value, '%_\\').'%');
+                }),
+                'state_name' => $query->whereHas('state', function (Builder $q) use ($value) {
+                    self::whereIlike($q, 'state_name', '%'.addcslashes((string) $value, '%_\\').'%');
+                }),
+                'source_name' => $query->whereHas('sourceLead', function (Builder $q) use ($value) {
+                    self::whereIlike($q, 'source_name', '%'.addcslashes((string) $value, '%_\\').'%');
+                }),
+                'executive_name' => $query->whereHas('activeAssignment.employee', function (Builder $q) use ($value) {
+                    self::whereIlike($q, 'name', '%'.addcslashes((string) $value, '%_\\').'%');
+                }),
                 'team_size_search' => self::applyTeamSizeSearch($query, $value),
-                'employee_name' => $query->whereHas('employee', fn (Builder $q) => $q->where('name', 'ilike', '%'.addcslashes((string) $value, '%_\\').'%')),
+                'employee_name' => $query->whereHas('employee', function (Builder $q) use ($value) {
+                    self::whereIlike($q, 'name', '%'.addcslashes((string) $value, '%_\\').'%');
+                }),
                 'employee_name_exact' => $query->whereHas('employee', fn (Builder $q) => $q->where('name', $value)),
                 'manager_name_exact' => $query->whereHas('manager', fn (Builder $q) => $q->where('name', $value)),
                 'segment' => self::applySegment($query, (string) $value),

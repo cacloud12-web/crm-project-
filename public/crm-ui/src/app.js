@@ -385,13 +385,36 @@
 
   function resolvePageFromLocation() {
     if (window.__CRM_INITIAL_PAGE__ && CAPages.get(window.__CRM_INITIAL_PAGE__)) {
-      return window.__CRM_INITIAL_PAGE__;
+      var initial = window.__CRM_INITIAL_PAGE__;
+      window.__CRM_INITIAL_PAGE__ = null;
+      var pendingFromPath = parseReportSlugFromLocation();
+      if (pendingFromPath && initial === 'reports') {
+        window.__CRM_PENDING_REPORT_SLUG__ = pendingFromPath;
+      }
+      return resolveLeadHubPage(initial);
     }
     var path = normalizePath(location.pathname);
+    var reportSlug = parseReportSlugFromLocation();
+    if (reportSlug) {
+      window.__CRM_PENDING_REPORT_SLUG__ = reportSlug;
+      return 'reports';
+    }
     if (PATH_PAGE_MAP[path]) return resolveLeadHubPage(PATH_PAGE_MAP[path]);
     var hash = (location.hash || '').replace('#', '');
     if (hash && CAPages.get(hash)) return resolveLeadHubPage(hash);
     return 'dashboard';
+  }
+
+  function parseReportSlugFromLocation() {
+    if (window.CrmReportAnalytics && typeof window.CrmReportAnalytics.parseSlugFromPath === 'function') {
+      return window.CrmReportAnalytics.parseSlugFromPath(location.pathname);
+    }
+    var path = normalizePath(location.pathname);
+    var match = path.match(/^\/reports\/([a-z0-9_-]+)$/i);
+    if (!match) return null;
+    var slug = match[1];
+    if (slug === 'analytics' || slug === 'export') return null;
+    return slug;
   }
 
   function syncLocationForPage(pageId) {
@@ -413,7 +436,8 @@
       var hideFab = pageId === 'dashboard' || pageId === 'settings' || pageId === 'demo-calendar'
         || pageId === 'sales-list' || pageId === 'email-configuration'
         || pageId === 'ca-master' || pageId === 'bulk' || pageId === 'leads'
-        || pageId === 'reports' || pageId === 'analytics' || pageId === 'activity' || pageId === 'audit';
+        || pageId === 'reports' || pageId === 'analytics' || pageId === 'activity' || pageId === 'audit'
+        || !!document.getElementById('ra-root');
       fabWrap.classList.toggle('hidden', hideFab);
     }
   }
@@ -447,6 +471,20 @@
 
   function applyPageContent(pageId) {
     const page = CAPages.get(pageId);
+    var pendingReport = window.__CRM_PENDING_REPORT_SLUG__;
+    if (pageId === 'reports' && pendingReport && window.CA_CRM && typeof CA_CRM.openReport === 'function') {
+      window.__CRM_PENDING_REPORT_SLUG__ = null;
+      pageContainer.classList.remove('page-exit');
+      pageContainer.classList.add('page-enter');
+      document.title = (page && page.title ? page.title : 'Reports') + ' — CA Cloud Desk';
+      /* Mount BI report directly into the CRM content area (no hub flash). */
+      CA_CRM.openReport(pendingReport);
+      if (window.CA_RBAC && typeof window.CA_RBAC.onPageChange === 'function') {
+        window.CA_RBAC.onPageChange('reports');
+      }
+      scrollCrmContentToTop();
+      return;
+    }
     pageContainer.innerHTML = page.html;
     pageContainer.classList.remove('page-exit');
     pageContainer.classList.add('page-enter');
@@ -504,7 +542,13 @@
     }
 
     if (window.innerWidth < 1024) closeAllOverlays();
-    syncLocationForPage(pageId);
+    /* BI report details sync their own /reports/{slug} URL — do not clobber it. */
+    var pageEl = document.getElementById('page-container');
+    var reportRoot = document.getElementById('ra-root');
+    var reportInShell = !!(pageId === 'reports' && pageEl && reportRoot && pageEl.contains(reportRoot));
+    if (!reportInShell) {
+      syncLocationForPage(pageId);
+    }
     updateFabVisibility(pageId);
   }
 

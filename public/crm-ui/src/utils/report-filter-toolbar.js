@@ -10,6 +10,9 @@ window.CrmReportFilterToolbar = (function () {
   /** Standard field order for all report toolbars. */
   var FIELD_ORDER = ['date', 'singleDate', 'employee', 'employeeSearch', 'type', 'status', 'search'];
 
+  /** In-memory filter values keyed by report page (survives Apply re-renders). */
+  var sharedFilterState = Object.create(null);
+
   function escapeAttr(text) {
     return String(text == null ? '' : text)
       .replace(/&/g, '&amp;')
@@ -230,7 +233,7 @@ window.CrmReportFilterToolbar = (function () {
     if (!el) return;
     el.value = value == null ? '' : String(value);
     if (window.CrmDateTimePicker) {
-      window.CrmDateTimePicker.syncAll(el.closest('.crm-report-filter-toolbar') || document);
+      window.CrmDateTimePicker.syncAll(el.closest('.crm-report-filter-toolbar') || el.closest('.crm-report-page') || document);
     }
   }
 
@@ -238,6 +241,47 @@ window.CrmReportFilterToolbar = (function () {
     writeInputValue(fromId, '');
     writeInputValue(toId, '');
     hideDateRangeError(errorId);
+  }
+
+  /**
+   * @param {string} key shared state key (e.g. report slug or page id)
+   * @param {Object.<string,string>} fieldMap logicalName -> element id
+   */
+  function captureFields(key, fieldMap) {
+    var values = {};
+    Object.keys(fieldMap || {}).forEach(function (name) {
+      values[name] = readInputValue(fieldMap[name]);
+    });
+    sharedFilterState[key] = values;
+    return values;
+  }
+
+  /**
+   * Restore captured values into the DOM without clearing other controls.
+   * @param {string} key
+   * @param {Object.<string,string>} fieldMap
+   * @param {object} [fallback] used when no shared state exists yet
+   */
+  function restoreFields(key, fieldMap, fallback) {
+    var values = sharedFilterState[key] || fallback || {};
+    Object.keys(fieldMap || {}).forEach(function (name) {
+      if (!Object.prototype.hasOwnProperty.call(values, name)) return;
+      writeInputValue(fieldMap[name], values[name]);
+    });
+    return values;
+  }
+
+  function getSharedState(key) {
+    return sharedFilterState[key] ? Object.assign({}, sharedFilterState[key]) : null;
+  }
+
+  function setSharedState(key, values) {
+    sharedFilterState[key] = Object.assign({}, values || {});
+    return getSharedState(key);
+  }
+
+  function clearSharedState(key) {
+    delete sharedFilterState[key];
   }
 
   /**
@@ -272,6 +316,12 @@ window.CrmReportFilterToolbar = (function () {
     hideDateRangeError: hideDateRangeError,
     writeInputValue: writeInputValue,
     clearDateFields: clearDateFields,
+    readInputValue: readInputValue,
+    captureFields: captureFields,
+    restoreFields: restoreFields,
+    getSharedState: getSharedState,
+    setSharedState: setSharedState,
+    clearSharedState: clearSharedState,
     DATE_ATTRS: DATE_ATTRS,
     FIELD_ORDER: FIELD_ORDER,
   };

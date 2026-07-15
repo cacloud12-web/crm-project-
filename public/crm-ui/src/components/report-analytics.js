@@ -11,7 +11,19 @@ window.CrmReportAnalytics = (function () {
     sortDir: 'desc',
     bound: false,
     drillDown: null,
+    /** Applied filter values — survive Apply / soft refresh / full re-render. */
+    filters: null,
   };
+
+  var RA_FILTER_FIELDS = {
+    from: 'ra-filter-from',
+    to: 'ra-filter-to',
+    employee: 'ra-filter-employee',
+    status: 'ra-filter-status',
+    search: 'ra-filter-source',
+  };
+
+  var FILTER_STORAGE_PREFIX = 'ca_crm_report_filter_';
 
   var CHART_EMPTY = 'No data is available for the selected filters.';
 
@@ -120,17 +132,116 @@ window.CrmReportAnalytics = (function () {
     };
   }
 
+  function filterStorageKey(slug) {
+    return FILTER_STORAGE_PREFIX + (slug || state.slug || 'report');
+  }
+
+  function readPersistedFilters(slug) {
+    try {
+      var raw = localStorage.getItem(filterStorageKey(slug));
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function persistFilters(slug, filters) {
+    try {
+      localStorage.setItem(filterStorageKey(slug), JSON.stringify(filters || {}));
+    } catch (err) { /* ignore quota */ }
+    if (window.CrmReportFilterToolbar) {
+      window.CrmReportFilterToolbar.setSharedState(filterStorageKey(slug), filters || {});
+    }
+  }
+
+  function clearPersistedFilters(slug) {
+    try {
+      localStorage.removeItem(filterStorageKey(slug));
+    } catch (err) { /* ignore */ }
+    if (window.CrmReportFilterToolbar) {
+      window.CrmReportFilterToolbar.clearSharedState(filterStorageKey(slug));
+    }
+  }
+
+  function emptyFilterState(withDefaults) {
+    var range = withDefaults ? defaultDateRange() : { from: '', to: '' };
+    return {
+      from: range.from || '',
+      to: range.to || '',
+      employee: '',
+      status: '',
+      search: '',
+    };
+  }
+
+  function captureFiltersFromDom() {
+    var toolbar = window.CrmReportFilterToolbar;
+    var next = Object.assign({}, state.filters || emptyFilterState(false));
+    if (toolbar && typeof toolbar.captureFields === 'function' && document.getElementById('ra-filter-from')) {
+      next = Object.assign(next, toolbar.captureFields(filterStorageKey(state.slug), RA_FILTER_FIELDS));
+    } else {
+      Object.keys(RA_FILTER_FIELDS).forEach(function (name) {
+        var el = $(RA_FILTER_FIELDS[name]);
+        if (el) next[name] = String(el.value || '').trim();
+      });
+    }
+    state.filters = next;
+    state.tableSearch = next.search || state.tableSearch || '';
+    return next;
+  }
+
+  function applyFiltersToDom(filters) {
+    filters = filters || state.filters || emptyFilterState(true);
+    state.filters = Object.assign({}, filters);
+    var toolbar = window.CrmReportFilterToolbar;
+    if (toolbar && typeof toolbar.restoreFields === 'function') {
+      toolbar.restoreFields(filterStorageKey(state.slug), RA_FILTER_FIELDS, filters);
+    } else {
+      Object.keys(RA_FILTER_FIELDS).forEach(function (name) {
+        var el = $(RA_FILTER_FIELDS[name]);
+        if (el) el.value = filters[name] || '';
+      });
+      if (window.CrmDateTimePicker) {
+        window.CrmDateTimePicker.syncAll($('ra-root') || document);
+      }
+    }
+  }
+
+  function ensureFilterState(slug, opts) {
+    opts = opts || {};
+    slug = slug || state.slug;
+    if (!opts.reset && state.filters && state.slug === slug) {
+      return state.filters;
+    }
+    var shared = window.CrmReportFilterToolbar
+      ? window.CrmReportFilterToolbar.getSharedState(filterStorageKey(slug))
+      : null;
+    var persisted = shared || readPersistedFilters(slug);
+    if (persisted && !opts.reset) {
+      state.filters = Object.assign(emptyFilterState(false), persisted);
+      return state.filters;
+    }
+    state.filters = emptyFilterState(true);
+    return state.filters;
+  }
+
   function getFilterQuery() {
     var parts = [];
-    var from = $('ra-filter-from');
-    var to = $('ra-filter-to');
-    var emp = $('ra-filter-employee');
+    /* Prefer live DOM when present; otherwise use shared applied state (critical after Apply wipe). */
+    if (document.getElementById('ra-filter-from') || document.getElementById('ra-filter-employee')) {
+      captureFiltersFromDom();
+    } else {
+      ensureFilterState(state.slug);
+    }
+    var f = state.filters || emptyFilterState(true);
     var range = defaultDateRange();
-    var fromVal = (from && from.value) || range.from;
-    var toVal = (to && to.value) || range.to;
+    var fromVal = f.from || range.from;
+    var toVal = f.to || range.to;
     parts.push('from=' + encodeURIComponent(fromVal));
     parts.push('to=' + encodeURIComponent(toVal));
-    if (emp && emp.value) parts.push('employee_id=' + encodeURIComponent(emp.value));
+    if (f.employee) parts.push('employee_id=' + encodeURIComponent(f.employee));
     return '?' + parts.join('&');
   }
 
@@ -655,7 +766,7 @@ window.CrmReportAnalytics = (function () {
     }
     var enabled = FILTER_PRESETS[slug] || ['date', 'employee', 'search'];
     return toolbar.build({
-      wrapperClass: 'ra-lc-toolbar',
+      wrapperClass: 'crm-report-filter-toolbar card ra-lc-toolbar',
       errorId: 'ra-filter-date-error',
       applyId: 'ra-filter-apply',
       resetId: 'ra-filter-reset',
@@ -669,13 +780,64 @@ window.CrmReportAnalytics = (function () {
     return '<div class="ra-notice" role="status"><i data-lucide="info" class="h-4 w-4"></i><span>' + escapeHtml(meta.notice) + '</span></div>';
   }
 
+  function renderReportBody(report) {
+    var noticeHost = document.querySelector('.ra-lc-main');
+    var existingNotice = noticeHost ? noticeHost.querySelector('.ra-notice') : null;
+    var noticeHtml = buildNotice(report.slug || state.slug);
+    if (noticeHost) {
+      if (existingNotice) existingNotice.remove();
+      if (noticeHtml) noticeHost.insertAdjacentHTML('afterbegin', noticeHtml);
+    }
+    var titleEl = $('ra-title');
+    var meta = SLUG_META[report.slug || state.slug] || {};
+    if (titleEl) titleEl.textContent = report.label || meta.title || fmtLabel(report.slug || state.slug);
+    var kpis = $('ra-kpis');
+    var charts = $('ra-charts');
+    var table = $('ra-table');
+    if (kpis) kpis.innerHTML = buildKpis(report);
+    if (charts) charts.innerHTML = buildCharts(report);
+    if (table) table.innerHTML = buildTable(report);
+    iconsIn($('ra-root'));
+  }
+
+  function renderSoftLoading() {
+    var kpis = $('ra-kpis');
+    var charts = $('ra-charts');
+    var table = $('ra-table');
+    if (kpis) {
+      kpis.innerHTML = '<div class="ra-skeleton__kpis">' + Array(6).join('<div class="ra-skeleton__kpi"></div>') + '</div>';
+    }
+    if (charts) {
+      charts.innerHTML = '<div class="ra-skeleton__charts">' + Array(3).join('<div class="ra-skeleton__chart"></div>') + '</div>';
+    }
+    if (table) {
+      table.innerHTML = '<div class="ra-skeleton__table"></div>';
+    }
+  }
+
+  function canSoftRefresh() {
+    var page = document.getElementById('page-container');
+    var root = $('ra-root');
+    return !!(
+      page &&
+      root &&
+      page.contains(root) &&
+      $('ra-filter-apply') &&
+      ($('ra-kpis') || $('ra-charts') || $('ra-table'))
+    );
+  }
+
   function renderUnifiedShell(report) {
     var slug = report.slug || state.slug;
     var meta = SLUG_META[slug] || {};
     var title = report.label || meta.title || fmtLabel(slug);
     var subtitle = report.description || meta.description || '';
-    var root = $('ra-root');
+    var root = ensurePageRoot();
     if (!root) return;
+
+    var actionsHtml = window.CrmReportShell
+      ? (window.CrmReportShell.buildPageActions || window.CrmReportShell.buildDrawerActions)()
+      : '';
 
     root.innerHTML =
       (window.CrmReportShell
@@ -685,17 +847,20 @@ window.CrmReportAnalytics = (function () {
           icon: meta.icon || 'file-text',
           titleId: 'ra-title',
           backId: 'ra-back',
+          backNav: 'reports',
           showBack: true,
-          actionsHtml: window.CrmReportShell.buildDrawerActions(),
+          actionsHtml: actionsHtml,
         })
         : '') +
       buildFilterBar(slug) +
-      '<main class="ra-lc-main">' +
-        buildNotice(slug) +
-        '<div id="ra-kpis">' + buildKpis(report) + '</div>' +
-        '<div id="ra-charts">' + buildCharts(report) + '</div>' +
-        '<div id="ra-table">' + buildTable(report) + '</div>' +
-      '</main>';
+      '<div class="crm-report-page__body">' +
+        '<main class="ra-lc-main">' +
+          buildNotice(slug) +
+          '<div id="ra-kpis">' + buildKpis(report) + '</div>' +
+          '<div id="ra-charts">' + buildCharts(report) + '</div>' +
+          '<div id="ra-table">' + buildTable(report) + '</div>' +
+        '</main>' +
+      '</div>';
 
     seedFilters();
     if (window.CrmReportShell) {
@@ -703,8 +868,11 @@ window.CrmReportAnalytics = (function () {
     } else if (window.CrmReportFilterToolbar) {
       window.CrmReportFilterToolbar.initToolbar(root);
     }
+    /* Re-apply after date-picker enhancement so display triggers keep applied values. */
+    applyFiltersToDom(state.filters);
     loadEmployeeOptions();
     if (window.CrmDateTimePicker) window.CrmDateTimePicker.initAll(root);
+    applyFiltersToDom(state.filters);
     iconsIn(root);
   }
 
@@ -713,34 +881,14 @@ window.CrmReportAnalytics = (function () {
   }
 
   function seedFilters() {
-    var hubFrom = $('reports-filter-from');
-    var hubTo = $('reports-filter-to');
-    var from = $('ra-filter-from');
-    var to = $('ra-filter-to');
-    if (from && hubFrom && hubFrom.value) from.value = hubFrom.value;
-    if (to && hubTo && hubTo.value) to.value = hubTo.value;
-    if (from && !from.value) {
-      var start = new Date();
-      start.setDate(start.getDate() - 30);
-      from.value = start.toISOString().slice(0, 10);
-    }
-    if (to && !to.value) to.value = new Date().toISOString().slice(0, 10);
-    try {
-      var saved = localStorage.getItem('ca_crm_report_filter_' + state.slug);
-      if (saved) {
-        var preset = JSON.parse(saved);
-        if (preset.from && from) from.value = preset.from;
-        if (preset.to && to) to.value = preset.to;
-        var emp = $('ra-filter-employee');
-        if (preset.employee && emp) emp.value = preset.employee;
-      }
-    } catch (err) { /* ignore */ }
+    ensureFilterState(state.slug);
+    applyFiltersToDom(state.filters);
   }
 
   function loadEmployeeOptions() {
     var select = $('ra-filter-employee');
     if (!select) return;
-    var current = select.value;
+    var current = (state.filters && state.filters.employee) || select.value || '';
     apiFetch('/employees?per_page=200&status=Active&sort_by=name&sort_dir=asc')
       .then(function (body) {
         var items = (body.data && body.data.items) || body.data || [];
@@ -754,13 +902,15 @@ window.CrmReportAnalytics = (function () {
           html += '<option value="' + escapeHtml(String(id)) + '">' + escapeHtml(name) + '</option>';
         });
         select.innerHTML = html;
-        if (current) select.value = current;
+        var desired = (state.filters && state.filters.employee) || current;
+        if (desired) select.value = desired;
+        if (state.filters) state.filters.employee = select.value || '';
       })
       .catch(function () { /* optional */ });
   }
 
   function renderLoading() {
-    var root = $('ra-root');
+    var root = ensurePageRoot();
     if (!root) return;
     root.innerHTML =
       '<div class="ra-skeleton">' +
@@ -773,7 +923,7 @@ window.CrmReportAnalytics = (function () {
   }
 
   function renderError(message) {
-    var root = $('ra-root');
+    var root = ensurePageRoot();
     if (!root) return;
     root.innerHTML =
       '<div class="ra-error-state">' +
@@ -781,47 +931,83 @@ window.CrmReportAnalytics = (function () {
         '<h3>Unable to load report</h3>' +
         '<p>' + escapeHtml(message || 'Something went wrong.') + '</p>' +
         '<button type="button" class="btn-primary btn-sm" id="ra-error-retry">Retry</button>' +
-        '<button type="button" class="btn-secondary btn-sm" id="ra-close">Close</button>' +
+        '<button type="button" class="btn-secondary btn-sm" id="ra-back">Back to Reports</button>' +
       '</div>';
     iconsIn(root);
   }
 
-  function openDrawer() {
-    var drawer = $('report-analytics-drawer');
-    if (!drawer) return;
-    if (window.CA_CRM && typeof window.CA_CRM.openExclusiveCrmModal === 'function') {
-      window.CA_CRM.openExclusiveCrmModal(drawer);
-    } else {
-      drawer.classList.add('open');
-    }
-    drawer.setAttribute('aria-hidden', 'false');
-    document.body.classList.add('ra-drawer-open');
-    iconsIn(drawer);
+  var RESERVED_REPORT_SEGMENTS = { analytics: true, export: true };
+
+  function normalizePathname(path) {
+    return String(path || '/').replace(/\/+$/, '') || '/';
   }
 
-  function closeDrawer() {
-    var drawer = $('report-analytics-drawer');
-    if (!drawer) return;
-    drawer.classList.remove('open');
-    drawer.setAttribute('aria-hidden', 'true');
+  function reportPathForSlug(slug) {
+    return '/reports/' + encodeURIComponent(slug || '');
+  }
+
+  /** Ensure report HTML mounts inside #page-container — never the fullscreen overlay. */
+  function ensurePageRoot() {
+    var page = document.getElementById('page-container');
+    if (!page) return null;
+    var root = document.getElementById('ra-root');
+    if (root && page.contains(root)) return root;
+    page.innerHTML = '<div class="crm-report-page" id="ra-root" data-report-in-shell="1"></div>';
+    return document.getElementById('ra-root');
+  }
+
+  function markReportsNavActive() {
+    document.querySelectorAll('[data-page]').forEach(function (link) {
+      link.classList.toggle('active', link.dataset.page === 'reports');
+    });
+    window.__CRM_CURRENT_PAGE__ = 'reports';
+    window._currentPageId = 'reports';
+  }
+
+  function syncReportLocation(slug) {
+    if (!slug) return;
+    var path = reportPathForSlug(slug);
+    if (normalizePathname(location.pathname) !== path) {
+      history.pushState({ pageId: 'reports', reportSlug: slug }, '', path);
+    }
+    markReportsNavActive();
+    document.title = ((SLUG_META[slug] && SLUG_META[slug].title) || fmtLabel(slug)) + ' — CA Cloud Desk';
+  }
+
+  function mountReportInShell() {
     document.body.classList.remove('ra-drawer-open');
+    ensurePageRoot();
+    syncReportLocation(state.slug);
+  }
+
+  /** Leave the report detail and restore the Reports hub inside the CRM shell. */
+  function closeReport() {
+    state.slug = null;
+    state.report = null;
+    state.drillDown = null;
+    state.loading = false;
     var exportList = $('ra-export-list');
     if (exportList) exportList.classList.add('hidden');
-    state.drillDown = null;
-    if (window.CA_CRM && typeof window.CA_CRM.closeModal === 'function') {
-      window.CA_CRM.closeModal(drawer);
-    } else {
-      var overlay = document.getElementById('overlay');
-      if (overlay) overlay.classList.remove('active');
-      if (typeof window.setCrmScrollLock === 'function') window.setCrmScrollLock(false);
-      else document.body.style.overflow = '';
+    document.body.classList.remove('ra-drawer-open');
+    if (typeof navigateTo === 'function') {
+      navigateTo('reports');
+      return;
+    }
+    history.pushState({ pageId: 'reports' }, '', '/reports');
+    if (window.CAPages && document.getElementById('page-container')) {
+      document.getElementById('page-container').innerHTML = (window.CAPages.get('reports') || {}).html || '';
     }
   }
 
   function loadReport(slug, opts) {
     opts = opts || {};
     if (state.loading && !opts.force) return Promise.resolve();
-    var isRefresh = slug === state.slug;
+    var previousSlug = state.slug;
+    var isRefresh = slug === previousSlug;
+    if (!isRefresh) {
+      /* New report page — load that report's saved filters (or defaults), do not keep prior report values. */
+      state.filters = null;
+    }
     state.slug = slug;
     if (!isRefresh || !opts.preserveSearch) {
       if (!opts.preserveDrill) state.drillDown = null;
@@ -829,14 +1015,39 @@ window.CrmReportAnalytics = (function () {
       state.sortKey = null;
       state.sortDir = 'desc';
     }
+    if (isRefresh && document.getElementById('ra-filter-from') && document.getElementById('page-container')
+        && document.getElementById('page-container').contains(document.getElementById('ra-filter-from'))) {
+      captureFiltersFromDom();
+    } else {
+      ensureFilterState(slug);
+    }
+    if (state.filters && state.filters.search && (isRefresh || opts.preserveSearch)) {
+      state.tableSearch = state.filters.search;
+    }
     state.loading = true;
-    openDrawer();
-    renderLoading();
-    return apiFetch('/reports/' + encodeURIComponent(slug) + getFilterQuery())
+    mountReportInShell();
+
+    var soft = !!opts.soft || (isRefresh && canSoftRefresh());
+    if (soft) {
+      renderSoftLoading();
+    } else {
+      renderLoading();
+    }
+
+    var query = getFilterQuery();
+    return apiFetch('/reports/' + encodeURIComponent(slug) + query)
       .then(function (body) {
         state.report = body.data || {};
         state.loading = false;
-        renderShell(state.report);
+        if (soft && canSoftRefresh()) {
+          renderReportBody(state.report);
+          applyFiltersToDom(state.filters);
+          loadEmployeeOptions();
+        } else {
+          renderShell(state.report);
+        }
+        persistFilters(state.slug, state.filters);
+        syncReportLocation(state.slug);
       })
       .catch(function (err) {
         state.loading = false;
@@ -847,7 +1058,7 @@ window.CrmReportAnalytics = (function () {
 
   function refreshReport() {
     if (!state.slug) return;
-    loadReport(state.slug, { preserveSearch: true, preserveDrill: true });
+    loadReport(state.slug, { preserveSearch: true, preserveDrill: true, soft: true });
   }
 
   function applyFilters() {
@@ -855,11 +1066,12 @@ window.CrmReportAnalytics = (function () {
     if (!validateDateRange()) return;
     hideDateRangeError();
     syncHubFilters();
-    var source = $('ra-filter-source');
-    var status = $('ra-filter-status');
-    state.tableSearch = (source && source.value) || '';
-    if (status && status.value) state.tableSearch = (status.value + ' ' + state.tableSearch).trim();
+    captureFiltersFromDom();
+    var status = state.filters.status || '';
+    state.tableSearch = state.filters.search || '';
+    if (status) state.tableSearch = (status + ' ' + state.tableSearch).trim();
     state.drillDown = null;
+    persistFilters(state.slug, state.filters);
     refreshReport();
   }
 
@@ -868,19 +1080,13 @@ window.CrmReportAnalytics = (function () {
     state.sortKey = null;
     state.sortDir = 'desc';
     state.drillDown = null;
-    ['ra-filter-status', 'ra-filter-source', 'ra-filter-employee'].forEach(function (id) {
-      var el = $(id);
-      if (el) el.value = '';
-    });
-    if (window.CrmReportFilterToolbar) {
-      window.CrmReportFilterToolbar.clearDateFields('ra-filter-from', 'ra-filter-to', 'ra-filter-date-error');
-    } else {
-      var from = $('ra-filter-from');
-      var to = $('ra-filter-to');
-      if (from) from.value = '';
-      if (to) to.value = '';
+    clearPersistedFilters(state.slug);
+    state.filters = emptyFilterState(true);
+    if (canSoftRefresh()) {
+      applyFiltersToDom(state.filters);
     }
     syncHubFilters();
+    persistFilters(state.slug, state.filters);
     refreshReport();
   }
 
@@ -903,16 +1109,21 @@ window.CrmReportAnalytics = (function () {
     iconsIn(tableEl);
   }
 
+  function isReportShellEvent(target) {
+    if (!target || !target.closest) return false;
+    return !!(target.closest('#ra-root') || target.closest('[data-report-in-shell]'));
+  }
+
   function bindGlobal() {
     if (state.bound) return;
     state.bound = true;
 
-    var drawer = $('report-analytics-drawer');
-    if (!drawer) return;
+    document.addEventListener('click', function (e) {
+      if (!isReportShellEvent(e.target)) return;
 
-    drawer.addEventListener('click', function (e) {
-      if (e.target.closest('#ra-back, [data-ra-close], .ra-drawer__backdrop, #ra-close')) {
-        closeDrawer();
+      if (e.target.closest('#ra-back, #ra-close, [data-ra-close]')) {
+        e.preventDefault();
+        closeReport();
         return;
       }
       if (e.target.closest('#ra-error-retry')) {
@@ -928,7 +1139,7 @@ window.CrmReportAnalytics = (function () {
         return;
       }
       if (e.target.closest('#ra-share')) {
-        var url = window.location.href.split('#')[0] + '#reports/' + (state.slug || '');
+        var url = window.location.origin + reportPathForSlug(state.slug || '');
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(url).then(function () { toast('Report link copied.', 'success'); });
         } else {
@@ -974,16 +1185,18 @@ window.CrmReportAnalytics = (function () {
       }
     });
 
-    drawer.addEventListener('input', function (e) {
+    document.addEventListener('input', function (e) {
+      if (!isReportShellEvent(e.target)) return;
       if (e.target && e.target.id === 'ra-table-search') {
         handleTableSearch(e.target.value);
       }
     });
 
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && drawer.classList.contains('open')) {
-        closeDrawer();
-      }
+      if (e.key !== 'Escape') return;
+      if (!state.slug || !document.getElementById('ra-root')) return;
+      if (!document.getElementById('page-container') || !document.getElementById('page-container').contains(document.getElementById('ra-root'))) return;
+      closeReport();
     });
   }
 
@@ -991,8 +1204,16 @@ window.CrmReportAnalytics = (function () {
 
   return {
     open: loadReport,
-    close: closeDrawer,
+    close: closeReport,
     refresh: refreshReport,
     getFilterQuery: getFilterQuery,
+    parseSlugFromPath: function (path) {
+      path = normalizePathname(path);
+      var match = path.match(/^\/reports\/([a-z0-9_-]+)$/i);
+      if (!match) return null;
+      var slug = match[1];
+      if (RESERVED_REPORT_SEGMENTS[slug]) return null;
+      return slug;
+    },
   };
 })();
