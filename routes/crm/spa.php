@@ -12,6 +12,7 @@ Route::middleware(['auth', 'rbac'])->group(function () {
         'assignment',
         'followups',
         'bulk',
+        'ocr-import',
         'ca-master',
         'recycle-bin',
         'settings',

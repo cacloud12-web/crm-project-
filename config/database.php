@@ -65,6 +65,22 @@ return [
             ]) : [],
         ],
 
+        'ca_reference' => [
+            'driver' => 'mysql',
+            'host' => env('CA_REFERENCE_DB_HOST', '127.0.0.1'),
+            'port' => env('CA_REFERENCE_DB_PORT', '3306'),
+            'database' => env('CA_REFERENCE_DB_DATABASE'),
+            'username' => env('CA_REFERENCE_DB_USERNAME'),
+            'password' => env('CA_REFERENCE_DB_PASSWORD'),
+            'unix_socket' => env('CA_REFERENCE_DB_SOCKET', ''),
+            'charset' => 'utf8mb4',
+            'collation' => 'utf8mb4_unicode_ci',
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'strict' => true,
+            'engine' => null,
+        ],
+
         'mysql_target' => [
             'driver' => 'mysql',
             'host' => env('MYSQL_HOST', env('DB_HOST', '127.0.0.1')),

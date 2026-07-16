@@ -35,7 +35,7 @@ class EmployeeResource extends JsonResource
             'status' => $this->status,
             'is_online' => (bool) ($presence['is_online'] ?? false),
             'last_seen_at' => $presence['last_seen_at'] ?? null,
-            'last_seen_human' => $presence['last_seen_human'] ?? 'Absent',
+            'last_seen_human' => $presence['last_seen_human'] ?? 'Offline',
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

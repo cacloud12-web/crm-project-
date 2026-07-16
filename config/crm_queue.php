@@ -48,6 +48,6 @@ return [
     |
     */
 
-    'auto_drain' => filter_var(env('CRM_QUEUE_AUTO_DRAIN', false), FILTER_VALIDATE_BOOL),
+    'auto_drain' => filter_var(env('CRM_QUEUE_AUTO_DRAIN', true), FILTER_VALIDATE_BOOL),
 
 ];

@@ -91,7 +91,7 @@ class EmployeePresenceService
         return [
             'is_online' => $online,
             'last_seen_at' => $iso,
-            'last_seen_human' => $online ? 'Present' : 'Absent',
+            'last_seen_human' => $online ? 'Online' : 'Offline',
         ];
     }
 

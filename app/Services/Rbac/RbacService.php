@@ -124,6 +124,13 @@ class RbacService
             'schedule_demo' => ['schedule_demo', 'create', 'edit'],
             'mark_completed' => ['mark_completed', 'edit'],
             'manage_settings' => ['manage_settings', 'edit'],
+            'upload' => ['upload', 'create', 'import'],
+            'create' => ['create', 'upload', 'import'],
+            'import' => ['import', 'upload', 'create'],
+            'process' => ['process', 'upload', 'create', 'import'],
+            'retry' => ['retry', 'edit'],
+            'download' => ['download', 'view', 'export'],
+            'view_all' => ['view_all'],
         ];
 
         $candidates = $aliases[$permission] ?? [$permission];
@@ -384,20 +391,29 @@ class RbacService
         }
 
         if (str_starts_with($path, 'ocr-documents')) {
-            if ($this->roleKey($request->user()) === 'employee') {
-                $permission = match ($method) {
-                    'POST' => 'edit',
-                    default => $this->methodPermission($method),
-                };
+            $permission = match (true) {
+                str_contains($path, '/retry') => 'retry',
+                str_contains($path, '/preview'),
+                str_contains($path, '/download'),
+                str_contains($path, '/original') => 'download',
+                $method === 'POST' => 'upload',
+                $method === 'DELETE' => 'delete',
+                in_array($method, ['PUT', 'PATCH'], true) => 'edit',
+                default => 'view',
+            };
 
-                return ['module' => 'leads', 'permission' => $permission];
-            }
-
-            return ['module' => 'ca_master', 'permission' => $this->methodPermission($method)];
+            return ['module' => 'ocr', 'permission' => $permission];
         }
 
         if (str_starts_with($path, 'activity-logs')) {
             return ['module' => 'activity', 'permission' => $method === 'GET' ? 'view' : 'reports'];
+        }
+
+        if (str_starts_with($path, 'attendance')) {
+            return [
+                'module' => 'attendance',
+                'permission' => $method === 'GET' ? 'view' : 'edit',
+            ];
         }
 
         if (str_starts_with($path, 'assignment-histories')) {
@@ -470,6 +486,10 @@ class RbacService
         }
 
         if (str_contains($path, 'bulk-import')) {
+            if ($method === 'DELETE') {
+                return ['module' => 'bulk', 'permission' => 'delete'];
+            }
+
             return ['module' => 'bulk', 'permission' => $method === 'GET' ? 'view' : 'import'];
         }
 

@@ -20,6 +20,7 @@ use App\Models\SmsSetting;
 use App\Models\WaMessageLog;
 use App\Models\WhatsAppCampaign;
 use App\Services\Assignment\EmployeeTargetService;
+use App\Services\Attendance\EmployeeAttendanceService;
 use App\Services\Cache\CrmCacheService;
 use App\Services\DemoConfirmation\DemoConfirmationService;
 use App\Services\FollowUp\ManagerFollowUpDashboardService;
@@ -32,6 +33,7 @@ use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+use Throwable;
 
 class DashboardService
 {
@@ -47,6 +49,7 @@ class DashboardService
         private readonly DashboardMetricsService $dashboardMetrics,
         private readonly DemoMetricsService $demoMetricsService,
         private readonly EmployeeTargetService $employeeTargetService,
+        private readonly EmployeeAttendanceService $attendanceService,
     ) {}
 
     private const PIPELINE_STATUSES = [
@@ -119,9 +122,14 @@ class DashboardService
             'to' => $range['to']->toDateString(),
         ];
 
-        return $this->cacheService->rememberDashboardMetrics($scopeKey, $filterKey, function () use ($employeeId, $range) {
+        $metrics = $this->cacheService->rememberDashboardMetrics($scopeKey, $filterKey, function () use ($employeeId, $range) {
             return $this->buildMetrics($employeeId, $range);
         });
+
+        // Attendance changes frequently; keep it outside the dashboard metrics cache.
+        $metrics['attendance_summary'] = $this->attendanceSummaryForViewer();
+
+        return $metrics;
     }
 
     /**
@@ -240,6 +248,23 @@ class DashboardService
             'activity_preview' => $this->activityPreview($employeeId, $from, $to),
             'generated_at' => now()->toIso8601String(),
         ];
+    }
+
+    /**
+     * @return array{date: string, total: int, present: int, absent: int, not_marked: int}|null
+     */
+    private function attendanceSummaryForViewer(): ?array
+    {
+        $user = auth()->user();
+        if (! $user) {
+            return null;
+        }
+
+        try {
+            return $this->attendanceService->summary($user);
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     /**

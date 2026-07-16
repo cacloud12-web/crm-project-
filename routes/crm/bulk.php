@@ -12,6 +12,7 @@ Route::middleware(['auth', 'rbac'])->group(function () {
     Route::get('ca-masters/bulk-import/sample.xlsx', [BulkCaMasterImportController::class, 'downloadSampleXlsx']);
     Route::get('ca-masters/bulk-import/history', [BulkCaMasterImportController::class, 'history']);
     Route::get('ca-masters/bulk-import/history/{id}', [BulkCaMasterImportController::class, 'show']);
+    Route::delete('ca-masters/bulk-import/history/{id}', [BulkCaMasterImportController::class, 'destroy']);
     Route::get('ca-masters/bulk-import/history/{id}/error-report.csv', [BulkCaMasterImportController::class, 'importErrorReport']);
     Route::get('ca-masters/bulk-import/history/{id}/reimport-template.csv', [BulkCaMasterImportController::class, 'importReimportTemplate']);
     Route::get('ca-masters/bulk-import/session/{sessionId}/error-report.csv', [BulkCaMasterImportController::class, 'sessionErrorReport']);

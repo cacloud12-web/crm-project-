@@ -540,18 +540,24 @@ class SalesListService
         }
 
         if ($received > 0 && $balance > 0) {
-            if ($expiryDate && Carbon::parse($expiryDate)->isPast()) {
+            if ($expiryDate && $this->isExpiryDatePast($expiryDate)) {
                 return 'Overdue';
             }
 
             return 'Partial';
         }
 
-        if ($expiryDate && Carbon::parse($expiryDate)->isPast() && $total > 0) {
+        if ($expiryDate && $this->isExpiryDatePast($expiryDate) && $total > 0) {
             return 'Overdue';
         }
 
         return 'Pending';
+    }
+
+    private function isExpiryDatePast(string $expiryDate): bool
+    {
+        // Overdue only after the expiry calendar day ends (expiry day itself remains Partial/Pending).
+        return Carbon::parse($expiryDate)->startOfDay()->lt(now()->startOfDay());
     }
 
     private function resolveManagerId(PurchasedCustomer $purchase): ?int

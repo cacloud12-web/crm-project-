@@ -22,7 +22,7 @@
 
   const REPORTS_PAGES = ['reports', 'analytics', 'activity', 'audit', 'duplicate-attempts'];
   const ASSIGNMENT_PAGES = ['assignment', 'employees'];
-  const CA_MASTER_PAGES = ['ca-master', 'bulk'];
+  const CA_MASTER_PAGES = ['ca-master', 'bulk', 'ocr-import'];
   const SETTINGS_PAGES = [
     'settings', 'sales-list', 'email-configuration', 'roles-permissions',
     'settings-email-templates', 'settings-whatsapp-templates', 'settings-google-api',
@@ -323,6 +323,7 @@
     '/follow-ups': 'followups',
     '/followups': 'followups',
     '/bulk': 'bulk',
+    '/ocr-import': 'ocr-import',
     '/settings': 'settings',
     '/settings/roles-permissions': 'roles-permissions',
     '/settings/email-templates': 'settings-email-templates',
@@ -354,6 +355,7 @@
     employees: '/employees',
     followups: '/follow-ups',
     bulk: '/bulk',
+    'ocr-import': '/ocr-import',
     settings: '/settings',
     'roles-permissions': '/settings/roles-permissions',
     'settings-email-templates': '/settings/email-templates',
@@ -433,7 +435,7 @@
     if (fabWrap) {
       var hideFab = pageId === 'dashboard' || pageId === 'settings' || pageId === 'demo-calendar'
         || pageId === 'sales-list' || pageId === 'email-configuration'
-        || pageId === 'ca-master' || pageId === 'bulk' || pageId === 'leads'
+        || pageId === 'ca-master' || pageId === 'bulk' || pageId === 'ocr-import' || pageId === 'leads'
         || pageId === 'reports' || pageId === 'analytics' || pageId === 'activity' || pageId === 'audit'
         || !!document.getElementById('ra-root');
       fabWrap.classList.toggle('hidden', hideFab);
@@ -960,6 +962,11 @@
       if (card._bulkCardBound) return;
       card._bulkCardBound = true;
       card.addEventListener('click', function () {
+        var navPage = card.getAttribute('data-nav-page');
+        if (navPage) {
+          if (typeof navigateTo === 'function') navigateTo(navPage);
+          return;
+        }
         var isImport = card.dataset.bulk === 'Bulk Import';
         var isAssign = card.dataset.bulk === 'Bulk Assignment';
         var isExport = card.dataset.bulk === 'Bulk Export';
@@ -1867,7 +1874,7 @@
     initNotificationUI();
     enhanceCrmTables();
     if (window.CA_CRM) CA_CRM.init();
-    startCrmPresenceHeartbeat();
+    // Client heartbeat disabled: Present/Absent is manual attendance, not login activity.
   });
 
   initSidebarState();

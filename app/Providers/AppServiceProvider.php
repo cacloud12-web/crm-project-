@@ -27,7 +27,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        $this->app->bind(
+            \App\Contracts\Ocr\OcrProcessorInterface::class,
+            \App\Services\Ocr\GoogleDocumentAiService::class,
+        );
     }
 
     /**
@@ -142,6 +145,7 @@ class AppServiceProvider extends ServiceProvider
         $this->registerUserActionLimiter('follow-up', 'follow_up');
         $this->registerUserActionLimiter('lead-action', 'lead_action');
         $this->registerUserActionLimiter('presence-heartbeat', 'presence_heartbeat');
+        $this->registerUserActionLimiter('ocr-upload', 'ocr_upload');
     }
 
     private function registerUserActionLimiter(string $name, string $configKey): void

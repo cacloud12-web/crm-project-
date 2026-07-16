@@ -16,7 +16,7 @@ class OcrDocumentPolicy
 
     public function viewAny(User $user): bool
     {
-        return $this->canModule($user, 'view');
+        return $this->canModule($user, 'view') || $this->canModule($user, 'view_all');
     }
 
     public function view(User $user, OcrDocument $ocrDocument): bool
@@ -26,7 +26,9 @@ class OcrDocumentPolicy
 
     public function create(User $user): bool
     {
-        return $this->canModule($user, 'create') || $this->canModule($user, 'edit');
+        return $this->canModule($user, 'upload')
+            || $this->canModule($user, 'create')
+            || $this->canModule($user, 'process');
     }
 
     public function update(User $user, OcrDocument $ocrDocument): bool
@@ -41,22 +43,36 @@ class OcrDocumentPolicy
 
     public function retry(User $user, OcrDocument $ocrDocument): bool
     {
-        return $ocrDocument->isFailed() && $this->canAccessRecord($user, $ocrDocument, 'edit');
+        return $ocrDocument->isFailed()
+            && (
+                $this->canAccessRecord($user, $ocrDocument, 'retry')
+                || $this->canAccessRecord($user, $ocrDocument, 'edit')
+            );
     }
 
     public function download(User $user, OcrDocument $ocrDocument): bool
     {
-        return $this->canAccessRecord($user, $ocrDocument, 'view');
+        return $this->canAccessRecord($user, $ocrDocument, 'download')
+            || $this->canAccessRecord($user, $ocrDocument, 'view');
     }
 
     private function canAccessRecord(User $user, OcrDocument $ocrDocument, string $permission): bool
     {
-        if (! $this->canModule($user, $permission)) {
+        if (! $this->canModule($user, $permission) && ! ($permission === 'view' && $this->canModule($user, 'view_all'))) {
             return false;
         }
 
+        if ($this->canModule($user, 'view_all') && in_array($permission, ['view', 'download'], true)) {
+            return true;
+        }
+
         if (! $ocrDocument->ca_id) {
-            return $ocrDocument->uploaded_by === $user->id;
+            $role = $this->rbacService->roleKey($user);
+            if (in_array($role, ['super_admin', 'admin', 'manager'], true)) {
+                return true;
+            }
+
+            return (int) $ocrDocument->uploaded_by === (int) $user->id;
         }
 
         try {
@@ -70,9 +86,6 @@ class OcrDocumentPolicy
 
     private function canModule(User $user, string $permission): bool
     {
-        $role = $this->rbacService->roleKey($user);
-        $module = $role === 'employee' ? 'leads' : 'ca_master';
-
-        return $this->rbacService->can($user, $module, $permission);
+        return $this->rbacService->can($user, 'ocr', $permission);
     }
 }

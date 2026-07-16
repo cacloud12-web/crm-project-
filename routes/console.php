@@ -17,7 +17,17 @@ Schedule::command('campaigns:process-scheduled')->everyMinute()->withoutOverlapp
 // Local dev: run `php artisan schedule:work` to process email:sync, campaigns, and auto-drain.
 // Production: add * * * * * php artisan schedule:run to cron.
 
-Schedule::command('queue:work --stop-when-empty --max-time=55 --tries=3')
+Schedule::command('queue:work --stop-when-empty --max-time=55 --tries=3 --timeout=300')
     ->everyMinute()
     ->withoutOverlapping()
-    ->when(fn () => (bool) config('crm_queue.auto_drain', false));
+    ->when(fn () => (bool) config('crm_queue.auto_drain', true) || config('queue.default') !== 'sync');
+
+// OCR delayed batch status checks + any leftover jobs.
+Schedule::command('queue:work --stop-when-empty --max-time=50 --tries=3 --timeout=300 --queue=default')
+    ->everyMinute()
+    ->withoutOverlapping('ocr-queue-drain')
+    ->when(fn () => config('queue.default') !== 'sync');
+
+Schedule::command('ocr:recover-stuck')
+    ->everyFiveMinutes()
+    ->withoutOverlapping('ocr-recover-stuck');

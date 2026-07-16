@@ -173,6 +173,23 @@ class BulkCaMasterImportController extends Controller
         );
     }
 
+    public function destroy(string $id): JsonResponse
+    {
+        try {
+            $this->historyService->destroy($id);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return ApiResponse::error('Import history record not found.', 404);
+        } catch (RuntimeException $e) {
+            return ApiResponse::error($e->getMessage(), 422);
+        } catch (Throwable $e) {
+            report($e);
+
+            return ApiResponse::error('Unable to delete import history record.', 500);
+        }
+
+        return ApiResponse::success(null, 'Import history record deleted');
+    }
+
     public function sessionErrorReport(string $sessionId): StreamedResponse
     {
         $rows = $this->importService->sessionErrorRows($sessionId);

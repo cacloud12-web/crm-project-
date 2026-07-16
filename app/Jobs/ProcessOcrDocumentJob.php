@@ -3,7 +3,7 @@
 namespace App\Jobs;
 
 use App\Exceptions\DocumentAi\DocumentAiConfigurationException;
-use App\Exceptions\DocumentAi\DocumentAiProcessingException;
+use App\Exceptions\Ocr\OcrProviderException;
 use App\Models\OcrDocument;
 use App\Services\Ocr\OcrDocumentService;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
@@ -11,17 +11,23 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Throwable;
 
+/**
+ * Entry job: routes OCR documents to online or batch processing.
+ */
 class ProcessOcrDocumentJob implements ShouldBeUnique, ShouldQueue
 {
     use Queueable;
 
     public int $tries = 3;
 
-    public int $timeout = 120;
+    public int $timeout = 180;
+
+    /** Unique lock expires so a crashed worker cannot block retries forever. */
+    public int $uniqueFor = 180;
 
     public function backoff(): array
     {
-        return [30, 60, 120];
+        return [15, 30, 60];
     }
 
     public function __construct(
@@ -38,7 +44,7 @@ class ProcessOcrDocumentJob implements ShouldBeUnique, ShouldQueue
         try {
             $ocrDocumentService->processQueuedDocument($this->ocrDocumentId);
         } catch (Throwable) {
-            // Failures are persisted on the OCR record; do not bubble to the upload HTTP response.
+            // Failures are persisted on the OCR record.
         }
     }
 
@@ -53,7 +59,7 @@ class ProcessOcrDocumentJob implements ShouldBeUnique, ShouldQueue
             return;
         }
 
-        if ($exception instanceof DocumentAiProcessingException && ! $exception->retryable) {
+        if ($exception instanceof OcrProviderException && ! $exception->retryable) {
             return;
         }
 
@@ -62,6 +68,7 @@ class ProcessOcrDocumentJob implements ShouldBeUnique, ShouldQueue
                 'status' => OcrDocument::STATUS_FAILED,
                 'error_code' => 'queue_failed',
                 'error_message' => 'The document could not be processed. Please verify the OCR configuration or retry.',
+                'processing_progress' => 'Failed',
                 'processed_at' => now(),
             ]);
         }

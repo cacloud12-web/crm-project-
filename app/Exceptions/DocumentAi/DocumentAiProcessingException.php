@@ -2,16 +2,16 @@
 
 namespace App\Exceptions\DocumentAi;
 
-use RuntimeException;
+use App\Exceptions\Ocr\OcrProviderException;
 
-class DocumentAiProcessingException extends RuntimeException
+class DocumentAiProcessingException extends OcrProviderException
 {
     public function __construct(
         string $message,
-        public readonly string $errorCode = 'processing_failed',
-        public readonly bool $retryable = true,
+        string $errorCode = 'processing_failed',
+        bool $retryable = true,
         ?\Throwable $previous = null,
     ) {
-        parent::__construct($message, 0, $previous);
+        parent::__construct($message, $errorCode, $retryable, 0, $previous);
     }
 }

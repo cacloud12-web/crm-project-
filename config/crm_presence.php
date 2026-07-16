@@ -8,7 +8,8 @@ return [
     |--------------------------------------------------------------------------
     |
     | An employee is considered online when users.last_seen_at is within this
-    | many minutes of "now". Used by managers in Assignment presence UI.
+    | many minutes of "now". Retained for login/logout last_seen tracking only;
+    | Assignment no longer displays Present/Absent from heartbeat presence.
     |
     */
     'online_window_minutes' => max(1, (int) env('CRM_EMPLOYEE_ONLINE_WINDOW_MINUTES', 5)),

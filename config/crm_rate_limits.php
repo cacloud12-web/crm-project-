@@ -33,4 +33,9 @@ return [
         'decay_minutes' => (int) env('CRM_RATE_PRESENCE_HEARTBEAT_DECAY', 1),
     ],
 
+    'ocr_upload' => [
+        'max_attempts' => (int) env('CRM_RATE_OCR_UPLOAD_MAX', 10),
+        'decay_minutes' => (int) env('CRM_RATE_OCR_UPLOAD_DECAY', 1),
+    ],
+
 ];

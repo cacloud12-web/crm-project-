@@ -8,6 +8,7 @@ $crmRoutes = [
     'auth',
     'spa',
     'dashboard',
+    'attendance',
     'leads',
     'bulk',
     'assignment',

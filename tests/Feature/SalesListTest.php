@@ -86,7 +86,7 @@ class SalesListTest extends TestCase
             'mobile_no' => '9111111111',
             'city_name' => 'Delhi',
             'plan_purchased' => 'CRM Half-Yearly',
-            'purchase_date' => '2026-01-15',
+            'purchase_date' => now()->subMonths(2)->toDateString(),
             'cooling_period_days' => 7,
             'total_amount' => 15000,
             'amount_received' => 5000,
@@ -101,7 +101,10 @@ class SalesListTest extends TestCase
         $this->assertSame('After Name', $entry->customer_name);
         $this->assertSame(10000.0, (float) $entry->balance_amount);
         $this->assertSame('Partial', $entry->payment_status);
-        $this->assertSame('2026-07-15', $entry->expiry_date?->toDateString());
+        $this->assertSame(
+            now()->subMonths(2)->addMonths(6)->toDateString(),
+            $entry->expiry_date?->toDateString()
+        );
 
         $this->assertDatabaseHas('sales_list_edit_histories', [
             'sales_list_entry_id' => $entry->id,

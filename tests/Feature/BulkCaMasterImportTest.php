@@ -499,4 +499,128 @@ class BulkCaMasterImportTest extends TestCase
                 ],
             ]);
     }
+
+    public function test_admin_can_persistently_delete_import_history_without_removing_leads(): void
+    {
+        $this->actingAsAdmin();
+        $ts = (string) microtime(true);
+
+        $csv = "CA Name,Firm Name,Email\n";
+        $csv .= '"Delete Hist CA '.$ts.'","Delete Hist Firm '.$ts.'","delete.hist.'.$ts.'@test.local"'."\n";
+        $file = UploadedFile::fake()->createWithContent('delete-history.csv', $csv);
+
+        $parse = $this->post('/ca-masters/bulk-import/parse', ['file' => $file], [
+            'Accept' => 'application/json',
+        ])->assertOk();
+
+        $sessionId = $parse->json('data.session_id');
+        $mapping = [
+            'ca_name' => 'CA Name',
+            'firm_name' => 'Firm Name',
+            'email_id' => 'Email',
+        ];
+
+        $this->postJson('/ca-masters/bulk-import/validate', [
+            'session_id' => $sessionId,
+            'mapping' => $mapping,
+        ])->assertOk();
+
+        $import = $this->postJson('/ca-masters/bulk-import', [
+            'session_id' => $sessionId,
+            'mapping' => $mapping,
+        ])->assertOk();
+
+        $bulkActionId = (int) $import->json('data.bulk_action_id');
+        $this->assertGreaterThan(0, $bulkActionId);
+
+        $other = DB::table('bulk_actions')->insertGetId([
+            'action_type' => 'ca_master_import',
+            'file_name' => 'keep-other-'.$ts.'.csv',
+            'total_records' => 1,
+            'processed_records' => 1,
+            'success_records' => 1,
+            'duplicate_records' => 0,
+            'skipped_records' => 0,
+            'failed_records' => 0,
+            'initiated_by' => null,
+            'imported_by' => 'admin@ca.local',
+            'status' => 'Completed',
+            'started_at' => now(),
+            'completed_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ], 'bulk_action_id');
+
+        $this->assertDatabaseHas('bulk_actions', ['bulk_action_id' => $bulkActionId]);
+        $this->assertDatabaseHas('ca_masters', [
+            'email_id' => 'delete.hist.'.$ts.'@test.local',
+            'bulk_action_id' => $bulkActionId,
+        ]);
+
+        $delete = $this->deleteJson('/ca-masters/bulk-import/history/'.$bulkActionId);
+        $delete->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('message', 'Import history record deleted');
+
+        $this->assertDatabaseMissing('bulk_actions', ['bulk_action_id' => $bulkActionId]);
+        $this->assertDatabaseMissing('bulk_action_logs', ['bulk_action_id' => $bulkActionId]);
+        $this->assertDatabaseHas('bulk_actions', ['bulk_action_id' => $other]);
+
+        $lead = CaMaster::query()->where('email_id', 'delete.hist.'.$ts.'@test.local')->first();
+        $this->assertNotNull($lead);
+        $this->assertNull($lead->bulk_action_id);
+
+        $history = $this->getJson('/ca-masters/bulk-import/history')->assertOk();
+        $ids = collect($history->json('data'))->pluck('bulk_action_id')->map(fn ($id) => (int) $id);
+        $this->assertFalse($ids->contains($bulkActionId));
+        $this->assertTrue($ids->contains((int) $other));
+
+        $ops = $this->getJson('/ca-masters/bulk-operations/history')->assertOk();
+        $opIds = collect($ops->json('data.items') ?? $ops->json('data') ?? [])
+            ->pluck('bulk_action_id')
+            ->map(fn ($id) => (int) $id);
+        $this->assertFalse($opIds->contains($bulkActionId));
+
+        $this->deleteJson('/ca-masters/bulk-import/history/'.$bulkActionId)
+            ->assertNotFound();
+    }
+
+    public function test_employee_cannot_delete_import_history(): void
+    {
+        $admin = $this->actingAsAdmin();
+
+        $bulkActionId = DB::table('bulk_actions')->insertGetId([
+            'action_type' => 'ca_master_import',
+            'file_name' => 'employee-deny-'.microtime(true).'.csv',
+            'total_records' => 0,
+            'processed_records' => 0,
+            'success_records' => 0,
+            'duplicate_records' => 0,
+            'skipped_records' => 0,
+            'failed_records' => 0,
+            'initiated_by' => null,
+            'imported_by' => $admin->email,
+            'status' => 'Completed',
+            'started_at' => now(),
+            'completed_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ], 'bulk_action_id');
+
+        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $this->actingAs($employee);
+
+        $this->deleteJson('/ca-masters/bulk-import/history/'.$bulkActionId)
+            ->assertForbidden();
+
+        $this->assertDatabaseHas('bulk_actions', ['bulk_action_id' => $bulkActionId]);
+    }
+
+    public function test_delete_missing_import_history_returns_404(): void
+    {
+        $this->actingAsAdmin();
+
+        $this->deleteJson('/ca-masters/bulk-import/history/999999991')
+            ->assertNotFound();
+    }
 }

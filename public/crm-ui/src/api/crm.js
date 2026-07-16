@@ -414,6 +414,17 @@ window.CA_CRM = (function () {
 
   function apiFetch(url, options) {
     options = options || {};
+    if (options.credentials == null) {
+      options.credentials = 'same-origin';
+    }
+    // Never force multipart Content-Type — browser must set boundary for FormData.
+    if (typeof FormData !== 'undefined' && options.body instanceof FormData && options.headers) {
+      var cleaned = Object.assign({}, options.headers);
+      Object.keys(cleaned).forEach(function (key) {
+        if (String(key).toLowerCase() === 'content-type') delete cleaned[key];
+      });
+      options.headers = cleaned;
+    }
     options.headers = Object.assign({
       'X-CSRF-TOKEN': csrfToken(),
       'Accept': 'application/json',
@@ -434,6 +445,12 @@ window.CA_CRM = (function () {
       if (response.status === 401) {
         window.location.href = '/login';
         throw new Error('Session expired. Please sign in again.');
+      }
+      if (response.status === 419) {
+        throw Object.assign(new Error('The upload request expired. Please refresh the page and retry.'), { status: 419 });
+      }
+      if (response.status === 413) {
+        throw Object.assign(new Error('The file is too large for the server. Please use a smaller file or ask your host to raise upload limits.'), { status: 413 });
       }
       return response.text().then(function (text) {
         var body = {};
@@ -6103,6 +6120,347 @@ window.CA_CRM = (function () {
     '</div>';
   }
 
+  function canManageAttendance() {
+    if (isEmployeeUser()) return false;
+    if (window.CA_RBAC && typeof CA_RBAC.can === 'function') {
+      return CA_RBAC.can('attendance', 'view') || CA_RBAC.can('attendance', 'edit');
+    }
+    var role = String((window.__CRM_USER__ || {}).role || '').toLowerCase();
+    return role === 'super_admin' || role === 'admin' || role === 'manager';
+  }
+
+  function canEditAttendance() {
+    if (!canManageAttendance()) return false;
+    if (window.CA_RBAC && typeof CA_RBAC.can === 'function') {
+      return CA_RBAC.can('attendance', 'edit');
+    }
+    return true;
+  }
+
+  var attendanceUiState = {
+    date: '',
+    search: '',
+    page: 1,
+    perPage: 25,
+    items: [],
+    selected: {},
+    summary: null,
+    loading: false,
+    bound: false,
+  };
+
+  function attendanceTodayIso() {
+    var d = new Date();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return d.getFullYear() + '-' + m + '-' + day;
+  }
+
+  function renderAttendanceSummaryStrip(el, summary) {
+    if (!el) return;
+    summary = summary || {};
+    el.innerHTML =
+      '<span><strong>Total:</strong> ' + (summary.total ?? 0) + '</span>' +
+      '<span class="attendance-chip attendance-chip--present"><strong>Present:</strong> ' + (summary.present ?? 0) + '</span>' +
+      '<span class="attendance-chip attendance-chip--absent"><strong>Absent:</strong> ' + (summary.absent ?? 0) + '</span>' +
+      '<span class="attendance-chip attendance-chip--neutral"><strong>Not Marked:</strong> ' + (summary.not_marked ?? 0) + '</span>';
+  }
+
+  function renderManagerAttendancePanel(summary) {
+    var panel = document.getElementById('mgr-attendance-panel');
+    if (!panel) return;
+    if (!canManageAttendance() || !summary) {
+      panel.classList.add('hidden');
+      panel.innerHTML = '';
+      return;
+    }
+    panel.classList.remove('hidden');
+    panel.innerHTML =
+      '<div class="mgr-panel-head">' +
+        '<div>' +
+          '<h3 class="mgr-panel-title"><i data-lucide="clipboard-check" class="h-5 w-5 text-brand"></i> Today’s Attendance</h3>' +
+        '</div>' +
+        '<button type="button" class="btn-primary btn-sm" id="mgr-manage-attendance-btn">Manage Attendance</button>' +
+      '</div>' +
+      '<div class="attendance-summary-strip" id="mgr-attendance-summary">' +
+        '<span><strong>Total:</strong> ' + (summary.total ?? 0) + '</span>' +
+        '<span class="attendance-chip attendance-chip--present"><strong>Present:</strong> ' + (summary.present ?? 0) + '</span>' +
+        '<span class="attendance-chip attendance-chip--absent"><strong>Absent:</strong> ' + (summary.absent ?? 0) + '</span>' +
+        '<span class="attendance-chip attendance-chip--neutral"><strong>Not Marked:</strong> ' + (summary.not_marked ?? 0) + '</span>' +
+      '</div>';
+    var btn = document.getElementById('mgr-manage-attendance-btn');
+    if (btn && !btn._attendanceBound) {
+      btn._attendanceBound = true;
+      btn.addEventListener('click', function () { openManageAttendanceModal(); });
+    }
+  }
+
+  function bindAttendanceModalControls() {
+    if (attendanceUiState.bound) return;
+    attendanceUiState.bound = true;
+    var dateInput = document.getElementById('attendance-date-input');
+    var searchInput = document.getElementById('attendance-search-input');
+    var selectAll = document.getElementById('attendance-select-all');
+    var tbody = document.getElementById('attendance-table-body');
+
+    if (dateInput) {
+      dateInput.addEventListener('change', function () {
+        attendanceUiState.date = dateInput.value || attendanceTodayIso();
+        attendanceUiState.page = 1;
+        loadAttendanceModalList();
+      });
+    }
+    if (searchInput) {
+      var searchTimer = null;
+      searchInput.addEventListener('input', function () {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(function () {
+          attendanceUiState.search = searchInput.value || '';
+          attendanceUiState.page = 1;
+          loadAttendanceModalList();
+        }, 250);
+      });
+    }
+    if (selectAll) {
+      selectAll.addEventListener('change', function () {
+        var checked = !!selectAll.checked;
+        attendanceUiState.selected = {};
+        (attendanceUiState.items || []).forEach(function (row) {
+          if (checked) attendanceUiState.selected[String(row.employee_id)] = true;
+        });
+        renderAttendanceTableRows();
+      });
+    }
+    if (tbody && !tbody._attendanceBound) {
+      tbody._attendanceBound = true;
+      tbody.addEventListener('click', function (e) {
+        var markBtn = e.target.closest('[data-attendance-mark]');
+        if (markBtn) {
+          e.preventDefault();
+          markSingleAttendance(markBtn.getAttribute('data-attendance-employee'), markBtn.getAttribute('data-attendance-mark'), markBtn);
+          return;
+        }
+        var check = e.target.closest('.attendance-row-check');
+        if (check) {
+          var id = check.getAttribute('data-employee-id');
+          if (!id) return;
+          if (check.checked) attendanceUiState.selected[id] = true;
+          else delete attendanceUiState.selected[id];
+        }
+      });
+    }
+  }
+
+  function openManageAttendanceModal() {
+    if (!canManageAttendance()) {
+      toast('You do not have permission to manage attendance.', 'warning');
+      return;
+    }
+    bindAttendanceModalControls();
+    attendanceUiState.date = attendanceUiState.date || attendanceTodayIso();
+    attendanceUiState.page = 1;
+    attendanceUiState.selected = {};
+    var dateInput = document.getElementById('attendance-date-input');
+    if (dateInput) {
+      dateInput.value = attendanceUiState.date;
+      dateInput.max = attendanceTodayIso();
+    }
+    var searchInput = document.getElementById('attendance-search-input');
+    if (searchInput) searchInput.value = attendanceUiState.search || '';
+    openModal(document.getElementById('modal-manage-attendance'));
+    loadAttendanceModalList();
+    icons();
+  }
+
+  function loadAttendanceModalList() {
+    if (!canManageAttendance()) return;
+    attendanceUiState.loading = true;
+    var tbody = document.getElementById('attendance-table-body');
+    if (tbody) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-slate-500 py-4">Loading attendance…</td></tr>';
+    }
+    var qs = new URLSearchParams({
+      date: attendanceUiState.date || attendanceTodayIso(),
+      search: attendanceUiState.search || '',
+      page: String(attendanceUiState.page || 1),
+      per_page: String(attendanceUiState.perPage || 25),
+    });
+    apiFetch('/attendance?' + qs.toString()).then(function (body) {
+      var data = body.data || {};
+      attendanceUiState.items = data.items || [];
+      attendanceUiState.summary = data.summary || null;
+      attendanceUiState.loading = false;
+      renderAttendanceSummaryStrip(document.getElementById('attendance-modal-summary'), attendanceUiState.summary);
+      renderAttendanceTableRows();
+      renderAttendancePagination(data.pagination || {});
+      if (attendanceUiState.summary) {
+        renderManagerAttendancePanel(attendanceUiState.summary);
+        if (window.dashboardMetrics) window.dashboardMetrics.attendance_summary = attendanceUiState.summary;
+      }
+      icons();
+    }).catch(function (err) {
+      attendanceUiState.loading = false;
+      if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-rose-600 py-4">' + escapeHtml(err.message || 'Unable to load attendance') + '</td></tr>';
+      }
+    });
+  }
+
+  function renderAttendanceTableRows() {
+    var tbody = document.getElementById('attendance-table-body');
+    if (!tbody) return;
+    var canEdit = canEditAttendance();
+    var items = attendanceUiState.items || [];
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-slate-500 py-4">No employees found for this date.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items.map(function (row) {
+      var id = String(row.employee_id);
+var status = row.status || '';
+
+var statusClass = status === 'present'
+  ? 'is-present'
+  : (status === 'absent' ? 'is-absent' : 'is-unmarked');
+
+var statusDisplay = status === 'present'
+  ? 'P'
+  : (status === 'absent'
+      ? 'A'
+      : (row.status_label || 'Not Marked'));
+
+var checked = attendanceUiState.selected[id] ? ' checked' : '';
+
+var markHtml = canEdit
+  ? '<div class="attendance-mark-group" role="group" aria-label="Mark attendance for ' + escapeHtml(row.name || '') + '">' +
+      '<button type="button" class="attendance-mark-btn' +
+        (status === 'present' ? ' is-selected is-present' : '') +
+        '" data-attendance-employee="' + id +
+        '" data-attendance-mark="present" title="Present">P</button>' +
+
+      '<button type="button" class="attendance-mark-btn' +
+        (status === 'absent' ? ' is-selected is-absent' : '') +
+        '" data-attendance-employee="' + id +
+        '" data-attendance-mark="absent" title="Absent">A</button>' +
+    '</div>'
+  : '<span class="text-slate-500">' +
+      escapeHtml(statusDisplay) +
+    '</span>';
+
+return '<tr class="attendance-row ' + statusClass + '">' +
+
+  '<td class="attendance-checkbox-cell">' +
+    '<input type="checkbox" class="attendance-row-check" data-employee-id="' +
+      id + '"' + checked + (canEdit ? '' : ' disabled') + ' />' +
+  '</td>' +
+
+  '<td class="attendance-employee-cell">' +
+    '<strong>' + escapeHtml(row.name || '—') + '</strong>' +
+  '</td>' +
+
+  '<td class="attendance-status-cell">' +
+    '<span class="attendance-status-pill ' + statusClass + '">' +
+      escapeHtml(statusDisplay) +
+    '</span>' +
+  '</td>' +
+
+  '<td class="attendance-mark-cell">' +
+    markHtml +
+  '</td>' +
+
+'</tr>';
+    }).join('');
+  }
+
+  function renderAttendancePagination(pagination) {
+    var slot = document.getElementById('attendance-pagination');
+    if (!slot) return;
+    var page = pagination.page || 1;
+    var last = pagination.last_page || 1;
+    var total = pagination.total || 0;
+    if (last <= 1) {
+      slot.innerHTML = '<span class="text-slate-500 text-sm">' + total + ' employee' + (total === 1 ? '' : 's') + '</span>';
+      return;
+    }
+    slot.innerHTML =
+      '<button type="button" class="btn-secondary btn-xs" id="attendance-page-prev"' + (page <= 1 ? ' disabled' : '') + '>Previous</button>' +
+      '<span class="text-sm text-slate-600">Page ' + page + ' / ' + last + ' · ' + total + '</span>' +
+      '<button type="button" class="btn-secondary btn-xs" id="attendance-page-next"' + (page >= last ? ' disabled' : '') + '>Next</button>';
+    var prev = document.getElementById('attendance-page-prev');
+    var next = document.getElementById('attendance-page-next');
+    if (prev) prev.addEventListener('click', function () {
+      if (attendanceUiState.page > 1) {
+        attendanceUiState.page -= 1;
+        loadAttendanceModalList();
+      }
+    });
+    if (next) next.addEventListener('click', function () {
+      if (attendanceUiState.page < last) {
+        attendanceUiState.page += 1;
+        loadAttendanceModalList();
+      }
+    });
+  }
+
+  function markSingleAttendance(employeeId, status, btn) {
+    if (!canEditAttendance() || !employeeId || !status) return;
+    if (btn) btn.disabled = true;
+    apiFetch('/attendance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        employee_id: parseInt(employeeId, 10),
+        status: status,
+        date: attendanceUiState.date || attendanceTodayIso(),
+      }),
+    }).then(function () {
+      toast('Attendance saved', 'success');
+      loadAttendanceModalList();
+      refreshAttendanceDashboardSummary();
+    }).catch(function (err) {
+      if (btn) btn.disabled = false;
+      toast(err.message || 'Unable to save attendance', 'error');
+    });
+  }
+
+  function bulkMarkAttendance(status) {
+    if (!canEditAttendance()) return;
+    var ids = Object.keys(attendanceUiState.selected || {}).map(function (id) { return parseInt(id, 10); }).filter(Boolean);
+    if (!ids.length) {
+      toast('Select at least one employee first.', 'warning');
+      return;
+    }
+    var label = status === 'present' ? 'Present' : 'Absent';
+    if (!window.confirm('Mark ' + ids.length + ' selected employee(s) as ' + label + '?')) return;
+    apiFetch('/attendance/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        employee_ids: ids,
+        status: status,
+        date: attendanceUiState.date || attendanceTodayIso(),
+      }),
+    }).then(function (body) {
+      toast('Attendance updated for ' + ((body.data || {}).updated || ids.length) + ' employee(s)', 'success');
+      attendanceUiState.selected = {};
+      loadAttendanceModalList();
+      refreshAttendanceDashboardSummary();
+    }).catch(function (err) {
+      toast(err.message || 'Unable to update attendance', 'error');
+    });
+  }
+
+  function refreshAttendanceDashboardSummary() {
+    if (!canManageAttendance()) return;
+    apiFetch('/attendance/summary?date=' + encodeURIComponent(attendanceTodayIso())).then(function (body) {
+      var summary = body.data || null;
+      if (summary) {
+        renderManagerAttendancePanel(summary);
+        if (window.dashboardMetrics) window.dashboardMetrics.attendance_summary = summary;
+      }
+    }).catch(function () { /* keep existing panel */ });
+  }
+
   function paintManagerDashboard(m) {
     var crmUser = window.__CRM_USER__ || {};
     var displayName = crmUser.name || 'User';
@@ -6128,6 +6486,7 @@ window.CA_CRM = (function () {
     ensureManagerEmployeeFilter();
     renderOrganizationTargetPanel(metrics.organization_target || m.organization_target);
     renderManagerEmployeeProductivityPanel(employeeFilter);
+    renderManagerAttendancePanel(metrics.attendance_summary || m.attendance_summary || null);
 
     renderDashboardKpiSections('mgr-kpi-sections', ADMIN_DASHBOARD_KPI_SECTIONS, function (card) {
       return m[card.key];
@@ -7826,12 +8185,16 @@ window.CA_CRM = (function () {
     var secondary = document.getElementById('cam-secondary-views');
     var masters = document.getElementById('cam-secondary-masters');
     var bulk = document.getElementById('cam-secondary-bulk');
+    var ocr = document.getElementById('cam-secondary-ocr');
     var title = document.getElementById('cam-secondary-title');
     if (primary) primary.classList.add('hidden');
     if (secondary) secondary.classList.remove('hidden');
     if (masters) masters.classList.toggle('hidden', view !== 'masters');
     if (bulk) bulk.classList.toggle('hidden', view !== 'bulk');
-    if (title) title.textContent = view === 'masters' ? 'Master Tables' : 'Bulk Tools';
+    if (ocr) ocr.classList.toggle('hidden', view !== 'ocr');
+    if (title) {
+      title.textContent = view === 'masters' ? 'Master Tables' : (view === 'ocr' ? 'OCR Import' : 'Bulk Tools');
+    }
     var hub = document.getElementById('cam-hub');
     if (hub) hub.dataset.camSecondary = view || '';
     if (view === 'bulk') {
@@ -7846,6 +8209,9 @@ window.CA_CRM = (function () {
     }
     if (view === 'masters' && typeof renderMasterTables === 'function') {
       renderMasterTables();
+    }
+    if (view === 'ocr' && window.CrmOcrImportPage && typeof window.CrmOcrImportPage.mountIntoSecondary === 'function') {
+      window.CrmOcrImportPage.mountIntoSecondary();
     }
     icons();
   }
@@ -12662,7 +13028,7 @@ window.CA_CRM = (function () {
       }
     });
 
-    if (page.dataset.camSecondary === 'masters' || page.dataset.camSecondary === 'bulk') {
+    if (page.dataset.camSecondary === 'masters' || page.dataset.camSecondary === 'bulk' || page.dataset.camSecondary === 'ocr') {
       showCamSecondaryView(page.dataset.camSecondary);
     }
 
@@ -17002,18 +17368,42 @@ window.CA_CRM = (function () {
       icons();
       return;
     }
-    if (pageId === 'ca-master' || pageId === 'bulk') {
-      if (pageId === 'bulk' || pageId === 'ca-master') window._leadSegmentFilter = 'all';
+    if (pageId === 'ca-master' || pageId === 'bulk' || pageId === 'ocr-import') {
+      if (pageId === 'bulk' || pageId === 'ca-master' || pageId === 'ocr-import') window._leadSegmentFilter = 'all';
       var camHubEarly = document.getElementById('cam-hub');
       var camSecondaryEarly = camHubEarly ? camHubEarly.getAttribute('data-cam-secondary') : '';
+      /* Invalidate prior Master Data/Bulk async paints so they cannot wipe OCR / secondary views. */
+      window._camPaintGeneration = (window._camPaintGeneration || 0) + 1;
+      var paintGeneration = window._camPaintGeneration;
+      var paintPageId = pageId;
+
+      function isCurrentCamPaint() {
+        return paintGeneration === window._camPaintGeneration && !!document.getElementById('cam-hub');
+      }
 
       function paintCaMasterUi(reason) {
+        if (!isCurrentCamPaint()) return;
+        /* Re-read secondary flag from live DOM — avoids stale closures after navigation. */
+        var hubNow = document.getElementById('cam-hub');
+        var secondaryNow = hubNow ? (hubNow.getAttribute('data-cam-secondary') || '') : '';
+        var wantOcr = paintPageId === 'ocr-import' || secondaryNow === 'ocr' || camSecondaryEarly === 'ocr';
+        var wantBulk = paintPageId === 'bulk' || secondaryNow === 'bulk' || camSecondaryEarly === 'bulk';
+        var wantMasters = secondaryNow === 'masters' || camSecondaryEarly === 'masters';
         try {
-          if (!document.getElementById('cam-hub')) return;
-          resetCamListingDefaults();
+          if (!hubNow) return;
+          if (!wantOcr) resetCamListingDefaults();
           initCaMasterPage();
           applyMasterDataRbac();
-          if (camSecondaryEarly === 'bulk' || pageId === 'bulk') {
+          if (!isCurrentCamPaint()) return;
+          if (wantOcr) {
+            showCamSecondaryView('ocr');
+            try { renderCamKpis(); } catch (kpiOcrErr) {
+              console.error('Master Data toolbar paint failed (' + reason + ')', kpiOcrErr);
+            }
+            icons();
+            return;
+          }
+          if (wantBulk) {
             showCamSecondaryView('bulk');
             var bulkWizard = document.getElementById('bulk-import-wizard');
             if (bulkWizard && bulkWizard.classList.contains('hidden') && typeof window.resetBulkImportWizard === 'function') {
@@ -17025,7 +17415,7 @@ window.CA_CRM = (function () {
             icons();
             return;
           }
-          if (camSecondaryEarly === 'masters') {
+          if (wantMasters) {
             showCamSecondaryView('masters');
             try { renderMasterTables(); } catch (masterErr) {
               console.error('Master tables paint failed (' + reason + ')', masterErr);
@@ -17059,9 +17449,16 @@ window.CA_CRM = (function () {
           icons();
         } catch (paintErr) {
           console.error('Master Data paint failed (' + reason + ')', paintErr);
+          if (!isCurrentCamPaint()) return;
           try {
-            showCamPrimaryViews();
-            if (document.getElementById('ca-master-data-table')) renderCaMasterTable();
+            if (wantOcr) {
+              showCamSecondaryView('ocr');
+            } else if (wantBulk) {
+              showCamSecondaryView('bulk');
+            } else {
+              showCamPrimaryViews();
+              if (document.getElementById('ca-master-data-table')) renderCaMasterTable();
+            }
           } catch (tableErr) {
             console.error('Master Data table fallback failed', tableErr);
           }
@@ -17072,15 +17469,16 @@ window.CA_CRM = (function () {
         }
       }
 
-      /* Paint toolbar + table immediately — do not wait for lookups/ensureMasterData. */
-      if (pageId === 'ca-master' && camHubEarly) {
+      /* Paint immediately for Master Data, Bulk Tools, and OCR Import. */
+      if (camHubEarly) {
         paintCaMasterUi('early');
       }
 
       ensureMasterData(function () {
+        if (!isCurrentCamPaint()) return;
         function finishCaMasterPage() {
-          if (pageId === 'ca-master') {
-            /* Refresh hub attribute in case DOM was replaced; keep primary All Firms path. */
+          if (!isCurrentCamPaint()) return;
+          if (paintPageId === 'ca-master') {
             camSecondaryEarly = (document.getElementById('cam-hub') || {}).getAttribute
               ? document.getElementById('cam-hub').getAttribute('data-cam-secondary')
               : camSecondaryEarly;
@@ -17357,14 +17755,11 @@ window.CA_CRM = (function () {
     var availClass = (emp.availability || '').toLowerCase().replace(/\s+/g, '-');
     var disabled = emp.assignable === false ? ' bulk-assign-emp-disabled' : '';
     var disabledAttr = emp.assignable === false ? ' disabled' : '';
-    var presence = (window.CAEmployeePresence && typeof window.CAEmployeePresence.indicatorHtml === 'function')
-      ? window.CAEmployeePresence.indicatorHtml(!!(emp && emp.is_online === true))
-      : '';
     return '<label class="bulk-assign-emp-card' + (selected ? ' is-selected' : '') + disabled + '">' +
       '<input type="checkbox" class="bulk-assign-emp-check" data-employee-id="' + emp.employee_id + '"' + (selected ? ' checked' : '') + disabledAttr + ' />' +
       '<div class="bulk-assign-emp-avatar">' + escapeHtml((emp.name || '?').charAt(0).toUpperCase()) + '</div>' +
       '<div class="bulk-assign-emp-body">' +
-        '<p class="bulk-assign-emp-name">' + presence + '<span class="bulk-assign-emp-name-text">' + escapeHtml(emp.name || '—') + '</span></p>' +
+        '<p class="bulk-assign-emp-name"><span class="bulk-assign-emp-name-text">' + escapeHtml(emp.name || '—') + '</span></p>' +
         '<p class="bulk-assign-emp-role">' + escapeHtml(emp.designation || '—') + ' · ' + escapeHtml(emp.city || '—') + '</p>' +
         '<div class="bulk-assign-emp-stats">' +
           '<span>Today: ' + (emp.assigned_today || 0) + '</span>' +
@@ -19261,12 +19656,29 @@ window.CA_CRM = (function () {
       toast('You do not have permission to delete import history.', 'warning');
       return;
     }
-    if (!window.confirm('Delete this bulk import history record? This cannot be undone.')) return;
-    window._bulkOperationsHistoryCache = (window._bulkOperationsHistoryCache || []).filter(function (item) {
-      return String(item.bulk_action_id) !== String(bulkActionId);
-    });
-    renderBulkOperationsHistoryTable(window._bulkOperationsHistoryCache);
-    toast('Import history record deleted.', 'success');
+    if (!window.confirm('Delete this bulk import history record? Imported leads will be kept. This cannot be undone.')) return;
+
+    var deleteBtn = document.querySelector('[data-bulk-history-delete="' + bulkActionId + '"]');
+    if (deleteBtn) deleteBtn.disabled = true;
+
+    apiFetch('/ca-masters/bulk-import/history/' + encodeURIComponent(bulkActionId), { method: 'DELETE' })
+      .then(function () {
+        var remainingOnPage = (window._bulkOperationsHistoryCache || []).filter(function (item) {
+          return String(item.bulk_action_id) !== String(bulkActionId);
+        }).length;
+        if (remainingOnPage === 0 && window.CA_LISTING_SEARCH && typeof CA_LISTING_SEARCH.getState === 'function') {
+          var st = CA_LISTING_SEARCH.getState('bulk_operations') || {};
+          if ((st.page || 1) > 1 && typeof CA_LISTING_SEARCH.setState === 'function') {
+            CA_LISTING_SEARCH.setState('bulk_operations', { page: st.page - 1 });
+          }
+        }
+        toast('Import history record deleted.', 'success');
+        loadBulkOperationsHistory();
+      })
+      .catch(function (err) {
+        if (deleteBtn) deleteBtn.disabled = false;
+        toast((err && err.message) || 'Unable to delete import history.', 'error');
+      });
   }
 
   function bindBulkHistoryTableActions(el) {
@@ -23358,3 +23770,11 @@ window.CA_CRM = (function () {
     mapEmployeeRecord: mapEmployeeRecord,
   };
 })();
+
+/* Compatibility alias used by OCR Import / OCR panel modules. */
+window.apiFetch = function (url, options) {
+  if (window.CA_CRM && typeof window.CA_CRM.apiFetch === 'function') {
+    return window.CA_CRM.apiFetch(url, options);
+  }
+  return Promise.reject(new Error('CRM API is not ready yet. Please refresh the page.'));
+};

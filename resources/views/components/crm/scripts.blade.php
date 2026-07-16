@@ -4,7 +4,6 @@
 <script>window.__CRM_GOOGLE_MAPS_KEY__ = @json(config('services.google.maps_js_api_key'));</script>
 <script src="{{ crm_ui_asset('crm-ui/src/constants/data.js') }}"></script>
 <script src="{{ crm_ui_asset('crm-ui/src/utils/listing-search.js') }}"></script>
-<script src="{{ crm_ui_asset('crm-ui/src/utils/employee-presence.js') }}"></script>
 {{-- Shared Reports shell + filter toolbar (must load before report-analytics.js) --}}
 <script src="{{ crm_ui_asset('crm-ui/src/utils/report-filter-toolbar.js') }}"></script>
 <script src="{{ crm_ui_asset('crm-ui/src/components/report-shell.js') }}"></script>
@@ -16,6 +15,8 @@
 <script src="{{ crm_ui_asset('crm-ui/src/components/google-maps.js') }}"></script>
 <script src="{{ crm_ui_asset('crm-ui/src/components/research-workspace.js') }}"></script>
 <script src="{{ crm_ui_asset('crm-ui/src/components/ocr-panel.js') }}"></script>
+<script src="{{ crm_ui_asset('crm-ui/src/components/ocr-import-page.js') }}"></script>
+<script>window.__CRM_DOCUMENT_AI__ = @json(['max_file_mb' => (int) config('document-ai.max_file_mb', 10)]);</script>
 <script src="{{ crm_ui_asset('crm-ui/src/api/crm.js') }}"></script>
 <script src="{{ crm_ui_asset('crm-ui/src/components/lead-picker.js') }}"></script>
 <script src="{{ crm_ui_asset('crm-ui/src/components/entity-lookup.js') }}"></script>

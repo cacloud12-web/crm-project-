@@ -4,7 +4,10 @@ namespace App\Services\Bulk;
 
 use App\Models\BulkAction;
 use App\Models\BulkActionLog;
+use App\Models\ImportDuplicateLog;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 
 class BulkImportHistoryService
@@ -24,6 +27,37 @@ class BulkImportHistoryService
             ->where('action_type', 'ca_master_import')
             ->with(['logs' => fn ($query) => $query->orderBy('row_number')])
             ->findOrFail($bulkActionId);
+    }
+
+    /**
+     * Permanently remove an import-history row (and its row logs).
+     * Successfully imported CA Master leads are preserved (bulk_action_id nullOnDelete).
+     */
+    public function destroy(int|string $bulkActionId): void
+    {
+        DB::transaction(function () use ($bulkActionId): void {
+            $action = BulkAction::query()
+                ->where('action_type', 'ca_master_import')
+                ->whereKey($bulkActionId)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            BulkActionLog::query()
+                ->where('bulk_action_id', $action->bulk_action_id)
+                ->delete();
+
+            ImportDuplicateLog::query()
+                ->where('bulk_action_id', $action->bulk_action_id)
+                ->delete();
+
+            if ($action->output_path && Storage::disk('local')->exists($action->output_path)) {
+                Storage::disk('local')->delete($action->output_path);
+            }
+
+            if (! $action->delete()) {
+                throw new RuntimeException('Unable to delete import history record.');
+            }
+        });
     }
 
     public function detail(int|string $bulkActionId): array

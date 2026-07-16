@@ -25,7 +25,17 @@
   }
 
   function maxFileMb() {
-    return 10;
+    return Number((window.__CRM_DOCUMENT_AI__ && window.__CRM_DOCUMENT_AI__.max_file_mb) || 20);
+  }
+
+  function apiFetch(url, options) {
+    if (window.CA_CRM && typeof window.CA_CRM.apiFetch === 'function') {
+      return window.CA_CRM.apiFetch(url, options);
+    }
+    if (typeof window.apiFetch === 'function' && window.apiFetch !== apiFetch) {
+      return window.apiFetch(url, options);
+    }
+    return Promise.reject(new Error('CRM API is not ready yet. Please refresh the page.'));
   }
 
   function supportedFormatsLabel() {
@@ -112,7 +122,7 @@
   }
 
   function fetchList(caId) {
-    return window.apiFetch('/ocr-documents?ca_id=' + encodeURIComponent(caId) + '&per_page=10&include_text=1');
+    return apiFetch('/ocr-documents?ca_id=' + encodeURIComponent(caId) + '&per_page=10&include_text=1');
   }
 
   function mountIntoDrawer(caId, containerId) {
@@ -150,7 +160,7 @@
     var formData = new FormData();
     formData.append('ca_id', String(caId));
     formData.append('document', file);
-    return window.apiFetch('/ocr-documents', {
+    return apiFetch('/ocr-documents', {
       method: 'POST',
       body: formData,
       headers: { 'Accept': 'application/json' },
@@ -169,7 +179,19 @@
         if (typeof window.toast === 'function') window.toast('Document uploaded for OCR processing.', 'success');
         return mountIntoDrawer(caId);
       }).catch(function (err) {
-        if (typeof window.toast === 'function') window.toast(err.message || 'Upload failed.', 'error');
+        var message = err.message || 'Upload failed.';
+        if (err.status === 419) {
+          message = 'The upload request expired. Please refresh the page and retry.';
+        } else if (err.status === 413) {
+          message = 'The file is too large for the server. Please use a smaller file or ask your host to raise upload limits.';
+        } else if (err.status === 403) {
+          message = err.message || 'You do not have permission to upload OCR documents.';
+        } else if (err.status === 422 && err.errors && err.errors.document && err.errors.document[0]) {
+          message = err.errors.document[0];
+        } else if (err.status === 401) {
+          message = 'Your session expired. Please sign in again.';
+        }
+        if (typeof window.toast === 'function') window.toast(message, 'error');
       }).finally(function () {
         uploadInput.disabled = false;
         uploadInput.value = '';
@@ -202,7 +224,7 @@
       if (retryBtn) {
         e.preventDefault();
         retryBtn.disabled = true;
-        window.apiFetch('/ocr-documents/' + encodeURIComponent(retryBtn.getAttribute('data-ocr-retry')) + '/retry', { method: 'POST' })
+        apiFetch('/ocr-documents/' + encodeURIComponent(retryBtn.getAttribute('data-ocr-retry')) + '/retry', { method: 'POST' })
           .then(function () {
             if (typeof window.toast === 'function') window.toast('OCR retry queued.', 'success');
             return mountIntoDrawer(caId);
@@ -219,7 +241,7 @@
         e.preventDefault();
         if (!window.confirm('Delete this OCR document?')) return;
         deleteBtn.disabled = true;
-        window.apiFetch('/ocr-documents/' + encodeURIComponent(deleteBtn.getAttribute('data-ocr-delete')), { method: 'DELETE' })
+        apiFetch('/ocr-documents/' + encodeURIComponent(deleteBtn.getAttribute('data-ocr-delete')), { method: 'DELETE' })
           .then(function () {
             if (typeof window.toast === 'function') window.toast('OCR document deleted.', 'success');
             return mountIntoDrawer(caId);
@@ -255,7 +277,7 @@
         var id = saveBtn.getAttribute('data-ocr-save');
         var field = document.getElementById('ocr-text-' + id);
         saveBtn.disabled = true;
-        window.apiFetch('/ocr-documents/' + encodeURIComponent(id) + '/text', {
+        apiFetch('/ocr-documents/' + encodeURIComponent(id) + '/text', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
           body: JSON.stringify({ corrected_text: field ? field.value : '' }),

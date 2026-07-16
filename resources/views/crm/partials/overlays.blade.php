@@ -185,7 +185,7 @@
             <div><label class="form-label">New Firm?</label><select name="is_newly_established" class="input-field"><option value="" selected>—</option><option value="no">No</option><option value="yes">Yes</option></select></div>
             <div><label class="form-label">Source</label><select name="source_id" class="input-field" id="form-lead-source-id"><option value="">Select source</option></select></div>
             <div><label class="form-label">Status</label><select name="status" class="input-field"><option>New</option><option>Hot</option><option>Warm</option><option>Pipeline</option><option>Demo Scheduled</option><option>Active</option><option>Inactive</option><option>Lost</option></select></div>
-            <div><label class="form-label">Assign Employee</label><select name="executive_id" class="input-field" id="form-executive-select" data-crm-entity-lookup="employee" data-crm-lookup-show-presence="true" data-crm-lookup-empty-label="Auto assign later" data-crm-lookup-placeholder="Search employee…"><option value="">Auto assign later</option></select></div>
+            <div><label class="form-label">Assign Employee</label><select name="executive_id" class="input-field" id="form-executive-select" data-crm-entity-lookup="employee" data-crm-lookup-empty-label="Auto assign later" data-crm-lookup-placeholder="Search employee…"><option value="">Auto assign later</option></select></div>
             <div id="form-lead-google-section" class="hidden sm:col-span-2 border border-slate-200 rounded-xl p-4 bg-slate-50">
               <p class="text-card-heading text-sm mb-3">Saved Google Places Data</p>
               <div class="grid sm:grid-cols-2 gap-3 text-caption" id="form-lead-google-fields"></div>
@@ -669,7 +669,7 @@
       <form id="form-assign-lead" class="ca-modal-body space-y-4">
         <div id="assign-bulk-summary" class="hidden rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-sm text-slate-700"></div>
         <div id="assign-lead-select-wrap"><label class="form-label">Select Lead</label><select name="ca_id" class="input-field" id="form-assign-lead-select" data-crm-entity-lookup="lead" data-crm-lookup-empty-label="Select lead" data-crm-lookup-placeholder="Search firm, CA, mobile, city…" required><option value="">Select lead</option></select></div>
-        <div><label class="form-label">Assign Employee</label><select name="executive_id" class="input-field" id="form-assign-executive" data-crm-entity-lookup="employee" data-crm-lookup-show-presence="true" data-crm-lookup-empty-label="Select employee" data-crm-lookup-placeholder="Search employee…" required><option value="">Select employee</option></select></div>
+        <div><label class="form-label">Assign Employee</label><select name="executive_id" class="input-field" id="form-assign-executive" data-crm-entity-lookup="employee" data-crm-lookup-empty-label="Select employee" data-crm-lookup-placeholder="Search employee…" required><option value="">Select employee</option></select></div>
         <div><label class="form-label">Assignment Type</label><select name="assignment_type" class="input-field"><option>Manual</option><option>Auto</option></select></div>
         <div><label class="form-label">Reason</label><select name="reason" class="input-field"><option value="MANUAL_ASSIGN">Manual Assignment</option><option value="WORKLOAD_BALANCE">Workload Balance</option><option value="HOT_LEAD_AUTO">Hot Lead Auto</option><option value="CITY_MATCH">City Match</option></select></div>
       </form>
@@ -1341,6 +1341,52 @@
         <div class="crm-table-container scrollbar-thin max-h-72 overflow-auto"><table class="ca-table w-full"><thead><tr><th>Date</th><th>Status</th><th>Reason</th><th></th></tr></thead><tbody id="employee-leave-table"></tbody></table></div>
       </div>
       <div class="ca-modal-footer"><div class="ca-modal-footer-buttons"><button type="button" class="btn-secondary" data-close-crm-modal>Close</button></div></div>
+    </div>
+  </div>
+
+  <!-- Attendance Management Modal -->
+  <div id="modal-manage-attendance" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="manage-attendance-title">
+    <div class="ca-modal-panel ca-modal-panel-lg">
+      <div class="ca-modal-header">
+        <h3 id="manage-attendance-title" class="ca-modal-title">
+          <span class="ca-modal-icon"><i data-lucide="clipboard-check" class="h-5 w-5"></i></span>
+          Today’s Attendance
+        </h3>
+        <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
+      </div>
+      <div class="ca-modal-body space-y-3">
+        <div class="attendance-toolbar">
+          <div>
+            <label class="form-label" for="attendance-date-input">Date</label>
+            <input type="date" id="attendance-date-input" class="input-field" data-allow-past />
+          </div>
+          <div class="attendance-toolbar__search">
+            <label class="form-label" for="attendance-search-input">Search</label>
+            <input type="search" id="attendance-search-input" class="input-field" placeholder="Search employee…" autocomplete="off" />
+          </div>
+        </div>
+        <div class="attendance-summary-strip" id="attendance-modal-summary"></div>
+        <div class="crm-table-container scrollbar-thin max-h-96 overflow-auto">
+          <table class="ca-table w-full attendance-table">
+            <thead>
+              <tr>
+                <th style="width:2.25rem"><input type="checkbox" id="attendance-select-all" aria-label="Select all visible employees" /></th>
+                <th>Employee</th>
+                
+                <th>Status</th>
+                <th>Mark Attendance</th>
+              </tr>
+            </thead>
+            <tbody id="attendance-table-body"></tbody>
+          </table>
+        </div>
+        <div id="attendance-pagination" class="attendance-pagination"></div>
+      </div>
+      <div class="ca-modal-footer">
+        <div class="ca-modal-footer-buttons">
+          <button type="button" class="btn-secondary" data-close-crm-modal>Close</button>
+        </div>
+      </div>
     </div>
   </div>
 

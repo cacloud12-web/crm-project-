@@ -126,6 +126,119 @@ class RbacDatabaseService
     }
 
     /**
+     * Non-destructive: grant any permissions present in config/rbac.php matrix that are
+     * missing from the database for editable system roles. Does not revoke custom grants.
+     *
+     * @return int number of grants inserted
+     */
+    public function ensureConfigDefaultGrants(): int
+    {
+        if (! $this->isSeeded()) {
+            return 0;
+        }
+
+        $modules = config('rbac.modules', []);
+        $actions = config('rbac.permissions', []);
+        $actionLabels = config('rbac.permission_labels', []);
+        $matrix = config('rbac.matrix', []);
+
+        // Ensure newly added modules/actions exist before granting them.
+        foreach ($modules as $module) {
+            foreach ($actions as $actionIndex => $action) {
+                CrmPermission::query()->updateOrCreate(
+                    ['module' => $module, 'action' => $action],
+                    [
+                        'label' => $actionLabels[$action] ?? ucwords(str_replace('_', ' ', $action)),
+                        'sort_order' => is_int($actionIndex) ? $actionIndex : 0,
+                    ],
+                );
+            }
+        }
+
+        $permissionMap = CrmPermission::query()
+            ->get(['id', 'module', 'action'])
+            ->keyBy(fn (CrmPermission $row) => $row->module.'.'.$row->action);
+
+        $inserted = 0;
+        $now = now();
+
+        DB::transaction(function () use ($modules, $matrix, $permissionMap, &$inserted, $now) {
+            foreach ($matrix as $roleKey => $roleMatrix) {
+                if ($roleKey === 'super_admin' || ! is_array($roleMatrix)) {
+                    continue;
+                }
+
+                $role = CrmRole::query()->where('key', $roleKey)->first();
+                if (! $role) {
+                    continue;
+                }
+
+                $expectedIds = [];
+
+                $wildcardActions = (isset($roleMatrix['*']) && is_array($roleMatrix['*']))
+                    ? $roleMatrix['*']
+                    : [];
+
+                if ($wildcardActions !== [] && ! in_array('*', $wildcardActions, true)) {
+                    foreach ($modules as $module) {
+                        foreach ($wildcardActions as $action) {
+                            $permission = $permissionMap->get($module.'.'.$action);
+                            if ($permission) {
+                                $expectedIds[(int) $permission->id] = true;
+                            }
+                        }
+                    }
+                }
+
+                foreach ($roleMatrix as $module => $moduleActions) {
+                    if ($module === '*' || ! is_array($moduleActions)) {
+                        continue;
+                    }
+                    foreach ($moduleActions as $action) {
+                        $permission = $permissionMap->get($module.'.'.$action);
+                        if ($permission) {
+                            $expectedIds[(int) $permission->id] = true;
+                        }
+                    }
+                }
+
+                if ($expectedIds === []) {
+                    continue;
+                }
+
+                $existing = DB::table('crm_role_permissions')
+                    ->where('crm_role_id', $role->id)
+                    ->where('granted', true)
+                    ->pluck('crm_permission_id')
+                    ->map(fn ($id) => (int) $id)
+                    ->all();
+                $existingLookup = array_fill_keys($existing, true);
+
+                $rows = [];
+                foreach (array_keys($expectedIds) as $permissionId) {
+                    if (isset($existingLookup[$permissionId])) {
+                        continue;
+                    }
+                    $rows[] = [
+                        'crm_role_id' => $role->id,
+                        'crm_permission_id' => $permissionId,
+                        'granted' => true,
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ];
+                }
+
+                if ($rows) {
+                    DB::table('crm_role_permissions')->insert($rows);
+                    $inserted += count($rows);
+                }
+            }
+        });
+
+        return $inserted;
+    }
+
+    /**
      * @return list<array{module: string, action: string, label: string|null}>
      */
     public function permissionCatalog(): array

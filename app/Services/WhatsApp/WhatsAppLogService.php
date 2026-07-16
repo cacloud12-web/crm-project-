@@ -38,7 +38,7 @@ class WhatsAppLogService
             'campaign_id' => $campaign->id,
             'ca_id' => $lead->ca_id,
             'employee_id' => $employeeId,
-            'mobile_no' => $lead->mobile_no,
+            'mobile_no' => (string) ($lead->mobile_no ?? ''),
             'template_name' => $template->template_name,
             'language_code' => $template->language_code,
             'message' => $payload['rendered_message'] ?? '',

@@ -8,7 +8,6 @@ use App\Models\Employee;
 use App\Models\FollowUp;
 use App\Models\LeadAssignmentEngine;
 use App\Models\SourceLead;
-use App\Services\Presence\EmployeePresenceService;
 use App\Support\Database\SqlAggregate;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -327,11 +326,8 @@ class BulkAssignmentCatalogService
         $search = trim((string) ($params['search'] ?? ''));
         $page = max(1, (int) ($params['page'] ?? 1));
         $perPage = min(100, max(10, (int) ($params['per_page'] ?? 25)));
-        $presenceService = app(EmployeePresenceService::class);
-        $hasPresence = $presenceService->hasLastSeenColumn();
-
         $query = Employee::query()
-            ->with(array_merge(['city.state'], $presenceService->employeeUserWith()))
+            ->with(['city.state'])
             ->whereNull('deleted_at');
 
         if ($search !== '') {
@@ -346,29 +342,15 @@ class BulkAssignmentCatalogService
 
         $total = (clone $query)->count('employees.employee_id');
 
-        if ($hasPresence) {
-            $threshold = $presenceService->onlineThreshold()->toDateTimeString();
-            $employees = $query
-                ->leftJoin('users', 'employees.user_id', '=', 'users.id')
-                ->orderByRaw(
-                    'CASE WHEN users.last_seen_at IS NOT NULL AND users.last_seen_at >= ? THEN 0 ELSE 1 END',
-                    [$threshold]
-                )
-                ->orderBy('employees.name')
-                ->select('employees.*')
-                ->forPage($page, $perPage)
-                ->get();
-        } else {
-            $employees = $query
-                ->orderBy('employees.name')
-                ->forPage($page, $perPage)
-                ->get();
-        }
+        $employees = $query
+            ->orderBy('employees.name')
+            ->forPage($page, $perPage)
+            ->get();
 
         $employeeIds = $employees->pluck('employee_id')->all();
         $stats = $this->employeeWorkloadStats($employeeIds);
 
-        $items = $employees->map(function (Employee $employee) use ($stats, $presenceService) {
+        $items = $employees->map(function (Employee $employee) use ($stats) {
             $row = $stats[$employee->employee_id] ?? [
                 'active_leads' => 0,
                 'assigned_today' => 0,
@@ -376,7 +358,6 @@ class BulkAssignmentCatalogService
             ];
             $activeLeads = (int) $row['active_leads'];
             $workloadPct = min(100, (int) round(($activeLeads / self::WORKLOAD_CAP) * 100));
-            $presence = $presenceService->payloadForEmployee($employee);
 
             return [
                 'employee_id' => $employee->employee_id,
@@ -393,9 +374,6 @@ class BulkAssignmentCatalogService
                 'followups_today' => (int) $row['followups_today'],
                 'workload_pct' => $workloadPct,
                 'assignable' => $this->isAssignable($employee),
-                'is_online' => (bool) ($presence['is_online'] ?? false),
-                'last_seen_at' => $presence['last_seen_at'] ?? null,
-                'last_seen_human' => $presence['last_seen_human'] ?? 'Absent',
             ];
         })->values()->all();
 

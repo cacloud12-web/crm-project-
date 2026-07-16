@@ -4,6 +4,11 @@ namespace App\Services\DocumentAi;
 
 use App\Exceptions\DocumentAi\DocumentAiConfigurationException;
 use App\Exceptions\DocumentAi\DocumentAiProcessingException;
+use App\Exceptions\Ocr\OcrAuthenticationException;
+use App\Exceptions\Ocr\OcrFileException;
+use App\Exceptions\Ocr\OcrPermissionException;
+use App\Exceptions\Ocr\OcrProcessorNotFoundException;
+use App\Exceptions\Ocr\OcrProviderException;
 use App\Support\DocumentAi\TextAnchorHelper;
 use Google\ApiCore\ApiException;
 use Google\Cloud\DocumentAI\V1\Client\DocumentProcessorServiceClient;
@@ -36,29 +41,44 @@ class GoogleDocumentAiService
 
     public function usesApplicationDefaultCredentials(): bool
     {
-        return $this->resolveCredentialsPath() === null;
+        if ($this->resolveCredentialsPath() !== null) {
+            return false;
+        }
+
+        $adc = getenv('GOOGLE_APPLICATION_CREDENTIALS') ?: '';
+        if (is_string($adc) && $adc !== '' && is_readable($adc)) {
+            return true;
+        }
+
+        $homeAdc = (getenv('HOME') ?: '').'/.config/gcloud/application_default_credentials.json';
+
+        return is_readable($homeAdc);
     }
 
     public function validateConfiguration(): void
     {
-        $credentialsPath = $this->resolveCredentialsPath();
-        if ($credentialsPath !== null) {
-            $this->validateCredentialsFile($credentialsPath);
-        }
-
         $this->validateProjectId();
         $this->validateProcessorId();
         $this->validateLocation();
+
+        $credentialsPath = $this->resolveCredentialsPath();
+        if ($credentialsPath === null) {
+            throw new DocumentAiConfigurationException(
+                'Document AI credentials file is missing or unreadable. Place the service-account JSON at storage/app/google/document-ai-service-account.json and ensure GOOGLE_DOCUMENT_AI_CREDENTIALS points to it.',
+            );
+        }
+
+        $this->validateCredentialsFile($credentialsPath);
     }
 
     public function processBinary(string $binary, string $mimeType): array
     {
         if ($binary === '') {
-            throw new DocumentAiProcessingException('The uploaded document is empty.', 'empty_file', false);
+            throw new OcrFileException('The uploaded document is empty.', 'empty_file');
         }
 
         if (! in_array($mimeType, config('document-ai.supported_mime_types', []), true)) {
-            throw new DocumentAiProcessingException('Unsupported document type.', 'unsupported_mime', false);
+            throw new OcrFileException('Unsupported document type.', 'unsupported_mime');
         }
 
         $this->validateConfiguration();
@@ -67,7 +87,8 @@ class GoogleDocumentAiService
         $location = $this->validateLocation();
         $processorId = $this->validateProcessorId();
         $credentialsPath = $this->resolveCredentialsPath();
-        $endpoint = sprintf('%s-documentai.googleapis.com', $location);
+        $endpoint = (string) config('document-ai.api_endpoint')
+            ?: sprintf('%s-documentai.googleapis.com', $location);
         $timeout = (int) config('document-ai.timeout', 120);
 
         $clientConfig = [
@@ -105,7 +126,7 @@ class GoogleDocumentAiService
             }
 
             return $this->normalizeDocument($document, $text, $processorName);
-        } catch (DocumentAiConfigurationException|DocumentAiProcessingException $exception) {
+        } catch (DocumentAiConfigurationException|OcrProviderException $exception) {
             throw $exception;
         } catch (ApiException $exception) {
             throw $this->mapApiException($exception);
@@ -166,11 +187,17 @@ class GoogleDocumentAiService
         return [
             'text' => $text,
             'page_count' => count($pages),
+            'languages' => array_values(array_unique($detectedLanguages)),
             'detected_languages' => array_values(array_unique($detectedLanguages)),
             'pages' => $pages,
             'entities' => [],
             'average_confidence' => $averageConfidence,
             'processor_name' => $processorName,
+            'provider_reference' => $processorName,
+            'metadata' => [
+                'provider' => 'google_document_ai',
+                'page_count' => count($pages),
+            ],
         ];
     }
 
@@ -239,27 +266,21 @@ class GoogleDocumentAiService
         return is_readable($path) ? $path : null;
     }
 
-    private function mapApiException(ApiException $exception): DocumentAiProcessingException
+    private function mapApiException(ApiException $exception): OcrProviderException
     {
         $message = Str::lower($exception->getMessage());
         $status = $exception->getStatus();
 
+        if (str_contains($message, 'unauthenticated') || $status === 'UNAUTHENTICATED') {
+            return new OcrAuthenticationException(previous: $exception);
+        }
+
         if (str_contains($message, 'permission denied') || $status === 'PERMISSION_DENIED') {
-            return new DocumentAiProcessingException(
-                'The document could not be processed. Please verify the OCR configuration or retry.',
-                'permission_denied',
-                false,
-                $exception,
-            );
+            return new OcrPermissionException(previous: $exception);
         }
 
         if (str_contains($message, 'not found') || $status === 'NOT_FOUND') {
-            return new DocumentAiProcessingException(
-                'The document could not be processed. Please verify the OCR configuration or retry.',
-                'processor_not_found',
-                false,
-                $exception,
-            );
+            return new OcrProcessorNotFoundException(previous: $exception);
         }
 
         if (str_contains($message, 'billing') || str_contains($message, 'billing disabled')) {
@@ -298,11 +319,42 @@ class GoogleDocumentAiService
             );
         }
 
+        if (
+            str_contains($message, 'page_limit_exceeded')
+            || str_contains($message, 'page limit')
+            || str_contains($message, 'pages exceed')
+            || str_contains($message, 'document pages exceed')
+        ) {
+            $pageLimit = $this->extractApiMetadataValue($exception, 'page_limit') ?? '30';
+            $pages = $this->extractApiMetadataValue($exception, 'pages');
+            $detail = $pages !== null
+                ? " This PDF has {$pages} pages (online OCR limit is {$pageLimit})."
+                : " Online OCR supports up to {$pageLimit} pages per document.";
+
+            return new DocumentAiProcessingException(
+                'This document has too many pages for online OCR.'.$detail
+                .' Split it into smaller PDFs and upload again.',
+                'page_limit_exceeded',
+                false,
+                $exception,
+            );
+        }
+
         return new DocumentAiProcessingException(
             'The document could not be processed. Please verify the OCR configuration or retry.',
             'processing_failed',
             true,
             $exception,
         );
+    }
+
+    private function extractApiMetadataValue(ApiException $exception, string $key): ?string
+    {
+        $raw = $exception->getMessage();
+        if (preg_match('/"'.preg_quote($key, '/').'"\s*:\s*"([^"]+)"/', $raw, $matches)) {
+            return $matches[1];
+        }
+
+        return null;
     }
 }

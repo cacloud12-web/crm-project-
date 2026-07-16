@@ -343,6 +343,7 @@ window.CAPages = (function () {
       '<div id="mgr-organization-target-panel" class="mgr-panel card dash-productivity-panel hidden"></div>' +
       '<div id="mgr-employee-productivity-panel" class="mgr-panel card dash-productivity-panel hidden"></div>' +
       '<section class="dash-section" aria-label="Key metrics"><div class="dash-kpi-sections" id="mgr-kpi-sections"></div></section>' +
+      '<section id="mgr-attendance-panel" class="mgr-panel card dash-section dash-attendance-panel hidden" aria-label="Today\'s Attendance"></section>' +
       '<div class="dash-toolbar-row">' +
         '<section class="mgr-panel card dash-quick-actions-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="zap" class="h-5 w-5 text-brand"></i> Quick Actions</h3></div><div id="dash-quick-actions" class="dash-quick-actions"></div></section>' +
         '<section class="mgr-panel card dash-activity-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="activity" class="h-5 w-5 text-brand"></i> Recent Activity</h3><button type="button" class="mgr-link-btn" data-nav-page="activity">View all</button></div><div id="recent-activity-list" class="mgr-activity-feed dash-activity-feed"></div></section>' +
@@ -842,7 +843,7 @@ window.CAPages = (function () {
 
   function caMasterPage(activeTab) {
     activeTab = activeTab || 'all';
-    var showSecondary = activeTab === 'masters' || activeTab === 'bulk';
+    var showSecondary = activeTab === 'masters' || activeTab === 'bulk' || activeTab === 'ocr';
     var primaryTab = showSecondary ? 'all' : (activeTab === 'pipeline' ? 'pipeline' : 'all');
 
     var masterToolbar = function (entity, label) {
@@ -893,7 +894,7 @@ window.CAPages = (function () {
         '<div class="flex items-center gap-2 mb-3">' +
           actSecondary('Back to Firms', 'data-cam-action="back-to-firms"', 'arrow-left') +
           '<h2 class="text-card-heading" id="cam-secondary-title">' +
-            (activeTab === 'masters' ? 'Master Tables' : (activeTab === 'bulk' ? 'Bulk Tools' : '')) +
+            (activeTab === 'masters' ? 'Master Tables' : (activeTab === 'bulk' ? 'Bulk Tools' : (activeTab === 'ocr' ? 'OCR Import' : ''))) +
           '</h2>' +
         '</div>' +
         '<div id="cam-secondary-masters" class="' + (activeTab === 'masters' ? '' : 'hidden') + '">' +
@@ -902,6 +903,7 @@ window.CAPages = (function () {
         '<div id="cam-secondary-bulk" class="' + (activeTab === 'bulk' ? '' : 'hidden') + '">' +
           bulkBody() +
         '</div>' +
+        '<div id="cam-secondary-ocr" class="' + (activeTab === 'ocr' ? '' : 'hidden') + '"></div>' +
       '</div>' +
     '</div>';
   }
@@ -909,13 +911,17 @@ window.CAPages = (function () {
   function bulkBody() {
     var bulkItems = [
       { bulk: 'Bulk Import', icon: 'layers' },
+      { bulk: 'OCR Import', icon: 'scan-text', nav: 'ocr-import' },
       { bulk: 'Bulk Assignment', icon: 'user-check' },
       { bulk: 'Bulk Export', icon: 'download' },
       { bulk: 'Bulk Status Update', icon: 'refresh-cw' },
     ];
-    return '<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 bulk-tools-grid">' +
+    return '<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 mb-6 bulk-tools-grid">' +
         bulkItems.map(function (item) {
-          return '<div class="card-interactive crm-kpi-card crm-kpi-card--clickable bulk-action-card" data-bulk="' + item.bulk + '" role="button" tabindex="0" aria-label="' + item.bulk + '">' +
+          var attrs = item.nav
+            ? ' data-nav-page="' + item.nav + '"'
+            : ' data-bulk="' + item.bulk + '"';
+          return '<div class="card-interactive crm-kpi-card crm-kpi-card--clickable bulk-action-card"' + attrs + ' role="button" tabindex="0" aria-label="' + item.bulk + '">' +
             '<div class="bulk-action-card__top">' +
               '<div class="bulk-action-card__icon" aria-hidden="true">' +
                 '<i data-lucide="' + item.icon + '"></i>' +
@@ -2644,6 +2650,7 @@ window.CAPages = (function () {
     audit: { title: 'Audit Logs', breadcrumb: 'Reports / Audit', er: 'ACTIVITY_LOGS', html: reportsHubPage('audit') },
     'duplicate-attempts': { title: 'Duplicate Attempts', breadcrumb: 'Reports / Duplicate Attempts', er: 'CA_MASTER', html: duplicateAttemptsPage() },
     bulk: { title: 'Bulk Operations', breadcrumb: 'Master Data / Bulk', er: 'BULK_ACTIONS', html: caMasterPage('bulk') },
+    'ocr-import': { title: 'OCR Import', breadcrumb: 'Master Data / OCR Import', er: 'OCR_DOCUMENTS', html: caMasterPage('ocr') },
     employees: { title: 'Team', breadcrumb: 'Assignment / Team', er: 'EMPLOYEE_MASTER', html: assignmentPage('team') },
     queue: { title: 'System Health', breadcrumb: 'Queue', er: 'QUEUE_SYSTEM', html: queuePage() },
     'db-health': { title: 'Database Health', breadcrumb: 'Admin / Database Health', er: 'DEV_DB_HEALTH', html: dbHealthPage() },
