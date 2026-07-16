@@ -1,13 +1,14 @@
 <?php
 
 return [
-    'call_statuses' => [
-        'Connected',
-        'Not Connected',
-        'Busy',
-        'Wrong Number',
-        'Call Back Later',
-    ],
+   'call_statuses' => [
+    'Connected',
+    'Not Connected',
+    'Busy',
+    'Wrong Number',
+    'Call Back Later',
+    'Other',
+],
 
     'demo_results' => [
     'Interested',

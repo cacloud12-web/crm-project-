@@ -941,6 +941,25 @@
           </select>
           <p class="ca-field-error hidden" data-error-for="call_status"></p>
         </div>
+        <div id="lead-call-log-other-status-wrap"
+     class="ca-field hidden"
+     data-field="custom_call_status">
+  <label class="form-label" for="lead-call-log-other-status">
+    Enter Other Call Status
+  </label>
+
+  <input
+    type="text"
+    name="custom_call_status"
+    id="lead-call-log-other-status"
+    class="input-field"
+    maxlength="40"
+    placeholder="Enter your call status"
+  />
+
+  <p class="ca-field-error hidden" data-error-for="custom_call_status"></p>
+</div>
+
         <div class="ca-field" data-field="call_note">
           <label class="form-label" for="lead-call-log-note">Call Notes</label>
           <textarea name="call_note" id="lead-call-log-note" class="input-field" rows="3" placeholder="Call notes…"></textarea>
@@ -1210,7 +1229,7 @@
   <option value="Not Interested">Not Interested</option>
   <option value="Next Week">Next Week</option>
   <option value="Next Month">Next Month</option>
-  <option value="Left">Left in between</option>
+  <option value="Left in between">Left in between</option>
   <option value="Hold">Hold</option>
 </select>
         </div>

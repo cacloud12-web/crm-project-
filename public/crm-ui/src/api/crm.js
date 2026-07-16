@@ -1616,6 +1616,21 @@ window.CA_CRM = (function () {
 
   function syncLeadCallLogFields() {
     var status = (document.getElementById('lead-call-log-status') || {}).value || '';
+    var otherWrap = document.getElementById('lead-call-log-other-status-wrap');
+var otherInput = document.getElementById('lead-call-log-other-status');
+var isOther = status === 'Other';
+
+if (otherWrap) {
+  otherWrap.classList.toggle('hidden', !isOther);
+}
+
+if (otherInput) {
+  otherInput.required = isOther;
+
+  if (!isOther) {
+    otherInput.value = '';
+  }
+}
     var nextWrap = document.getElementById('lead-call-log-next-wrap');
     var demoWrap = document.getElementById('lead-call-log-demo-wrap');
     if (nextWrap) {
@@ -6946,7 +6961,11 @@ return '<tr class="attendance-row ' + statusClass + '">' +
       return '<div class="mgr-emp-prod-section">' +
         '<h3 class="mgr-emp-prod-section__title">' + escapeHtml(titleText) + '</h3>' +
         '<div class="mgr-emp-prod-grid">' + cards.map(function (card) {
-          return '<div class="mgr-emp-prod-card">' +
+          var cardClass = card.wide
+            ? 'mgr-emp-prod-card mgr-emp-prod-card--wide'
+            : 'mgr-emp-prod-card';
+    
+          return '<div class="' + cardClass + '">' +
             '<p class="mgr-emp-prod-card__label">' + escapeHtml(card.label) + '</p>' +
             '<p class="mgr-emp-prod-card__value">' + escapeHtml(String(card.value ?? '—')) + '</p>' +
           '</div>';
@@ -16815,6 +16834,23 @@ return '<tr class="attendance-row ' + statusClass + '">' +
       var form = e.target;
       var payload = validateLeadCallLogForm(form);
       if (!payload) return;
+      if (payload.call_status === 'Other') {
+        var otherInput = document.getElementById('lead-call-log-other-status');
+        var customStatus = otherInput ? String(otherInput.value || '').trim() : '';
+      
+        if (!customStatus) {
+          if (otherInput) {
+            otherInput.focus();
+          }
+      
+          alert('Please enter the other call status.');
+          return;
+        }
+      
+        payload.call_status = customStatus;
+      }
+      
+      delete payload.custom_call_status;
 
       var submitBtn = document.querySelector('button[form="form-lead-call-log"]');
       if (submitBtn) submitBtn.disabled = true;

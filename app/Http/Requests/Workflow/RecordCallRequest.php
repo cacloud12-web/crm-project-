@@ -33,7 +33,7 @@ class RecordCallRequest extends FormRequest
             'followup_id' => 'nullable|integer|exists:follow_ups,followup_id',
             'ca_id' => 'required_without:followup_id|integer|exists:ca_masters,ca_id',
             'employee_id' => 'nullable|integer|exists:employees,employee_id',
-            'call_status' => ['required', 'string', Rule::in($statuses)],
+            'call_status' => ['required', 'string', 'max:40'],
             'call_note' => 'nullable|string|max:2000',
             'remarks' => 'nullable|string|max:2000',
             'called_at' => 'nullable|date',
