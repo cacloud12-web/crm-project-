@@ -7861,6 +7861,11 @@ body:has(#modal-dcp-detail.open) #overlay.active {
   border-color: #fca5a5;
   color: #991b1b;
 }
+.attendance-mark-btn.is-selected.is-half-day {
+  background: #FEF3C7;
+  border-color: #FCD34D;
+  color: #92400E;
+}
 .attendance-status-pill {
   display: inline-flex;
   align-items: center;
