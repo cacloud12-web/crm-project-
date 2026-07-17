@@ -34,6 +34,36 @@ All importers must call:
 app(MasterDataMappingService::class)->processBatch($sourceType, $sourceRef, $rows, $actorId, $meta);
 ```
 
+### OCR import modes (`import_type` on `ocr_documents`)
+
+| Mode | Value | Post-parse path |
+|------|-------|-----------------|
+| Master CA Data | `master_ca` | `MasterCaDirectImportService` / `ImportMasterCaOcrJob` — exact official IDs only; **never** `MapOcrParsedFirmsJob` |
+| Sales Team Data | `sales_team` | `MasterDataMappingService::processOcrDocument()` with `state_firm_ca` |
+
+Master CA flow: Upload → OCR → Parse → Validate → Direct Master Insert → Completed.  
+Sales Team flow: Upload → OCR → Parse → Mapping → Update/Create → Completed.
+
+### Sales-team imports (`state_firm_ca`)
+
+Sales rows typically have only state + firm name + CA name + mobile. Master CA often lacks mobiles.
+
+```php
+app(MasterDataMappingService::class)->processSalesTeamBatch($records, $sourceRef, $actorId);
+// or
+app(MasterDataMappingService::class)->processBatch(
+    'sales_team',
+    $sourceRef,
+    $records,
+    $actorId,
+    ['matchingProfile' => 'state_firm_ca'],
+);
+```
+
+Match priority (state-scoped; no cross-state fuzzy): FRN/membership → existing CRM mobile → exact firm+CA+state → firm+state+strong CA → CA+state+strong firm → combined similarity same state.
+
+After a strong unique match: add mobile (primary if empty, else alternate); never overwrite official firm/CA/address; mobile owned by another Master → Conflict.
+
 ## Architecture
 
 | Layer | Service |
@@ -43,7 +73,7 @@ app(MasterDataMappingService::class)->processBatch($sourceType, $sourceRef, $row
 | Decide / apply | `MasterDataMappingService` |
 | Partners | `PartnerMappingService` |
 | Rollback | `MasterImportRollbackService` |
-| OCR staging | `OcrStructurePersistService` → `MapOcrParsedFirmsJob` |
+| OCR staging | `OcrStructurePersistService` → Master: `ImportMasterCaOcrJob` / Sales: `MapOcrParsedFirmsJob` |
 | Excel/CSV | `BulkCaMasterImportService` → engine when `CRM_MAPPING_USE_ENGINE_FOR_BULK=true` |
 | Manual gate | `OcrFirmApprovalService` |
 
@@ -95,6 +125,14 @@ Duplicate file upload (SHA-256 checksum) warns and blocks unless `force_reimport
 | `CRM_MAPPING_SYNC_MAX_FIRMS` | `50` |
 | `CRM_MAPPING_QUEUE_AFTER_OCR` | `true` |
 | `CRM_MAPPING_USE_ENGINE_FOR_BULK` | `true` |
+| `CRM_MAPPING_DEFAULT_PROFILE` | `identifier_first` |
+| `CRM_MAPPING_SALES_AUTO_CREATE` | `false` |
+| `CRM_MAPPING_SALES_AUTO_UPDATE_MIN` | `0.90` |
+| `CRM_MAPPING_SALES_REVIEW_MIN` | `0.70` |
+| `CRM_MAPPING_SALES_STRONG_CA` | `0.88` |
+| `CRM_MAPPING_SALES_STRONG_FIRM` | `0.88` |
+| `CRM_MAPPING_SALES_PREFIX` | `8` |
+| `CRM_MAPPING_SALES_PREFIX_LIMIT` | `25` |
 
 ## Performance
 
@@ -111,6 +149,7 @@ Duplicate file upload (SHA-256 checksum) warns and blocks unless `force_reimport
 | `2026_07_17_120000_add_master_mapping_engine_columns` | Staging match columns + `master_mapping_decisions` + `normalized_firm_name` |
 | `2026_07_17_160000_add_ocr_mapping_scalability_indexes` | Scalability indexes |
 | `2026_07_17_180000_add_master_import_batches_and_audit_columns` | `master_import_batches`, audit old/new, `ca_masters.field_confidence` |
+| `2026_07_17_200000_add_sales_team_mapping_indexes` | `normalized_ca_name` / `normalized_state`, state+firm(+ca) indexes, `decision_meta`, phone index |
 
 Never `migrate:fresh`. Never recreate `ca_reference`.
 
@@ -133,5 +172,5 @@ php artisan queue:restart
 ## Tests
 
 ```bash
-php artisan test --filter='MasterDataMapping|MasterImportBatch|OcrDuplicateFile|OcrAutoMapping|DataNormalization|MasterDataMatching'
+php artisan test --filter='MasterDataMapping|MasterImportBatch|OcrDuplicateFile|OcrAutoMapping|DataNormalization|MasterDataMatching|SalesTeam|StateFirmCa'
 ```

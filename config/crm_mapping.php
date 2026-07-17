@@ -76,11 +76,45 @@ return [
     */
     'use_engine_for_bulk' => filter_var(env('CRM_MAPPING_USE_ENGINE_FOR_BULK', true), FILTER_VALIDATE_BOOLEAN),
 
+    /*
+    | Default matching profile for processBatch.
+    | identifier_first = OCR/Excel (FRN/GST/PAN/mobile…)
+    | state_firm_ca    = sales-team imports against Master CA without mobiles
+    */
+    'default_matching_profile' => env('CRM_MAPPING_DEFAULT_PROFILE', 'identifier_first'),
+
+    'profiles' => [
+        'state_firm_ca' => [
+            'auto_create_unmatched' => filter_var(env('CRM_MAPPING_SALES_AUTO_CREATE', false), FILTER_VALIDATE_BOOLEAN),
+            'auto_update_min' => (float) env('CRM_MAPPING_SALES_AUTO_UPDATE_MIN', 0.90),
+            'review_min' => (float) env('CRM_MAPPING_SALES_REVIEW_MIN', 0.70),
+            'strong_ca_similarity' => (float) env('CRM_MAPPING_SALES_STRONG_CA', 0.88),
+            'strong_firm_similarity' => (float) env('CRM_MAPPING_SALES_STRONG_FIRM', 0.88),
+            'prefix_length' => max(4, (int) env('CRM_MAPPING_SALES_PREFIX', 8)),
+            'prefix_limit' => max(5, (int) env('CRM_MAPPING_SALES_PREFIX_LIMIT', 25)),
+            'weights' => [
+                'firm_exact' => 0.40,
+                'ca_exact' => 0.40,
+                'firm_fuzzy' => 0.25,
+                'ca_fuzzy' => 0.25,
+                'city' => 0.05,
+            ],
+        ],
+    ],
+
+    /*
+    | Max firms to import inline for Master CA OCR (larger files use ImportMasterCaOcrJob).
+    */
+    'master_ca_sync_max_firms' => max(10, (int) env('CRM_MAPPING_MASTER_CA_SYNC_MAX', 100)),
+    'master_ca_import_chunk' => max(25, (int) env('CRM_MAPPING_MASTER_CA_CHUNK', 200)),
+
     'source_types' => [
         'ocr' => 'OCR Import',
         'excel' => 'Excel Import',
         'csv' => 'CSV Import',
         'api' => 'API',
+        'sales_team' => 'Sales Team Import',
+        'master_ca' => 'Master CA Import',
         'manual' => 'Manual Review',
     ],
 

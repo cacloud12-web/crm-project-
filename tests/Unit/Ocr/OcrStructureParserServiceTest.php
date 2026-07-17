@@ -154,4 +154,63 @@ TXT;
         $this->assertStringContainsStringIgnoringCase('associates', (string) $result['firms'][0]['firm_name']);
         $this->assertSame('452001', $result['firms'][0]['pincode']);
     }
+
+    public function test_spreadsheet_sample_parses_all_49_rows(): void
+    {
+        $path = dirname(__DIR__, 2).'/Fixtures/ocr_spreadsheet_3page_sample.txt';
+        $this->assertFileExists($path);
+        $raw = file_get_contents($path);
+        $this->assertNotFalse($raw);
+
+        $parser = new OcrStructureParserService;
+        $result = $parser->parse($raw);
+
+        $this->assertSame('spreadsheet_table', $result['parse_mode']);
+        $this->assertSame(49, $result['rows_detected']);
+        $this->assertSame(49, $result['firm_count']);
+        $this->assertCount(49, $result['firms']);
+
+        $phones = array_values(array_filter(array_map(
+            static fn (array $f) => $f['phone'] ?? null,
+            $result['firms'],
+        )));
+        $this->assertGreaterThanOrEqual(45, count($phones), 'Most spreadsheet rows should keep a mobile');
+
+        $first = $result['firms'][0];
+        $this->assertSame(2, $first['row_serial']);
+        $this->assertSame('8023200146', $first['phone']);
+        $this->assertStringContainsStringIgnoringCase('Narayanan', (string) $first['firm_name']);
+
+        $third = $result['firms'][2];
+        $this->assertSame(4, $third['row_serial']);
+        $this->assertSame('9680960989', $third['phone']);
+        $this->assertStringContainsStringIgnoringCase('Nitesh', (string) $third['firm_name']);
+
+        // Spaced OCR mobile must still parse.
+        $this->assertContains('7338633003', $phones);
+    }
+
+    public function test_does_not_skip_row_when_ca_name_missing(): void
+    {
+        $raw = <<<'TXT'
+date
+firm name
+mobile number
+1
+02-04-2026 Solo Firm & Co
+9876543210
+2
+02-04-2026 Another Associates
+9123456789
+TXT;
+
+        $parser = new OcrStructureParserService;
+        $result = $parser->parse($raw);
+
+        $this->assertSame(2, $result['firm_count']);
+        $this->assertSame([], $result['firms'][0]['members']);
+        $this->assertNotEmpty($result['firms'][0]['firm_name']);
+        $this->assertSame('9876543210', $result['firms'][0]['phone']);
+    }
+
 }

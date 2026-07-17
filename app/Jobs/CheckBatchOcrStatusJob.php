@@ -30,14 +30,23 @@ class CheckBatchOcrStatusJob implements ShouldBeUnique, ShouldQueue
     {
         try {
             $ocrDocumentService->checkBatchProcessing($this->ocrDocumentId);
-        } catch (Throwable) {
-            // Persisted on the OCR record when appropriate.
+        } catch (Throwable $exception) {
+            \Illuminate\Support\Facades\Log::error('ocr.pipeline.job_failed', [
+                'step' => 'batch_check_job',
+                'ocr_document_id' => $this->ocrDocumentId,
+                'error_message' => $exception->getMessage(),
+                'exception' => $exception::class,
+            ]);
+            throw $exception;
         }
     }
 
     public function failed(Throwable $exception): void
     {
-        // Next delayed poll will be re-dispatched by the service when possible.
-        unset($exception);
+        \Illuminate\Support\Facades\Log::error('ocr.pipeline.job_permanently_failed', [
+            'step' => 'batch_check_job',
+            'ocr_document_id' => $this->ocrDocumentId,
+            'error_message' => $exception->getMessage(),
+        ]);
     }
 }

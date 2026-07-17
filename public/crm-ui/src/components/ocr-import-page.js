@@ -19,6 +19,7 @@
     mountedHost: null,
     detailDirty: false,
     openInFlight: null,
+    importType: '',
   };
 
   function esc(value) {
@@ -47,29 +48,59 @@
     return Number((window.__CRM_DOCUMENT_AI__ && window.__CRM_DOCUMENT_AI__.max_file_mb) || 20);
   }
 
-  function statusClass(status) {
-    if (status === 'completed') return 'ocr-status--completed';
-    if (status === 'processing' || status === 'queued' || status === 'uploading_to_cloud' || status === 'finalizing') {
+  function statusClass(status, item) {
+    var stage = (item && item.pipeline_stage) || status;
+    if (stage === 'completed' || status === 'completed') return 'ocr-status--completed';
+    if (stage === 'failed' || status === 'failed' || status === 'cancelled') return 'ocr-status--failed';
+    if (stage === 'uploading' || stage === 'ocr' || stage === 'parsing' || stage === 'mapping'
+      || status === 'processing' || status === 'queued' || status === 'uploading_to_cloud' || status === 'finalizing') {
       return 'ocr-status--processing';
     }
-    if (status === 'failed') return 'ocr-status--failed';
-    if (status === 'cancelled') return 'ocr-status--pending';
     return 'ocr-status--pending';
   }
 
-  function statusLabel(status) {
+  function statusLabel(status, item) {
+    if (item && item.pipeline_stage_label) return item.pipeline_stage_label;
+    if (item && item.status_label) return item.status_label;
     if (!status) return 'Pending';
-    if (status === 'uploading_to_cloud') return 'Uploading to cloud';
-    if (status === 'finalizing') return 'Finalizing';
+    if (status === 'uploading_to_cloud') return 'Uploading';
+    if (status === 'finalizing') return 'OCR';
     return status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, ' ');
   }
 
-  function isActiveStatus(status) {
+  function isActiveStatus(status, item) {
+    var stage = item && item.pipeline_stage;
+    if (stage === 'uploading' || stage === 'ocr' || stage === 'parsing' || stage === 'mapping') return true;
     return status === 'pending'
       || status === 'queued'
       || status === 'uploading_to_cloud'
       || status === 'processing'
       || status === 'finalizing';
+  }
+
+  function isBusyItem(item) {
+    if (!item) return false;
+    return isActiveStatus(item.status, item)
+      || item.parse_status === 'queued'
+      || item.parse_status === 'processing'
+      || (item.pipeline_stage && item.pipeline_stage !== 'completed' && item.pipeline_stage !== 'failed');
+  }
+
+  function selectedImportType() {
+    var el = document.getElementById('ocr-import-type');
+    var value = el ? String(el.value || '') : String(state.importType || '');
+    state.importType = value;
+    return value;
+  }
+
+  function importTypeDescription(type) {
+    if (type === 'master_ca') {
+      return 'Loads official CA records directly into Master Data. No sales mapping.';
+    }
+    if (type === 'sales_team') {
+      return 'Maps employee-collected records against Master Data and adds mobiles/leads.';
+    }
+    return 'Select an import type before uploading.';
   }
 
   function formatBytes(bytes) {
@@ -104,8 +135,8 @@
       '<div class="ocr-import-page" id="ocr-import-page">' +
         '<header class="ocr-import-page__header card">' +
           '<div>' +
-            '<h1 class="text-page-title">OCR Import</h1>' +
-            '<p class="ocr-import-page__subtitle">Upload PDF or image documents for Google Document AI. High-confidence firms map to Master Data automatically; only conflicts and low-confidence rows need review.</p>' +
+            '<h1 class="text-page-title">Smart Import</h1>' +
+            '<p class="ocr-import-page__subtitle">Upload PDF or image documents for Google Document AI. Choose Master CA Data for official bulk load, or Sales Team Data to map mobiles against Master.</p>' +
           '</div>' +
           '<div class="ocr-import-page__header-meta">' +
             '<span class="ocr-import-pill">Google Document AI</span>' +
@@ -115,13 +146,22 @@
         '<div class="ocr-import-layout">' +
           '<section class="card ocr-import-upload">' +
             '<h2 class="text-card-heading mb-3">Upload Document</h2>' +
+            '<div class="ocr-import-type-picker mb-3">' +
+              '<label class="text-caption font-medium text-slate-700 block mb-1" for="ocr-import-type">Import Type <span class="text-rose-600">*</span></label>' +
+              '<select id="ocr-import-type" class="input-field" required>' +
+                '<option value="">Select import type…</option>' +
+                '<option value="master_ca">Master CA Data</option>' +
+                '<option value="sales_team">Sales Team Data</option>' +
+              '</select>' +
+              '<p class="text-caption text-slate-500 mt-2" id="ocr-import-type-help">' + esc(importTypeDescription('')) + '</p>' +
+            '</div>' +
             '<label class="ocr-import-dropzone" data-ocr-import-dropzone>' +
-              '<input type="file" class="sr-only" data-ocr-import-upload accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,application/pdf,image/jpeg,image/png,image/tiff" />' +
+              '<input type="file" class="sr-only" data-ocr-import-upload multiple accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,application/pdf,image/jpeg,image/png,image/tiff" />' +
               '<i data-lucide="scan-text" class="h-8 w-8 text-brand"></i>' +
               '<p class="font-medium mt-2" data-ocr-import-drop-title>Drop a document here or click to browse</p>' +
-              '<p class="text-caption text-slate-500 mt-1" data-ocr-import-drop-caption>Queued for OCR · browser stays responsive</p>' +
+              '<p class="text-caption text-slate-500 mt-1" data-ocr-import-drop-caption>Select import type first · then upload</p>' +
             '</label>' +
-            '<p class="text-caption text-slate-500 mt-3" id="ocr-import-upload-hint">Exact / high-confidence matches auto-update or auto-create. Use Approve All Safe for remaining eligible rows.</p>' +
+            '<p class="text-caption text-slate-500 mt-3" id="ocr-import-upload-hint">Master CA imports go straight into Master Data. Sales Team imports run mapping and add mobiles.</p>' +
             '<p class="text-caption text-rose-600 mt-2 hidden" id="ocr-import-upload-error" role="alert"></p>' +
           '</section>' +
           '<section class="card ocr-import-history">' +
@@ -204,7 +244,7 @@
         ' title="Delete document" aria-label="Delete document">' +
         '<i data-lucide="trash-2" class="h-4 w-4" aria-hidden="true"></i>' +
       '</button>';
-    } else if (isActiveStatus(item.status)) {
+    } else if (isActiveStatus(item.status, item)) {
       html += '<button type="button" class="ocr-import-action-btn" disabled title="Processing in progress" aria-label="Processing in progress">' +
         '<i data-lucide="loader-2" class="h-4 w-4 animate-spin" aria-hidden="true"></i>' +
       '</button>';
@@ -227,16 +267,21 @@
       return '<tr class="ocr-import-row' + (String(state.selectedId) === String(item.id) ? ' is-selected' : '') + '" data-ocr-row="' + esc(item.id) + '">' +
         '<td>' +
           '<strong class="block truncate" title="' + esc(item.original_filename) + '">' + esc(item.original_filename) + '</strong>' +
-          '<span class="text-caption text-slate-500">' + firm + ' · ' + esc(item.file_size_label || '') + mode +
+          '<span class="text-caption text-slate-500">' +
+            esc(item.import_type_label || (item.import_type === 'master_ca' ? 'Master CA Data' : 'Sales Team Data')) +
+            ' · ' + firm + ' · ' + esc(item.file_size_label || '') + mode +
             (item.parsed_firm_count != null && item.status === 'completed'
               ? ' · ' + esc(String(item.parsed_firm_count)) + ' firms'
               : '') +
           '</span>' +
         '</td>' +
         '<td>' +
-          '<span class="ocr-status ' + statusClass(item.status) + '">' + esc(statusLabel(item.status)) + '</span>' +
-          (item.processing_progress && isActiveStatus(item.status)
+          '<span class="ocr-status ' + statusClass(item.status, item) + '">' + esc(statusLabel(item.status, item)) + '</span>' +
+          (item.processing_progress && isBusyItem(item)
             ? '<span class="block text-caption text-slate-500 mt-1">' + esc(item.processing_progress) + '</span>'
+            : '') +
+          (item.error_message && (item.status === 'failed' || item.pipeline_stage === 'failed')
+            ? '<span class="block text-caption text-rose-600 mt-1">' + esc(item.error_message) + '</span>'
             : '') +
         '</td>' +
         '<td class="text-caption">' + esc(formatDate(item.created_at)) + '</td>' +
@@ -325,11 +370,7 @@
 
   function schedulePoll(items) {
     clearPoll();
-    var busyItems = (items || []).filter(function (item) {
-      return isActiveStatus(item.status)
-        || item.parse_status === 'queued'
-        || item.parse_status === 'processing';
-    });
+    var busyItems = (items || []).filter(isBusyItem);
     if (!busyItems.length) {
       state.pollStartedAt = null;
       return;
@@ -350,10 +391,12 @@
       state.pollInFlight = true;
       loadList().then(function (fresh) {
         if (state.selectedId) openDetail(state.selectedId, true);
-        if (hasOnline && elapsed >= 60000 && (fresh || []).some(function (item) { return isActiveStatus(item.status); })) {
+        if (hasOnline && elapsed >= 60000 && (fresh || []).some(isBusyItem)) {
           setUploadHint('Processing is taking longer than expected. You may continue using the CRM.', false);
         }
-      }).catch(function () { /* keep last rendered state */ }).finally(function () {
+      }).catch(function (err) {
+        setUploadHint((err && err.message) || 'Unable to refresh OCR list from the server.', true);
+      }).finally(function () {
         state.pollInFlight = false;
       });
     }, delay);
@@ -376,6 +419,7 @@
     return new Promise(function (resolve, reject) {
       var formData = new FormData();
       formData.append('document', file);
+      formData.append('import_type', selectedImportType());
       if (forceReimport) formData.append('force_reimport', '1');
       var xhr = new XMLHttpRequest();
       xhr.open('POST', '/ocr-documents');
@@ -475,50 +519,74 @@
   }
 
   function matchStatusLabel(status) {
+    if (status === 'imported') return 'Imported';
+    if (status === 'updated_official') return 'Updated official record';
+    if (status === 'duplicate') return 'Duplicate';
     if (status === 'auto_mapped') return 'Auto-updated';
     if (status === 'auto_created') return 'Auto-created';
     if (status === 'needs_review') return 'Needs review';
     if (status === 'conflict') return 'Conflict';
     if (status === 'rejected') return 'Rejected';
     if (status === 'failed') return 'Failed';
-    if (status === 'pending' || !status) return 'Pending mapping';
+    if (status === 'pending' || !status) return 'Pending';
     return status || '';
   }
 
   function mappingStageIndex(item, importBatch) {
     var status = (item && item.status) || '';
     var parseStatus = (item && item.parse_status) || '';
+    var pipeline = (item && item.pipeline_stage) || '';
+    var progress = String((item && item.processing_progress) || '').toLowerCase();
+    var isMaster = (item && item.import_type) === 'master_ca';
     var stage = (importBatch && importBatch.progress_stage) || '';
-    if (stage === 'completed' || (importBatch && importBatch.status === 'completed')) return 5;
-    if (stage === 'mapping' || stage === 'creating' || stage === 'updating') return 3;
-    if (parseStatus === 'completed' && status === 'completed') return 3;
-    if (parseStatus === 'processing' || parseStatus === 'queued') return 2;
-    if (status === 'processing' || status === 'queued' || status === 'uploading_to_cloud' || status === 'finalizing') return 1;
+
+    if (pipeline === 'completed' || stage === 'completed' || (importBatch && importBatch.status === 'completed')
+      || (status === 'completed' && parseStatus === 'completed' && progress.indexOf('completed') >= 0 && progress.indexOf('queued') < 0 && progress.indexOf('mapping') < 0 && progress.indexOf('importing') < 0 && progress.indexOf('validat') < 0)) {
+      return 5;
+    }
+    if (isMaster) {
+      if (pipeline === 'importing' || stage === 'importing' || progress.indexOf('importing') >= 0) return 4;
+      if (pipeline === 'validating' || stage === 'validating' || progress.indexOf('validat') >= 0) return 3;
+      if (parseStatus === 'processing' || parseStatus === 'queued' || pipeline === 'parsing') return 2;
+      if (status === 'processing' || status === 'queued' || status === 'uploading_to_cloud' || status === 'finalizing' || pipeline === 'ocr' || pipeline === 'uploading') return 1;
+      return 0;
+    }
+    if (pipeline === 'updating' || stage === 'creating' || stage === 'updating') return 4;
+    if (pipeline === 'mapping' || stage === 'mapping' || progress.indexOf('mapping') >= 0 || progress.indexOf('queued for sales') >= 0) return 3;
+    if (parseStatus === 'processing' || parseStatus === 'queued' || pipeline === 'parsing') return 2;
+    if (status === 'processing' || status === 'queued' || status === 'uploading_to_cloud' || status === 'finalizing' || pipeline === 'ocr' || pipeline === 'uploading') return 1;
     if (status === 'completed') return 5;
     return 0;
   }
 
   function renderMappingProgressDashboard(item, mapping, importBatch) {
-    var stages = ['Uploading', 'Parsing', 'Mapping', 'Creating', 'Updating', 'Completed'];
+    var isMaster = (item && item.import_type) === 'master_ca';
+    var masterImport = (item && item.structured_data && item.structured_data.master_import) || {};
+    var stages = isMaster
+      ? ['Uploading', 'OCR', 'Parsing', 'Validating', 'Importing', 'Completed']
+      : ['Uploading', 'OCR', 'Parsing', 'Mapping', 'Updating/Creating', 'Completed'];
     var active = mappingStageIndex(item, importBatch);
-    var created = (importBatch && importBatch.created_count != null)
-      ? importBatch.created_count
-      : (mapping.auto_created || 0);
-    var updated = (importBatch && importBatch.updated_count != null)
-      ? importBatch.updated_count
-      : (mapping.auto_updated || 0);
-    var review = (importBatch && importBatch.review_count != null)
-      ? importBatch.review_count
-      : (mapping.needs_review || 0);
-    var conflict = (importBatch && importBatch.conflict_count != null)
-      ? importBatch.conflict_count
-      : (mapping.conflicts || 0);
-    var failed = (importBatch && importBatch.failed_count != null) ? importBatch.failed_count : 0;
+    var created = isMaster
+      ? ((importBatch && importBatch.created_count != null) ? importBatch.created_count : (masterImport.imported || 0))
+      : ((importBatch && importBatch.created_count != null) ? importBatch.created_count : (mapping.auto_created || 0));
+    var updated = isMaster
+      ? ((importBatch && importBatch.updated_count != null) ? importBatch.updated_count : (masterImport.updated || 0))
+      : ((importBatch && importBatch.updated_count != null) ? importBatch.updated_count : (mapping.auto_updated || 0));
+    var review = isMaster
+      ? ((importBatch && importBatch.review_count != null) ? importBatch.review_count : (masterImport.review || 0))
+      : ((importBatch && importBatch.review_count != null) ? importBatch.review_count : (mapping.needs_review || 0));
+    var conflict = isMaster
+      ? ((importBatch && importBatch.duplicate_count != null) ? importBatch.duplicate_count : (masterImport.duplicates || 0))
+      : ((importBatch && importBatch.conflict_count != null) ? importBatch.conflict_count : (mapping.conflicts || 0));
+    var failed = (importBatch && importBatch.failed_count != null)
+      ? importBatch.failed_count
+      : (isMaster ? (masterImport.failed || 0) : 0);
     var total = (importBatch && importBatch.total_records != null)
       ? importBatch.total_records
-      : (mapping.processed || 0);
+      : (isMaster ? (masterImport.processed || 0) : (mapping.processed || 0));
     var pct = importBatch && importBatch.progress_pct != null ? importBatch.progress_pct : (active >= 5 ? 100 : null);
     var html = '<div class="ocr-mapping-dashboard mt-3">';
+    html += '<p class="text-caption text-slate-600 mb-2"><strong>' + esc(item.import_type_label || (isMaster ? 'Master CA Data' : 'Sales Team Data')) + '</strong></p>';
     html += '<div class="ocr-mapping-dashboard__stages">' + stages.map(function (label, idx) {
       var cls = 'ocr-mapping-stage';
       if (idx < active) cls += ' is-done';
@@ -529,9 +597,12 @@
       html += '<div class="ocr-mapping-dashboard__bar"><span style="width:' + Math.max(0, Math.min(100, pct)) + '%"></span></div>';
     }
     html += '<p class="text-caption text-slate-500 mt-2">Total ' + esc(String(total)) +
-      ' · ' + esc(String(created)) + ' created · ' + esc(String(updated)) + ' updated · ' +
-      esc(String(review)) + ' review · ' + esc(String(conflict)) + ' conflict · ' +
-      esc(String(failed)) + ' failed</p>';
+      (isMaster
+        ? (' · ' + esc(String(created)) + ' imported · ' + esc(String(updated)) + ' updated · ' +
+          esc(String(conflict)) + ' duplicate · ' + esc(String(review)) + ' review · ' + esc(String(failed)) + ' failed')
+        : (' · ' + esc(String(created)) + ' created · ' + esc(String(updated)) + ' updated · ' +
+          esc(String(review)) + ' review · ' + esc(String(conflict)) + ' conflict · ' + esc(String(failed)) + ' failed')) +
+      '</p>';
     if (importBatch && importBatch.rollbackable && importBatch.id) {
       html += '<button type="button" class="btn-secondary btn-sm mt-2" data-ocr-rollback-batch="' +
         esc(String(importBatch.id)) + '">Rollback this import</button>';
@@ -642,7 +713,7 @@
 
     var html =
       '<div class="ocr-import-detail__meta">' +
-        '<span class="ocr-status ' + statusClass(item.status) + '">' + esc(statusLabel(item.status)) + '</span>' +
+        '<span class="ocr-status ' + statusClass(item.status, item) + '">' + esc(statusLabel(item.status, item)) + '</span>' +
         (item.processing_mode_label ? '<span class="text-caption">' + esc(item.processing_mode_label) + '</span>' : '') +
       '</div>' +
       '<div class="ocr-import-detail__grid mt-3">' +
@@ -659,16 +730,17 @@
     if (item.batch_notice) {
       html += '<p class="ocr-panel__processing mt-3">' + esc(item.batch_notice) + '</p>';
     }
-    if (item.processing_progress && isActiveStatus(item.status)) {
+    if (item.processing_progress && isBusyItem(item)) {
       html += '<p class="text-caption text-slate-500 mt-2">Progress: ' + esc(item.processing_progress) + '</p>';
     }
-    if (isActiveStatus(item.status)) {
-      html += '<p class="ocr-panel__processing mt-3"><i data-lucide="loader-2" class="h-3.5 w-3.5 animate-spin"></i> Processing document…</p>';
+    if (isActiveStatus(item.status, item) && item.pipeline_stage !== 'failed') {
+      html += '<p class="ocr-panel__processing mt-3"><i data-lucide="loader-2" class="h-3.5 w-3.5 animate-spin"></i> ' +
+        esc(statusLabel(item.status, item)) + '…</p>';
       html += '<div class="ocr-panel__actions mt-4">' + fileActions + '</div>';
       return html;
     }
 
-    if (item.status === 'failed') {
+    if (item.status === 'failed' || item.pipeline_stage === 'failed') {
       html += item.error_message
         ? '<p class="ocr-panel__error mt-3" role="alert">' + esc(item.error_message) + '</p>'
         : '<p class="ocr-panel__error mt-3" role="alert">OCR processing failed.</p>';
@@ -700,6 +772,20 @@
       } else if (firms.length) {
         var mapping = (item.structured_data && item.structured_data.mapping) || {};
         var completeness = (item.structured_data && item.structured_data.parsed && item.structured_data.parsed.completeness) || {};
+        var quality = (item.structured_data && item.structured_data.parsed && item.structured_data.parsed.quality_report) || {};
+        if (quality.total_rows_detected != null || quality.total_firms_parsed != null) {
+          html += '<div class="ocr-quality-report mt-2">' +
+            '<p class="text-caption text-slate-600"><strong>OCR Quality Report</strong> · ' +
+            'Pages ' + esc(String(quality.total_pages != null ? quality.total_pages : '—')) +
+            ' (' + esc(String(quality.pages_with_text != null ? quality.pages_with_text : '—')) + ' with text) · ' +
+            'Rows ' + esc(String(quality.total_rows_detected != null ? quality.total_rows_detected : '—')) +
+            ' · Parsed ' + esc(String(quality.total_firms_parsed != null ? quality.total_firms_parsed : '—')) +
+            ' · Missing ' + esc(String(quality.missing_row_count != null ? quality.missing_row_count : 0)) +
+            ' · Dup rows ' + esc(String(quality.duplicate_row_count != null ? quality.duplicate_row_count : 0)) +
+            ' · Accuracy ' + esc(String(quality.parsing_accuracy != null ? quality.parsing_accuracy + '%' : '—')) +
+            (quality.ocr_confidence != null ? ' · OCR conf ' + esc(String(Math.round(Number(quality.ocr_confidence) * 100) / 100)) : '') +
+            '</p></div>';
+        }
         if (completeness.warnings && completeness.warnings.length) {
           html += '<div class="ocr-completeness-warn mt-2">' + completeness.warnings.map(function (w) {
             return '<p class="text-caption text-amber-700">⚠ ' + esc(w) + '</p>';
@@ -1179,6 +1265,8 @@
     var dropzone = root.querySelector('[data-ocr-import-dropzone]');
     var searchInput = document.getElementById('ocr-import-search');
     var statusSelect = document.getElementById('ocr-import-status');
+    var importTypeSelect = document.getElementById('ocr-import-type');
+    var importTypeHelp = document.getElementById('ocr-import-type-help');
     var refreshBtn = document.getElementById('ocr-import-refresh');
     var closeBtn = document.getElementById('ocr-import-detail-close');
     var dropTitle = root.querySelector('[data-ocr-import-drop-title]');
@@ -1186,6 +1274,15 @@
 
     if (root._ocrImportUploadBound) return;
     root._ocrImportUploadBound = true;
+
+    if (importTypeSelect && !importTypeSelect._ocrBound) {
+      importTypeSelect._ocrBound = true;
+      importTypeSelect.addEventListener('change', function () {
+        state.importType = String(importTypeSelect.value || '');
+        if (importTypeHelp) importTypeHelp.textContent = importTypeDescription(state.importType);
+        setUploadHint(importTypeDescription(state.importType), false);
+      });
+    }
 
     function resetUploadUi(caption) {
       state.uploading = false;
@@ -1199,48 +1296,75 @@
 
     function handleFiles(files) {
       if (!files || !files.length || state.uploading) return;
-      var file = files[0];
+      var importType = selectedImportType();
+      if (importType !== 'master_ca' && importType !== 'sales_team') {
+        setUploadHint('Select Import Type: Master CA Data or Sales Team Data before uploading.', true);
+        toast('Select an import type before uploading.', 'error');
+        if (uploadInput) uploadInput.value = '';
+        return;
+      }
+      // Upload every selected file sequentially — each must create its own ocr_documents row.
+      var queue = Array.prototype.slice.call(files);
       state.uploading = true;
-      setUploadHint('Uploading “' + file.name + '” (' + formatBytes(file.size) + ')…', false);
-      if (dropTitle) dropTitle.textContent = 'Uploading… 0%';
-      if (dropCaption) dropCaption.textContent = file.name + ' · ' + formatBytes(file.size);
       if (uploadInput) uploadInput.disabled = true;
 
-      function onUploadProgress(percent) {
+      function onUploadProgress(file, percent) {
         if (percent >= 100) {
           if (dropTitle) dropTitle.textContent = 'Saving document…';
-          setUploadHint('Upload finished. Saving document on the server…', false);
+          setUploadHint('Upload finished. Saving “' + file.name + '” on the server…', false);
           return;
         }
         if (dropTitle) dropTitle.textContent = 'Uploading… ' + percent + '%';
         setUploadHint('Uploading “' + file.name + '”… ' + percent + '%', false);
       }
 
-      function afterUploadSuccess(body) {
-        var item = unwrapItem(body) || {};
-        var successHint = (body && body.message)
-          ? body.message
-          : 'Document uploaded successfully. OCR processing has started.';
-        resetUploadUi(item.processing_mode === 'batch'
-          ? 'Batch OCR running in background · you can upload another file'
-          : 'Queued for OCR · browser stays responsive');
-        toast(successHint, 'success');
-        setUploadHint(successHint, false);
-        state.page = 1;
-        if (item.id) {
-          state.selectedId = item.id;
-          state.pollStartedAt = Date.now();
-          renderRows([item]);
-          schedulePoll([item]);
-          openDetail(item.id);
-        }
-        loadList().catch(function () { /* optimistic row already shown */ });
+      function uploadOne(file, forceReimport) {
+        if (dropTitle) dropTitle.textContent = 'Uploading… 0%';
+        if (dropCaption) dropCaption.textContent = file.name + ' · ' + formatBytes(file.size);
+        setUploadHint('Uploading “' + file.name + '” (' + formatBytes(file.size) + ')…', false);
+        return uploadFile(file, function (percent) { onUploadProgress(file, percent); }, forceReimport)
+          .catch(function (err) {
+            if (!forceReimport && err.duplicateFile && window.confirm(err.message + '\n\nRe-import this file anyway?')) {
+              return uploadOne(file, true);
+            }
+            throw err;
+          });
       }
 
-      uploadFile(file, onUploadProgress, false).then(afterUploadSuccess).catch(function (err) {
-        if (err.duplicateFile && window.confirm(err.message + '\n\nRe-import this file anyway?')) {
-          return uploadFile(file, onUploadProgress, true).then(afterUploadSuccess);
+      function uploadNext(index, createdIds) {
+        if (index >= queue.length) {
+          resetUploadUi(queue.length > 1
+            ? queue.length + ' documents uploaded · OCR running in background'
+            : 'Queued for OCR · browser stays responsive');
+          toast(queue.length > 1
+            ? queue.length + ' documents uploaded. OCR processing has started.'
+            : 'Document uploaded successfully. OCR processing has started.', 'success');
+          state.page = 1;
+          if (createdIds.length) {
+            state.selectedId = createdIds[createdIds.length - 1];
+            state.pollStartedAt = Date.now();
+          }
+          // Always refresh from GET /ocr-documents — never keep client-only rows.
+          return loadList().then(function (items) {
+            schedulePoll(items || []);
+            if (state.selectedId) openDetail(state.selectedId);
+          }).catch(function (err) {
+            setUploadHint((err && err.message) || 'Upload saved, but the document list could not be refreshed.', true);
+          });
         }
+
+        var file = queue[index];
+        return uploadOne(file, false).then(function (body) {
+          var item = unwrapItem(body) || {};
+          if (!item.id) {
+            throw new Error('Upload succeeded but the server did not return an OCR document id.');
+          }
+          createdIds.push(item.id);
+          return uploadNext(index + 1, createdIds);
+        });
+      }
+
+      uploadNext(0, []).catch(function (err) {
         var message = err.message || 'Upload failed.';
         if (err.status === 419) {
           message = 'The upload request expired. Please refresh the page and retry.';
@@ -1256,6 +1380,7 @@
         resetUploadUi();
         setUploadHint(message, true);
         toast(message, 'error');
+        loadList().catch(function () { /* list may still be valid */ });
       }).finally(function () {
         if (state.uploading) resetUploadUi();
       });

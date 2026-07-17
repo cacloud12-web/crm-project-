@@ -27,6 +27,15 @@ class OcrDocument extends Model
 
     public const STATUS_CANCELLED = 'cancelled';
 
+    public const IMPORT_MASTER_CA = 'master_ca';
+
+    public const IMPORT_SALES_TEAM = 'sales_team';
+
+    public const IMPORT_TYPES = [
+        self::IMPORT_MASTER_CA,
+        self::IMPORT_SALES_TEAM,
+    ];
+
     public const STATUSES = [
         self::STATUS_PENDING,
         self::STATUS_QUEUED,
@@ -60,6 +69,7 @@ class OcrDocument extends Model
         'result_checksum',
         'status',
         'provider',
+        'import_type',
         'processing_mode',
         'provider_reference',
         'provider_operation_name',
@@ -172,12 +182,97 @@ class OcrDocument extends Model
         return $this->corrected_text ?? $this->extracted_text;
     }
 
+    public function isMasterCaImport(): bool
+    {
+        return $this->import_type === self::IMPORT_MASTER_CA;
+    }
+
+    public function isSalesTeamImport(): bool
+    {
+        return $this->import_type === self::IMPORT_SALES_TEAM
+            || ($this->import_type === null || $this->import_type === '');
+    }
+
     public function statusLabel(): string
     {
-        return match ($this->status) {
-            self::STATUS_UPLOADING_TO_CLOUD => 'Uploading to cloud',
-            self::STATUS_FINALIZING => 'Finalizing',
-            default => $this->status ? ucfirst(str_replace('_', ' ', $this->status)) : 'Pending',
+        return match ($this->pipelineStage()) {
+            'pending' => 'Pending',
+            'uploading' => 'Uploading',
+            'ocr' => 'OCR',
+            'parsing' => 'Parsing',
+            'validating' => 'Validating',
+            'importing' => 'Importing',
+            'mapping' => 'Mapping',
+            'updating' => 'Updating/Creating',
+            'completed' => 'Completed',
+            'failed' => 'Failed',
+            default => match ($this->status) {
+                self::STATUS_UPLOADING_TO_CLOUD => 'Uploading',
+                self::STATUS_FINALIZING => 'OCR',
+                default => $this->status ? ucfirst(str_replace('_', ' ', $this->status)) : 'Pending',
+            },
         };
+    }
+
+    /**
+     * User-facing pipeline stage (mode-aware):
+     * Master: Uploading → OCR → Parsing → Validating → Importing → Completed
+     * Sales:  Uploading → OCR → Parsing → Mapping → Updating/Creating → Completed
+     */
+    public function pipelineStage(): string
+    {
+        if ($this->status === self::STATUS_FAILED) {
+            return 'failed';
+        }
+        if ($this->status === self::STATUS_CANCELLED) {
+            return 'failed';
+        }
+        if (in_array($this->status, [self::STATUS_PENDING], true)) {
+            return 'pending';
+        }
+        if (in_array($this->status, [self::STATUS_QUEUED, self::STATUS_UPLOADING_TO_CLOUD], true)) {
+            return 'uploading';
+        }
+        if (in_array($this->status, [self::STATUS_PROCESSING, self::STATUS_FINALIZING], true)) {
+            return 'ocr';
+        }
+        if ($this->status !== self::STATUS_COMPLETED) {
+            return 'pending';
+        }
+
+        $progress = mb_strtolower((string) ($this->processing_progress ?? ''));
+        if ($this->parse_status === 'failed' || str_contains($progress, 'parsing failed') || str_contains($progress, 'import failed') || str_contains($progress, 'mapping failed')) {
+            return 'failed';
+        }
+        if ($this->parse_status !== 'completed') {
+            return 'parsing';
+        }
+
+        if ($this->isMasterCaImport()) {
+            if (str_contains($progress, 'validat')) {
+                return 'validating';
+            }
+            if (str_contains($progress, 'import') && ! str_contains($progress, 'completed')) {
+                return 'importing';
+            }
+            if (str_contains($progress, 'queued for master')) {
+                // Should never happen for Master CA — treat as importing recovery.
+                return 'importing';
+            }
+
+            return 'completed';
+        }
+
+        if (
+            (str_contains($progress, 'mapping') && ! str_contains($progress, 'completed'))
+            || str_contains($progress, 'queued for master')
+        ) {
+            return 'mapping';
+        }
+        if (str_contains($progress, 'updating') || str_contains($progress, 'creating')) {
+            return 'updating';
+        }
+
+        return 'completed';
     }
 }

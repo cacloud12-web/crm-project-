@@ -9,7 +9,16 @@ namespace App\Services\Ocr;
  */
 class OcrStructureParserService
 {
-    public const PARSER_VERSION = '1.1.0';
+    public const PARSER_VERSION = '2.1.0';
+
+    public function __construct(
+        private readonly ?OcrSpreadsheetTableParser $spreadsheetParser = null,
+    ) {}
+
+    private function spreadsheet(): OcrSpreadsheetTableParser
+    {
+        return $this->spreadsheetParser ?? new OcrSpreadsheetTableParser;
+    }
 
     private const NOISE_EXACT = [
         'preview', 'file', 'edit', 'view', 'go', 'tools', 'window', 'help',
@@ -53,18 +62,50 @@ class OcrStructureParserService
 
     /**
      * @param  array<string, mixed>|null  $layoutMetadata  Optional Document AI structured_data (pages/paragraphs).
-     * @return array{
-     *   parser_version: string,
-     *   firm_count: int,
-     *   heading_count: int,
-     *   skipped_blocks: int,
-     *   candidate_firm_count: int,
-     *   strategy: string,
-     *   firms: list<array<string, mixed>>
-     * }
+     * @return array<string, mixed>
      */
     public function parse(string $rawText, ?array $layoutMetadata = null): array
     {
+        $rawText = str_replace(["\r\n", "\r"], "\n", $rawText);
+
+        // Spreadsheet / table PDFs: one serial+date anchor → one firm (never drop rows).
+        if (trim($rawText) !== '' && $this->spreadsheet()->looksLikeSpreadsheet($rawText)) {
+            $sheet = $this->spreadsheet()->parse($rawText);
+            $firms = $sheet['firms'];
+            $uniquePhones = [];
+            $duplicateFirms = [];
+            foreach ($firms as $firm) {
+                $phone = preg_replace('/\D+/', '', (string) ($firm['phone'] ?? '')) ?: null;
+                if ($phone && isset($uniquePhones[$phone])) {
+                    $duplicateFirms[] = [
+                        'firm_name' => $firm['firm_name'] ?? null,
+                        'phone' => $phone,
+                        'row_serial' => $firm['row_serial'] ?? null,
+                    ];
+                }
+                if ($phone) {
+                    $uniquePhones[$phone] = true;
+                }
+            }
+
+            return [
+                'parser_version' => self::PARSER_VERSION,
+                'parse_mode' => 'spreadsheet_table',
+                'strategy' => 'spreadsheet_table',
+                'firm_count' => count($firms),
+                'heading_count' => (int) ($sheet['rows_detected'] ?? count($firms)),
+                'rows_detected' => (int) ($sheet['rows_detected'] ?? count($firms)),
+                'skipped_blocks' => count($sheet['skipped'] ?? []),
+                'skipped_details' => $sheet['skipped'] ?? [],
+                'missing_serials' => $sheet['missing_serials'] ?? [],
+                'duplicate_serials' => $sheet['duplicate_serials'] ?? [],
+                'duplicate_firms' => $duplicateFirms,
+                'unique_firm_estimate' => count($firms) - count($duplicateFirms),
+                'candidate_firm_count' => count($firms),
+                'firms' => $firms,
+            ];
+        }
+
         $strategy = 'line_based';
         $sourceText = $rawText;
 
@@ -72,6 +113,14 @@ class OcrStructureParserService
         if ($layoutText !== null && trim($layoutText) !== '') {
             $sourceText = $layoutText;
             $strategy = 'layout_aware';
+        }
+
+        if (trim($sourceText) === '' && trim($rawText) === '') {
+            return array_merge($this->emptyResult('empty_ocr_text'), [
+                'strategy' => 'empty',
+                'candidate_firm_count' => 0,
+                'parse_mode' => 'none',
+            ]);
         }
 
         $lines = $this->prepareLines($sourceText);
@@ -82,31 +131,33 @@ class OcrStructureParserService
         }
 
         if ($lines === []) {
-            return [
-                'parser_version' => self::PARSER_VERSION,
-                'firm_count' => 0,
-                'heading_count' => 0,
-                'skipped_blocks' => 0,
-                'candidate_firm_count' => 0,
+            return array_merge($this->emptyResult($strategy === 'layout_aware' ? 'layout_empty' : 'no_content_lines_after_noise_filter'), [
                 'strategy' => $strategy === 'layout_aware' ? 'layout_empty' : 'empty',
-                'firms' => [],
-            ];
+                'candidate_firm_count' => 0,
+                'parse_mode' => 'directory',
+            ]);
         }
 
-        // Conservative second pass: if first strategy finds zero firms, try repaired raw text.
+        $pageStats = $this->pageStats($lines);
         $blocks = $this->splitIntoFirmBlocks($lines);
-        $firms = $this->firmsFromBlocks($blocks);
+        $parsedBlocks = $this->firmsFromBlocksDetailed($blocks);
+        $firms = $parsedBlocks['firms'];
+        $skippedDetails = $parsedBlocks['skipped_details'];
+        $skippedBlocks = $parsedBlocks['skipped_blocks'];
         $candidateCount = count($blocks);
 
         if ($firms === [] && $strategy === 'layout_aware') {
             $fallbackLines = $this->prepareLines($rawText);
             $fallbackBlocks = $this->splitIntoFirmBlocks($fallbackLines);
-            $fallbackFirms = $this->firmsFromBlocks($fallbackBlocks);
-            if ($fallbackFirms !== []) {
-                $firms = $fallbackFirms;
+            $fallbackParsed = $this->firmsFromBlocksDetailed($fallbackBlocks);
+            if ($fallbackParsed['firms'] !== []) {
+                $firms = $fallbackParsed['firms'];
                 $blocks = $fallbackBlocks;
+                $skippedDetails = $fallbackParsed['skipped_details'];
+                $skippedBlocks = $fallbackParsed['skipped_blocks'];
                 $candidateCount = count($fallbackBlocks);
                 $strategy = 'line_based_fallback';
+                $pageStats = $this->pageStats($fallbackLines);
             }
         }
 
@@ -115,18 +166,34 @@ class OcrStructureParserService
             if ($conservative['firms'] !== []) {
                 return array_merge($conservative, [
                     'parser_version' => self::PARSER_VERSION,
+                    'parse_mode' => 'directory',
                     'strategy' => 'conservative_fallback',
+                    'rows_detected' => $conservative['heading_count'] ?? count($conservative['firms']),
+                    'skipped_details' => [],
+                    'missing_serials' => [],
+                    'duplicate_serials' => [],
+                    'duplicate_firms' => [],
+                    'unique_firm_estimate' => count($conservative['firms']),
+                    'page_stats' => $pageStats,
                 ]);
             }
         }
 
         return [
             'parser_version' => self::PARSER_VERSION,
+            'parse_mode' => 'directory',
             'firm_count' => count($firms),
             'heading_count' => count($blocks),
-            'skipped_blocks' => max(0, count($blocks) - count($firms)),
+            'rows_detected' => count($blocks),
+            'skipped_blocks' => $skippedBlocks,
+            'skipped_details' => $skippedDetails,
+            'missing_serials' => [],
+            'duplicate_serials' => [],
+            'duplicate_firms' => [],
+            'unique_firm_estimate' => count($firms),
             'candidate_firm_count' => $candidateCount,
             'strategy' => $strategy,
+            'page_stats' => $pageStats,
             'firms' => $firms,
         ];
     }
@@ -137,18 +204,80 @@ class OcrStructureParserService
      */
     private function firmsFromBlocks(array $blocks): array
     {
+        return $this->firmsFromBlocksDetailed($blocks)['firms'];
+    }
+
+    /**
+     * @param  list<array{city: ?string, city_meta: ?array, firm_hint?: ?string, firm_hint_line?: ?array, lines: list<array{text: string, line_no: int, page: int|null}>}>  $blocks
+     * @return array{firms: list<array<string, mixed>>, skipped_blocks: int, skipped_details: list<array<string, mixed>>}
+     */
+    private function firmsFromBlocksDetailed(array $blocks): array
+    {
         $firms = [];
         $sequence = 1;
+        $skippedBlocks = 0;
+        $skippedDetails = [];
+
         foreach ($blocks as $block) {
             $firm = $this->parseFirmBlock($block, $sequence);
             if ($firm === null) {
+                $skippedBlocks++;
+                $hint = (string) ($block['firm_hint'] ?? '');
+                $skippedDetails[] = [
+                    'serial' => null,
+                    'reason' => 'empty_firm_block_no_identity',
+                    'snippet' => mb_substr($hint !== '' ? $hint : ($block['lines'][0]['text'] ?? ''), 0, 80),
+                ];
                 continue;
             }
             $firms[] = $firm;
             $sequence++;
         }
 
-        return $firms;
+        return [
+            'firms' => $firms,
+            'skipped_blocks' => $skippedBlocks,
+            'skipped_details' => $skippedDetails,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function emptyResult(string $reason): array
+    {
+        return [
+            'parser_version' => self::PARSER_VERSION,
+            'parse_mode' => 'none',
+            'firm_count' => 0,
+            'heading_count' => 0,
+            'rows_detected' => 0,
+            'skipped_blocks' => 1,
+            'skipped_details' => [['serial' => null, 'reason' => $reason, 'snippet' => '']],
+            'missing_serials' => [],
+            'duplicate_serials' => [],
+            'duplicate_firms' => [],
+            'unique_firm_estimate' => 0,
+            'firms' => [],
+        ];
+    }
+
+    /**
+     * @param  list<array{text: string, line_no: int, page: int|null}>  $lines
+     * @return array{pages_with_text: int, lines_per_page: array<int, int>}
+     */
+    private function pageStats(array $lines): array
+    {
+        $perPage = [];
+        foreach ($lines as $line) {
+            $page = (int) ($line['page'] ?? 1);
+            $perPage[$page] = ($perPage[$page] ?? 0) + 1;
+        }
+
+        return [
+            'pages_with_text' => count($perPage),
+            'lines_per_page' => $perPage,
+        ];
     }
 
     /**

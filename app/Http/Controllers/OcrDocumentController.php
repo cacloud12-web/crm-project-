@@ -78,20 +78,46 @@ class OcrDocumentController extends Controller
     public function store(StoreOcrDocumentRequest $request): JsonResponse
     {
         $caId = $request->filled('ca_id') ? (int) $request->integer('ca_id') : null;
+        $file = $request->file('document');
+
+        $importType = (string) $request->input('import_type', \App\Models\OcrDocument::IMPORT_SALES_TEAM);
+
+        \Illuminate\Support\Facades\Log::info('ocr.pipeline.step', [
+            'step' => 'http_upload_received',
+            'original_filename' => $file?->getClientOriginalName(),
+            'file_size' => $file?->getSize(),
+            'mime_type' => $file?->getMimeType(),
+            'ca_id' => $caId,
+            'import_type' => $importType,
+            'user_id' => $request->user()?->id,
+            'force_reimport' => (bool) $request->boolean('force_reimport'),
+        ]);
 
         try {
             $document = $this->ocrDocumentService->store(
-                $request->file('document'),
+                $file,
                 $caId,
                 $request->user(),
                 (bool) $request->boolean('force_reimport'),
+                $importType,
             );
         } catch (\App\Exceptions\DocumentAi\DocumentAiConfigurationException $exception) {
+            \Illuminate\Support\Facades\Log::error('ocr.pipeline.upload_rejected', [
+                'step' => 'http_upload',
+                'error_code' => 'configuration_error',
+                'error_message' => $exception->getMessage(),
+            ]);
+
             return ApiResponse::error(
                 $this->configurationErrorMessage($request, $exception),
                 422,
             );
         } catch (\App\Exceptions\Ocr\OcrFileException $exception) {
+            \Illuminate\Support\Facades\Log::error('ocr.pipeline.upload_rejected', [
+                'step' => 'http_upload',
+                'error_code' => $exception->errorCode,
+                'error_message' => $exception->getMessage(),
+            ]);
             $payload = ['document' => [$exception->getMessage()]];
             if ($exception->errorCode === 'duplicate_file') {
                 $payload['duplicate_file'] = true;
@@ -99,7 +125,22 @@ class OcrDocumentController extends Controller
             }
 
             return ApiResponse::error($exception->getMessage(), 422, $payload);
+        } catch (\Throwable $exception) {
+            \Illuminate\Support\Facades\Log::error('ocr.pipeline.upload_exception', [
+                'step' => 'http_upload',
+                'error_code' => 'upload_failed',
+                'error_message' => $exception->getMessage(),
+                'exception' => $exception::class,
+            ]);
+            throw $exception;
         }
+
+        \Illuminate\Support\Facades\Log::info('ocr.pipeline.step', [
+            'step' => 'http_upload_created',
+            'ocr_document_id' => $document->id,
+            'status' => $document->status,
+            'pipeline_stage' => $document->pipelineStage(),
+        ]);
 
         return ApiResponse::created(
             new OcrDocumentResource($document),

@@ -31,6 +31,8 @@ class StoreOcrDocumentRequest extends FormRequest
         return [
             // Optional: omit for library/OCR Import (future CA mapping phase attaches later).
             'ca_id' => ['nullable', 'integer', 'exists:ca_masters,ca_id'],
+            // UI requires a selection; omitted values default to sales_team in the controller for lead-drawer/API callers.
+            'import_type' => ['nullable', 'string', 'in:master_ca,sales_team'],
             'force_reimport' => ['nullable', 'boolean'],
             'document' => [
                 'required',
@@ -47,6 +49,8 @@ class StoreOcrDocumentRequest extends FormRequest
         $maxMb = max(1, (int) config('document-ai.max_file_mb', 20));
 
         return [
+            'import_type.required' => 'Select Import Type: Master CA Data or Sales Team Data before uploading.',
+            'import_type.in' => 'Import Type must be Master CA Data or Sales Team Data.',
             'document.required' => 'Please choose a PDF or image document to upload.',
             'document.file' => $this->uploadedErrorMessage(),
             'document.max' => "The document may not be larger than {$maxMb} MB.",

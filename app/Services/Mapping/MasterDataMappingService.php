@@ -8,6 +8,7 @@ use App\Models\MasterMappingDecision;
 use App\Models\OcrDocument;
 use App\Models\OcrParsedFirm;
 use App\Models\SourceLead;
+use App\Repositories\Leads\LeadPhoneNumberRepository;
 use App\Services\Cache\CrmCacheService;
 use App\Services\Leads\DuplicateLeadDetectionService;
 use App\Services\Leads\LeadFieldNormalizationService;
@@ -34,12 +35,37 @@ class MasterDataMappingService
         private readonly PhoneClassificationService $phoneClassification,
         private readonly EmployeeDataScopeService $employeeDataScope,
         private readonly CrmCacheService $cacheService,
+        private readonly LeadPhoneNumberRepository $phoneNumbers,
     ) {}
+
+    /**
+     * Convenience entry for sales-team imports (state + firm + CA profile).
+     *
+     * @param  list<array<string, mixed>>  $records
+     * @return array<string, mixed>
+     */
+    public function processSalesTeamBatch(array $records, ?string $sourceRef = null, ?int $actorId = null, ?array $meta = null): array
+    {
+        return $this->processBatch(
+            'sales_team',
+            $sourceRef ?: ('sales-'.now()->format('YmdHis')),
+            $records,
+            $actorId,
+            array_merge($meta ?? [], [
+                'matching_profile' => MasterDataMatchingService::PROFILE_STATE_FIRM_CA,
+                'matchingProfile' => MasterDataMatchingService::PROFILE_STATE_FIRM_CA,
+                'source_name' => $meta['source_name'] ?? 'Sales Team Import',
+            ]),
+        );
+    }
 
     /**
      * Map a batch of raw source rows through the engine.
      *
+     * Supports meta keys: matching_profile|matchingProfile, file_name, file_hash, import_batch_id, finalize.
+     *
      * @param  list<array<string, mixed>>  $rows  Each row may include staging_id for OCR
+     * @param  array<string, mixed>|null  $meta
      * @return array{
      *     processed: int,
      *     auto_updated: int,
@@ -47,29 +73,53 @@ class MasterDataMappingService
      *     needs_review: int,
      *     conflicts: int,
      *     skipped: int,
-     *     decisions: list<array<string, mixed>>
+     *     decisions: list<array<string, mixed>>,
+     *     import_batch_id: int|null,
+     *     matching_profile: string
      * }
-     */
-    /**
-     * @param  array{file_name?: ?string, file_hash?: ?string, import_batch_id?: ?int}|null  $meta
      */
     public function processBatch(string $sourceType, string $sourceRef, array $rows, ?int $actorId = null, ?array $meta = null): array
     {
+        $profile = $this->matching->resolveProfile(
+            $meta['matching_profile'] ?? ($meta['matchingProfile'] ?? (
+                $sourceType === 'sales_team' ? MasterDataMatchingService::PROFILE_STATE_FIRM_CA : null
+            )),
+        );
+
         $payloads = [];
         foreach ($rows as $i => $row) {
             $payload = $this->matching->normalizePayload($row);
+            if (empty($payload['state_id']) && filled($payload['state'] ?? null)) {
+                $payload['state_id'] = $this->lookupResolver->resolveStateId($payload['state']);
+            }
+            if (empty($payload['city_id']) && filled($payload['city'] ?? null)) {
+                $payload['city_id'] = $this->lookupResolver->resolveCityId($payload['city'], $payload['state_id'] ?? null);
+            }
             $payload['_staging_id'] = $row['staging_id'] ?? ($row['id'] ?? null);
             $payload['_row_index'] = $i;
+            $payload['_matching_profile'] = $profile;
             $payload['field_meta'] = $row['field_meta'] ?? ($payload['field_meta'] ?? null);
             $payload['overall_confidence'] = $row['overall_confidence'] ?? ($payload['overall_confidence'] ?? null);
             $payload['members'] = $row['members'] ?? ($payload['members'] ?? []);
+            if ($payload['members'] === [] && filled($payload['ca_name'] ?? null)) {
+                $payload['members'] = [['ca_name' => $payload['ca_name'], 'mobile' => $payload['mobile_no'] ?? null]];
+            }
             $payload['source_name'] = $row['source_name'] ?? ($meta['source_name'] ?? config('crm_mapping.source_types.'.$sourceType, 'Import'));
+            // Sales imports are high-trust for contact fill, not for overwriting official names.
+            if ($profile === MasterDataMatchingService::PROFILE_STATE_FIRM_CA && ($payload['overall_confidence'] ?? null) === null) {
+                $payload['overall_confidence'] = 0.75;
+                $payload['field_meta'] = array_merge(is_array($payload['field_meta']) ? $payload['field_meta'] : [], [
+                    'phone' => ['confidence' => 0.95],
+                    'firm_name' => ['confidence' => 0.55],
+                    'ca_name' => ['confidence' => 0.55],
+                ]);
+            }
             $payloads[] = $payload;
         }
 
         $batch = $this->resolveOrCreateBatch($sourceType, $sourceRef, count($payloads), $actorId, $meta);
         $finalize = ! array_key_exists('finalize', $meta ?? []) || (bool) ($meta['finalize'] ?? true);
-        $index = $this->matching->buildIndex($payloads);
+        $index = $this->matching->buildIndex($payloads, $profile);
         $stats = [
             'processed' => 0,
             'auto_updated' => 0,
@@ -79,6 +129,7 @@ class MasterDataMappingService
             'skipped' => 0,
             'decisions' => [],
             'import_batch_id' => $batch?->id,
+            'matching_profile' => $profile,
         ];
         $createdIds = is_array($batch?->created_ca_ids) ? $batch->created_ca_ids : [];
         $updatedSnapshots = is_array($batch?->updated_snapshots) ? $batch->updated_snapshots : [];
@@ -99,9 +150,9 @@ class MasterDataMappingService
 
         foreach ($payloads as $payload) {
             $stats['processed']++;
-            $match = $this->matching->match($payload, $index);
-            $decision = $this->decide($match, $payload);
-            $result = $this->applyDecision($sourceType, $sourceRef, $payload, $match, $decision, $actorId, $batch?->id);
+            $match = $this->matching->match($payload, $index, $profile);
+            $decision = $this->decide($match, $payload, $profile);
+            $result = $this->applyDecision($sourceType, $sourceRef, $payload, $match, $decision, $actorId, $batch?->id, $profile);
             $stats['decisions'][] = $result;
 
             match ($result['decision']) {
@@ -209,6 +260,13 @@ class MasterDataMappingService
      */
     public function processOcrDocument(int $ocrDocumentId, ?int $actorId = null): array
     {
+        $doc = OcrDocument::query()->find($ocrDocumentId);
+        if ($doc && $doc->isMasterCaImport()) {
+            throw new \InvalidArgumentException(
+                'Master CA imports must use MasterCaDirectImportService — sales mapping is not allowed.',
+            );
+        }
+
         $chunkSize = max(25, (int) config('crm_mapping.map_chunk_size', 200));
         $stats = [
             'processed' => 0,
@@ -219,6 +277,7 @@ class MasterDataMappingService
             'skipped' => 0,
             'decisions' => [],
             'import_batch_id' => null,
+            'matching_profile' => MasterDataMatchingService::PROFILE_STATE_FIRM_CA,
         ];
 
         $pendingQuery = OcrParsedFirm::query()
@@ -234,23 +293,26 @@ class MasterDataMappingService
             });
 
         $expectedTotal = (clone $pendingQuery)->count();
-        $doc = OcrDocument::query()->find($ocrDocumentId);
         $batch = null;
         if ($expectedTotal > 0 && Schema::hasTable('master_import_batches')) {
             $batch = MasterImportBatch::query()->create([
-                'source_type' => 'ocr',
+                'source_type' => OcrDocument::IMPORT_SALES_TEAM,
                 'source_ref' => (string) $ocrDocumentId,
                 'file_name' => $doc?->original_filename,
                 'file_hash' => $doc?->checksum,
                 'status' => MasterImportBatch::STATUS_PROCESSING,
                 'total_records' => 0,
-                'progress_stage' => 'parsing',
+                'progress_stage' => 'mapping',
                 'progress_pct' => 10,
                 'actor_id' => $actorId,
                 'created_ca_ids' => [],
                 'updated_snapshots' => [],
             ]);
             $stats['import_batch_id'] = $batch->id;
+        }
+
+        if ($doc) {
+            $doc->update(['processing_progress' => 'Mapping sales records to Master Data']);
         }
 
         (clone $pendingQuery)
@@ -261,13 +323,15 @@ class MasterDataMappingService
                 if ($rows === []) {
                     return;
                 }
-                // Keep batch open across chunks; finalize once after all chunks.
-                $chunkStats = $this->processBatch('ocr', (string) $ocrDocumentId, $rows, $actorId, [
+                // Sales-team OCR always uses state_firm_ca against official Master CA.
+                $chunkStats = $this->processBatch(OcrDocument::IMPORT_SALES_TEAM, (string) $ocrDocumentId, $rows, $actorId, [
                     'import_batch_id' => $batch?->id,
                     'file_name' => $batch?->file_name,
                     'file_hash' => $batch?->file_hash,
                     'finalize' => false,
                     'expected_total' => $expectedTotal,
+                    'matchingProfile' => MasterDataMatchingService::PROFILE_STATE_FIRM_CA,
+                    'source_name' => 'Sales Team Import',
                 ]);
                 foreach (['processed', 'auto_updated', 'auto_created', 'needs_review', 'conflicts', 'skipped'] as $key) {
                     $stats[$key] += (int) ($chunkStats[$key] ?? 0);
@@ -288,6 +352,10 @@ class MasterDataMappingService
                 'conflict_count' => $stats['conflicts'],
                 'failed_count' => $stats['skipped'],
             ]);
+        }
+
+        if ($doc) {
+            $doc->update(['processing_progress' => 'Completed']);
         }
 
         return $stats;
@@ -408,31 +476,55 @@ class MasterDataMappingService
         ];
     }
 
-    public function decide(MatchResult $match, ?array $payload = null): string
+    public function decide(MatchResult $match, ?array $payload = null, ?string $profile = null): string
     {
+        $profile = $this->matching->resolveProfile($profile ?? ($payload['_matching_profile'] ?? null));
+        $isSales = $profile === MasterDataMatchingService::PROFILE_STATE_FIRM_CA;
+
         $autoExact = (bool) config('crm_mapping.auto_apply_exact', true);
-        $autoCreate = (bool) config('crm_mapping.auto_create_unmatched', true);
-        $autoMin = (float) config('crm_mapping.auto_update_min_confidence', 0.90);
-        $reviewMin = (float) config('crm_mapping.review_min_confidence', 0.55);
+        $autoCreate = $isSales
+            ? (bool) config('crm_mapping.profiles.state_firm_ca.auto_create_unmatched', false)
+            : (bool) config('crm_mapping.auto_create_unmatched', true);
+        $autoMin = $isSales
+            ? (float) config('crm_mapping.profiles.state_firm_ca.auto_update_min', 0.90)
+            : (float) config('crm_mapping.auto_update_min_confidence', 0.90);
+        $reviewMin = $isSales
+            ? (float) config('crm_mapping.profiles.state_firm_ca.review_min', 0.70)
+            : (float) config('crm_mapping.review_min_confidence', 0.55);
         $fuzzyAutoMin = (float) config('crm_mapping.fuzzy_auto_update_min', 0.97);
 
         if ($match->isConflict()) {
             return MasterMappingDecision::DECISION_CONFLICT;
         }
 
-        $lowFieldConfidence = $payload !== null && $this->hasLowFieldConfidence($payload);
+        // Weak / incomplete sales names → review (never auto-create on CA name alone).
+        if ($isSales && $payload !== null) {
+            $firm = trim((string) ($payload['normalized_firm_name'] ?? $payload['firm_name'] ?? ''));
+            $ca = trim((string) ($payload['normalized_ca_name'] ?? $payload['ca_name'] ?? ''));
+            $stateId = (int) ($payload['state_id'] ?? 0);
+            if ($stateId < 1 || ($firm === '' && $ca === '')) {
+                return MasterMappingDecision::DECISION_NEEDS_REVIEW;
+            }
+            if ($firm === '' && $match->isUnmatched()) {
+                return MasterMappingDecision::DECISION_NEEDS_REVIEW;
+            }
+        }
+
+        $lowFieldConfidence = ! $isSales && $payload !== null && $this->hasLowFieldConfidence($payload);
 
         if ($match->isExact() && $autoExact && $match->caId && ! $lowFieldConfidence) {
             return MasterMappingDecision::DECISION_AUTO_UPDATE;
         }
 
         if ($match->status === MatchResult::STATUS_POSSIBLE && $match->caId) {
-            // Never auto-merge on fuzzy name alone unless confidence is extremely high.
-            if (($match->matchedOn === 'fuzzy_firm_name') && $match->confidence < $fuzzyAutoMin) {
+            if (! $isSales && ($match->matchedOn === 'fuzzy_firm_name') && $match->confidence < $fuzzyAutoMin) {
                 return MasterMappingDecision::DECISION_NEEDS_REVIEW;
             }
             if ($match->confidence >= $autoMin && ! $lowFieldConfidence) {
                 return MasterMappingDecision::DECISION_AUTO_UPDATE;
+            }
+            if ($match->confidence >= $reviewMin) {
+                return MasterMappingDecision::DECISION_NEEDS_REVIEW;
             }
 
             return MasterMappingDecision::DECISION_NEEDS_REVIEW;
@@ -482,6 +574,7 @@ class MasterDataMappingService
         string $decision,
         ?int $actorId,
         ?int $importBatchId = null,
+        ?string $profile = null,
     ): array {
         $stagingId = isset($payload['_staging_id']) ? (int) $payload['_staging_id'] : null;
         $caId = null;
@@ -489,44 +582,110 @@ class MasterDataMappingService
         $oldValues = null;
         $newValues = null;
         $snapshot = null;
+        $mobileAction = 'none';
+        $profile = $this->matching->resolveProfile($profile ?? ($payload['_matching_profile'] ?? null));
 
         if ($decision === MasterMappingDecision::DECISION_AUTO_UPDATE && $match->caId) {
-            $merge = DB::transaction(function () use ($payload, $match) {
-                $existing = CaMaster::query()->lockForUpdate()->find($match->caId);
-                if (! $existing) {
-                    return null;
-                }
-                $before = $this->snapshotLead($existing);
-                $attrs = $this->toCaMasterAttributes($payload);
-                $lead = $this->mergeIntoExisting($existing, $attrs, $payload);
-                $this->syncPartners($lead, $payload['members'] ?? []);
-
-                return [
-                    'lead' => $lead,
-                    'before' => $before,
-                    'after' => $this->snapshotLead($lead),
-                ];
-            });
-            $caId = $merge['lead']->ca_id ?? null;
-            $appliedAt = now();
-            if (! $caId) {
-                $decision = MasterMappingDecision::DECISION_NEEDS_REVIEW;
+            $mobileCheck = $this->evaluateMobileOwnership($payload, (int) $match->caId);
+            if ($mobileCheck['conflict']) {
+                $decision = MasterMappingDecision::DECISION_CONFLICT;
+                $mobileAction = 'conflict_other_master';
+                $match = MatchResult::conflict(array_values(array_filter([
+                    ...$match->candidates,
+                    [
+                        'ca_id' => (int) $mobileCheck['owner_ca_id'],
+                        'score' => 1.0,
+                        'matched_on' => 'mobile_owned_elsewhere',
+                        'firm_name' => null,
+                        'ca_name' => null,
+                    ],
+                ])), 'mobile_belongs_to_other_master');
             } else {
-                $oldValues = $merge['before'];
-                $newValues = $merge['after'];
-                $snapshot = ['ca_id' => $caId, 'before' => $merge['before']];
+                $merge = DB::transaction(function () use ($payload, $match, $profile, &$mobileAction) {
+                    $existing = CaMaster::query()->lockForUpdate()->find($match->caId);
+                    if (! $existing) {
+                        return null;
+                    }
+                    $before = $this->snapshotLead($existing);
+                    $attrs = $this->toCaMasterAttributes($payload);
+                    if ($profile === MasterDataMatchingService::PROFILE_STATE_FIRM_CA) {
+                        // Never overwrite official Master firm/CA/address from sales data.
+                        unset($attrs['firm_name'], $attrs['ca_name'], $attrs['address'], $attrs['gst_no'], $attrs['pan_no'], $attrs['frn']);
+                    }
+                    $attach = $this->attachSalesMobile($existing, $attrs, $payload);
+                    $mobileAction = $attach['mobile_action'];
+                    $lead = $this->mergeIntoExisting($existing, $attach['attrs'], $payload);
+                    if ($profile === MasterDataMatchingService::PROFILE_STATE_FIRM_CA
+                        && in_array($match->matchedOn, ['state_firm_ca_exact', 'state_firm_strong_ca', 'state_ca_strong_firm', 'phone', 'frn', 'membership_no'], true)) {
+                        $this->syncPartners($lead, $payload['members'] ?? []);
+                    } elseif ($profile !== MasterDataMatchingService::PROFILE_STATE_FIRM_CA) {
+                        $this->syncPartners($lead, $payload['members'] ?? []);
+                    }
+
+                    return [
+                        'lead' => $lead,
+                        'before' => $before,
+                        'after' => $this->snapshotLead($lead),
+                    ];
+                });
+                $caId = $merge['lead']->ca_id ?? null;
+                $appliedAt = now();
+                if (! $caId) {
+                    $decision = MasterMappingDecision::DECISION_NEEDS_REVIEW;
+                } else {
+                    $oldValues = $merge['before'];
+                    $newValues = $merge['after'];
+                    $snapshot = ['ca_id' => $caId, 'before' => $merge['before']];
+                }
             }
         } elseif ($decision === MasterMappingDecision::DECISION_AUTO_CREATE) {
-            $lead = DB::transaction(function () use ($payload) {
-                $created = $this->createMaster($this->toCaMasterAttributes($payload));
-                $this->syncPartners($created, $payload['members'] ?? []);
+            $mobileCheck = $this->evaluateMobileOwnership($payload, null);
+            if ($mobileCheck['conflict']) {
+                $decision = MasterMappingDecision::DECISION_CONFLICT;
+                $mobileAction = 'conflict_other_master';
+                $match = MatchResult::conflict([[
+                    'ca_id' => (int) $mobileCheck['owner_ca_id'],
+                    'score' => 1.0,
+                    'matched_on' => 'mobile_owned_elsewhere',
+                    'firm_name' => null,
+                    'ca_name' => null,
+                ]], 'mobile_belongs_to_other_master');
+            } else {
+                $lead = DB::transaction(function () use ($payload) {
+                    $created = $this->createMaster($this->toCaMasterAttributes($payload));
+                    $this->syncPartners($created, $payload['members'] ?? []);
 
-                return $created;
-            });
-            $caId = $lead->ca_id;
-            $appliedAt = now();
-            $newValues = $this->snapshotLead($lead);
+                    return $created;
+                });
+                $caId = $lead->ca_id;
+                $appliedAt = now();
+                $newValues = $this->snapshotLead($lead);
+                $mobileAction = filled($payload['normalized_mobile'] ?? null) ? 'added_primary' : 'none';
+            }
         }
+
+        $top = $match->candidates[0] ?? [];
+        $decisionMeta = [
+            'matching_profile' => $profile,
+            'imported' => [
+                'state' => $payload['state'] ?? null,
+                'state_id' => $payload['state_id'] ?? null,
+                'ca_name' => $payload['ca_name'] ?? null,
+                'firm_name' => $payload['firm_name'] ?? null,
+                'mobile' => $payload['normalized_mobile'] ?? ($payload['mobile_no'] ?? null),
+            ],
+            'candidate_ca_ids' => array_values(array_unique(array_map(
+                static fn ($c) => (int) ($c['ca_id'] ?? 0),
+                $match->candidates,
+            ))),
+            'selected_ca_id' => $caId,
+            'firm_similarity' => $top['firm_similarity'] ?? null,
+            'ca_similarity' => $top['ca_similarity'] ?? null,
+            'combined_confidence' => $match->confidence,
+            'mapping_reason' => $match->matchedOn ?: $match->reason,
+            'mobile_action' => $mobileAction,
+            'status' => $decision,
+        ];
 
         $this->persistStagingState($stagingId, $decision, $match, $caId, $appliedAt);
         $log = $this->writeDecisionLog(
@@ -542,6 +701,7 @@ class MasterDataMappingService
             $importBatchId,
             $oldValues,
             $newValues,
+            $decisionMeta,
         );
 
         return [
@@ -552,7 +712,74 @@ class MasterDataMappingService
             'matched_on' => $match->matchedOn,
             'log_id' => $log?->id,
             'snapshot' => $snapshot,
+            'mobile_action' => $mobileAction,
+            'decision_meta' => $decisionMeta,
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array{conflict: bool, owner_ca_id: int|null}
+     */
+    private function evaluateMobileOwnership(array $payload, ?int $matchedCaId): array
+    {
+        $mobile = $payload['normalized_mobile'] ?? $this->normalizer->phone($payload['mobile_no'] ?? null);
+        if (! filled($mobile)) {
+            return ['conflict' => false, 'owner_ca_id' => null];
+        }
+        $owner = $this->phoneNumbers->findLeadByNormalizedNumber((string) $mobile, $matchedCaId);
+        if (! $owner) {
+            return ['conflict' => false, 'owner_ca_id' => null];
+        }
+        if ($matchedCaId !== null && (int) $owner->ca_id === (int) $matchedCaId) {
+            return ['conflict' => false, 'owner_ca_id' => (int) $owner->ca_id];
+        }
+
+        return ['conflict' => true, 'owner_ca_id' => (int) $owner->ca_id];
+    }
+
+    /**
+     * Attach sales mobile without replacing a valid existing number; prevent duplicates.
+     *
+     * @param  array<string, mixed>  $attrs
+     * @param  array<string, mixed>  $payload
+     * @return array{attrs: array<string, mixed>, mobile_action: string}
+     */
+    private function attachSalesMobile(CaMaster $lead, array $attrs, array $payload): array
+    {
+        $incoming = $payload['normalized_mobile'] ?? $this->normalizer->phone($attrs['mobile_no'] ?? ($payload['mobile_no'] ?? null));
+        if (! filled($incoming)) {
+            unset($attrs['mobile_no']);
+
+            return ['attrs' => $attrs, 'mobile_action' => 'none'];
+        }
+
+        $primary = $this->normalizer->phone($lead->mobile_no);
+        $alternate = $this->normalizer->phone($lead->alternate_mobile_no);
+
+        if ($primary === $incoming || $alternate === $incoming) {
+            unset($attrs['mobile_no']);
+
+            return ['attrs' => $attrs, 'mobile_action' => 'already_present'];
+        }
+
+        if (! filled($lead->mobile_no)) {
+            $attrs['mobile_no'] = $payload['mobile_no'] ?: $incoming;
+
+            return ['attrs' => $attrs, 'mobile_action' => 'added_primary'];
+        }
+
+        if (! filled($lead->alternate_mobile_no)) {
+            $attrs['alternate_mobile_no'] = $payload['mobile_no'] ?: $incoming;
+            unset($attrs['mobile_no']);
+
+            return ['attrs' => $attrs, 'mobile_action' => 'added_alternate'];
+        }
+
+        // Both slots filled with different numbers — do not overwrite official contacts.
+        unset($attrs['mobile_no'], $attrs['alternate_mobile_no']);
+
+        return ['attrs' => $attrs, 'mobile_action' => 'skipped_slots_full'];
     }
 
     /**
@@ -669,13 +896,14 @@ class MasterDataMappingService
         ?int $importBatchId = null,
         ?array $oldValues = null,
         ?array $newValues = null,
+        ?array $decisionMeta = null,
     ): ?MasterMappingDecision {
         if (! Schema::hasTable('master_mapping_decisions')) {
             return null;
         }
 
         $snapshot = $payload;
-        unset($snapshot['_staging_id'], $snapshot['_row_index'], $snapshot['members'], $snapshot['field_meta']);
+        unset($snapshot['_staging_id'], $snapshot['_row_index'], $snapshot['members'], $snapshot['field_meta'], $snapshot['_matching_profile']);
 
         $data = [
             'source_type' => $sourceType,
@@ -700,6 +928,9 @@ class MasterDataMappingService
         if (Schema::hasColumn('master_mapping_decisions', 'new_values')) {
             $data['new_values'] = $newValues;
         }
+        if (Schema::hasColumn('master_mapping_decisions', 'decision_meta')) {
+            $data['decision_meta'] = $decisionMeta;
+        }
 
         return MasterMappingDecision::query()->create($data);
     }
@@ -719,11 +950,13 @@ class MasterDataMappingService
             $phone = null;
         }
 
-        // Persist OCR source text as-is; normalized_* columns are for matching/dedupe only.
+        // Persist source text as-is; normalized_* columns are for matching/dedupe only.
         $data = [
             'ca_name' => $payload['ca_name'] ?: ($payload['firm_name'] ?: 'Unknown'),
             'firm_name' => $payload['firm_name'],
             'normalized_firm_name' => $payload['normalized_firm_name'] ?? $this->normalizer->firmName($payload['firm_name'] ?? null),
+            'normalized_ca_name' => $payload['normalized_ca_name'] ?? $this->normalizer->caName($payload['ca_name'] ?? null),
+            'normalized_state' => $payload['normalized_state'] ?? $this->normalizer->state($payload['state'] ?? null),
             'mobile_no' => $payload['mobile_no'] ?: $phone,
             'alternate_mobile_no' => $payload['alternate_mobile_no'] ?? null,
             'email_id' => $payload['email_id'] ?? null,
@@ -759,6 +992,12 @@ class MasterDataMappingService
 
         if (! Schema::hasColumn('ca_masters', 'normalized_firm_name')) {
             unset($data['normalized_firm_name']);
+        }
+        if (! Schema::hasColumn('ca_masters', 'normalized_ca_name')) {
+            unset($data['normalized_ca_name']);
+        }
+        if (! Schema::hasColumn('ca_masters', 'normalized_state')) {
+            unset($data['normalized_state']);
         }
 
         return $data;

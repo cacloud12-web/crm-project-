@@ -35,8 +35,14 @@ class FinalizeBatchOcrResultJob implements ShouldBeUnique, ShouldQueue
     {
         try {
             $ocrDocumentService->finalizeBatchProcessing($this->ocrDocumentId);
-        } catch (Throwable) {
-            // Persisted on the OCR record.
+        } catch (Throwable $exception) {
+            \Illuminate\Support\Facades\Log::error('ocr.pipeline.job_failed', [
+                'step' => 'batch_finalize_job',
+                'ocr_document_id' => $this->ocrDocumentId,
+                'error_message' => $exception->getMessage(),
+                'exception' => $exception::class,
+            ]);
+            throw $exception;
         }
     }
 

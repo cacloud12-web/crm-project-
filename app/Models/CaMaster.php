@@ -17,6 +17,7 @@ class CaMaster extends Model
 
     protected $fillable = [
         'ca_name',
+        'normalized_ca_name',
         'firm_name',
         'normalized_firm_name',
         'mobile_no',
@@ -29,6 +30,7 @@ class CaMaster extends Model
         'normalized_email',
         'city_id',
         'state_id',
+        'normalized_state',
         'source_id',
         'bulk_action_id',
         'created_by_employee_id',

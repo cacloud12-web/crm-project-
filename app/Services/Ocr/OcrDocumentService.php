@@ -22,6 +22,7 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -112,8 +113,12 @@ class OcrDocumentService
         return $query->latest('created_at')->paginate($perPage);
     }
 
-    public function store(UploadedFile $file, ?int $caId, User $user, bool $forceReimport = false): OcrDocument
+    public function store(UploadedFile $file, ?int $caId, User $user, bool $forceReimport = false, string $importType = OcrDocument::IMPORT_SALES_TEAM): OcrDocument
     {
+        if (! in_array($importType, OcrDocument::IMPORT_TYPES, true)) {
+            throw new OcrFileException('Select Master CA Data or Sales Team Data before uploading.', 'invalid_import_type');
+        }
+
         if ($caId !== null && $caId > 0) {
             $this->employeeDataScope->ensureCanAccessCaMaster($caId);
             CaMaster::query()->findOrFail($caId);
@@ -171,7 +176,7 @@ class OcrDocumentService
                 throw new \RuntimeException('Unable to store the uploaded document.');
             }
 
-            $document = OcrDocument::query()->create([
+            $createAttrs = [
                 'ca_id' => $caId,
                 'uploaded_by' => $user->id,
                 'original_filename' => $file->getClientOriginalName(),
@@ -183,12 +188,27 @@ class OcrDocumentService
                 'checksum' => $checksum,
                 'status' => OcrDocument::STATUS_QUEUED,
                 'provider' => 'google_document_ai',
+                'import_type' => $importType,
                 'processing_mode' => $decision['mode'],
                 'page_count' => $decision['page_count'],
                 'total_pages' => $decision['page_count'],
                 'processing_progress' => $decision['mode'] === OcrProcessingModeSelector::MODE_BATCH
                     ? 'Queued for batch OCR'
                     : 'Queued for online OCR',
+            ];
+            if (! Schema::hasColumn('ocr_documents', 'import_type')) {
+                unset($createAttrs['import_type']);
+            }
+            $document = OcrDocument::query()->create($createAttrs);
+
+            $this->logPipelineStep('document_created', $document, [
+                'uploaded_by' => $user->id,
+                'checksum' => $checksum,
+                'storage_disk' => $disk,
+                'import_type' => $importType,
+                'processing_mode' => $decision['mode'],
+                'page_count' => $decision['page_count'],
+                'file_size' => (int) $file->getSize(),
             ]);
 
             $this->logActivity('OCR Document Uploaded', $document, 'OCR document uploaded.');
@@ -201,11 +221,23 @@ class OcrDocumentService
                 }
 
                 try {
+                    $this->logPipelineStep('ocr_sync_start', $document);
                     $this->processOnline($document->fresh() ?? $document);
                 } catch (Throwable $exception) {
-                    Log::warning('ocr.document.sync_fast_path_failed', [
+                    $fresh = $document->fresh() ?? $document;
+                    if ($fresh && in_array($fresh->status, OcrDocument::ACTIVE_STATUSES, true)) {
+                        $this->markFailed(
+                            $fresh,
+                            $this->exceptionErrorCode($exception, 'sync_ocr_failed'),
+                            $this->exceptionMessage($exception, 'Synchronous OCR failed.'),
+                            true,
+                        );
+                    }
+                    Log::error('ocr.pipeline.sync_fast_path_failed', [
                         'ocr_document_id' => $document->id,
-                        'error' => class_basename($exception),
+                        'error_code' => $fresh->error_code ?? 'sync_ocr_failed',
+                        'error_message' => $exception->getMessage(),
+                        'exception' => $exception::class,
                     ]);
                 }
 
@@ -214,21 +246,18 @@ class OcrDocumentService
 
             $this->logActivity('OCR Processing Queued', $document, 'OCR processing queued ('.$decision['mode'].').');
             $this->dispatchProcessingJob($document->id);
-
-            Log::info('ocr.document.queued', [
-                'ocr_document_id' => $document->id,
-                'uploaded_by' => $user->id,
-                'mime_type' => $document->mime_type,
-                'file_size' => $document->file_size,
-                'processing_mode' => $document->processing_mode,
-                'page_count' => $document->page_count,
-            ]);
+            $this->logPipelineStep('ocr_job_dispatched', $document);
 
             return $document->fresh(['uploader:id,name,email', 'caMaster:ca_id,firm_name,ca_name']);
         } catch (Throwable $exception) {
             if ($stored) {
                 Storage::disk($disk)->delete($storagePath);
             }
+            Log::error('ocr.pipeline.upload_failed', [
+                'error_message' => $exception->getMessage(),
+                'exception' => $exception::class,
+                'storage_path' => $storagePath,
+            ]);
 
             throw $exception;
         }
@@ -391,20 +420,70 @@ class OcrDocumentService
     {
         $document = OcrDocument::query()->find($ocrDocumentId);
         if (! $document) {
+            Log::warning('ocr.pipeline.missing_document', ['ocr_document_id' => $ocrDocumentId, 'step' => 'process_queued']);
+
             return;
         }
 
+        $this->logPipelineStep('process_queued_enter', $document);
+
+        if (in_array($document->status, [OcrDocument::STATUS_COMPLETED, OcrDocument::STATUS_CANCELLED], true)) {
+            $this->logPipelineStep('process_queued_skip_terminal', $document);
+
+            return;
+        }
+
+        if ($document->status === OcrDocument::STATUS_FAILED) {
+            $this->logPipelineStep('process_queued_skip_failed', $document);
+
+            return;
+        }
+
+        // Resume / heal stuck active statuses instead of silently exiting (root cause of "stuck on Processing").
         if (in_array($document->status, [
-            OcrDocument::STATUS_COMPLETED,
-            OcrDocument::STATUS_CANCELLED,
             OcrDocument::STATUS_UPLOADING_TO_CLOUD,
             OcrDocument::STATUS_PROCESSING,
             OcrDocument::STATUS_FINALIZING,
         ], true)) {
-            return;
+            if ($document->processing_mode === OcrProcessingModeSelector::MODE_BATCH && filled($document->provider_operation_name)) {
+                if ($document->status === OcrDocument::STATUS_FINALIZING) {
+                    $this->logPipelineStep('batch_finalize_resume', $document);
+                    $this->finalizeBatchProcessing($document->id);
+                } else {
+                    $this->logPipelineStep('batch_status_resume', $document);
+                    $this->dispatchBatchStatusCheck($document->id);
+                }
+
+                return;
+            }
+
+            if (filled($document->extracted_text)) {
+                $this->logPipelineStep('heal_processing_with_text', $document);
+                $document->update([
+                    'status' => OcrDocument::STATUS_COMPLETED,
+                    'processing_progress' => 'Completed',
+                    'processed_at' => $document->processed_at ?? now(),
+                    'error_code' => null,
+                    'error_message' => null,
+                ]);
+                $this->queueOrRunStructureParse($document->fresh());
+
+                return;
+            }
+
+            $this->logPipelineStep('resume_stuck_online_ocr', $document, [
+                'previous_status' => $document->status,
+            ]);
+            $document->update([
+                'status' => OcrDocument::STATUS_QUEUED,
+                'processing_progress' => 'Resuming OCR after interrupted processing',
+            ]);
+            $document->refresh();
         }
 
         if ($document->status !== OcrDocument::STATUS_QUEUED && $document->status !== OcrDocument::STATUS_PENDING) {
+            $this->logPipelineStep('process_queued_skip_unexpected_status', $document);
+
             return;
         }
 
@@ -423,6 +502,7 @@ class OcrDocumentService
         }
 
         if ($mode === OcrProcessingModeSelector::MODE_BATCH) {
+            $this->logPipelineStep('batch_job_dispatch', $document);
             StartBatchOcrJob::dispatch($document->id);
 
             return;
@@ -576,14 +656,15 @@ class OcrDocumentService
             FinalizeBatchOcrResultJob::dispatch($document->id);
         } catch (OcrProviderException $exception) {
             $this->markFailed($document, $exception->errorCode, $exception->getMessage(), $exception->retryable);
+            throw $exception;
         } catch (Throwable $exception) {
             $this->markFailed(
                 $document,
                 'batch_status_failed',
-                'Unable to check batch OCR status. Please retry shortly.',
+                $this->exceptionMessage($exception, 'Unable to check batch OCR status. Please retry shortly.'),
                 true,
             );
-            unset($exception);
+            throw $exception;
         }
     }
 
@@ -707,6 +788,7 @@ class OcrDocumentService
             'error_message' => null,
         ]);
         $document->refresh();
+        $this->logPipelineStep('ocr_provider_start', $document);
 
         $this->logActivity('OCR Processing Started', $document, 'Online OCR processing started.');
 
@@ -716,9 +798,15 @@ class OcrDocumentService
             }
 
             $binary = Storage::disk($document->storage_disk)->get($document->storage_path);
+            $this->logPipelineStep('ocr_file_loaded', $document, ['bytes' => strlen((string) $binary)]);
             $started = microtime(true);
             $result = $this->documentAiService->processBinary($binary, $document->mime_type);
             $googleMs = (int) round((microtime(true) - $started) * 1000);
+            $this->logPipelineStep('ocr_provider_response', $document, [
+                'google_duration_ms' => $googleMs,
+                'page_count' => $result['page_count'] ?? null,
+                'text_length' => mb_strlen((string) ($result['text'] ?? '')),
+            ]);
 
             $document->update([
                 'status' => OcrDocument::STATUS_COMPLETED,
@@ -740,17 +828,15 @@ class OcrDocumentService
                 'processor_name' => $result['processor_name'] ?? null,
                 'provider' => 'google_document_ai',
                 'provider_reference' => $result['provider_reference'] ?? ($result['processor_name'] ?? null),
-                'processing_progress' => 'Completed',
+                'processing_progress' => 'OCR complete — parsing structure',
                 'processed_at' => now(),
                 'error_code' => null,
                 'error_message' => null,
             ]);
 
-            Log::info('ocr.document.completed', [
-                'ocr_document_id' => $document->id,
+            $this->logPipelineStep('ocr_text_saved', $document->fresh() ?? $document, [
                 'google_duration_ms' => $googleMs,
                 'page_count' => $result['page_count'] ?? null,
-                'mode' => 'online',
             ]);
 
             $this->logActivity('OCR Completed', $document, 'OCR processing completed.');
@@ -764,16 +850,10 @@ class OcrDocumentService
         } catch (Throwable $exception) {
             $this->markFailed(
                 $document,
-                'processing_failed',
-                'The document could not be processed. Please verify the OCR configuration or retry.',
+                $this->exceptionErrorCode($exception, 'processing_failed'),
+                $this->exceptionMessage($exception, 'The document could not be processed. Please verify the OCR configuration or retry.'),
                 true,
             );
-
-            Log::warning('ocr.document.failed', [
-                'ocr_document_id' => $document->id,
-                'ca_id' => $document->ca_id,
-                'error' => class_basename($exception),
-            ]);
 
             throw $exception;
         }
@@ -885,9 +965,22 @@ class OcrDocumentService
             if ($document->processing_mode === OcrProcessingModeSelector::MODE_BATCH
                 && $document->provider_operation_name
                 && $document->status === OcrDocument::STATUS_PROCESSING) {
-                // Let the batch status checker decide; only kick a check.
                 CheckBatchOcrStatusJob::dispatch($document->id);
                 $skipped++;
+                continue;
+            }
+
+            // Online / interrupted jobs: re-queue once more before failing permanently.
+            if ((int) $document->processing_attempts < 3 && ! filled($document->extracted_text)) {
+                $document->update([
+                    'status' => OcrDocument::STATUS_QUEUED,
+                    'processing_progress' => 'Re-queued after stuck recovery',
+                    'error_code' => null,
+                    'error_message' => null,
+                ]);
+                ProcessOcrDocumentJob::dispatch($document->id);
+                $this->logPipelineStep('stuck_online_redispatched', $document);
+                $redispatched++;
                 continue;
             }
 
@@ -994,7 +1087,9 @@ class OcrDocumentService
                 'parse_status' => 'completed',
                 'parsed_firm_count' => 0,
                 'parsed_at' => now(),
+                'processing_progress' => 'Completed',
             ]);
+            $this->logPipelineStep('parse_skipped_empty_text', $document);
 
             return;
         }
@@ -1006,16 +1101,28 @@ class OcrDocumentService
                 'processing_progress' => 'Structuring OCR results',
             ]);
             ParseOcrStructureJob::dispatch($document->id);
+            $this->logPipelineStep('parse_job_dispatched', $document, ['text_length' => mb_strlen($text)]);
 
             return;
         }
 
         try {
+            $this->logPipelineStep('parse_inline_start', $document);
             $this->structurePersistService->parseAndPersist($document);
         } catch (Throwable $exception) {
-            Log::warning('ocr.document.structure_inline_failed', [
+            // OCR text is already saved — keep status=completed, surface parse error for retry.
+            $fresh = $document->fresh() ?? $document;
+            $fresh->update([
+                'parse_status' => 'failed',
+                'error_code' => $this->exceptionErrorCode($exception, 'structure_parse_failed'),
+                'error_message' => $this->exceptionMessage($exception, 'Structure parsing failed.'),
+                'processing_progress' => 'Parsing failed — retry available',
+            ]);
+            Log::error('ocr.pipeline.structure_inline_failed', [
                 'ocr_document_id' => $document->id,
-                'error' => class_basename($exception),
+                'error_code' => $fresh->error_code,
+                'error_message' => $exception->getMessage(),
+                'exception' => $exception::class,
             ]);
         }
     }
@@ -1025,7 +1132,7 @@ class OcrDocumentService
         $document->update([
             'status' => OcrDocument::STATUS_FAILED,
             'error_code' => $errorCode,
-            'error_message' => $message,
+            'error_message' => mb_substr($message, 0, 2000),
             'processing_progress' => 'Failed',
             'failed_at' => now(),
             'processed_at' => now(),
@@ -1033,12 +1140,50 @@ class OcrDocumentService
 
         $this->logActivity('OCR Failed', $document, 'OCR processing failed.');
 
-        Log::warning('ocr.document.failed', [
+        Log::error('ocr.pipeline.failed', [
+            'step' => 'mark_failed',
             'ocr_document_id' => $document->id,
             'ca_id' => $document->ca_id,
             'error_code' => $errorCode,
+            'error_message' => $message,
             'retryable' => $retryable,
+            'status' => OcrDocument::STATUS_FAILED,
         ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     */
+    private function logPipelineStep(string $step, OcrDocument $document, array $context = []): void
+    {
+        Log::info('ocr.pipeline.step', array_merge([
+            'step' => $step,
+            'ocr_document_id' => $document->id,
+            'status' => $document->status,
+            'parse_status' => $document->parse_status,
+            'processing_mode' => $document->processing_mode,
+            'processing_progress' => $document->processing_progress,
+            'original_filename' => $document->original_filename,
+        ], $context));
+    }
+
+    private function exceptionErrorCode(Throwable $exception, string $fallback): string
+    {
+        if ($exception instanceof OcrFileException && filled($exception->errorCode)) {
+            return (string) $exception->errorCode;
+        }
+        if ($exception instanceof OcrProviderException && filled($exception->errorCode)) {
+            return (string) $exception->errorCode;
+        }
+
+        return $fallback;
+    }
+
+    private function exceptionMessage(Throwable $exception, string $fallback): string
+    {
+        $message = trim($exception->getMessage());
+
+        return $message !== '' ? mb_substr($message, 0, 2000) : $fallback;
     }
 
     private function logActivity(string $action, OcrDocument $document, string $description): void

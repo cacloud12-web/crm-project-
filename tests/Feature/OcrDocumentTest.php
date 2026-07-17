@@ -177,9 +177,10 @@ class OcrDocumentTest extends TestCase
             ['scan.png', 'image/png'],
             ['scan.tiff', 'image/tiff'],
         ] as [$name, $mime]) {
+            // Unique bytes per file so checksum duplicate protection does not block siblings.
             $this->post('/ocr-documents', [
                 'ca_id' => $lead->ca_id,
-                'document' => UploadedFile::fake()->createWithContent($name, 'fake image bytes', $mime),
+                'document' => UploadedFile::fake()->createWithContent($name, 'fake image bytes for '.$name, $mime),
             ], ['Accept' => 'application/json'])->assertCreated();
         }
     }

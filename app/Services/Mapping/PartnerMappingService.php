@@ -45,10 +45,23 @@ class PartnerMappingService
                 $membership = $this->normalizer->membershipNumber(
                     isset($member['membership_no']) ? (string) $member['membership_no'] : ($member['membership_number'] ?? null)
                 );
+                $normalizedName = mb_strtolower((string) ($this->normalizer->caName($name) ?: $name));
                 $query = CaPartner::query()->where('firm_id', $firm->id);
-                $partner = $membership
-                    ? (clone $query)->where('membership_number', $membership)->first()
-                    : (clone $query)->whereRaw('LOWER(TRIM(partner_name)) = ?', [mb_strtolower($name)])->first();
+                $partner = null;
+                if ($membership) {
+                    $partner = (clone $query)->where('membership_number', $membership)->first();
+                }
+                if (! $partner) {
+                    $partner = (clone $query)->whereRaw('LOWER(TRIM(partner_name)) = ?', [$normalizedName])->first();
+                }
+                // Name-order variant: "Kumar Raj" vs "Raj Kumar"
+                if (! $partner) {
+                    $parts = preg_split('/\s+/', $normalizedName) ?: [];
+                    if (count($parts) >= 2) {
+                        $reordered = trim($parts[count($parts) - 1].' '.implode(' ', array_slice($parts, 0, -1)));
+                        $partner = (clone $query)->whereRaw('LOWER(TRIM(partner_name)) = ?', [$reordered])->first();
+                    }
+                }
 
                 $attrs = [
                     'firm_id' => $firm->id,

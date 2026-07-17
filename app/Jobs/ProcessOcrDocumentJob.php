@@ -9,6 +9,7 @@ use App\Services\Ocr\OcrDocumentService;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
@@ -41,10 +42,23 @@ class ProcessOcrDocumentJob implements ShouldBeUnique, ShouldQueue
 
     public function handle(OcrDocumentService $ocrDocumentService): void
     {
+        Log::info('ocr.pipeline.step', [
+            'step' => 'job_process_handle',
+            'ocr_document_id' => $this->ocrDocumentId,
+            'attempt' => $this->attempts(),
+        ]);
+
         try {
             $ocrDocumentService->processQueuedDocument($this->ocrDocumentId);
-        } catch (Throwable) {
-            // Failures are persisted on the OCR record.
+        } catch (Throwable $exception) {
+            Log::error('ocr.pipeline.job_failed', [
+                'step' => 'job_process_handle',
+                'ocr_document_id' => $this->ocrDocumentId,
+                'error_message' => $exception->getMessage(),
+                'exception' => $exception::class,
+                'attempt' => $this->attempts(),
+            ]);
+            throw $exception;
         }
     }
 
@@ -67,11 +81,18 @@ class ProcessOcrDocumentJob implements ShouldBeUnique, ShouldQueue
             $document->update([
                 'status' => OcrDocument::STATUS_FAILED,
                 'error_code' => 'queue_failed',
-                'error_message' => 'The document could not be processed. Please verify the OCR configuration or retry.',
+                'error_message' => mb_substr($exception->getMessage() ?: 'The document could not be processed. Please retry.', 0, 2000),
                 'processing_progress' => 'Failed',
                 'failed_at' => now(),
                 'processed_at' => now(),
             ]);
         }
+
+        Log::error('ocr.pipeline.job_permanently_failed', [
+            'step' => 'job_process_failed',
+            'ocr_document_id' => $this->ocrDocumentId,
+            'error_code' => $document->error_code,
+            'error_message' => $exception->getMessage(),
+        ]);
     }
 }

@@ -16410,6 +16410,12 @@ body.ra-drawer-open .crm-header {
   color: #64748b;
   margin-right: auto;
 }
+.ocr-quality-report {
+  border: 1px solid #ccfbf1;
+  background: #f0fdfa;
+  border-radius: 0.5rem;
+  padding: 0.55rem 0.75rem;
+}
 .ocr-completeness-warn {
   padding: 0.5rem 0.65rem;
   border-radius: 0.5rem;

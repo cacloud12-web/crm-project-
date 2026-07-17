@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Jobs\ImportMasterCaOcrJob;
 use App\Models\OcrDocument;
 use App\Services\Mapping\MasterDataMappingService;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
@@ -43,6 +44,16 @@ class MapOcrParsedFirmsJob implements ShouldBeUnique, ShouldQueue
             return;
         }
 
+        if ($document->isMasterCaImport()) {
+            Log::error('ocr.pipeline.mapping_blocked_master_ca', [
+                'ocr_document_id' => $this->ocrDocumentId,
+                'message' => 'MapOcrParsedFirmsJob refused Master CA import — use ImportMasterCaOcrJob.',
+            ]);
+            ImportMasterCaOcrJob::dispatch($this->ocrDocumentId, $this->actorId);
+
+            return;
+        }
+
         if ($document->parse_status !== 'completed') {
             Log::warning('ocr.document.mapping_skipped_parse_status', [
                 'ocr_document_id' => $this->ocrDocumentId,
@@ -76,11 +87,18 @@ class MapOcrParsedFirmsJob implements ShouldBeUnique, ShouldQueue
                 'stats' => collect($stats)->except('decisions')->all(),
             ]);
         } catch (Throwable $e) {
-            Log::error('ocr.document.mapping_failed', [
+            Log::error('ocr.pipeline.mapping_failed', [
+                'step' => 'mapping_job',
                 'ocr_document_id' => $this->ocrDocumentId,
-                'error' => $e->getMessage(),
+                'error_code' => 'mapping_failed',
+                'error_message' => $e->getMessage(),
+                'exception' => $e::class,
             ]);
-            $document->update(['processing_progress' => 'Mapping failed — retry available']);
+            $document->update([
+                'error_code' => 'mapping_failed',
+                'error_message' => mb_substr($e->getMessage(), 0, 2000),
+                'processing_progress' => 'Mapping failed — retry available',
+            ]);
 
             throw $e;
         }

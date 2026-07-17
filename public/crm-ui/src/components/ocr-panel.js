@@ -160,6 +160,8 @@
     var formData = new FormData();
     formData.append('ca_id', String(caId));
     formData.append('document', file);
+    // Lead-drawer uploads are sales-team contact enrichment, not official Master CA load.
+    formData.append('import_type', 'sales_team');
     return apiFetch('/ocr-documents', {
       method: 'POST',
       body: formData,
@@ -173,12 +175,24 @@
 
     function handleFiles(files) {
       if (!files || !files.length) return;
-      var file = files[0];
+      var queue = Array.prototype.slice.call(files);
       uploadInput.disabled = true;
-      uploadFile(caId, file).then(function () {
-        if (typeof window.toast === 'function') window.toast('Document uploaded for OCR processing.', 'success');
-        return mountIntoDrawer(caId);
-      }).catch(function (err) {
+
+      function uploadNext(index) {
+        if (index >= queue.length) {
+          if (typeof window.toast === 'function') {
+            window.toast(queue.length > 1
+              ? queue.length + ' documents uploaded for OCR processing.'
+              : 'Document uploaded for OCR processing.', 'success');
+          }
+          return mountIntoDrawer(caId);
+        }
+        return uploadFile(caId, queue[index]).then(function () {
+          return uploadNext(index + 1);
+        });
+      }
+
+      uploadNext(0).catch(function (err) {
         var message = err.message || 'Upload failed.';
         if (err.status === 419) {
           message = 'The upload request expired. Please refresh the page and retry.';
@@ -192,6 +206,7 @@
           message = 'Your session expired. Please sign in again.';
         }
         if (typeof window.toast === 'function') window.toast(message, 'error');
+        return mountIntoDrawer(caId);
       }).finally(function () {
         uploadInput.disabled = false;
         uploadInput.value = '';

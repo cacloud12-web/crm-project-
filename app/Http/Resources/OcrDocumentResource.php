@@ -30,10 +30,16 @@ class OcrDocumentResource extends JsonResource
             'ca_name' => $this->whenLoaded('caMaster', fn () => $this->caMaster?->ca_name),
             'provider' => 'google_document_ai',
             'provider_label' => 'Google Document AI',
+            'import_type' => $this->import_type ?: OcrDocument::IMPORT_SALES_TEAM,
+            'import_type_label' => $this->import_type === OcrDocument::IMPORT_MASTER_CA
+                ? 'Master CA Data'
+                : 'Sales Team Data',
             'processing_mode' => $this->processing_mode,
             'processing_mode_label' => $this->processing_mode === 'batch' ? 'Batch OCR' : ($this->processing_mode === 'online' ? 'Online OCR' : null),
             'status' => $this->status,
             'status_label' => $this->resource->statusLabel(),
+            'pipeline_stage' => $this->resource->pipelineStage(),
+            'pipeline_stage_label' => $this->resource->statusLabel(),
             'processing_progress' => $this->processing_progress,
             'parse_status' => $this->parse_status,
             'parsed_firm_count' => $this->parsed_firm_count,
@@ -67,10 +73,13 @@ class OcrDocumentResource extends JsonResource
                 function () {
                     $data = is_array($this->structured_data) ? $this->structured_data : [];
 
+                    $parsed = $data['parsed'] ?? null;
+
                     return [
-                        'parsed' => $data['parsed'] ?? null,
+                        'parsed' => $parsed,
                         'mapping' => $data['mapping'] ?? null,
                         'import_batch' => $this->latestImportBatchSummary(),
+                        'quality_report' => is_array($parsed) ? ($parsed['quality_report'] ?? null) : null,
                     ];
                 },
             ),
@@ -116,8 +125,12 @@ class OcrDocumentResource extends JsonResource
         }
 
         $batch = MasterImportBatch::query()
-            ->where('source_type', 'ocr')
             ->where('source_ref', (string) $this->id)
+            ->whereIn('source_type', [
+                'ocr',
+                OcrDocument::IMPORT_SALES_TEAM,
+                OcrDocument::IMPORT_MASTER_CA,
+            ])
             ->latest('id')
             ->first();
 

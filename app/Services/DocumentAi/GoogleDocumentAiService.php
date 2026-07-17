@@ -149,6 +149,7 @@ class GoogleDocumentAiService
         $pages = [];
         $confidences = [];
         $detectedLanguages = [];
+        $pageTextChunks = [];
 
         foreach ($document->getPages() as $index => $page) {
             $pageLanguages = [];
@@ -197,17 +198,27 @@ class GoogleDocumentAiService
                 $paragraphs[] = $entry;
             }
 
+            $pageNumber = $index + 1;
+            $pageBody = trim(implode("\n", $paragraphs));
+            if ($pageBody !== '') {
+                $pageTextChunks[] = "--- Page {$pageNumber} ---\n".$pageBody;
+            }
+
             $pageConfidence = $page->getLayout()?->getConfidence();
             if ($pageConfidence !== null) {
                 $confidences[] = (float) $pageConfidence;
             }
 
             $pages[] = [
-                'page_number' => $index + 1,
+                'page_number' => $pageNumber,
                 'languages' => array_values(array_unique($pageLanguages)),
                 'paragraph_count' => count($paragraphs),
                 'paragraphs' => $paragraphs,
                 'confidence' => $pageConfidence !== null ? (float) $pageConfidence : null,
+                'line_count' => count($paragraphs),
+                'has_text' => $pageBody !== '',
+                // Keep page body for quality reporting; full extracted_text still holds combined OCR.
+                'text_length' => mb_strlen($pageBody),
             ];
         }
 
@@ -215,10 +226,15 @@ class GoogleDocumentAiService
             ? round(array_sum($confidences) / count($confidences), 4)
             : null;
 
+        // Prefer page-stitched text with markers so the parser can attribute firms per page.
+        // Fall back to raw Document AI text when paragraph anchors are empty.
+        $stitched = trim(implode("\n\n", $pageTextChunks));
+        $finalText = $stitched !== '' ? $stitched : $text;
+
         return [
             'provider' => 'google_document_ai',
             'processing_mode' => 'online',
-            'text' => $text,
+            'text' => $finalText,
             'page_count' => count($pages),
             'confidence' => $averageConfidence,
             'languages' => array_values(array_unique($detectedLanguages)),

@@ -14,8 +14,13 @@ use Illuminate\Support\Facades\Schema;
  */
 class MasterDataMatchingService
 {
+    public const PROFILE_IDENTIFIER_FIRST = 'identifier_first';
+
+    public const PROFILE_STATE_FIRM_CA = 'state_firm_ca';
+
     public function __construct(
         private readonly DataNormalizationService $normalizer,
+        private readonly StateFirmCaMatchingProfile $stateFirmCaProfile,
     ) {}
 
     /**
@@ -49,13 +54,17 @@ class MasterDataMatchingService
         $rawFrn = is_string($frn) ? trim($frn) : null;
         $rawMembership = is_string($membership) ? trim($membership) : null;
         $rawPincode = is_string($pincode) ? trim($pincode) : null;
+        $rawCity = is_string($city) ? trim($city) : null;
+        $rawState = is_string($state) ? trim($state) : null;
+        $normalizedFirm = $this->normalizer->firmName($rawFirm);
+        $normalizedCa = $this->normalizer->caName($rawCa);
 
         // Display/save fields stay raw; normalized_* are match-only keys.
         return [
             'firm_name' => $rawFirm,
-            'normalized_firm_name' => $this->normalizer->firmName($rawFirm),
+            'normalized_firm_name' => $normalizedFirm,
             'ca_name' => $rawCa,
-            'normalized_ca_name' => $this->normalizer->caName($rawCa),
+            'normalized_ca_name' => $normalizedCa,
             'mobile_no' => $rawPhone,
             'normalized_mobile' => $this->normalizer->phone($rawPhone),
             'alternate_mobile_no' => $rawAltPhone,
@@ -71,8 +80,10 @@ class MasterDataMatchingService
             'membership_no' => $rawMembership,
             'normalized_membership_no' => $this->normalizer->membershipNumber($rawMembership),
             'address' => isset($raw['address']) ? trim((string) $raw['address']) : null,
-            'city' => is_string($city) ? trim($city) : null,
-            'state' => is_string($state) ? trim($state) : null,
+            'city' => $rawCity,
+            'state' => $rawState,
+            'normalized_state' => $this->normalizer->state($rawState),
+            'normalized_city' => $this->normalizer->city($rawCity),
             'pincode' => $rawPincode,
             'normalized_pincode' => $this->normalizer->postalCode($rawPincode),
             'website' => isset($raw['website']) ? trim((string) $raw['website']) : null,
@@ -126,8 +137,17 @@ class MasterDataMatchingService
      *     by_id: array<int, array<string, mixed>>
      * }
      */
-    public function buildIndex(array $payloads): array
+    /**
+     * @param  list<array<string, mixed>>  $payloads
+     * @return array<string, mixed>
+     */
+    public function buildIndex(array $payloads, ?string $profile = null): array
     {
+        $profile = $this->resolveProfile($profile);
+        if ($profile === self::PROFILE_STATE_FIRM_CA) {
+            return $this->stateFirmCaProfile->buildIndex($payloads);
+        }
+
         $chunk = (int) config('crm_mapping.index_chunk_size', 500);
         $prefixLen = (int) config('crm_mapping.fuzzy_prefix_length', 8);
         $fuzzyLimit = (int) config('crm_mapping.fuzzy_prefix_limit', 25);
@@ -278,8 +298,13 @@ class MasterDataMatchingService
      * @param  array<string, mixed>  $payload  Normalized via normalizePayload()
      * @param  array<string, mixed>  $index    From buildIndex()
      */
-    public function match(array $payload, array $index): MatchResult
+    public function match(array $payload, array $index, ?string $profile = null): MatchResult
     {
+        $profile = $this->resolveProfile($profile ?? ($index['profile'] ?? null));
+        if ($profile === self::PROFILE_STATE_FIRM_CA) {
+            return $this->stateFirmCaProfile->match($payload, $index);
+        }
+
         // Strict priority: stop at the first identifier rung that yields hits.
         $exactPriority = [
             ['frn', 'by_frn', $payload['normalized_frn'] ?? ($payload['frn'] ?? null)],
@@ -503,11 +528,16 @@ class MasterDataMatchingService
             ? ($lead->normalized_firm_name ?: $this->normalizer->firmName($lead->firm_name))
             : $this->normalizer->firmName($lead->firm_name);
 
+        $normalizedCa = Schema::hasColumn('ca_masters', 'normalized_ca_name')
+            ? ($lead->normalized_ca_name ?: $this->normalizer->caName($lead->ca_name))
+            : $this->normalizer->caName($lead->ca_name);
+
         return [
             'ca_id' => (int) $lead->ca_id,
             'ca_name' => $lead->ca_name,
             'firm_name' => $lead->firm_name,
             'normalized_firm_name' => $normalizedFirm,
+            'normalized_ca_name' => $normalizedCa,
             'city_id' => $lead->city_id ? (int) $lead->city_id : null,
             'state_id' => $lead->state_id ? (int) $lead->state_id : null,
             'mobile_no' => $lead->mobile_no,
@@ -523,5 +553,15 @@ class MasterDataMatchingService
             'pincode' => $lead->pincode ?? null,
             'status' => $lead->status,
         ];
+    }
+
+    public function resolveProfile(?string $profile): string
+    {
+        $profile = $profile ?: (string) config('crm_mapping.default_matching_profile', self::PROFILE_IDENTIFIER_FIRST);
+        if ($profile === self::PROFILE_STATE_FIRM_CA || $profile === 'sales_team') {
+            return self::PROFILE_STATE_FIRM_CA;
+        }
+
+        return self::PROFILE_IDENTIFIER_FIRST;
     }
 }
