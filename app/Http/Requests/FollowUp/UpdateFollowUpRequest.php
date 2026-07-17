@@ -4,9 +4,8 @@ namespace App\Http\Requests\FollowUp;
 
 use App\Http\Requests\Concerns\PreparesFollowUpDemoFields;
 use App\Http\Requests\Concerns\SanitizesUserText;
+use App\Http\Requests\Concerns\ValidatesFollowUpEmployeeDemoProvider;
 use App\Http\Requests\Concerns\ValidatesFollowUpSchedule;
-use App\Models\FollowUp;
-use App\Services\DemoConfirmation\DemoConfirmationService;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -15,6 +14,7 @@ class UpdateFollowUpRequest extends FormRequest
 {
     use PreparesFollowUpDemoFields;
     use SanitizesUserText;
+    use ValidatesFollowUpEmployeeDemoProvider;
     use ValidatesFollowUpSchedule;
 
     public function authorize(): bool
@@ -43,6 +43,7 @@ class UpdateFollowUpRequest extends FormRequest
             'reschedule_reason' => 'nullable|string|max:2000',
             'team_size' => 'nullable|integer|min:1',
             'demo_provider_name' => 'nullable|string|max:255',
+            'demo_provider_employee_id' => 'nullable|integer|exists:employees,employee_id',
             'meeting_link' => 'nullable|string|max:500',
         ];
     }
@@ -50,24 +51,6 @@ class UpdateFollowUpRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $this->appendFollowUpScheduleValidation($validator);
-
-        $validator->after(function (Validator $validator): void {
-            $type = $this->input('followup_type');
-            if ($type === null) {
-                $followUpId = $this->followUpRouteId();
-                if ($followUpId) {
-                    $type = FollowUp::query()->where('followup_id', $followUpId)->value('followup_type');
-                }
-            }
-
-            if ($type !== DemoConfirmationService::DEMO_FOLLOWUP_TYPE) {
-                return;
-            }
-
-            $link = trim((string) $this->input('meeting_link', ''));
-            if ($link === '') {
-                $validator->errors()->add('meeting_link', 'Meeting link is required for demo scheduled follow-ups.');
-            }
-        });
+        $this->appendFollowUpEmployeeDemoProviderValidation($validator, false);
     }
 }

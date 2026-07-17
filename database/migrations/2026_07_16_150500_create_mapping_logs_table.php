@@ -10,6 +10,10 @@ return new class extends Migration
 
     public function up(): void
     {
+        if (Schema::connection($this->connection)->hasTable('mapping_logs')) {
+            return;
+        }
+
         Schema::connection($this->connection)->create('mapping_logs', function (Blueprint $table) {
             $table->id();
             $table->foreignId('firm_id')->constrained('ca_firms')->cascadeOnDelete();

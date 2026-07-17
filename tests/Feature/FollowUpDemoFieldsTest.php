@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\CaMaster;
 use App\Models\City;
 use App\Models\DemoSchedule;
+use App\Models\Employee;
 use App\Models\FollowUp;
 use App\Models\State;
 use App\Models\User;
@@ -35,6 +36,7 @@ class FollowUpDemoFieldsTest extends TestCase
         $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
         $this->actingAs($admin);
 
+        $provider = $this->createEligibleProvider('Dev Aggarwal', 1, 10, 'https://meet.google.com/awm-gsft-xov');
         $lead = $this->createLeadWithTeamSize(8);
         $scheduled = now()->addDays(3)->setTime(15, 30);
 
@@ -44,12 +46,13 @@ class FollowUpDemoFieldsTest extends TestCase
             'scheduled_date' => $scheduled->toDateTimeString(),
             'status' => 'Pending',
             'remarks' => 'Demo booking',
-            'meeting_link' => 'https://meet.google.com/awm-gsft-xov',
+            'demo_provider_employee_id' => $provider->employee_id,
         ]);
 
         $response->assertCreated()
             ->assertJsonPath('data.team_size', 8)
             ->assertJsonPath('data.demo_provider_name', 'Dev Aggarwal')
+            ->assertJsonPath('data.demo_provider_employee_id', $provider->employee_id)
             ->assertJsonPath('data.meeting_link', 'https://meet.google.com/awm-gsft-xov');
 
         $this->deleteJson('/ca-masters/'.$lead->ca_id)->assertOk();
@@ -60,6 +63,8 @@ class FollowUpDemoFieldsTest extends TestCase
         $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
         $this->actingAs($admin);
 
+        $small = $this->createEligibleProvider('Ankit Bhardwaj', 1, 1, 'https://meet.google.com/mcq-jrnh-uea');
+        $large = $this->createEligibleProvider('Kamal Sharma', 11, 50, 'https://meet.google.com/ouq-sxne-jwn');
         $lead = $this->createLeadWithTeamSize(1);
         $scheduled = now()->addDays(2)->setTime(11, 0);
 
@@ -68,23 +73,24 @@ class FollowUpDemoFieldsTest extends TestCase
             'followup_type' => 'Demo Scheduled',
             'scheduled_date' => $scheduled->toDateTimeString(),
             'team_size' => 1,
-            'meeting_link' => 'https://meet.google.com/mcq-jrnh-uea',
+            'demo_provider_employee_id' => $small->employee_id,
         ])->assertCreated();
 
         $followupId = $create->json('data.followup_id');
 
         $this->putJson('/follow-ups/'.$followupId, [
             'team_size' => 12,
-            'meeting_link' => 'https://meet.google.com/ouq-sxne-jwn',
+            'demo_provider_employee_id' => $large->employee_id,
         ])->assertOk()
             ->assertJsonPath('data.team_size', 12)
             ->assertJsonPath('data.demo_provider_name', 'Kamal Sharma')
+            ->assertJsonPath('data.demo_provider_employee_id', $large->employee_id)
             ->assertJsonPath('data.meeting_link', 'https://meet.google.com/ouq-sxne-jwn');
 
         $this->deleteJson('/ca-masters/'.$lead->ca_id)->assertOk();
     }
 
-    public function test_demo_scheduled_requires_meeting_link_when_team_size_unavailable(): void
+    public function test_demo_scheduled_requires_team_size_when_unavailable(): void
     {
         $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
         $this->actingAs($admin);
@@ -97,7 +103,7 @@ class FollowUpDemoFieldsTest extends TestCase
             'followup_type' => 'Demo Scheduled',
             'scheduled_date' => $scheduled->toDateTimeString(),
         ])->assertUnprocessable()
-            ->assertJsonValidationErrors(['meeting_link']);
+            ->assertJsonValidationErrors(['team_size']);
 
         $this->deleteJson('/ca-masters/'.$lead->ca_id)->assertOk();
     }
@@ -115,6 +121,7 @@ class FollowUpDemoFieldsTest extends TestCase
             ])->save();
         }
 
+        $provider = $this->createEligibleProvider('Dev Aggarwal', 1, 10, 'https://meet.google.com/awm-gsft-xov');
         $lead = $this->createLeadWithTeamSize(8);
         $scheduled = now()->addDays(3)->setTime(15, 30);
 
@@ -122,7 +129,7 @@ class FollowUpDemoFieldsTest extends TestCase
             'ca_id' => $lead->ca_id,
             'followup_type' => 'Demo Scheduled',
             'scheduled_date' => $scheduled->toDateTimeString(),
-            'meeting_link' => 'https://meet.google.com/awm-gsft-xov',
+            'demo_provider_employee_id' => $provider->employee_id,
         ])->assertCreated()
             ->assertJsonPath('data.followup_type', 'Demo Scheduled');
 
@@ -153,6 +160,7 @@ class FollowUpDemoFieldsTest extends TestCase
         $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
         $this->actingAs($admin);
 
+        $provider = $this->createEligibleProvider('Dev Aggarwal', 1, 10, 'https://meet.google.com/awm-gsft-xov');
         $lead = $this->createLeadWithTeamSize(8);
         $scheduled = now()->addDays(3)->setTime(15, 30);
 
@@ -160,7 +168,7 @@ class FollowUpDemoFieldsTest extends TestCase
             'ca_id' => $lead->ca_id,
             'followup_type' => 'Demo Scheduled',
             'scheduled_date' => $scheduled->toDateTimeString(),
-            'meeting_link' => 'https://meet.google.com/awm-gsft-xov',
+            'demo_provider_employee_id' => $provider->employee_id,
         ])->assertCreated();
 
         $followupId = $create->json('data.followup_id');
@@ -203,6 +211,22 @@ class FollowUpDemoFieldsTest extends TestCase
             ->assertJsonPath('data.status', 'Completed');
 
         $this->deleteJson('/ca-masters/'.$lead->ca_id)->assertOk();
+    }
+
+    private function createEligibleProvider(string $name, int $min, int $max, string $link): Employee
+    {
+        $ts = (string) microtime(true).random_int(100, 999);
+
+        return Employee::query()->create([
+            'name' => $name,
+            'email_id' => 'demo.provider.'.md5($ts.$name).'@test.local',
+            'status' => 'Active',
+            'work_type' => 'demo_provider',
+            'demo_meeting_link' => $link,
+            'demo_min_team_size' => $min,
+            'demo_max_team_size' => $max,
+            'active_for_demo' => true,
+        ]);
     }
 
     private function createLeadWithTeamSize(?int $teamSize): CaMaster

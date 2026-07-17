@@ -18,6 +18,7 @@ class OcrStructureParseTest extends TestCase
     {
         parent::setUp();
         Storage::fake('local');
+        config(['crm_mapping.queue_after_ocr_parse' => false]);
         app(\App\Services\Rbac\RbacDatabaseService::class)->ensureConfigDefaultGrants();
         app(\App\Services\Rbac\RbacMatrixService::class)->flushCache();
     }
@@ -82,9 +83,12 @@ class OcrStructureParseTest extends TestCase
         app(OcrStructurePersistService::class)->parseAndPersist($document);
         $firm = OcrParsedFirm::query()->where('ocr_document_id', $document->id)->firstOrFail();
 
-        $this->patchJson('/ocr-documents/'.$document->id.'/firms/'.$firm->id.'/review', [
+        $approve = $this->patchJson('/ocr-documents/'.$document->id.'/firms/'.$firm->id.'/review', [
             'review_status' => 'approved',
-        ])->assertOk()->assertJsonPath('data.review_status', 'approved');
+        ])->assertOk()
+            ->assertJsonPath('data.review_status', 'approved');
+
+        $this->assertGreaterThan(0, (int) $approve->json('data.ca_id'));
 
         $this->patchJson('/ocr-documents/'.$document->id.'/firms/'.$firm->id.'/review', [
             'review_status' => 'rejected',

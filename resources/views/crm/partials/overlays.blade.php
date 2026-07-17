@@ -260,6 +260,35 @@
           <div><label class="form-label">City</label><select name="city_id" class="input-field" disabled><option value="">Select city</option></select></div>
         </div>
         <div><label class="form-label">Date of Joining</label><input name="date_of_joining" type="date" class="input-field" data-crm-date-input data-allow-past /></div>
+        <div>
+          <label class="form-label" for="employee-work-type">Work Type</label>
+          <select name="work_type" id="employee-work-type" class="input-field">
+            <option value="calling">Calling</option>
+            <option value="demo_provider">Demo Provider</option>
+            <option value="both">Both</option>
+          </select>
+        </div>
+        <div id="employee-demo-fields-wrap" class="hidden space-y-4 border-t border-slate-100 pt-4">
+          <p class="text-card-heading text-sm">Demo Assignment</p>
+          <div>
+            <label class="form-label" for="employee-demo-meeting-link">Demo Meeting Link</label>
+            <input name="demo_meeting_link" type="url" id="employee-demo-meeting-link" class="input-field" placeholder="https://meet.google.com/…" />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="form-label" for="employee-demo-min-team-size">Minimum Team Size</label>
+              <input name="demo_min_team_size" type="number" min="1" step="1" id="employee-demo-min-team-size" class="input-field" placeholder="1" />
+            </div>
+            <div>
+              <label class="form-label" for="employee-demo-max-team-size">Maximum Team Size</label>
+              <input name="demo_max_team_size" type="number" min="1" step="1" id="employee-demo-max-team-size" class="input-field" placeholder="25" />
+            </div>
+          </div>
+          <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+            <input name="active_for_demo" type="checkbox" id="employee-active-for-demo" value="1" class="rounded border-slate-300" />
+            Active for demo assignment
+          </label>
+        </div>
         <div id="employee-login-fields" class="space-y-4 border-t border-slate-100 pt-4">
           <p class="text-card-heading text-sm">Login Credentials</p>
           <div><label class="form-label">CRM Access Role</label>
@@ -770,35 +799,6 @@
             </div>
           </div>
         </div>
-        <div id="followup-lead-context" class="followup-lead-context card hidden" aria-live="polite">
-          <p class="followup-lead-context__title">Selected Lead</p>
-          <dl class="followup-lead-context__grid">
-            <div class="followup-lead-context__item">
-              <dt>Firm Name</dt>
-              <dd id="followup-ctx-firm">—</dd>
-            </div>
-            <div class="followup-lead-context__item">
-              <dt>CA Name</dt>
-              <dd id="followup-ctx-ca">—</dd>
-            </div>
-            <div class="followup-lead-context__item">
-              <dt>Mobile</dt>
-              <dd id="followup-ctx-mobile">—</dd>
-            </div>
-            <div class="followup-lead-context__item">
-              <dt>Current Status</dt>
-              <dd id="followup-ctx-status">—</dd>
-            </div>
-            <div class="followup-lead-context__item">
-              <dt>City</dt>
-              <dd id="followup-ctx-city">—</dd>
-            </div>
-            <div class="followup-lead-context__item followup-lead-context__item--full">
-              <dt>Assigned Employee</dt>
-              <dd id="followup-ctx-employee">—</dd>
-            </div>
-          </dl>
-        </div>
         <div><label class="form-label">Follow-up Type</label><select name="followup_type" class="input-field"><option>Call Status</option><option>Demo Scheduled</option><option>Demo Completed</option><option>Details Shared</option><option>Negotiation</option><option>Not Interested</option><option>Follow Up Reminder</option><option>Follow Up Scheduled</option></select></div>
         <div><label class="form-label">Remarks</label><textarea name="remarks" class="input-field" rows="2" placeholder="Discussion notes…"></textarea></div>
         <div>
@@ -811,12 +811,16 @@
             <input name="team_size" type="number" min="1" step="1" id="form-followup-team-size" class="input-field" placeholder="Auto from lead" />
           </div>
           <div>
-            <label class="form-label" for="form-followup-demo-provider">Demo Provider Name</label>
-            <input name="demo_provider_name" type="text" id="form-followup-demo-provider" class="input-field" placeholder="Auto from team size" />
+            <label class="form-label" for="form-followup-demo-provider">Demo Provider</label>
+            <select name="demo_provider_employee_id" id="form-followup-demo-provider" class="input-field">
+              <option value="">Select demo provider</option>
+            </select>
+            <p id="form-followup-demo-provider-hint" class="text-caption text-slate-500 mt-1 hidden"></p>
+            <input type="hidden" name="demo_provider_name" id="form-followup-demo-provider-name" value="" />
           </div>
           <div>
             <label class="form-label" for="form-followup-meeting-link">Meeting Link</label>
-            <input name="meeting_link" type="url" id="form-followup-meeting-link" class="input-field" placeholder="https://meet.google.com/…" />
+            <input name="meeting_link" type="url" id="form-followup-meeting-link" class="input-field" placeholder="Auto from selected provider" />
           </div>
         </div>
         <div><label class="form-label">Priority</label><select name="priority" class="input-field"><option>Normal</option><option>Low</option><option>High</option><option>Urgent</option></select></div>

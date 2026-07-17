@@ -405,6 +405,13 @@ class RbacService
             return ['module' => 'ocr', 'permission' => $permission];
         }
 
+        if (str_starts_with($path, 'master-import-batches')) {
+            return [
+                'module' => 'ocr',
+                'permission' => $method === 'POST' ? 'edit' : 'view',
+            ];
+        }
+
         if (str_starts_with($path, 'activity-logs')) {
             return ['module' => 'activity', 'permission' => $method === 'GET' ? 'view' : 'reports'];
         }

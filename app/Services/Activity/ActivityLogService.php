@@ -82,6 +82,8 @@ class ActivityLogService
         'OCR Text Corrected',
         'OCR Original Viewed',
         'OCR Document Deleted',
+        'OCR Firm Approved',
+        'OCR Firm Linked',
         'Access Denied',
         'Login Failed',
         'Login Locked',

@@ -414,17 +414,6 @@ window.CA_CRM = (function () {
 
   function apiFetch(url, options) {
     options = options || {};
-    if (options.credentials == null) {
-      options.credentials = 'same-origin';
-    }
-    // Never force multipart Content-Type — browser must set boundary for FormData.
-    if (typeof FormData !== 'undefined' && options.body instanceof FormData && options.headers) {
-      var cleaned = Object.assign({}, options.headers);
-      Object.keys(cleaned).forEach(function (key) {
-        if (String(key).toLowerCase() === 'content-type') delete cleaned[key];
-      });
-      options.headers = cleaned;
-    }
     options.headers = Object.assign({
       'X-CSRF-TOKEN': csrfToken(),
       'Accept': 'application/json',
@@ -445,12 +434,6 @@ window.CA_CRM = (function () {
       if (response.status === 401) {
         window.location.href = '/login';
         throw new Error('Session expired. Please sign in again.');
-      }
-      if (response.status === 419) {
-        throw Object.assign(new Error('The upload request expired. Please refresh the page and retry.'), { status: 419 });
-      }
-      if (response.status === 413) {
-        throw Object.assign(new Error('The file is too large for the server. Please use a smaller file or ask your host to raise upload limits.'), { status: 413 });
       }
       return response.text().then(function (text) {
         var body = {};
@@ -2735,11 +2718,45 @@ if (otherInput) {
     select.value = 'employee';
   }
 
+  function isEmployeeDemoWorkType(workType) {
+    return workType === 'demo_provider' || workType === 'both';
+  }
+
+  function toggleEmployeeDemoFields() {
+    var workTypeSel = document.getElementById('employee-work-type');
+    var wrap = document.getElementById('employee-demo-fields-wrap');
+    if (!workTypeSel || !wrap) return;
+    var show = isEmployeeDemoWorkType(workTypeSel.value);
+    wrap.classList.toggle('hidden', !show);
+  }
+
+  function bindEmployeeDemoWorkTypeEvents() {
+    var workTypeSel = document.getElementById('employee-work-type');
+    if (!workTypeSel || workTypeSel._demoWorkBound) return;
+    workTypeSel._demoWorkBound = true;
+    workTypeSel.addEventListener('change', toggleEmployeeDemoFields);
+  }
+
+  function fillEmployeeDemoWorkTypeFields(employee) {
+    var workTypeSel = document.getElementById('employee-work-type');
+    var linkInput = document.getElementById('employee-demo-meeting-link');
+    var minInput = document.getElementById('employee-demo-min-team-size');
+    var maxInput = document.getElementById('employee-demo-max-team-size');
+    var activeToggle = document.getElementById('employee-active-for-demo');
+    if (workTypeSel) workTypeSel.value = employee && employee.work_type ? employee.work_type : 'calling';
+    if (linkInput) linkInput.value = (employee && employee.demo_meeting_link) || '';
+    if (minInput) minInput.value = employee && employee.demo_min_team_size != null ? employee.demo_min_team_size : '';
+    if (maxInput) maxInput.value = employee && employee.demo_max_team_size != null ? employee.demo_max_team_size : '';
+    if (activeToggle) activeToggle.checked = !!(employee && employee.active_for_demo);
+    toggleEmployeeDemoFields();
+  }
+
   function configureEmployeeModalMode(mode, employee) {
     var loginFields = document.getElementById('employee-login-fields');
     var statusNote = document.getElementById('employee-login-status-note');
     var title = document.getElementById('add-employee-title');
     var passwordInputs = loginFields ? loginFields.querySelectorAll('[name="password"], [name="password_confirmation"]') : [];
+    bindEmployeeDemoWorkTypeEvents();
 
     if (mode === 'edit') {
       if (loginFields) loginFields.classList.add('hidden');
@@ -2752,6 +2769,7 @@ if (otherInput) {
         statusNote.classList.remove('hidden');
       }
       if (title) title.innerHTML = title.innerHTML.replace('Add Employee', 'Edit Employee');
+      fillEmployeeDemoWorkTypeFields(employee || null);
     } else {
       if (loginFields) loginFields.classList.remove('hidden');
       passwordInputs.forEach(function (input) { input.required = true; });
@@ -2760,6 +2778,7 @@ if (otherInput) {
       if (title && title.textContent.indexOf('Edit') >= 0) {
         title.innerHTML = title.innerHTML.replace('Edit Employee', 'Add Employee');
       }
+      fillEmployeeDemoWorkTypeFields(null);
     }
   }
 
@@ -5350,8 +5369,6 @@ if (otherInput) {
           '<i data-lucide="' + (trend.dir === 'up' ? 'trending-up' : 'trending-down') + '" class="h-3 w-3"></i>' +
           '<span>' + escapeHtml(trend.label) + '</span></span>'
       : '';
-    var desc = card.desc ? '<p class="mgr-kpi-desc">' + escapeHtml(card.desc) + '</p>' : '';
-    var updatedAt = window.__dashboardUpdatedAt || Date.now();
     var accent = card.accent || (card.key || 'default').replace(/_/g, '-');
     return '<button type="button" class="mgr-kpi-card dash-kpi-card dash-kpi-card--premium" data-accent="' + escapeHtml(accent) + '"' + attrs + ' data-kpi="' + escapeHtml(card.label) + '">' +
       '<div class="mgr-kpi-top">' +
@@ -5360,8 +5377,6 @@ if (otherInput) {
       '</div>' +
       '<p class="mgr-kpi-value" data-metric="' + (card.key || '') + '">' + escapeHtml(String(display)) + '</p>' +
       '<p class="mgr-kpi-label">' + escapeHtml(card.label) + '</p>' +
-      desc +
-      '<div class="mgr-kpi-footer"><span class="mgr-kpi-updated">Updated ' + escapeHtml(formatDashboardUpdatedAt(updatedAt)) + '</span></div>' +
     '</button>';
   }
 
@@ -6135,347 +6150,6 @@ if (otherInput) {
     '</div>';
   }
 
-  function canManageAttendance() {
-    if (isEmployeeUser()) return false;
-    if (window.CA_RBAC && typeof CA_RBAC.can === 'function') {
-      return CA_RBAC.can('attendance', 'view') || CA_RBAC.can('attendance', 'edit');
-    }
-    var role = String((window.__CRM_USER__ || {}).role || '').toLowerCase();
-    return role === 'super_admin' || role === 'admin' || role === 'manager';
-  }
-
-  function canEditAttendance() {
-    if (!canManageAttendance()) return false;
-    if (window.CA_RBAC && typeof CA_RBAC.can === 'function') {
-      return CA_RBAC.can('attendance', 'edit');
-    }
-    return true;
-  }
-
-  var attendanceUiState = {
-    date: '',
-    search: '',
-    page: 1,
-    perPage: 25,
-    items: [],
-    selected: {},
-    summary: null,
-    loading: false,
-    bound: false,
-  };
-
-  function attendanceTodayIso() {
-    var d = new Date();
-    var m = String(d.getMonth() + 1).padStart(2, '0');
-    var day = String(d.getDate()).padStart(2, '0');
-    return d.getFullYear() + '-' + m + '-' + day;
-  }
-
-  function renderAttendanceSummaryStrip(el, summary) {
-    if (!el) return;
-    summary = summary || {};
-    el.innerHTML =
-      '<span><strong>Total:</strong> ' + (summary.total ?? 0) + '</span>' +
-      '<span class="attendance-chip attendance-chip--present"><strong>Present:</strong> ' + (summary.present ?? 0) + '</span>' +
-      '<span class="attendance-chip attendance-chip--absent"><strong>Absent:</strong> ' + (summary.absent ?? 0) + '</span>' +
-      '<span class="attendance-chip attendance-chip--neutral"><strong>Not Marked:</strong> ' + (summary.not_marked ?? 0) + '</span>';
-  }
-
-  function renderManagerAttendancePanel(summary) {
-    var panel = document.getElementById('mgr-attendance-panel');
-    if (!panel) return;
-    if (!canManageAttendance() || !summary) {
-      panel.classList.add('hidden');
-      panel.innerHTML = '';
-      return;
-    }
-    panel.classList.remove('hidden');
-    panel.innerHTML =
-      '<div class="mgr-panel-head">' +
-        '<div>' +
-          '<h3 class="mgr-panel-title"><i data-lucide="clipboard-check" class="h-5 w-5 text-brand"></i> Today’s Attendance</h3>' +
-        '</div>' +
-        '<button type="button" class="btn-primary btn-sm" id="mgr-manage-attendance-btn">Manage Attendance</button>' +
-      '</div>' +
-      '<div class="attendance-summary-strip" id="mgr-attendance-summary">' +
-        '<span><strong>Total:</strong> ' + (summary.total ?? 0) + '</span>' +
-        '<span class="attendance-chip attendance-chip--present"><strong>Present:</strong> ' + (summary.present ?? 0) + '</span>' +
-        '<span class="attendance-chip attendance-chip--absent"><strong>Absent:</strong> ' + (summary.absent ?? 0) + '</span>' +
-        '<span class="attendance-chip attendance-chip--neutral"><strong>Not Marked:</strong> ' + (summary.not_marked ?? 0) + '</span>' +
-      '</div>';
-    var btn = document.getElementById('mgr-manage-attendance-btn');
-    if (btn && !btn._attendanceBound) {
-      btn._attendanceBound = true;
-      btn.addEventListener('click', function () { openManageAttendanceModal(); });
-    }
-  }
-
-  function bindAttendanceModalControls() {
-    if (attendanceUiState.bound) return;
-    attendanceUiState.bound = true;
-    var dateInput = document.getElementById('attendance-date-input');
-    var searchInput = document.getElementById('attendance-search-input');
-    var selectAll = document.getElementById('attendance-select-all');
-    var tbody = document.getElementById('attendance-table-body');
-
-    if (dateInput) {
-      dateInput.addEventListener('change', function () {
-        attendanceUiState.date = dateInput.value || attendanceTodayIso();
-        attendanceUiState.page = 1;
-        loadAttendanceModalList();
-      });
-    }
-    if (searchInput) {
-      var searchTimer = null;
-      searchInput.addEventListener('input', function () {
-        clearTimeout(searchTimer);
-        searchTimer = setTimeout(function () {
-          attendanceUiState.search = searchInput.value || '';
-          attendanceUiState.page = 1;
-          loadAttendanceModalList();
-        }, 250);
-      });
-    }
-    if (selectAll) {
-      selectAll.addEventListener('change', function () {
-        var checked = !!selectAll.checked;
-        attendanceUiState.selected = {};
-        (attendanceUiState.items || []).forEach(function (row) {
-          if (checked) attendanceUiState.selected[String(row.employee_id)] = true;
-        });
-        renderAttendanceTableRows();
-      });
-    }
-    if (tbody && !tbody._attendanceBound) {
-      tbody._attendanceBound = true;
-      tbody.addEventListener('click', function (e) {
-        var markBtn = e.target.closest('[data-attendance-mark]');
-        if (markBtn) {
-          e.preventDefault();
-          markSingleAttendance(markBtn.getAttribute('data-attendance-employee'), markBtn.getAttribute('data-attendance-mark'), markBtn);
-          return;
-        }
-        var check = e.target.closest('.attendance-row-check');
-        if (check) {
-          var id = check.getAttribute('data-employee-id');
-          if (!id) return;
-          if (check.checked) attendanceUiState.selected[id] = true;
-          else delete attendanceUiState.selected[id];
-        }
-      });
-    }
-  }
-
-  function openManageAttendanceModal() {
-    if (!canManageAttendance()) {
-      toast('You do not have permission to manage attendance.', 'warning');
-      return;
-    }
-    bindAttendanceModalControls();
-    attendanceUiState.date = attendanceUiState.date || attendanceTodayIso();
-    attendanceUiState.page = 1;
-    attendanceUiState.selected = {};
-    var dateInput = document.getElementById('attendance-date-input');
-    if (dateInput) {
-      dateInput.value = attendanceUiState.date;
-      dateInput.max = attendanceTodayIso();
-    }
-    var searchInput = document.getElementById('attendance-search-input');
-    if (searchInput) searchInput.value = attendanceUiState.search || '';
-    openModal(document.getElementById('modal-manage-attendance'));
-    loadAttendanceModalList();
-    icons();
-  }
-
-  function loadAttendanceModalList() {
-    if (!canManageAttendance()) return;
-    attendanceUiState.loading = true;
-    var tbody = document.getElementById('attendance-table-body');
-    if (tbody) {
-      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-slate-500 py-4">Loading attendance…</td></tr>';
-    }
-    var qs = new URLSearchParams({
-      date: attendanceUiState.date || attendanceTodayIso(),
-      search: attendanceUiState.search || '',
-      page: String(attendanceUiState.page || 1),
-      per_page: String(attendanceUiState.perPage || 25),
-    });
-    apiFetch('/attendance?' + qs.toString()).then(function (body) {
-      var data = body.data || {};
-      attendanceUiState.items = data.items || [];
-      attendanceUiState.summary = data.summary || null;
-      attendanceUiState.loading = false;
-      renderAttendanceSummaryStrip(document.getElementById('attendance-modal-summary'), attendanceUiState.summary);
-      renderAttendanceTableRows();
-      renderAttendancePagination(data.pagination || {});
-      if (attendanceUiState.summary) {
-        renderManagerAttendancePanel(attendanceUiState.summary);
-        if (window.dashboardMetrics) window.dashboardMetrics.attendance_summary = attendanceUiState.summary;
-      }
-      icons();
-    }).catch(function (err) {
-      attendanceUiState.loading = false;
-      if (tbody) {
-        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-rose-600 py-4">' + escapeHtml(err.message || 'Unable to load attendance') + '</td></tr>';
-      }
-    });
-  }
-
-  function renderAttendanceTableRows() {
-    var tbody = document.getElementById('attendance-table-body');
-    if (!tbody) return;
-    var canEdit = canEditAttendance();
-    var items = attendanceUiState.items || [];
-    if (!items.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-slate-500 py-4">No employees found for this date.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = items.map(function (row) {
-      var id = String(row.employee_id);
-var status = row.status || '';
-
-var statusClass = status === 'present'
-  ? 'is-present'
-  : (status === 'absent' ? 'is-absent' : 'is-unmarked');
-
-var statusDisplay = status === 'present'
-  ? 'P'
-  : (status === 'absent'
-      ? 'A'
-      : (row.status_label || 'Not Marked'));
-
-var checked = attendanceUiState.selected[id] ? ' checked' : '';
-
-var markHtml = canEdit
-  ? '<div class="attendance-mark-group" role="group" aria-label="Mark attendance for ' + escapeHtml(row.name || '') + '">' +
-      '<button type="button" class="attendance-mark-btn' +
-        (status === 'present' ? ' is-selected is-present' : '') +
-        '" data-attendance-employee="' + id +
-        '" data-attendance-mark="present" title="Present">P</button>' +
-
-      '<button type="button" class="attendance-mark-btn' +
-        (status === 'absent' ? ' is-selected is-absent' : '') +
-        '" data-attendance-employee="' + id +
-        '" data-attendance-mark="absent" title="Absent">A</button>' +
-    '</div>'
-  : '<span class="text-slate-500">' +
-      escapeHtml(statusDisplay) +
-    '</span>';
-
-return '<tr class="attendance-row ' + statusClass + '">' +
-
-  '<td class="attendance-checkbox-cell">' +
-    '<input type="checkbox" class="attendance-row-check" data-employee-id="' +
-      id + '"' + checked + (canEdit ? '' : ' disabled') + ' />' +
-  '</td>' +
-
-  '<td class="attendance-employee-cell">' +
-    '<strong>' + escapeHtml(row.name || '—') + '</strong>' +
-  '</td>' +
-
-  '<td class="attendance-status-cell">' +
-    '<span class="attendance-status-pill ' + statusClass + '">' +
-      escapeHtml(statusDisplay) +
-    '</span>' +
-  '</td>' +
-
-  '<td class="attendance-mark-cell">' +
-    markHtml +
-  '</td>' +
-
-'</tr>';
-    }).join('');
-  }
-
-  function renderAttendancePagination(pagination) {
-    var slot = document.getElementById('attendance-pagination');
-    if (!slot) return;
-    var page = pagination.page || 1;
-    var last = pagination.last_page || 1;
-    var total = pagination.total || 0;
-    if (last <= 1) {
-      slot.innerHTML = '<span class="text-slate-500 text-sm">' + total + ' employee' + (total === 1 ? '' : 's') + '</span>';
-      return;
-    }
-    slot.innerHTML =
-      '<button type="button" class="btn-secondary btn-xs" id="attendance-page-prev"' + (page <= 1 ? ' disabled' : '') + '>Previous</button>' +
-      '<span class="text-sm text-slate-600">Page ' + page + ' / ' + last + ' · ' + total + '</span>' +
-      '<button type="button" class="btn-secondary btn-xs" id="attendance-page-next"' + (page >= last ? ' disabled' : '') + '>Next</button>';
-    var prev = document.getElementById('attendance-page-prev');
-    var next = document.getElementById('attendance-page-next');
-    if (prev) prev.addEventListener('click', function () {
-      if (attendanceUiState.page > 1) {
-        attendanceUiState.page -= 1;
-        loadAttendanceModalList();
-      }
-    });
-    if (next) next.addEventListener('click', function () {
-      if (attendanceUiState.page < last) {
-        attendanceUiState.page += 1;
-        loadAttendanceModalList();
-      }
-    });
-  }
-
-  function markSingleAttendance(employeeId, status, btn) {
-    if (!canEditAttendance() || !employeeId || !status) return;
-    if (btn) btn.disabled = true;
-    apiFetch('/attendance', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        employee_id: parseInt(employeeId, 10),
-        status: status,
-        date: attendanceUiState.date || attendanceTodayIso(),
-      }),
-    }).then(function () {
-      toast('Attendance saved', 'success');
-      loadAttendanceModalList();
-      refreshAttendanceDashboardSummary();
-    }).catch(function (err) {
-      if (btn) btn.disabled = false;
-      toast(err.message || 'Unable to save attendance', 'error');
-    });
-  }
-
-  function bulkMarkAttendance(status) {
-    if (!canEditAttendance()) return;
-    var ids = Object.keys(attendanceUiState.selected || {}).map(function (id) { return parseInt(id, 10); }).filter(Boolean);
-    if (!ids.length) {
-      toast('Select at least one employee first.', 'warning');
-      return;
-    }
-    var label = status === 'present' ? 'Present' : 'Absent';
-    if (!window.confirm('Mark ' + ids.length + ' selected employee(s) as ' + label + '?')) return;
-    apiFetch('/attendance/bulk', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        employee_ids: ids,
-        status: status,
-        date: attendanceUiState.date || attendanceTodayIso(),
-      }),
-    }).then(function (body) {
-      toast('Attendance updated for ' + ((body.data || {}).updated || ids.length) + ' employee(s)', 'success');
-      attendanceUiState.selected = {};
-      loadAttendanceModalList();
-      refreshAttendanceDashboardSummary();
-    }).catch(function (err) {
-      toast(err.message || 'Unable to update attendance', 'error');
-    });
-  }
-
-  function refreshAttendanceDashboardSummary() {
-    if (!canManageAttendance()) return;
-    apiFetch('/attendance/summary?date=' + encodeURIComponent(attendanceTodayIso())).then(function (body) {
-      var summary = body.data || null;
-      if (summary) {
-        renderManagerAttendancePanel(summary);
-        if (window.dashboardMetrics) window.dashboardMetrics.attendance_summary = summary;
-      }
-    }).catch(function () { /* keep existing panel */ });
-  }
-
   function paintManagerDashboard(m) {
     var crmUser = window.__CRM_USER__ || {};
     var displayName = crmUser.name || 'User';
@@ -6501,7 +6175,6 @@ return '<tr class="attendance-row ' + statusClass + '">' +
     ensureManagerEmployeeFilter();
     renderOrganizationTargetPanel(metrics.organization_target || m.organization_target);
     renderManagerEmployeeProductivityPanel(employeeFilter);
-    renderManagerAttendancePanel(metrics.attendance_summary || m.attendance_summary || null);
 
     renderDashboardKpiSections('mgr-kpi-sections', ADMIN_DASHBOARD_KPI_SECTIONS, function (card) {
       return m[card.key];
@@ -7022,7 +6695,7 @@ return '<tr class="attendance-row ' + statusClass + '">' +
         { label: 'Pending', value: metrics.followups.pending },
         { label: 'Completed', value: metrics.followups.completed },
         { label: 'Missed', value: metrics.followups.missed },
-        { label: 'Next Upcoming', value: nextFollowup },
+        { label: 'Next Upcoming', value: nextFollowup, wide: true },
       ]);
   }
 
@@ -8212,7 +7885,8 @@ return '<tr class="attendance-row ' + statusClass + '">' +
     if (bulk) bulk.classList.toggle('hidden', view !== 'bulk');
     if (ocr) ocr.classList.toggle('hidden', view !== 'ocr');
     if (title) {
-      title.textContent = view === 'masters' ? 'Master Tables' : (view === 'ocr' ? 'OCR Import' : 'Bulk Tools');
+      title.textContent = view === 'masters' ? 'Master Tables'
+        : (view === 'bulk' ? 'Bulk Tools' : (view === 'ocr' ? 'OCR Import' : ''));
     }
     var hub = document.getElementById('cam-hub');
     if (hub) hub.dataset.camSecondary = view || '';
@@ -8763,6 +8437,7 @@ return '<tr class="attendance-row ' + statusClass + '">' +
     form.querySelector('[name="email_id"]').value = employee.email_id || '';
     form.querySelector('[name="mobile_no"]').value = employee.mobile_no || '';
     form.querySelector('[name="date_of_joining"]').value = (employee.date_of_joining || '').slice(0, 10);
+    fillEmployeeDemoWorkTypeFields(employee);
     configureEmployeeModalMode('edit', employee);
     if (window.CA_STATE_CITY) {
       window.CA_STATE_CITY.prepareModal(modal);
@@ -10285,19 +9960,47 @@ return '<tr class="attendance-row ' + statusClass + '">' +
     var hasYearly = yearly.has_target;
 
     if (!hasToday && !hasYearly) {
-      panel.innerHTML = '<div class="emp-daily-target-card"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="target" class="h-5 w-5 text-brand"></i> Daily Target (' + year + ')</h3></div><p class="text-slate-500">' + escapeHtml(yearly.message || targetData.message || 'No yearly target has been assigned.') + '</p></div>';
+      panel.classList.add('emp-daily-targets-panel--empty');
+      panel.classList.remove('emp-daily-targets-panel--compact');
+      panel.innerHTML =
+        '<div class="emp-daily-target-card emp-daily-target-card--empty">' +
+          '<div class="emp-daily-target-empty__title">' +
+            '<i data-lucide="target" class="h-4 w-4 text-brand"></i>' +
+            '<span>Daily Target (' + year + ')</span>' +
+          '</div>' +
+          '<p class="emp-daily-target-empty__msg">' +
+            escapeHtml(yearly.message || targetData.message || 'No yearly target has been assigned.') +
+          '</p>' +
+        '</div>';
       iconsIn(panel);
       return;
     }
 
+    panel.classList.remove('emp-daily-targets-panel--empty');
+    panel.classList.add('emp-daily-targets-panel--compact');
+
+    function empDtStat(label, value, opts) {
+      opts = opts || {};
+      var pct = opts.pct != null ? Math.min(100, Number(opts.pct)) : null;
+      return '<div class="emp-dt__stat' + (pct != null ? ' emp-dt__stat--progress' : '') + '">' +
+        '<span class="emp-dt__k">' + escapeHtml(label) + '</span>' +
+        '<span class="emp-dt__v">' + escapeHtml(String(value)) + '</span>' +
+        (pct != null
+          ? '<div class="emp-dt__bar" aria-hidden="true"><div class="emp-dt__bar-fill" style="width:' + pct + '%"></div></div>'
+          : '') +
+      '</div>';
+    }
+
     var todayPct = Math.min(100, Number(today.demo_pct || 0));
     var todayBlock = hasToday
-      ? '<div class="emp-daily-target-grid mb-4">' +
-          '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">Today\'s Target</p><p class="emp-daily-target-item__value">' + (today.demo_target || 0) + '</p></article>' +
-          '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">Today\'s Achieved</p><p class="emp-daily-target-item__value">' + (today.demo_achieved || 0) + '</p></article>' +
-          '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">Remaining</p><p class="emp-daily-target-item__value">' + (today.demo_remaining || 0) + '</p></article>' +
-          '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">Achievement</p><p class="emp-daily-target-item__value">' + todayPct + '%</p>' +
-            '<div class="assign-daily-target-bar"><div class="assign-daily-target-bar__fill" style="width:' + todayPct + '%"></div></div></article>' +
+      ? '<div class="emp-dt__section">' +
+          '<div class="emp-dt__section-label">Today</div>' +
+          '<div class="emp-dt__stats emp-dt__stats--4">' +
+            empDtStat('Target', today.demo_target || 0) +
+            empDtStat('Achieved', today.demo_achieved || 0) +
+            empDtStat('Remaining', today.demo_remaining || 0) +
+            empDtStat('Done', todayPct + '%', { pct: todayPct }) +
+          '</div>' +
         '</div>'
       : '';
 
@@ -10306,30 +10009,49 @@ return '<tr class="attendance-row ' + statusClass + '">' +
       var metrics = yearly.metrics || targetData.target?.metrics || [];
       var ytdPct = Math.min(100, Number(yearly.ytd_demo_pct || yearly.overall_pct || 0));
       yearlyBlock =
-        '<div class="mgr-panel-head mt-2"><h4 class="text-sm font-semibold text-slate-800">Year-to-Date (' + (yearly.target_year || year) + ')</h4>' +
-          (yearly.status_label ? '<span class="' + dailyTargetStatusClass(yearly.status) + '">' + escapeHtml(yearly.status_label) + '</span>' : '') +
-        '</div>' +
-        '<p class="text-caption text-slate-500 mb-3">Daily demo rate: ' + escapeHtml(String(yearly.daily_demo_target || '—')) +
-        ' · Yearly demo target: ' + escapeHtml(String(yearly.yearly_demo_target || '—')) +
-        ' · Working days: ' + escapeHtml(String(yearly.standard_countable_days || '—')) + '</p>' +
-        '<div class="emp-daily-target-grid mb-3">' +
-          '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">YTD Achieved</p><p class="emp-daily-target-item__value">' + (yearly.ytd_demo_achieved || 0) + '</p></article>' +
-          '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">YTD Remaining</p><p class="emp-daily-target-item__value">' + (yearly.ytd_demo_remaining || 0) + '</p></article>' +
-          '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">YTD Progress</p><p class="emp-daily-target-item__value">' + ytdPct + '%</p>' +
-            '<div class="assign-daily-target-bar"><div class="assign-daily-target-bar__fill" style="width:' + ytdPct + '%"></div></div></article>' +
-        '</div>' +
-        (metrics.length ? '<div class="emp-daily-target-grid">' + metrics.map(function (metric) {
-          var pct = Math.min(100, Number(metric.pct || 0));
-          return '<article class="emp-daily-target-item"><p class="emp-daily-target-item__label">' + escapeHtml(metric.label || '') + '</p><p class="emp-daily-target-item__value">' + (metric.completed || 0) + ' / ' + (metric.target || 0) + '</p>' +
-            '<div class="assign-daily-target-bar"><div class="assign-daily-target-bar__fill" style="width:' + pct + '%"></div></div></article>';
-        }).join('') + '</div>' : '');
+        '<div class="emp-dt__section">' +
+          '<div class="emp-dt__section-head">' +
+            '<div class="emp-dt__section-label">Year-to-date (' + escapeHtml(String(yearly.target_year || year)) + ')</div>' +
+            (yearly.status_label
+              ? '<span class="' + dailyTargetStatusClass(yearly.status) + '">' + escapeHtml(yearly.status_label) + '</span>'
+              : '') +
+          '</div>' +
+          '<div class="emp-dt__stats emp-dt__stats--3">' +
+            empDtStat('Achieved', yearly.ytd_demo_achieved || 0) +
+            empDtStat('Remaining', yearly.ytd_demo_remaining || 0) +
+            empDtStat('Progress', ytdPct + '%', { pct: ytdPct }) +
+          '</div>' +
+          (metrics.length
+            ? '<div class="emp-dt__metrics">' + metrics.map(function (metric) {
+                var pct = Math.min(100, Number(metric.pct || 0));
+                return '<div class="emp-dt__metric">' +
+                  '<div class="emp-dt__metric-top">' +
+                    '<span class="emp-dt__metric-label">' + escapeHtml(metric.label || '') + '</span>' +
+                    '<span class="emp-dt__metric-value">' + (metric.completed || 0) + '/' + (metric.target || 0) + '</span>' +
+                  '</div>' +
+                  '<div class="emp-dt__bar" aria-hidden="true"><div class="emp-dt__bar-fill" style="width:' + pct + '%"></div></div>' +
+                '</div>';
+              }).join('') + '</div>'
+            : '') +
+        '</div>';
     }
 
-    panel.innerHTML = '<div class="emp-daily-target-card">' +
-      '<div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="target" class="h-5 w-5 text-brand"></i> Daily Target</h3></div>' +
-      todayBlock +
-      yearlyBlock +
-    '</div>';
+    var metaBits = [];
+    if (hasYearly) {
+      if (yearly.daily_demo_target != null) metaBits.push('Daily rate ' + yearly.daily_demo_target);
+      if (yearly.yearly_demo_target != null) metaBits.push('Yearly ' + yearly.yearly_demo_target);
+      if (yearly.standard_countable_days != null) metaBits.push(yearly.standard_countable_days + ' working days');
+    }
+
+    panel.innerHTML =
+      '<div class="emp-daily-target-card emp-dt">' +
+        '<div class="emp-dt__head">' +
+          '<h3 class="emp-dt__title"><i data-lucide="target" class="h-4 w-4 text-brand"></i> Daily Target</h3>' +
+          (metaBits.length ? '<p class="emp-dt__meta">' + escapeHtml(metaBits.join(' · ')) + '</p>' : '') +
+        '</div>' +
+        todayBlock +
+        yearlyBlock +
+      '</div>';
     iconsIn(panel);
   }
 
@@ -12393,8 +12115,12 @@ return '<tr class="attendance-row ' + statusClass + '">' +
     if (form.elements.team_size) form.elements.team_size.value = followup.team_size != null ? followup.team_size : '';
     if (form.elements.demo_provider_name) form.elements.demo_provider_name.value = followup.demo_provider_name || '';
     if (form.elements.meeting_link) form.elements.meeting_link.value = followup.meeting_link || '';
+    window._followupDemoProviderEmployeeId = followup.demo_provider_employee_id || null;
     resetFollowupDemoFieldState();
     window._followupOriginalScheduled = followup.scheduled_date ? String(followup.scheduled_date).slice(0, 16) : '';
+    if (isFollowupDemoScheduledType(followup.followup_type)) {
+      populateFollowupDemoFieldsFromLead(followup.demo_provider_employee_id || null);
+    }
   }
 
   function openFollowupFormForEdit(followupId) {
@@ -14056,9 +13782,7 @@ return '<tr class="attendance-row ' + statusClass + '">' +
   function clearFollowupLeadContext() {
     window._followupContextLead = null;
     var hidden = document.getElementById('form-followup-ca-id');
-    var wrap = document.getElementById('followup-lead-context');
     if (hidden) hidden.value = '';
-    if (wrap) wrap.classList.add('hidden');
   }
 
   function clearFollowupLeadError() {
@@ -14094,32 +13818,15 @@ return '<tr class="attendance-row ' + statusClass + '">' +
   }
 
   function renderFollowupLeadContext(lead) {
+    /* Lead summary card removed from Add Follow-up — keep ca_id for save only. */
     window._followupContextLead = lead || null;
-    var wrap = document.getElementById('followup-lead-context');
     var hidden = document.getElementById('form-followup-ca-id');
-    if (!wrap || !hidden) return;
+    if (!hidden) return;
     if (!lead) {
       clearFollowupLeadContext();
       return;
     }
     hidden.value = String(lead.ca_id);
-    var firmEl = document.getElementById('followup-ctx-firm');
-    var caEl = document.getElementById('followup-ctx-ca');
-    var mobileEl = document.getElementById('followup-ctx-mobile');
-    var statusEl = document.getElementById('followup-ctx-status');
-    var cityEl = document.getElementById('followup-ctx-city');
-    var employeeEl = document.getElementById('followup-ctx-employee');
-    if (firmEl) firmEl.textContent = lead.firm_name || '—';
-    if (caEl) caEl.textContent = lead.ca_name || '—';
-    if (mobileEl) mobileEl.textContent = lead.mobile_no || '—';
-    if (statusEl) statusEl.textContent = lead.status || '—';
-    if (cityEl) cityEl.textContent = lead.city || '—';
-    if (employeeEl) employeeEl.textContent = lead.executive || 'Unassigned';
-    var titleEl = wrap.querySelector('.followup-lead-context__title');
-    if (titleEl) {
-      titleEl.textContent = window._followupModalMode === 'row' ? 'Selected Lead' : 'Lead';
-    }
-    wrap.classList.remove('hidden');
     clearFollowupLeadError();
   }
 
@@ -14345,18 +14052,6 @@ return '<tr class="attendance-row ' + statusClass + '">' +
     return String(type || '').trim() === 'Demo Scheduled';
   }
 
-  function resolveDemoProviderFromTeamSize(teamSize) {
-    var n = parseInt(teamSize, 10);
-    if (!n || n < 1) return null;
-    if (n === 1) {
-      return { provider: 'Ankit Bhardwaj', link: 'https://meet.google.com/mcq-jrnh-uea' };
-    }
-    if (n <= 10) {
-      return { provider: 'Dev Aggarwal', link: 'https://meet.google.com/awm-gsft-xov' };
-    }
-    return { provider: 'Kamal Sharma', link: 'https://meet.google.com/ouq-sxne-jwn' };
-  }
-
   function getFollowupSelectedLeadTeamSize() {
     var lead = getFollowupContextLead();
     if (!lead || lead.team_size == null || lead.team_size === '') return null;
@@ -14364,23 +14059,79 @@ return '<tr class="attendance-row ' + statusClass + '">' +
     return n > 0 ? n : null;
   }
 
-  function syncFollowupDemoProviderFromTeamSize(force) {
-    var teamInput = document.getElementById('form-followup-team-size');
-    var providerInput = document.getElementById('form-followup-demo-provider');
-    var linkInput = document.getElementById('form-followup-meeting-link');
-    if (!teamInput || !providerInput || !linkInput) return;
-    var n = parseInt(teamInput.value, 10);
-    if (!n || n < 1) return;
-    var resolved = resolveDemoProviderFromTeamSize(n);
-    if (!resolved) return;
-    if (force || providerInput.dataset.autoFilled === '1') {
-      providerInput.value = resolved.provider;
-      providerInput.dataset.autoFilled = '1';
+  function setFollowupDemoProviderHint(message, isError) {
+    var hint = document.getElementById('form-followup-demo-provider-hint');
+    if (!hint) return;
+    if (!message) {
+      hint.textContent = '';
+      hint.classList.add('hidden');
+      hint.classList.remove('text-red-600');
+      return;
     }
-    if (force || linkInput.dataset.autoFilled === '1') {
-      linkInput.value = resolved.link;
+    hint.textContent = message;
+    hint.classList.remove('hidden');
+    hint.classList.toggle('text-red-600', !!isError);
+  }
+
+  function applySelectedDemoProviderLink() {
+    var providerSel = document.getElementById('form-followup-demo-provider');
+    var nameInput = document.getElementById('form-followup-demo-provider-name');
+    var linkInput = document.getElementById('form-followup-meeting-link');
+    if (!providerSel) return;
+    var opt = providerSel.options[providerSel.selectedIndex];
+    var link = opt ? (opt.getAttribute('data-meeting-link') || '') : '';
+    var name = opt ? (opt.getAttribute('data-name') || opt.textContent || '') : '';
+    if (nameInput) nameInput.value = providerSel.value ? String(name).split(' — ')[0] : '';
+    if (linkInput && (linkInput.dataset.autoFilled === '1' || !linkInput.value)) {
+      linkInput.value = link;
       linkInput.dataset.autoFilled = '1';
     }
+  }
+
+  function loadFollowupDemoProviders(preferredEmployeeId) {
+    var teamInput = document.getElementById('form-followup-team-size');
+    var providerSel = document.getElementById('form-followup-demo-provider');
+    if (!teamInput || !providerSel) return;
+    var n = parseInt(teamInput.value, 10);
+    providerSel.innerHTML = '<option value="">Select demo provider</option>';
+    setFollowupDemoProviderHint('');
+    if (!n || n < 1) {
+      setFollowupDemoProviderHint('Enter a team size to load eligible demo providers.', false);
+      return;
+    }
+
+    apiFetch('/employees/demo-providers?team_size=' + encodeURIComponent(n))
+      .then(function (res) {
+        var options = (res && res.data) ? res.data : (Array.isArray(res) ? res : []);
+        if (!options.length) {
+          setFollowupDemoProviderHint('No active demo provider matches this team size.', true);
+          applySelectedDemoProviderLink();
+          return;
+        }
+        options.forEach(function (item) {
+          var option = document.createElement('option');
+          option.value = String(item.employee_id);
+          option.textContent = item.label || (item.name + ' — ' + item.demo_min_team_size + ' to ' + item.demo_max_team_size);
+          option.setAttribute('data-meeting-link', item.demo_meeting_link || '');
+          option.setAttribute('data-name', item.name || '');
+          providerSel.appendChild(option);
+        });
+        var preferred = preferredEmployeeId != null ? String(preferredEmployeeId) : '';
+        if (preferred && providerSel.querySelector('option[value="' + preferred + '"]')) {
+          providerSel.value = preferred;
+        } else if (options.length === 1) {
+          providerSel.value = String(options[0].employee_id);
+        }
+        applySelectedDemoProviderLink();
+      })
+      .catch(function () {
+        setFollowupDemoProviderHint('Unable to load demo providers.', true);
+      });
+  }
+
+  function syncFollowupDemoProviderFromTeamSize(force, preferredEmployeeId) {
+    if (force) resetFollowupDemoFieldState();
+    loadFollowupDemoProviders(preferredEmployeeId);
   }
 
   function applyFollowupDemoFieldsAccess(teamSizeUnavailable) {
@@ -14394,7 +14145,7 @@ return '<tr class="attendance-row ' + statusClass + '">' +
 
     teamInput.readOnly = !allowTeam;
     teamInput.classList.toggle('bg-slate-50', !allowTeam);
-    providerInput.readOnly = !allowProvider;
+    providerInput.disabled = !allowProvider;
     providerInput.classList.toggle('bg-slate-50', !allowProvider);
     linkInput.readOnly = false;
     linkInput.classList.remove('bg-slate-50');
@@ -14413,7 +14164,7 @@ return '<tr class="attendance-row ' + statusClass + '">' +
     }
   }
 
-  function populateFollowupDemoFieldsFromLead() {
+  function populateFollowupDemoFieldsFromLead(preferredEmployeeId) {
     var teamInput = document.getElementById('form-followup-team-size');
     var providerInput = document.getElementById('form-followup-demo-provider');
     var linkInput = document.getElementById('form-followup-meeting-link');
@@ -14421,6 +14172,7 @@ return '<tr class="attendance-row ' + statusClass + '">' +
 
     if (window._editingFollowUpId && teamInput.value) {
       applyFollowupDemoFieldsAccess(false);
+      syncFollowupDemoProviderFromTeamSize(false, preferredEmployeeId);
       return;
     }
 
@@ -14428,7 +14180,7 @@ return '<tr class="attendance-row ' + statusClass + '">' +
     if (teamSize) {
       teamInput.value = String(teamSize);
       resetFollowupDemoFieldState();
-      syncFollowupDemoProviderFromTeamSize(true);
+      syncFollowupDemoProviderFromTeamSize(true, preferredEmployeeId);
       applyFollowupDemoFieldsAccess(false);
       return;
     }
@@ -14438,6 +14190,7 @@ return '<tr class="attendance-row ' + statusClass + '">' +
       if (providerInput) providerInput.value = '';
       if (linkInput) linkInput.value = '';
       resetFollowupDemoFieldState();
+      setFollowupDemoProviderHint('Enter a team size to load eligible demo providers.', false);
     }
     applyFollowupDemoFieldsAccess(true);
   }
@@ -14450,7 +14203,7 @@ return '<tr class="attendance-row ' + statusClass + '">' +
     var isDemo = isFollowupDemoScheduledType(typeSel.value);
     wrap.classList.toggle('hidden', !isDemo);
     if (isDemo) {
-      populateFollowupDemoFieldsFromLead();
+      populateFollowupDemoFieldsFromLead(window._followupDemoProviderEmployeeId || null);
     }
   }
 
@@ -14467,14 +14220,21 @@ return '<tr class="attendance-row ' + statusClass + '">' +
     if (typeSel) typeSel.addEventListener('change', toggleFollowupDemoFields);
     if (teamInput) {
       teamInput.addEventListener('input', function () {
-        resetFollowupDemoFieldState();
+        syncFollowupDemoProviderFromTeamSize(true);
+      });
+      teamInput.addEventListener('change', function () {
         syncFollowupDemoProviderFromTeamSize(true);
       });
     }
     if (providerInput) {
-      providerInput.addEventListener('input', function () {
+      providerInput.addEventListener('change', function () {
         providerInput.dataset.userEdited = '1';
         providerInput.dataset.autoFilled = '0';
+        var link = document.getElementById('form-followup-meeting-link');
+        if (link) {
+          link.dataset.autoFilled = '1';
+        }
+        applySelectedDemoProviderLink();
       });
     }
     if (linkInput) {
@@ -16366,6 +16126,31 @@ return '<tr class="attendance-row ' + statusClass + '">' +
       e.preventDefault();
       var fd = new FormData(e.target);
       var editingId = window._editingEmployeeId;
+      var workType = String(fd.get('work_type') || 'calling');
+      if (!fd.get('work_type')) fd.set('work_type', 'calling');
+      if (isEmployeeDemoWorkType(workType)) {
+        var minSize = parseInt(fd.get('demo_min_team_size'), 10);
+        var maxSize = parseInt(fd.get('demo_max_team_size'), 10);
+        if (!fd.get('demo_meeting_link')) {
+          toast('Demo meeting link is required for Demo Provider work types.', 'error');
+          return;
+        }
+        if (!minSize || !maxSize) {
+          toast('Minimum and maximum team size are required for Demo Provider work types.', 'error');
+          return;
+        }
+        if (minSize > maxSize) {
+          toast('Minimum team size cannot be greater than maximum team size.', 'error');
+          return;
+        }
+        fd.set('active_for_demo', document.getElementById('employee-active-for-demo')?.checked ? '1' : '0');
+      } else {
+        fd.set('work_type', 'calling');
+        fd.set('active_for_demo', '0');
+        fd.delete('demo_meeting_link');
+        fd.delete('demo_min_team_size');
+        fd.delete('demo_max_team_size');
+      }
       if (!editingId) {
         if ((fd.get('password') || '') !== (fd.get('password_confirmation') || '')) {
           toast('Password and Confirm Password must match', 'error');
@@ -16389,6 +16174,7 @@ return '<tr class="attendance-row ' + statusClass + '">' +
           closeModal(document.getElementById('modal-add-employee'));
           e.target.reset();
           window._editingEmployeeId = null;
+          fillEmployeeDemoWorkTypeFields(null);
           if (window.CA_STATE_CITY) {
             window.CA_STATE_CITY.resetFormLocations(e.target);
           }
@@ -16680,16 +16466,35 @@ return '<tr class="attendance-row ' + statusClass + '">' +
       }
 
       if (isFollowupDemoScheduledType(payload.followup_type)) {
+        if (payload.team_size) payload.team_size = parseInt(payload.team_size, 10);
+        if (!payload.team_size || payload.team_size < 1) {
+          toast('Team size is required for Demo Scheduled follow-ups.', 'error');
+          var teamSizeInput = document.getElementById('form-followup-team-size');
+          if (teamSizeInput) teamSizeInput.focus();
+          return;
+        }
+        if (payload.demo_provider_employee_id) {
+          payload.demo_provider_employee_id = parseInt(payload.demo_provider_employee_id, 10);
+        }
+        if (!payload.demo_provider_employee_id) {
+          toast('Please select a demo provider for this team size.', 'error');
+          var providerSel = document.getElementById('form-followup-demo-provider');
+          if (providerSel) providerSel.focus();
+          return;
+        }
+        applySelectedDemoProviderLink();
+        payload.meeting_link = document.getElementById('form-followup-meeting-link')?.value || payload.meeting_link;
+        payload.demo_provider_name = document.getElementById('form-followup-demo-provider-name')?.value || payload.demo_provider_name;
         if (!payload.meeting_link || !String(payload.meeting_link).trim()) {
           toast('Meeting link is required for Demo Scheduled follow-ups.', 'error');
           var linkInput = document.getElementById('form-followup-meeting-link');
           if (linkInput) linkInput.focus();
           return;
         }
-        if (payload.team_size) payload.team_size = parseInt(payload.team_size, 10);
       } else {
         delete payload.team_size;
         delete payload.demo_provider_name;
+        delete payload.demo_provider_employee_id;
         delete payload.meeting_link;
       }
 
@@ -17408,30 +17213,14 @@ return '<tr class="attendance-row ' + statusClass + '">' +
       if (pageId === 'bulk' || pageId === 'ca-master' || pageId === 'ocr-import') window._leadSegmentFilter = 'all';
       var camHubEarly = document.getElementById('cam-hub');
       var camSecondaryEarly = camHubEarly ? camHubEarly.getAttribute('data-cam-secondary') : '';
-      /* Invalidate prior Master Data/Bulk async paints so they cannot wipe OCR / secondary views. */
-      window._camPaintGeneration = (window._camPaintGeneration || 0) + 1;
-      var paintGeneration = window._camPaintGeneration;
-      var paintPageId = pageId;
-
-      function isCurrentCamPaint() {
-        return paintGeneration === window._camPaintGeneration && !!document.getElementById('cam-hub');
-      }
 
       function paintCaMasterUi(reason) {
-        if (!isCurrentCamPaint()) return;
-        /* Re-read secondary flag from live DOM — avoids stale closures after navigation. */
-        var hubNow = document.getElementById('cam-hub');
-        var secondaryNow = hubNow ? (hubNow.getAttribute('data-cam-secondary') || '') : '';
-        var wantOcr = paintPageId === 'ocr-import' || secondaryNow === 'ocr' || camSecondaryEarly === 'ocr';
-        var wantBulk = paintPageId === 'bulk' || secondaryNow === 'bulk' || camSecondaryEarly === 'bulk';
-        var wantMasters = secondaryNow === 'masters' || camSecondaryEarly === 'masters';
         try {
-          if (!hubNow) return;
-          if (!wantOcr) resetCamListingDefaults();
+          if (!document.getElementById('cam-hub')) return;
+          resetCamListingDefaults();
           initCaMasterPage();
           applyMasterDataRbac();
-          if (!isCurrentCamPaint()) return;
-          if (wantOcr) {
+          if (camSecondaryEarly === 'ocr' || pageId === 'ocr-import') {
             showCamSecondaryView('ocr');
             try { renderCamKpis(); } catch (kpiOcrErr) {
               console.error('Master Data toolbar paint failed (' + reason + ')', kpiOcrErr);
@@ -17439,7 +17228,7 @@ return '<tr class="attendance-row ' + statusClass + '">' +
             icons();
             return;
           }
-          if (wantBulk) {
+          if (camSecondaryEarly === 'bulk' || pageId === 'bulk') {
             showCamSecondaryView('bulk');
             var bulkWizard = document.getElementById('bulk-import-wizard');
             if (bulkWizard && bulkWizard.classList.contains('hidden') && typeof window.resetBulkImportWizard === 'function') {
@@ -17451,7 +17240,7 @@ return '<tr class="attendance-row ' + statusClass + '">' +
             icons();
             return;
           }
-          if (wantMasters) {
+          if (camSecondaryEarly === 'masters') {
             showCamSecondaryView('masters');
             try { renderMasterTables(); } catch (masterErr) {
               console.error('Master tables paint failed (' + reason + ')', masterErr);
@@ -17485,16 +17274,9 @@ return '<tr class="attendance-row ' + statusClass + '">' +
           icons();
         } catch (paintErr) {
           console.error('Master Data paint failed (' + reason + ')', paintErr);
-          if (!isCurrentCamPaint()) return;
           try {
-            if (wantOcr) {
-              showCamSecondaryView('ocr');
-            } else if (wantBulk) {
-              showCamSecondaryView('bulk');
-            } else {
-              showCamPrimaryViews();
-              if (document.getElementById('ca-master-data-table')) renderCaMasterTable();
-            }
+            showCamPrimaryViews();
+            if (document.getElementById('ca-master-data-table')) renderCaMasterTable();
           } catch (tableErr) {
             console.error('Master Data table fallback failed', tableErr);
           }
@@ -17505,16 +17287,15 @@ return '<tr class="attendance-row ' + statusClass + '">' +
         }
       }
 
-      /* Paint immediately for Master Data, Bulk Tools, and OCR Import. */
-      if (camHubEarly) {
+      /* Paint toolbar + table immediately — do not wait for lookups/ensureMasterData. */
+      if ((pageId === 'ca-master' || pageId === 'ocr-import') && camHubEarly) {
         paintCaMasterUi('early');
       }
 
       ensureMasterData(function () {
-        if (!isCurrentCamPaint()) return;
         function finishCaMasterPage() {
-          if (!isCurrentCamPaint()) return;
-          if (paintPageId === 'ca-master') {
+          if (pageId === 'ca-master') {
+            /* Refresh hub attribute in case DOM was replaced; keep primary All Firms path. */
             camSecondaryEarly = (document.getElementById('cam-hub') || {}).getAttribute
               ? document.getElementById('cam-hub').getAttribute('data-cam-secondary')
               : camSecondaryEarly;
@@ -17522,7 +17303,7 @@ return '<tr class="attendance-row ' + statusClass + '">' +
             try { renderMasterTables(); } catch (e) { /* optional */ }
             return;
           }
-          paintCaMasterUi('ensureMasterData-bulk');
+          paintCaMasterUi(pageId === 'ocr-import' ? 'ensureMasterData-ocr' : 'ensureMasterData-bulk');
         }
         if (window.CA_LISTING_SEARCH && camSecondaryEarly === 'masters' && !(window.realCitiesCache && window.realCitiesCache.length)) {
           reloadListing('cities').then(function () {
@@ -17791,11 +17572,14 @@ return '<tr class="attendance-row ' + statusClass + '">' +
     var availClass = (emp.availability || '').toLowerCase().replace(/\s+/g, '-');
     var disabled = emp.assignable === false ? ' bulk-assign-emp-disabled' : '';
     var disabledAttr = emp.assignable === false ? ' disabled' : '';
+    var presence = (window.CAEmployeePresence && typeof window.CAEmployeePresence.indicatorHtml === 'function')
+      ? window.CAEmployeePresence.indicatorHtml(!!(emp && emp.is_online === true))
+      : '';
     return '<label class="bulk-assign-emp-card' + (selected ? ' is-selected' : '') + disabled + '">' +
       '<input type="checkbox" class="bulk-assign-emp-check" data-employee-id="' + emp.employee_id + '"' + (selected ? ' checked' : '') + disabledAttr + ' />' +
       '<div class="bulk-assign-emp-avatar">' + escapeHtml((emp.name || '?').charAt(0).toUpperCase()) + '</div>' +
       '<div class="bulk-assign-emp-body">' +
-        '<p class="bulk-assign-emp-name"><span class="bulk-assign-emp-name-text">' + escapeHtml(emp.name || '—') + '</span></p>' +
+        '<p class="bulk-assign-emp-name">' + presence + '<span class="bulk-assign-emp-name-text">' + escapeHtml(emp.name || '—') + '</span></p>' +
         '<p class="bulk-assign-emp-role">' + escapeHtml(emp.designation || '—') + ' · ' + escapeHtml(emp.city || '—') + '</p>' +
         '<div class="bulk-assign-emp-stats">' +
           '<span>Today: ' + (emp.assigned_today || 0) + '</span>' +
@@ -19692,29 +19476,12 @@ return '<tr class="attendance-row ' + statusClass + '">' +
       toast('You do not have permission to delete import history.', 'warning');
       return;
     }
-    if (!window.confirm('Delete this bulk import history record? Imported leads will be kept. This cannot be undone.')) return;
-
-    var deleteBtn = document.querySelector('[data-bulk-history-delete="' + bulkActionId + '"]');
-    if (deleteBtn) deleteBtn.disabled = true;
-
-    apiFetch('/ca-masters/bulk-import/history/' + encodeURIComponent(bulkActionId), { method: 'DELETE' })
-      .then(function () {
-        var remainingOnPage = (window._bulkOperationsHistoryCache || []).filter(function (item) {
-          return String(item.bulk_action_id) !== String(bulkActionId);
-        }).length;
-        if (remainingOnPage === 0 && window.CA_LISTING_SEARCH && typeof CA_LISTING_SEARCH.getState === 'function') {
-          var st = CA_LISTING_SEARCH.getState('bulk_operations') || {};
-          if ((st.page || 1) > 1 && typeof CA_LISTING_SEARCH.setState === 'function') {
-            CA_LISTING_SEARCH.setState('bulk_operations', { page: st.page - 1 });
-          }
-        }
-        toast('Import history record deleted.', 'success');
-        loadBulkOperationsHistory();
-      })
-      .catch(function (err) {
-        if (deleteBtn) deleteBtn.disabled = false;
-        toast((err && err.message) || 'Unable to delete import history.', 'error');
-      });
+    if (!window.confirm('Delete this bulk import history record? This cannot be undone.')) return;
+    window._bulkOperationsHistoryCache = (window._bulkOperationsHistoryCache || []).filter(function (item) {
+      return String(item.bulk_action_id) !== String(bulkActionId);
+    });
+    renderBulkOperationsHistoryTable(window._bulkOperationsHistoryCache);
+    toast('Import history record deleted.', 'success');
   }
 
   function bindBulkHistoryTableActions(el) {
@@ -23806,11 +23573,3 @@ return '<tr class="attendance-row ' + statusClass + '">' +
     mapEmployeeRecord: mapEmployeeRecord,
   };
 })();
-
-/* Compatibility alias used by OCR Import / OCR panel modules. */
-window.apiFetch = function (url, options) {
-  if (window.CA_CRM && typeof window.CA_CRM.apiFetch === 'function') {
-    return window.CA_CRM.apiFetch(url, options);
-  }
-  return Promise.reject(new Error('CRM API is not ready yet. Please refresh the page.'));
-};

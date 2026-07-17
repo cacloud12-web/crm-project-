@@ -65,12 +65,14 @@ Without GCS buckets configured, small-file online OCR still works; large uploads
    ```
 7. Prefer `QUEUE_CONNECTION=database` (jobs table already exists).
 8. Small online files (≤5 pages / ≤5 MB by default) use a **sync fast path** and complete in the upload request — no worker wait.
-9. Large / batch OCR still uses the database queue. Keep cron:
+9. Large / batch OCR still uses the database queue. On Hostinger shared hosting use PHP 8.3 and cron-driven workers (Supervisor may be unavailable):
 ```
-* * * * * cd /home/USER/domains/YOURDOMAIN/public_html && /usr/bin/php artisan schedule:run >> /dev/null 2>&1
-* * * * * cd /home/USER/domains/YOURDOMAIN/public_html && /usr/bin/php artisan queue:work --stop-when-empty --tries=3 --timeout=300 >> /home/USER/queue-worker.log 2>&1
+* * * * * cd /home/USER/domains/YOURDOMAIN/public_html && /opt/alt/php83/usr/bin/php artisan schedule:run >> /dev/null 2>&1
+* * * * * cd /home/USER/domains/YOURDOMAIN/public_html && /opt/alt/php83/usr/bin/php artisan queue:work --stop-when-empty --tries=3 --timeout=300 >> /home/USER/queue-worker.log 2>&1
 ```
-10. Optional recovery: `php artisan ocr:recover-stuck`
+10. Optional recovery: `/opt/alt/php83/usr/bin/php artisan ocr:recover-stuck`
+11. CA Reference (separate DB): `/opt/alt/php83/usr/bin/php artisan ca-reference:verify`
+12. OCR readiness: `/opt/alt/php83/usr/bin/php artisan ocr:verify`
 
 ### Local development
 With `QUEUE_CONNECTION=database`, either:

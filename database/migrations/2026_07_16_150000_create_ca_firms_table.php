@@ -10,6 +10,10 @@ return new class extends Migration
 
     public function up(): void
     {
+        if (Schema::connection($this->connection)->hasTable('ca_firms')) {
+            return;
+        }
+
         Schema::connection($this->connection)->create('ca_firms', function (Blueprint $table) {
             $table->id();
             $table->string('firm_name');

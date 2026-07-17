@@ -27,6 +27,7 @@ class FollowUp extends Model
         'priority',
         'team_size',
         'demo_provider_name',
+        'demo_provider_employee_id',
         'meeting_link',
         'sequence_step',
         'is_auto_generated',
@@ -87,5 +88,10 @@ class FollowUp extends Model
     public function employee(): BelongsTo
     {
         return $this->belongsTo(Employee::class, 'employee_id', 'employee_id');
+    }
+
+    public function demoProviderEmployee(): BelongsTo
+    {
+        return $this->belongsTo(Employee::class, 'demo_provider_employee_id', 'employee_id');
     }
 }

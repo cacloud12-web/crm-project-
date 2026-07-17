@@ -4,8 +4,8 @@ namespace App\Http\Requests\FollowUp;
 
 use App\Http\Requests\Concerns\PreparesFollowUpDemoFields;
 use App\Http\Requests\Concerns\SanitizesUserText;
+use App\Http\Requests\Concerns\ValidatesFollowUpEmployeeDemoProvider;
 use App\Http\Requests\Concerns\ValidatesFollowUpSchedule;
-use App\Services\DemoConfirmation\DemoConfirmationService;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -14,6 +14,7 @@ class StoreFollowUpRequest extends FormRequest
 {
     use PreparesFollowUpDemoFields;
     use SanitizesUserText;
+    use ValidatesFollowUpEmployeeDemoProvider;
     use ValidatesFollowUpSchedule;
 
     public function authorize(): bool
@@ -42,6 +43,7 @@ class StoreFollowUpRequest extends FormRequest
             'reschedule_reason' => 'nullable|string|max:2000',
             'team_size' => 'nullable|integer|min:1',
             'demo_provider_name' => 'nullable|string|max:255',
+            'demo_provider_employee_id' => 'nullable|integer|exists:employees,employee_id',
             'meeting_link' => 'nullable|string|max:500',
         ];
     }
@@ -49,16 +51,6 @@ class StoreFollowUpRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $this->appendFollowUpScheduleValidation($validator);
-
-        $validator->after(function (Validator $validator): void {
-            if ($this->input('followup_type') !== DemoConfirmationService::DEMO_FOLLOWUP_TYPE) {
-                return;
-            }
-
-            $link = trim((string) $this->input('meeting_link', ''));
-            if ($link === '') {
-                $validator->errors()->add('meeting_link', 'Meeting link is required for demo scheduled follow-ups.');
-            }
-        });
+        $this->appendFollowUpEmployeeDemoProviderValidation($validator, true);
     }
 }

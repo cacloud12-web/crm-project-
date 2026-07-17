@@ -114,7 +114,7 @@ class EmployeeService
     {
         $stateId = $this->lookupResolver->resolveStateId($data['state_id'] ?? null);
 
-        return [
+        $payload = [
             'name' => $data['name'],
             'email_id' => $data['email_id'],
             'mobile_no' => $data['mobile_no'] ?? null,
@@ -123,6 +123,20 @@ class EmployeeService
             'date_of_joining' => $data['date_of_joining'] ?? null,
             'status' => $data['status'] ?? 'Active',
         ];
+
+        if (array_key_exists('work_type', $data)) {
+            $payload['work_type'] = $data['work_type'] ?: 'calling';
+            $payload['demo_meeting_link'] = $data['demo_meeting_link'] ?? null;
+            $payload['demo_min_team_size'] = isset($data['demo_min_team_size']) && $data['demo_min_team_size'] !== ''
+                ? (int) $data['demo_min_team_size']
+                : null;
+            $payload['demo_max_team_size'] = isset($data['demo_max_team_size']) && $data['demo_max_team_size'] !== ''
+                ? (int) $data['demo_max_team_size']
+                : null;
+            $payload['active_for_demo'] = (bool) ($data['active_for_demo'] ?? false);
+        }
+
+        return $payload;
     }
 
     private function auditSnapshot(Employee $employee): array
@@ -136,6 +150,10 @@ class EmployeeService
             'status' => $employee->status,
             'city_id' => $employee->city_id,
             'user_id' => $employee->user_id,
+            'work_type' => $employee->work_type,
+            'active_for_demo' => (bool) $employee->active_for_demo,
+            'demo_min_team_size' => $employee->demo_min_team_size,
+            'demo_max_team_size' => $employee->demo_max_team_size,
         ];
     }
 }

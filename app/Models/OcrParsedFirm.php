@@ -17,21 +17,35 @@ class OcrParsedFirm extends Model
     protected $fillable = [
         'ocr_document_id',
         'sequence_no',
+        'raw_firm_name',
         'firm_name',
+        'normalized_firm_name',
         'firm_type',
         'frn',
         'gst_no',
         'pan_no',
         'address',
         'city',
+        'district',
         'state',
         'pincode',
         'phone',
         'email',
         'website',
+        'partner_count',
         'review_status',
         'overall_confidence',
         'page_number',
+        'matched_reference_firm_id',
+        'crm_ca_id',
+        'matched_ca_id',
+        'match_status',
+        'match_confidence',
+        'match_reason',
+        'match_candidates',
+        'mapped_at',
+        'source_data',
+        'notes',
         'field_meta',
     ];
 
@@ -39,15 +53,28 @@ class OcrParsedFirm extends Model
     {
         return [
             'field_meta' => 'array',
+            'source_data' => 'array',
+            'match_candidates' => 'array',
             'overall_confidence' => 'decimal:4',
+            'match_confidence' => 'decimal:4',
             'sequence_no' => 'integer',
             'page_number' => 'integer',
+            'partner_count' => 'integer',
+            'matched_reference_firm_id' => 'integer',
+            'crm_ca_id' => 'integer',
+            'matched_ca_id' => 'integer',
+            'mapped_at' => 'datetime',
         ];
     }
 
     public function document(): BelongsTo
     {
         return $this->belongsTo(OcrDocument::class, 'ocr_document_id');
+    }
+
+    public function crmMaster(): BelongsTo
+    {
+        return $this->belongsTo(CaMaster::class, 'crm_ca_id', 'ca_id');
     }
 
     public function members(): HasMany

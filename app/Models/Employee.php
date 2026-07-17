@@ -22,12 +22,20 @@ class Employee extends Model
         'role',
         'date_of_joining',
         'status',
+        'work_type',
+        'demo_meeting_link',
+        'demo_min_team_size',
+        'demo_max_team_size',
+        'active_for_demo',
     ];
 
     protected function casts(): array
     {
         return [
             'date_of_joining' => 'date',
+            'demo_min_team_size' => 'integer',
+            'demo_max_team_size' => 'integer',
+            'active_for_demo' => 'boolean',
         ];
     }
 

@@ -27,6 +27,11 @@
         <env name="DB_CONNECTION" value="sqlite"/>
         <env name="DB_DATABASE" value="database/database.sqlite"/>
         <env name="DB_URL" value=""/>
+        <env name="CA_REFERENCE_DB_DRIVER" value="sqlite"/>
+        <env name="CA_REFERENCE_DB_DATABASE" value="database/ca_reference_testing.sqlite"/>
+        <env name="CA_REFERENCE_DB_HOST" value=""/>
+        <env name="CA_REFERENCE_DB_USERNAME" value=""/>
+        <env name="CA_REFERENCE_DB_PASSWORD" value=""/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="EMAIL_SKIP_MX_CHECK" value="true"/>

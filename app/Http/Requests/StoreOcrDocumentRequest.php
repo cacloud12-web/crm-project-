@@ -31,6 +31,7 @@ class StoreOcrDocumentRequest extends FormRequest
         return [
             // Optional: omit for library/OCR Import (future CA mapping phase attaches later).
             'ca_id' => ['nullable', 'integer', 'exists:ca_masters,ca_id'],
+            'force_reimport' => ['nullable', 'boolean'],
             'document' => [
                 'required',
                 'file',

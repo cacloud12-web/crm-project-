@@ -80,6 +80,9 @@ class UatResetService
         'queue_jobs',
         'bounce_handlings',
         'spam_protections',
+        'master_mapping_decisions',
+        'ocr_parsed_members',
+        'ocr_parsed_firms',
         'ocr_documents',
         'ca_masters',
     ];

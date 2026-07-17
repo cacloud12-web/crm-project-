@@ -16,6 +16,7 @@ use App\Services\Cache\CrmCacheService;
 use App\Services\Leads\DuplicateLeadDetectionService;
 use App\Services\Leads\PhoneClassificationService;
 use App\Services\Leads\PhoneNormalizationService;
+use App\Services\Mapping\MasterDataMappingService;
 use App\Services\Master\LookupResolverService;
 use App\Services\Notifications\NotificationService;
 use App\Services\Rbac\EmployeeDataScopeService;
@@ -77,6 +78,7 @@ class BulkCaMasterImportService
         private readonly PhoneClassificationService $phoneClassification,
         private readonly EmployeeDataScopeService $employeeDataScope,
         private readonly CrmCacheService $cacheService,
+        private readonly MasterDataMappingService $masterDataMappingService,
     ) {}
 
     public function parseUpload(UploadedFile $file): array
@@ -503,20 +505,47 @@ class BulkCaMasterImportService
                 }
 
                 if (in_array($status, self::IMPORTABLE_STATUSES, true)) {
-                    $insertResult = $this->insertValidatedRow($result['data'], $bulkAction->bulk_action_id, true);
-                    if ($insertResult['status'] === 'inserted') {
-                        $inserted++;
-                        if ($status === 'landline' || ($result['phone_category'] ?? '') === 'landline') {
-                            $landlineImported++;
+                    if (filter_var(config('crm_mapping.use_engine_for_bulk', true), FILTER_VALIDATE_BOOLEAN)) {
+                        $engineResult = $this->importRowViaMappingEngine(
+                            $result['data'] ?? [],
+                            (string) $bulkAction->bulk_action_id,
+                            $session['file_name'] ?? null,
+                            $session['file_hash'] ?? null,
+                            $uploadedBy,
+                        );
+                        if (in_array($engineResult['status'], ['inserted', 'updated'], true)) {
+                            $inserted++;
+                            if ($status === 'landline' || ($result['phone_category'] ?? '') === 'landline') {
+                                $landlineImported++;
+                            }
+                            $this->logRow(
+                                $bulkAction->bulk_action_id,
+                                $rowNumber,
+                                'Success',
+                                $engineResult['status'] === 'updated' ? 'Mapped update' : 'Mapped create',
+                            );
+
+                            continue;
                         }
-                        $this->logRow($bulkAction->bulk_action_id, $rowNumber, 'Success', null);
+                        $status = $engineResult['status'];
+                        $result['errors'] = [$engineResult['message']];
+                        $result['error_codes'] = [$engineResult['code']];
+                    } else {
+                        $insertResult = $this->insertValidatedRow($result['data'], $bulkAction->bulk_action_id, true);
+                        if ($insertResult['status'] === 'inserted') {
+                            $inserted++;
+                            if ($status === 'landline' || ($result['phone_category'] ?? '') === 'landline') {
+                                $landlineImported++;
+                            }
+                            $this->logRow($bulkAction->bulk_action_id, $rowNumber, 'Success', null);
 
-                        continue;
+                            continue;
+                        }
+
+                        $status = $insertResult['status'];
+                        $result['errors'] = [$insertResult['message']];
+                        $result['error_codes'] = [$insertResult['code']];
                     }
-
-                    $status = $insertResult['status'];
-                    $result['errors'] = [$insertResult['message']];
-                    $result['error_codes'] = [$insertResult['code']];
                 }
 
                 match ($status) {
@@ -839,6 +868,70 @@ class BulkCaMasterImportService
             'error_codes' => [],
             'field_errors' => [],
         ];
+    }
+
+    /**
+     * Route Excel/CSV importable rows through the shared Mapping Engine.
+     *
+     * @param  array<string, mixed>  $row
+     * @return array{status: string, code?: string, message?: string, ca_id?: int|null}
+     */
+    private function importRowViaMappingEngine(
+        array $row,
+        string $sourceRef,
+        ?string $fileName,
+        ?string $fileHash,
+        int $actorId,
+    ): array {
+        try {
+            $stats = $this->masterDataMappingService->processBatch(
+                str_contains(strtolower((string) $fileName), '.csv') ? 'csv' : 'excel',
+                $sourceRef,
+                [[
+                    'firm_name' => $row['firm_name'] ?? null,
+                    'ca_name' => $row['ca_name'] ?? null,
+                    'phone' => $row['mobile_no'] ?? null,
+                    'alternate_mobile_no' => $row['alternate_mobile_no'] ?? null,
+                    'email' => $row['email_id'] ?? null,
+                    'gst_no' => $row['gst_no'] ?? null,
+                    'pan_no' => $row['pan_no'] ?? null,
+                    'frn' => $row['frn'] ?? null,
+                    'membership_no' => $row['membership_no'] ?? null,
+                    'address' => $row['address'] ?? null,
+                    'city' => $row['city'] ?? ($row['city_name'] ?? null),
+                    'state' => $row['state'] ?? ($row['state_name'] ?? null),
+                    'city_id' => $row['city_id'] ?? null,
+                    'state_id' => $row['state_id'] ?? null,
+                    'pincode' => $row['pincode'] ?? null,
+                    'website' => $row['website'] ?? null,
+                    'team_size' => $row['team_size'] ?? null,
+                    'source_name' => 'Excel/CSV Import',
+                    'overall_confidence' => 1.0,
+                ]],
+                $actorId > 0 ? $actorId : null,
+                [
+                    'file_name' => $fileName,
+                    'file_hash' => $fileHash,
+                ],
+            );
+        } catch (\Throwable $e) {
+            return ['status' => 'failed', 'code' => 'mapping_engine_error', 'message' => $e->getMessage()];
+        }
+
+        if (($stats['auto_created'] ?? 0) > 0) {
+            return ['status' => 'inserted', 'ca_id' => $stats['decisions'][0]['ca_id'] ?? null];
+        }
+        if (($stats['auto_updated'] ?? 0) > 0) {
+            return ['status' => 'updated', 'ca_id' => $stats['decisions'][0]['ca_id'] ?? null];
+        }
+        if (($stats['conflicts'] ?? 0) > 0) {
+            return ['status' => 'duplicate', 'code' => 'mapping_conflict', 'message' => 'Mapping conflict — needs review'];
+        }
+        if (($stats['needs_review'] ?? 0) > 0) {
+            return ['status' => 'failed', 'code' => 'needs_review', 'message' => 'Row parked for mapping review'];
+        }
+
+        return ['status' => 'failed', 'code' => 'mapping_skipped', 'message' => 'Mapping engine skipped row'];
     }
 
     private function insertValidatedRow(array $row, ?int $bulkActionId = null, bool $skipDuplicateCheck = false): array

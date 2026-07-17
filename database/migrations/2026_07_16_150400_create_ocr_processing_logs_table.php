@@ -10,6 +10,10 @@ return new class extends Migration
 
     public function up(): void
     {
+        if (Schema::connection($this->connection)->hasTable('ocr_processing_logs')) {
+            return;
+        }
+
         Schema::connection($this->connection)->create('ocr_processing_logs', function (Blueprint $table) {
             $table->id();
             $table->foreignId('import_log_id')->constrained('ocr_import_logs')->cascadeOnDelete();

@@ -84,6 +84,7 @@ class OcrDocumentController extends Controller
                 $request->file('document'),
                 $caId,
                 $request->user(),
+                (bool) $request->boolean('force_reimport'),
             );
         } catch (\App\Exceptions\DocumentAi\DocumentAiConfigurationException $exception) {
             return ApiResponse::error(
@@ -91,9 +92,13 @@ class OcrDocumentController extends Controller
                 422,
             );
         } catch (\App\Exceptions\Ocr\OcrFileException $exception) {
-            return ApiResponse::error($exception->getMessage(), 422, [
-                'document' => [$exception->getMessage()],
-            ]);
+            $payload = ['document' => [$exception->getMessage()]];
+            if ($exception->errorCode === 'duplicate_file') {
+                $payload['duplicate_file'] = true;
+                $payload['requires_confirmation'] = true;
+            }
+
+            return ApiResponse::error($exception->getMessage(), 422, $payload);
         }
 
         return ApiResponse::created(
@@ -198,26 +203,81 @@ class OcrDocumentController extends Controller
         );
     }
 
-    public function reviewFirm(\Illuminate\Http\Request $request, OcrDocument $ocrDocument, \App\Models\OcrParsedFirm $parsedFirm): JsonResponse
-    {
+    public function reviewFirm(
+        \Illuminate\Http\Request $request,
+        OcrDocument $ocrDocument,
+        \App\Models\OcrParsedFirm $parsedFirm,
+        \App\Services\Ocr\OcrFirmApprovalService $approvalService,
+    ): JsonResponse {
         $this->authorize('update', $ocrDocument);
-
-        if ((int) $parsedFirm->ocr_document_id !== (int) $ocrDocument->id) {
-            abort(404);
-        }
 
         $validated = $request->validate([
             'review_status' => ['required', 'string', 'in:pending,approved,rejected'],
+            'matched_ca_id' => ['nullable', 'integer', 'exists:ca_masters,ca_id'],
         ]);
 
-        $parsedFirm->update([
-            'review_status' => $validated['review_status'],
-        ]);
-
-        return ApiResponse::success(
-            (new OcrParsedFirmResource($parsedFirm->load('members')))->resolve(),
-            'Firm review status updated.',
+        $result = $approvalService->review(
+            $ocrDocument,
+            $parsedFirm,
+            $validated['review_status'],
+            isset($validated['matched_ca_id']) ? (int) $validated['matched_ca_id'] : null,
         );
+        $firmPayload = (new OcrParsedFirmResource($result['firm']))->resolve();
+        $firmPayload['ca_id'] = $result['ca_id'];
+        $firmPayload['approval_action'] = $result['action'];
+        $firmPayload['master_created'] = $result['created'];
+        $firmPayload['master_updated'] = $result['updated'];
+
+        return ApiResponse::success($firmPayload, $result['message']);
+    }
+
+    public function approveAllSafe(
+        OcrDocument $ocrDocument,
+        \App\Services\Ocr\OcrFirmApprovalService $approvalService,
+    ): JsonResponse {
+        $this->authorize('update', $ocrDocument);
+
+        $stats = $approvalService->approveAllSafe($ocrDocument);
+
+        return ApiResponse::success($stats, sprintf(
+            'Safe records processed: %d auto-created, %d auto-updated, %d still need review, %d conflicts.',
+            (int) ($stats['auto_created'] ?? 0),
+            (int) ($stats['auto_updated'] ?? 0),
+            (int) ($stats['needs_review'] ?? 0),
+            (int) ($stats['conflicts'] ?? 0),
+        ));
+    }
+
+    public function rejectSelectedFirms(
+        \Illuminate\Http\Request $request,
+        OcrDocument $ocrDocument,
+        \App\Services\Ocr\OcrFirmApprovalService $approvalService,
+    ): JsonResponse {
+        $this->authorize('update', $ocrDocument);
+
+        $validated = $request->validate([
+            'firm_ids' => ['required', 'array', 'min:1'],
+            'firm_ids.*' => ['integer', 'exists:ocr_parsed_firms,id'],
+        ]);
+
+        $result = $approvalService->rejectSelected($ocrDocument, array_map('intval', $validated['firm_ids']));
+
+        return ApiResponse::success($result, $result['rejected'].' firm(s) rejected.');
+    }
+
+    public function retryMapping(
+        OcrDocument $ocrDocument,
+        \App\Services\Ocr\OcrFirmApprovalService $approvalService,
+    ): JsonResponse {
+        $this->authorize('update', $ocrDocument);
+
+        if (! $ocrDocument->isCompleted()) {
+            return ApiResponse::error('Only completed OCR documents can retry mapping.', 422);
+        }
+
+        $stats = $approvalService->retryMapping($ocrDocument);
+
+        return ApiResponse::success($stats, 'Mapping retry completed.');
     }
 
     private function configurationErrorMessage(

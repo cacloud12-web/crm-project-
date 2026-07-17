@@ -185,12 +185,24 @@ class GoogleDocumentAiService
             : null;
 
         return [
+            'provider' => 'google_document_ai',
+            'processing_mode' => 'online',
             'text' => $text,
             'page_count' => count($pages),
+            'confidence' => $averageConfidence,
             'languages' => array_values(array_unique($detectedLanguages)),
             'detected_languages' => array_values(array_unique($detectedLanguages)),
             'pages' => $pages,
             'entities' => [],
+            'structured_data' => [
+                'pages' => $pages,
+                'languages' => array_values(array_unique($detectedLanguages)),
+            ],
+            'raw_response' => [
+                'processor_name' => $processorName,
+                'page_count' => count($pages),
+                'language_count' => count(array_unique($detectedLanguages)),
+            ],
             'average_confidence' => $averageConfidence,
             'processor_name' => $processorName,
             'provider_reference' => $processorName,

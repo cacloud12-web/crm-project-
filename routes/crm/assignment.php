@@ -74,6 +74,7 @@ Route::middleware(['auth', 'rbac'])->group(function () {
 
     Route::post('employees/provision-logins', [EmployeeController::class, 'provisionLogins'])
         ->middleware('spa.browser:employees');
+    Route::get('employees/demo-providers', [EmployeeController::class, 'demoProviders']);
     Route::post('employees/{employee}/reset-password', [EmployeeController::class, 'resetPassword'])
         ->middleware('spa.browser:employees');
     Route::resource('employees', EmployeeController::class)

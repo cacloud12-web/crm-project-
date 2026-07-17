@@ -2,12 +2,16 @@
 
 namespace App\Http\Requests\Employee;
 
+use App\Http\Requests\Employee\Concerns\ValidatesEmployeeDemoWorkType;
 use App\Rules\AssignableCrmRole;
 use App\Rules\CityBelongsToState;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Validator;
 
 class StoreEmployeeRequest extends FormRequest
 {
+    use ValidatesEmployeeDemoWorkType;
+
     public function authorize(): bool
     {
         return true;
@@ -15,7 +19,7 @@ class StoreEmployeeRequest extends FormRequest
 
     public function rules(): array
     {
-        return [
+        return array_merge([
             'name' => 'required|string|max:255',
             'email_id' => 'required|email|max:255|unique:employees,email_id|unique:users,email',
             'mobile_no' => 'nullable|string|max:20',
@@ -26,7 +30,12 @@ class StoreEmployeeRequest extends FormRequest
             'password' => 'required|string|min:8|confirmed',
             'date_of_joining' => 'nullable|date',
             'status' => 'nullable|string|max:255',
-        ];
+        ], $this->employeeDemoWorkTypeRules(false));
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $this->appendEmployeeDemoWorkTypeValidation($validator);
     }
 
     protected function prepareForValidation(): void
@@ -38,5 +47,7 @@ class StoreEmployeeRequest extends FormRequest
         if (! $this->filled('role')) {
             $this->merge(['role' => 'Sales Executive']);
         }
+
+        $this->prepareEmployeeDemoWorkType();
     }
 }

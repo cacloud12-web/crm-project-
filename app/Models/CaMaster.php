@@ -18,6 +18,7 @@ class CaMaster extends Model
     protected $fillable = [
         'ca_name',
         'firm_name',
+        'normalized_firm_name',
         'mobile_no',
         'normalized_mobile',
         'mobile_no_type',
@@ -58,6 +59,7 @@ class CaMaster extends Model
         'pincode',
         'pan_no',
         'rating',
+        'field_confidence',
         'is_newly_established',
         'status',
         'workflow_stage',
@@ -85,6 +87,7 @@ class CaMaster extends Model
             'rating' => 'integer',
             'team_size' => 'integer',
             'lead_tags' => 'array',
+            'field_confidence' => 'array',
             'view_count' => 'integer',
             'google_rating' => 'float',
             'google_review_count' => 'integer',

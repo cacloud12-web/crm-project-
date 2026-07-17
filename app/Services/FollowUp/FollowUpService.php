@@ -91,6 +91,7 @@ class FollowUpService
             'priority' => $data['priority'] ?? 'Normal',
             'team_size' => $demoFields['team_size'],
             'demo_provider_name' => $demoFields['demo_provider_name'],
+            'demo_provider_employee_id' => $demoFields['demo_provider_employee_id'],
             'meeting_link' => $demoFields['meeting_link'],
             'parent_followup_id' => $data['parent_followup_id'] ?? null,
             'sequence_step' => $data['sequence_step'] ?? null,

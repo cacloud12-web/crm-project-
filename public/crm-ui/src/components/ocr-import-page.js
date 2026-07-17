@@ -105,7 +105,7 @@
         '<header class="ocr-import-page__header card">' +
           '<div>' +
             '<h1 class="text-page-title">OCR Import</h1>' +
-            '<p class="ocr-import-page__subtitle">Upload PDF or image documents for Google Document AI extraction. Mapping to CA Master comes in a later phase.</p>' +
+            '<p class="ocr-import-page__subtitle">Upload PDF or image documents for Google Document AI. High-confidence firms map to Master Data automatically; only conflicts and low-confidence rows need review.</p>' +
           '</div>' +
           '<div class="ocr-import-page__header-meta">' +
             '<span class="ocr-import-pill">Google Document AI</span>' +
@@ -121,7 +121,7 @@
               '<p class="font-medium mt-2" data-ocr-import-drop-title>Drop a document here or click to browse</p>' +
               '<p class="text-caption text-slate-500 mt-1" data-ocr-import-drop-caption>Queued for OCR · browser stays responsive</p>' +
             '</label>' +
-            '<p class="text-caption text-slate-500 mt-3" id="ocr-import-upload-hint">No firm mapping yet — results are stored for review and future CA mapping.</p>' +
+            '<p class="text-caption text-slate-500 mt-3" id="ocr-import-upload-hint">Exact / high-confidence matches auto-update or auto-create. Use Approve All Safe for remaining eligible rows.</p>' +
             '<p class="text-caption text-rose-600 mt-2 hidden" id="ocr-import-upload-error" role="alert"></p>' +
           '</section>' +
           '<section class="card ocr-import-history">' +
@@ -372,10 +372,11 @@
   }
 
   /** Browser→Laravel upload with real progress (XHR). OCR runs separately after this resolves. */
-  function uploadFile(file, onProgress) {
+  function uploadFile(file, onProgress, forceReimport) {
     return new Promise(function (resolve, reject) {
       var formData = new FormData();
       formData.append('document', file);
+      if (forceReimport) formData.append('force_reimport', '1');
       var xhr = new XMLHttpRequest();
       xhr.open('POST', '/ocr-documents');
       xhr.withCredentials = true;
@@ -418,7 +419,11 @@
         } else if (xhr.status === 403) {
           message = body.message || 'You do not have permission to upload OCR documents.';
         }
-        reject(Object.assign(new Error(message), { status: xhr.status, errors: body.errors || null }));
+        reject(Object.assign(new Error(message), {
+          status: xhr.status,
+          errors: body.errors || null,
+          duplicateFile: !!(body.errors && body.errors.duplicate_file),
+        }));
       };
       xhr.onerror = function () {
         reject(new Error('Unable to reach the server. Please refresh the page and try again.'));
@@ -461,14 +466,101 @@
     return '<div class="ocr-import-detail__meta-row"><span class="text-caption text-slate-500">' + esc(label) + '</span><span>' + value + '</span></div>';
   }
 
-  function firmField(label, value) {
+  function firmField(label, value, fieldKey, lowFields) {
     if (value == null || value === '') return '';
-    return '<div class="ocr-firm-card__field"><span class="ocr-firm-card__label">' + esc(label) + '</span><span class="ocr-firm-card__value">' + esc(value) + '</span></div>';
+    var low = Array.isArray(lowFields) && fieldKey && lowFields.indexOf(fieldKey) >= 0;
+    return '<div class="ocr-firm-card__field' + (low ? ' ocr-firm-card__field--low-confidence' : '') + '">' +
+      '<span class="ocr-firm-card__label">' + esc(label) + (low ? ' <span class="ocr-low-conf-tag">low confidence</span>' : '') + '</span>' +
+      '<span class="ocr-firm-card__value">' + esc(value) + '</span></div>';
+  }
+
+  function matchStatusLabel(status) {
+    if (status === 'auto_mapped') return 'Auto-updated';
+    if (status === 'auto_created') return 'Auto-created';
+    if (status === 'needs_review') return 'Needs review';
+    if (status === 'conflict') return 'Conflict';
+    if (status === 'rejected') return 'Rejected';
+    if (status === 'failed') return 'Failed';
+    if (status === 'pending' || !status) return 'Pending mapping';
+    return status || '';
+  }
+
+  function mappingStageIndex(item, importBatch) {
+    var status = (item && item.status) || '';
+    var parseStatus = (item && item.parse_status) || '';
+    var stage = (importBatch && importBatch.progress_stage) || '';
+    if (stage === 'completed' || (importBatch && importBatch.status === 'completed')) return 5;
+    if (stage === 'mapping' || stage === 'creating' || stage === 'updating') return 3;
+    if (parseStatus === 'completed' && status === 'completed') return 3;
+    if (parseStatus === 'processing' || parseStatus === 'queued') return 2;
+    if (status === 'processing' || status === 'queued' || status === 'uploading_to_cloud' || status === 'finalizing') return 1;
+    if (status === 'completed') return 5;
+    return 0;
+  }
+
+  function renderMappingProgressDashboard(item, mapping, importBatch) {
+    var stages = ['Uploading', 'Parsing', 'Mapping', 'Creating', 'Updating', 'Completed'];
+    var active = mappingStageIndex(item, importBatch);
+    var created = (importBatch && importBatch.created_count != null)
+      ? importBatch.created_count
+      : (mapping.auto_created || 0);
+    var updated = (importBatch && importBatch.updated_count != null)
+      ? importBatch.updated_count
+      : (mapping.auto_updated || 0);
+    var review = (importBatch && importBatch.review_count != null)
+      ? importBatch.review_count
+      : (mapping.needs_review || 0);
+    var conflict = (importBatch && importBatch.conflict_count != null)
+      ? importBatch.conflict_count
+      : (mapping.conflicts || 0);
+    var failed = (importBatch && importBatch.failed_count != null) ? importBatch.failed_count : 0;
+    var total = (importBatch && importBatch.total_records != null)
+      ? importBatch.total_records
+      : (mapping.processed || 0);
+    var pct = importBatch && importBatch.progress_pct != null ? importBatch.progress_pct : (active >= 5 ? 100 : null);
+    var html = '<div class="ocr-mapping-dashboard mt-3">';
+    html += '<div class="ocr-mapping-dashboard__stages">' + stages.map(function (label, idx) {
+      var cls = 'ocr-mapping-stage';
+      if (idx < active) cls += ' is-done';
+      else if (idx === active) cls += ' is-active';
+      return '<span class="' + cls + '">' + esc(label) + '</span>';
+    }).join('') + '</div>';
+    if (pct != null) {
+      html += '<div class="ocr-mapping-dashboard__bar"><span style="width:' + Math.max(0, Math.min(100, pct)) + '%"></span></div>';
+    }
+    html += '<p class="text-caption text-slate-500 mt-2">Total ' + esc(String(total)) +
+      ' · ' + esc(String(created)) + ' created · ' + esc(String(updated)) + ' updated · ' +
+      esc(String(review)) + ' review · ' + esc(String(conflict)) + ' conflict · ' +
+      esc(String(failed)) + ' failed</p>';
+    if (importBatch && importBatch.rollbackable && importBatch.id) {
+      html += '<button type="button" class="btn-secondary btn-sm mt-2" data-ocr-rollback-batch="' +
+        esc(String(importBatch.id)) + '">Rollback this import</button>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function firmMatchesFilter(firm, filter) {
+    if (!filter || filter === 'all') return true;
+    var matchStatus = firm.match_status || '';
+    var review = firm.review_status || 'pending';
+    if (filter === 'auto_created') return matchStatus === 'auto_created';
+    if (filter === 'auto_updated') return matchStatus === 'auto_mapped';
+    if (filter === 'needs_review') return matchStatus === 'needs_review' || (!matchStatus && review === 'pending');
+    if (filter === 'conflict') return matchStatus === 'conflict';
+    if (filter === 'failed') return matchStatus === 'failed' || matchStatus === 'rejected' || review === 'rejected';
+    return true;
   }
 
   function renderFirmCard(firm, can) {
     var members = Array.isArray(firm.members) ? firm.members : [];
     var review = firm.review_status || 'pending';
+    var matchStatus = firm.match_status || '';
+    var caId = firm.crm_ca_id || firm.ca_id || null;
+    var isApproved = review === 'approved' || matchStatus === 'auto_mapped' || matchStatus === 'auto_created';
+    var isRejected = review === 'rejected' || matchStatus === 'rejected';
+    var needsManual = !isApproved && !isRejected && (matchStatus === 'needs_review' || matchStatus === 'conflict' || matchStatus === '' || matchStatus === 'pending');
+    var lowFields = Array.isArray(firm.low_confidence_fields) ? firm.low_confidence_fields : [];
     var partnersHtml = members.length
       ? '<ul class="ocr-firm-card__partners">' + members.map(function (m) {
           return '<li><i data-lucide="check" class="h-3.5 w-3.5 text-emerald-600" aria-hidden="true"></i> ' +
@@ -479,35 +571,55 @@
         }).join('') + '</ul>'
       : '<p class="text-caption text-slate-500 mt-2">No partners detected</p>';
 
-    return '<article class="ocr-firm-card" data-ocr-firm-id="' + esc(firm.id) + '">' +
+    var actionsHtml = '';
+    if (can.update && needsManual) {
+      actionsHtml = '<div class="ocr-firm-card__actions">' +
+        '<label class="ocr-firm-card__select"><input type="checkbox" data-ocr-firm-select value="' + esc(firm.id) + '" /> Select</label>' +
+        '<button type="button" class="btn-secondary btn-xs" data-ocr-firm-review="approved" data-ocr-firm-id="' + esc(firm.id) + '">' +
+          (matchStatus === 'conflict' ? 'Confirm match' : 'Approve') +
+        '</button>' +
+        '<button type="button" class="btn-secondary btn-xs text-rose-600" data-ocr-firm-review="rejected" data-ocr-firm-id="' + esc(firm.id) + '">Reject</button>' +
+      '</div>';
+    } else if (isApproved && caId) {
+      actionsHtml = '<div class="ocr-firm-card__actions">' +
+        '<span class="text-caption text-emerald-700">' +
+          esc(matchStatusLabel(matchStatus) || 'Linked') + ' · CA #' + esc(caId) +
+          (firm.match_reason ? ' · ' + esc(firm.match_reason) : '') +
+        '</span>' +
+      '</div>';
+    }
+
+    return '<article class="ocr-firm-card" data-ocr-firm-id="' + esc(firm.id) + '" data-ocr-match-status="' + esc(matchStatus || review) + '">' +
       '<div class="ocr-firm-card__top">' +
         '<div>' +
-          '<h4 class="ocr-firm-card__title">' + esc(firm.firm_name || 'Untitled firm') + '</h4>' +
-          (firm.city ? '<p class="text-caption text-slate-500">' + esc(firm.city) + (firm.state ? ', ' + esc(firm.state) : '') + '</p>' : '') +
+          '<h4 class="ocr-firm-card__title' + (lowFields.indexOf('firm_name') >= 0 ? ' ocr-firm-card__title--low-confidence' : '') + '">' +
+            esc(firm.firm_name || 'Untitled firm') +
+          '</h4>' +
+          (firm.city ? '<p class="text-caption text-slate-500">' + esc(firm.city) + (firm.state ? ', ' + esc(firm.state) : '') +
+            (firm.page_number != null ? ' · p.' + esc(firm.page_number) : '') + '</p>' : '') +
         '</div>' +
-        '<span class="ocr-firm-card__badge ocr-firm-card__badge--' + esc(review) + '">' + esc(review) + '</span>' +
+        '<span class="ocr-firm-card__badge ocr-firm-card__badge--' + esc(matchStatus || review || 'pending') + '">' +
+          esc(matchStatusLabel(matchStatus) || review) +
+        '</span>' +
       '</div>' +
       '<div class="ocr-firm-card__grid">' +
         firmField('Firm Type', firm.firm_type) +
-        firmField('Address', firm.address) +
-        firmField('PIN Code', firm.pincode) +
-        firmField('FRN', firm.frn) +
-        firmField('GST', firm.gst_no) +
-        firmField('PAN', firm.pan_no) +
-        firmField('Phone', firm.phone) +
-        firmField('Email', firm.email) +
+        firmField('Address', firm.address, 'address', lowFields) +
+        firmField('PIN Code', firm.pincode, 'pincode', lowFields) +
+        firmField('FRN', firm.frn, 'frn', lowFields) +
+        firmField('GST', firm.gst_no, 'gst_no', lowFields) +
+        firmField('PAN', firm.pan_no, 'pan_no', lowFields) +
+        firmField('Phone', firm.phone, 'phone', lowFields) +
+        firmField('Email', firm.email, 'email', lowFields) +
         firmField('Website', firm.website) +
+        (firm.match_confidence != null ? firmField('Match confidence', Math.round(Number(firm.match_confidence) * 100) + '%') : '') +
+        (caId ? firmField('Master CA ID', caId) : '') +
       '</div>' +
       '<div class="mt-3">' +
         '<p class="ocr-firm-card__label">Partners</p>' +
         partnersHtml +
       '</div>' +
-      (can.update
-        ? '<div class="ocr-firm-card__actions">' +
-            '<button type="button" class="btn-secondary btn-xs" data-ocr-firm-review="approved" data-ocr-firm-id="' + esc(firm.id) + '">Approve</button>' +
-            '<button type="button" class="btn-secondary btn-xs text-rose-600" data-ocr-firm-review="rejected" data-ocr-firm-id="' + esc(firm.id) + '">Reject</button>' +
-          '</div>'
-        : '') +
+      actionsHtml +
     '</article>';
   }
 
@@ -586,7 +698,33 @@
       if (parseStatus === 'queued' || parseStatus === 'processing') {
         html += '<p class="ocr-panel__processing mt-3"><i data-lucide="loader-2" class="h-3.5 w-3.5 animate-spin"></i> Converting OCR text into structured CA records…</p>';
       } else if (firms.length) {
-        html += '<div class="ocr-firm-cards">' + firms.map(function (firm) {
+        var mapping = (item.structured_data && item.structured_data.mapping) || {};
+        var completeness = (item.structured_data && item.structured_data.parsed && item.structured_data.parsed.completeness) || {};
+        if (completeness.warnings && completeness.warnings.length) {
+          html += '<div class="ocr-completeness-warn mt-2">' + completeness.warnings.map(function (w) {
+            return '<p class="text-caption text-amber-700">⚠ ' + esc(w) + '</p>';
+          }).join('') + '</div>';
+        }
+        var importBatch = item.import_batch || (item.structured_data && item.structured_data.import_batch) || null;
+        if (importBatch || mapping.processed != null) {
+          html += renderMappingProgressDashboard(item, mapping, importBatch);
+        }
+        html += '<div class="ocr-firm-bulk-toolbar mt-3">' +
+          '<select id="ocr-firm-filter" class="input-field input-field--sm" data-ocr-firm-filter>' +
+            '<option value="all">All firms</option>' +
+            '<option value="auto_created">Auto-created</option>' +
+            '<option value="auto_updated">Auto-updated</option>' +
+            '<option value="needs_review">Needs review</option>' +
+            '<option value="conflict">Conflict</option>' +
+            '<option value="failed">Rejected / failed</option>' +
+          '</select>' +
+          (can.update
+            ? '<button type="button" class="btn-primary btn-sm" data-ocr-approve-safe="' + id + '">Approve All Safe</button>' +
+              '<button type="button" class="btn-secondary btn-sm" data-ocr-reject-selected="' + id + '">Reject selected</button>' +
+              '<button type="button" class="btn-secondary btn-sm" data-ocr-retry-mapping="' + id + '">Retry mapping</button>'
+            : '') +
+        '</div>';
+        html += '<div class="ocr-firm-cards" data-ocr-firm-cards>' + firms.map(function (firm) {
           return renderFirmCard(firm, can);
         }).join('') + '</div>';
       } else if (parseStatus === 'failed') {
@@ -820,6 +958,96 @@
       return;
     }
 
+    var firmFilter = e.target.closest('[data-ocr-firm-filter]');
+    if (firmFilter && pageRoot && pageRoot.contains(firmFilter) && e.type === 'change') {
+      var filterVal = firmFilter.value || 'all';
+      pageRoot.querySelectorAll('.ocr-firm-card').forEach(function (card) {
+        var firmId = card.getAttribute('data-ocr-firm-id');
+        var fakeFirm = {
+          match_status: card.getAttribute('data-ocr-match-status'),
+          review_status: card.getAttribute('data-ocr-match-status'),
+        };
+        card.classList.toggle('hidden', !firmMatchesFilter(fakeFirm, filterVal));
+        if (filterVal === 'needs_review' && fakeFirm.match_status === 'pending') card.classList.remove('hidden');
+      });
+      return;
+    }
+
+    var approveSafeBtn = e.target.closest('[data-ocr-approve-safe]');
+    if (approveSafeBtn && pageRoot && pageRoot.contains(approveSafeBtn)) {
+      e.preventDefault();
+      var approveDocId = approveSafeBtn.getAttribute('data-ocr-approve-safe');
+      approveSafeBtn.disabled = true;
+      apiFetch('/ocr-documents/' + encodeURIComponent(approveDocId) + '/approve-safe', { method: 'POST' })
+        .then(function (body) {
+          toast((body && body.message) || 'Safe records approved.', 'success');
+          openDetail(approveDocId, true);
+        })
+        .catch(function (err) { toast(err.message || 'Approve All Safe failed.', 'error'); })
+        .finally(function () { approveSafeBtn.disabled = false; });
+      return;
+    }
+
+    var rejectSelectedBtn = e.target.closest('[data-ocr-reject-selected]');
+    if (rejectSelectedBtn && pageRoot && pageRoot.contains(rejectSelectedBtn)) {
+      e.preventDefault();
+      var rejectDocId = rejectSelectedBtn.getAttribute('data-ocr-reject-selected');
+      var selectedIds = Array.prototype.map.call(
+        pageRoot.querySelectorAll('[data-ocr-firm-select]:checked'),
+        function (el) { return parseInt(el.value, 10); },
+      ).filter(Boolean);
+      if (!selectedIds.length) {
+        toast('Select at least one firm to reject.', 'warning');
+        return;
+      }
+      rejectSelectedBtn.disabled = true;
+      apiFetch('/ocr-documents/' + encodeURIComponent(rejectDocId) + '/reject-selected', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ firm_ids: selectedIds }),
+      }).then(function (body) {
+        toast((body && body.message) || 'Selected firms rejected.', 'success');
+        openDetail(rejectDocId, true);
+      }).catch(function (err) {
+        toast(err.message || 'Reject selected failed.', 'error');
+      }).finally(function () { rejectSelectedBtn.disabled = false; });
+      return;
+    }
+
+    var retryMapBtn = e.target.closest('[data-ocr-retry-mapping]');
+    if (retryMapBtn && pageRoot && pageRoot.contains(retryMapBtn)) {
+      e.preventDefault();
+      var retryDocId = retryMapBtn.getAttribute('data-ocr-retry-mapping');
+      retryMapBtn.disabled = true;
+      apiFetch('/ocr-documents/' + encodeURIComponent(retryDocId) + '/retry-mapping', { method: 'POST' })
+        .then(function (body) {
+          toast((body && body.message) || 'Mapping retry completed.', 'success');
+          openDetail(retryDocId, true);
+        })
+        .catch(function (err) { toast(err.message || 'Retry mapping failed.', 'error'); })
+        .finally(function () { retryMapBtn.disabled = false; });
+      return;
+    }
+
+    var rollbackBtn = e.target.closest('[data-ocr-rollback-batch]');
+    if (rollbackBtn && pageRoot && pageRoot.contains(rollbackBtn)) {
+      e.preventDefault();
+      var batchId = rollbackBtn.getAttribute('data-ocr-rollback-batch');
+      if (!batchId || !window.confirm('Rollback this import? Auto-created masters without follow-ups will be removed and updates restored.')) {
+        return;
+      }
+      rollbackBtn.disabled = true;
+      apiFetch('/master-import-batches/' + encodeURIComponent(batchId) + '/rollback', { method: 'POST' })
+        .then(function (body) {
+          toast((body && body.message) || 'Import rolled back.', 'success');
+          if (state.selectedId) openDetail(state.selectedId, true);
+          loadList().catch(function () {});
+        })
+        .catch(function (err) { toast(err.message || 'Rollback failed.', 'error'); })
+        .finally(function () { rollbackBtn.disabled = false; });
+      return;
+    }
+
     var reparseBtn = e.target.closest('[data-ocr-import-reparse]');
     if (reparseBtn && pageRoot && pageRoot.contains(reparseBtn)) {
       e.preventDefault();
@@ -843,16 +1071,30 @@
       var docId = state.selectedId;
       if (!firmId || !docId) return;
       reviewBtn.disabled = true;
+      var siblingActions = reviewBtn.closest('.ocr-firm-card__actions');
+      if (siblingActions) {
+        siblingActions.querySelectorAll('button').forEach(function (btn) { btn.disabled = true; });
+      }
       apiFetch('/ocr-documents/' + encodeURIComponent(docId) + '/firms/' + encodeURIComponent(firmId) + '/review', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ review_status: status }),
-      }).then(function () {
-        toast(status === 'approved' ? 'Firm approved.' : 'Firm rejected.', 'success');
+      }).then(function (body) {
+        var data = (body && body.data) || {};
+        var msg = (body && body.message) || (status === 'approved' ? 'Firm approved.' : 'Firm rejected.');
+        if (status === 'approved' && data.ca_id) {
+          msg = msg + ' (CA #' + data.ca_id + ')';
+        }
+        toast(msg, 'success');
         openDetail(docId, true);
       }).catch(function (err) {
         toast(err.message || 'Unable to update review status.', 'error');
-      }).finally(function () { reviewBtn.disabled = false; });
+        if (siblingActions) {
+          siblingActions.querySelectorAll('button').forEach(function (btn) { btn.disabled = false; });
+        } else {
+          reviewBtn.disabled = false;
+        }
+      });
       return;
     }
 
@@ -914,6 +1156,7 @@
     if (window.__ocrImportDelegationBound) return;
     window.__ocrImportDelegationBound = true;
     document.addEventListener('click', handleDelegatedClick);
+    document.addEventListener('change', handleDelegatedClick);
     document.addEventListener('keydown', handleDelegatedKeydown);
   }
 
@@ -953,7 +1196,7 @@
       if (dropCaption) dropCaption.textContent = file.name + ' · ' + formatBytes(file.size);
       if (uploadInput) uploadInput.disabled = true;
 
-      uploadFile(file, function (percent) {
+      function onUploadProgress(percent) {
         if (percent >= 100) {
           if (dropTitle) dropTitle.textContent = 'Saving document…';
           setUploadHint('Upload finished. Saving document on the server…', false);
@@ -961,7 +1204,9 @@
         }
         if (dropTitle) dropTitle.textContent = 'Uploading… ' + percent + '%';
         setUploadHint('Uploading “' + file.name + '”… ' + percent + '%', false);
-      }).then(function (body) {
+      }
+
+      function afterUploadSuccess(body) {
         var item = unwrapItem(body) || {};
         var successHint = (body && body.message)
           ? body.message
@@ -980,7 +1225,12 @@
           openDetail(item.id);
         }
         loadList().catch(function () { /* optimistic row already shown */ });
-      }).catch(function (err) {
+      }
+
+      uploadFile(file, onUploadProgress, false).then(afterUploadSuccess).catch(function (err) {
+        if (err.duplicateFile && window.confirm(err.message + '\n\nRe-import this file anyway?')) {
+          return uploadFile(file, onUploadProgress, true).then(afterUploadSuccess);
+        }
         var message = err.message || 'Upload failed.';
         if (err.status === 419) {
           message = 'The upload request expired. Please refresh the page and retry.';

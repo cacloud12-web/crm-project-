@@ -3,7 +3,8 @@
 $location = strtolower((string) env('GOOGLE_DOCUMENT_AI_LOCATION', 'us'));
 
 return [
-    'project_id' => env('GOOGLE_DOCUMENT_AI_PROJECT_ID'),
+    // Prefer GOOGLE_DOCUMENT_AI_PROJECT_ID; accept GOOGLE_CLOUD_PROJECT_ID as alias.
+    'project_id' => env('GOOGLE_DOCUMENT_AI_PROJECT_ID') ?: env('GOOGLE_CLOUD_PROJECT_ID'),
 
     /**
      * Processor location (region), normally us or eu — not language.

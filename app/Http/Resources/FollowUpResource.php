@@ -18,6 +18,7 @@ class FollowUpResource extends JsonResource
             'priority' => $this->priority,
             'team_size' => $this->team_size,
             'demo_provider_name' => $this->demo_provider_name,
+            'demo_provider_employee_id' => $this->demo_provider_employee_id,
             'meeting_link' => $this->meeting_link,
             'source' => $this->source,
             'is_auto_generated' => $this->is_auto_generated,

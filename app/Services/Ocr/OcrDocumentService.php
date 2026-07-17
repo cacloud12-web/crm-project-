@@ -112,7 +112,7 @@ class OcrDocumentService
         return $query->latest('created_at')->paginate($perPage);
     }
 
-    public function store(UploadedFile $file, ?int $caId, User $user): OcrDocument
+    public function store(UploadedFile $file, ?int $caId, User $user, bool $forceReimport = false): OcrDocument
     {
         if ($caId !== null && $caId > 0) {
             $this->employeeDataScope->ensureCanAccessCaMaster($caId);
@@ -138,6 +138,27 @@ class OcrDocumentService
                 throw new OcrFileException('The uploaded document is empty.', 'empty_file');
             }
 
+            $checksum = hash('sha256', $contents);
+            if (! $forceReimport) {
+                $duplicate = OcrDocument::query()
+                    ->where('checksum', $checksum)
+                    ->whereIn('status', [
+                        OcrDocument::STATUS_COMPLETED,
+                        OcrDocument::STATUS_QUEUED,
+                        OcrDocument::STATUS_PROCESSING,
+                    ])
+                    ->latest('id')
+                    ->first(['id', 'original_filename', 'created_at', 'status']);
+                if ($duplicate) {
+                    throw new OcrFileException(
+                        'This file has already been imported (document #'.$duplicate->id
+                        .' · '.$duplicate->original_filename
+                        .'). Confirm re-import if you want to process it again.',
+                        'duplicate_file',
+                    );
+                }
+            }
+
             $mimeType = $file->getMimeType() ?: 'application/octet-stream';
             $decision = $this->modeSelector->decide($mimeType, (int) $file->getSize(), $contents);
 
@@ -149,8 +170,6 @@ class OcrDocumentService
             if (! $stored) {
                 throw new \RuntimeException('Unable to store the uploaded document.');
             }
-
-            $checksum = hash('sha256', $contents);
 
             $document = OcrDocument::query()->create([
                 'ca_id' => $caId,
@@ -269,6 +288,7 @@ class OcrDocumentService
             'error_message' => null,
             'processing_started_at' => null,
             'processed_at' => null,
+            'failed_at' => null,
             'provider_operation_name' => null,
             'gcs_input_uri' => null,
             'gcs_output_uri' => null,
@@ -796,10 +816,10 @@ class OcrDocumentService
                 try {
                     \Illuminate\Support\Facades\Artisan::call('queue:work', [
                         '--stop-when-empty' => true,
-                        '--max-jobs' => 5,
-                        '--max-time' => 55,
+                        '--max-jobs' => 20,
+                        '--max-time' => 90,
                         '--tries' => 3,
-                        '--timeout' => 120,
+                        '--timeout' => 300,
                         '--queue' => 'default',
                     ]);
                 } catch (Throwable $exception) {
@@ -1000,6 +1020,7 @@ class OcrDocumentService
             'error_code' => $errorCode,
             'error_message' => $message,
             'processing_progress' => 'Failed',
+            'failed_at' => now(),
             'processed_at' => now(),
         ]);
 

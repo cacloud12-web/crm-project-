@@ -3,15 +3,16 @@
 namespace App\Services\FollowUp\Concerns;
 
 use App\Models\CaMaster;
+use App\Models\Employee;
 use App\Models\FollowUp;
+use App\Services\Demo\DemoProviderEligibilityService;
 use App\Services\DemoConfirmation\DemoConfirmationService;
-use App\Support\Demo\DemoProviderResolver;
 
 trait ResolvesFollowUpDemoFields
 {
     /**
      * @param  array<string, mixed>  $data
-     * @return array{team_size: ?int, demo_provider_name: ?string, meeting_link: ?string}
+     * @return array{team_size: ?int, demo_provider_name: ?string, demo_provider_employee_id: ?int, meeting_link: ?string}
      */
     protected function resolveFollowUpDemoFields(array $data, ?FollowUp $existing = null): array
     {
@@ -20,6 +21,7 @@ trait ResolvesFollowUpDemoFields
             return [
                 'team_size' => null,
                 'demo_provider_name' => null,
+                'demo_provider_employee_id' => null,
                 'meeting_link' => null,
             ];
         }
@@ -31,6 +33,12 @@ trait ResolvesFollowUpDemoFields
             && array_key_exists('team_size', $data)
             && (int) ($teamSize ?? 0) !== (int) ($previousTeamSize ?? 0);
 
+        $providerEmployeeId = array_key_exists('demo_provider_employee_id', $data)
+            ? ($data['demo_provider_employee_id'] !== null && $data['demo_provider_employee_id'] !== ''
+                ? (int) $data['demo_provider_employee_id']
+                : null)
+            : ($existing?->demo_provider_employee_id ? (int) $existing->demo_provider_employee_id : null);
+
         $provider = array_key_exists('demo_provider_name', $data)
             ? ($data['demo_provider_name'] !== '' ? (string) $data['demo_provider_name'] : null)
             : $existing?->demo_provider_name;
@@ -38,12 +46,15 @@ trait ResolvesFollowUpDemoFields
             ? ($data['meeting_link'] !== '' ? (string) $data['meeting_link'] : null)
             : $existing?->meeting_link;
 
-        if ($teamSize !== null && $teamSize > 0) {
-            $resolved = DemoProviderResolver::resolve($teamSize);
-            if ($resolved) {
-                if ($existing === null || $teamSizeChanged) {
-                    $provider = $resolved['provider'];
-                    $link = $resolved['meeting_link'];
+        if ($providerEmployeeId) {
+            $employee = Employee::query()->where('employee_id', $providerEmployeeId)->first();
+            if ($employee && app(DemoProviderEligibilityService::class)->isDemoCapableWorkType($employee->work_type)) {
+                $provider = $employee->name;
+                if ($existing === null || $teamSizeChanged || array_key_exists('demo_provider_employee_id', $data) || ! $link) {
+                    $empLink = trim((string) ($employee->demo_meeting_link ?? ''));
+                    if ($empLink !== '') {
+                        $link = $empLink;
+                    }
                 }
             }
         }
@@ -51,6 +62,7 @@ trait ResolvesFollowUpDemoFields
         return [
             'team_size' => $teamSize,
             'demo_provider_name' => $provider,
+            'demo_provider_employee_id' => $providerEmployeeId,
             'meeting_link' => $link,
         ];
     }

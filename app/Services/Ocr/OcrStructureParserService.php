@@ -63,6 +63,8 @@ class OcrStructureParserService
             return [
                 'parser_version' => self::PARSER_VERSION,
                 'firm_count' => 0,
+                'heading_count' => 0,
+                'skipped_blocks' => 0,
                 'firms' => [],
             ];
         }
@@ -70,10 +72,13 @@ class OcrStructureParserService
         $blocks = $this->splitIntoFirmBlocks($lines);
         $firms = [];
         $sequence = 1;
+        $skippedBlocks = 0;
+        $headingCount = count($blocks);
 
         foreach ($blocks as $block) {
             $firm = $this->parseFirmBlock($block, $sequence);
             if ($firm === null) {
+                $skippedBlocks++;
                 continue;
             }
             $firms[] = $firm;
@@ -83,6 +88,8 @@ class OcrStructureParserService
         return [
             'parser_version' => self::PARSER_VERSION,
             'firm_count' => count($firms),
+            'heading_count' => $headingCount,
+            'skipped_blocks' => $skippedBlocks,
             'firms' => $firms,
         ];
     }

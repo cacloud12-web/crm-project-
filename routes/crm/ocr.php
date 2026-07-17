@@ -1,9 +1,14 @@
 <?php
 
+use App\Http\Controllers\Mapping\MasterImportBatchController;
 use App\Http\Controllers\OcrDocumentController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth', 'rbac'])->group(function () {
+    Route::get('master-import-batches/{batch}', [MasterImportBatchController::class, 'show'])
+        ->name('master-import-batches.show');
+    Route::post('master-import-batches/{batch}/rollback', [MasterImportBatchController::class, 'rollback'])
+        ->name('master-import-batches.rollback');
     Route::get('ocr-documents', [OcrDocumentController::class, 'index'])->name('ocr-documents.index');
     Route::get('ocr-documents/create', [OcrDocumentController::class, 'create'])->name('ocr-documents.create');
     Route::post('ocr-documents', [OcrDocumentController::class, 'store'])
@@ -19,6 +24,12 @@ Route::middleware(['auth', 'rbac'])->group(function () {
     Route::get('ocr-documents/{ocrDocument}/preview', [OcrDocumentController::class, 'preview'])->name('ocr-documents.preview');
     Route::get('ocr-documents/{ocrDocument}/download', [OcrDocumentController::class, 'download'])->name('ocr-documents.download');
     Route::post('ocr-documents/{ocrDocument}/reparse', [OcrDocumentController::class, 'reparse'])->name('ocr-documents.reparse');
+    Route::post('ocr-documents/{ocrDocument}/approve-safe', [OcrDocumentController::class, 'approveAllSafe'])
+        ->name('ocr-documents.approve-safe');
+    Route::post('ocr-documents/{ocrDocument}/reject-selected', [OcrDocumentController::class, 'rejectSelectedFirms'])
+        ->name('ocr-documents.reject-selected');
+    Route::post('ocr-documents/{ocrDocument}/retry-mapping', [OcrDocumentController::class, 'retryMapping'])
+        ->name('ocr-documents.retry-mapping');
     Route::patch('ocr-documents/{ocrDocument}/firms/{parsedFirm}/review', [OcrDocumentController::class, 'reviewFirm'])
         ->name('ocr-documents.firms.review');
     Route::delete('ocr-documents/{ocrDocument}', [OcrDocumentController::class, 'destroy'])->name('ocr-documents.destroy');

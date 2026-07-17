@@ -69,6 +69,7 @@ class ProcessOcrDocumentJob implements ShouldBeUnique, ShouldQueue
                 'error_code' => 'queue_failed',
                 'error_message' => 'The document could not be processed. Please verify the OCR configuration or retry.',
                 'processing_progress' => 'Failed',
+                'failed_at' => now(),
                 'processed_at' => now(),
             ]);
         }

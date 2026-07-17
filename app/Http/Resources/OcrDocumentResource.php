@@ -2,9 +2,11 @@
 
 namespace App\Http\Resources;
 
+use App\Models\MasterImportBatch;
 use App\Models\OcrDocument;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Facades\Schema;
 
 /** @mixin OcrDocument */
 class OcrDocumentResource extends JsonResource
@@ -59,6 +61,22 @@ class OcrDocumentResource extends JsonResource
             ),
             'has_structured_data' => (int) ($this->parsed_firm_count ?? 0) > 0
                 || $this->parse_status === 'completed',
+            'structured_data' => $this->when(
+                $this->shouldIncludeParsedFirms($request),
+                function () {
+                    $data = is_array($this->structured_data) ? $this->structured_data : [];
+
+                    return [
+                        'parsed' => $data['parsed'] ?? null,
+                        'mapping' => $data['mapping'] ?? null,
+                        'import_batch' => $this->latestImportBatchSummary(),
+                    ];
+                },
+            ),
+            'import_batch' => $this->when(
+                $this->shouldIncludeParsedFirms($request),
+                fn () => $this->latestImportBatchSummary(),
+            ),
             'error_code' => $this->error_code,
             'error_message' => $this->safeErrorMessage($request),
             'processing_attempts' => $this->processing_attempts,
@@ -84,6 +102,41 @@ class OcrDocumentResource extends JsonResource
                     && ! in_array($this->status, OcrDocument::ACTIVE_STATUSES, true),
                 'view' => $request->user()?->can('view', $this->resource) ?? false,
             ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function latestImportBatchSummary(): ?array
+    {
+        if (! Schema::hasTable('master_import_batches')) {
+            return null;
+        }
+
+        $batch = MasterImportBatch::query()
+            ->where('source_type', 'ocr')
+            ->where('source_ref', (string) $this->id)
+            ->latest('id')
+            ->first();
+
+        if (! $batch) {
+            return null;
+        }
+
+        return [
+            'id' => $batch->id,
+            'status' => $batch->status,
+            'progress_stage' => $batch->progress_stage,
+            'progress_pct' => $batch->progress_pct,
+            'total_records' => $batch->total_records,
+            'created_count' => $batch->created_count,
+            'updated_count' => $batch->updated_count,
+            'duplicate_count' => $batch->duplicate_count,
+            'review_count' => $batch->review_count,
+            'conflict_count' => $batch->conflict_count,
+            'failed_count' => $batch->failed_count,
+            'rollbackable' => $batch->isRollbackable(),
         ];
     }
 

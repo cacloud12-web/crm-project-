@@ -4,9 +4,10 @@ namespace App\Http\Requests\Concerns;
 
 use App\Models\CaMaster;
 use App\Models\DemoSchedule;
+use App\Models\Employee;
 use App\Models\FollowUp;
+use App\Services\Demo\DemoProviderEligibilityService;
 use App\Services\DemoConfirmation\DemoConfirmationService;
-use App\Support\Demo\DemoProviderResolver;
 
 trait PreparesFollowUpDemoFields
 {
@@ -36,39 +37,58 @@ trait PreparesFollowUpDemoFields
 
         $merge = [];
 
-        if (! trim((string) $this->input('meeting_link', ''))) {
-            $resolvedLink = $this->resolveExistingMeetingLink($existing, $followUpId);
-            if ($resolvedLink !== null) {
-                $merge['meeting_link'] = $resolvedLink;
-            }
-        }
-
         $teamSize = $this->input('team_size');
         if (($teamSize === null || $teamSize === '') && $this->input('ca_id')) {
             $teamSize = CaMaster::query()
                 ->where('ca_id', $this->input('ca_id'))
                 ->value('team_size');
+            if ($teamSize !== null && $teamSize !== '') {
+                $merge['team_size'] = (int) $teamSize;
+            }
         }
 
         if (($teamSize === null || $teamSize === '') && $existing?->team_size) {
             $teamSize = $existing->team_size;
         }
 
-        if ($teamSize === null || $teamSize === '') {
-            if ($merge !== []) {
-                $this->merge($merge);
-            }
-
-            return;
+        $providerId = $this->input('demo_provider_employee_id');
+        if (($providerId === null || $providerId === '') && $existing?->demo_provider_employee_id) {
+            $providerId = $existing->demo_provider_employee_id;
         }
 
-        $resolved = DemoProviderResolver::resolve((int) $teamSize);
-        if ($resolved) {
-            if (! trim((string) $this->input('demo_provider_name', '')) && ! ($existing?->demo_provider_name)) {
-                $merge['demo_provider_name'] = $resolved['provider'];
+        if ($providerId !== null && $providerId !== '') {
+            $employee = Employee::query()->where('employee_id', (int) $providerId)->first();
+            if ($employee) {
+                $merge['demo_provider_employee_id'] = (int) $employee->employee_id;
+                if (! trim((string) $this->input('demo_provider_name', ''))) {
+                    $merge['demo_provider_name'] = $employee->name;
+                }
+                if (! trim((string) $this->input('meeting_link', ''))) {
+                    $link = trim((string) ($employee->demo_meeting_link ?? ''));
+                    if ($link !== '') {
+                        $merge['meeting_link'] = $link;
+                    }
+                }
             }
-            if (! trim((string) ($merge['meeting_link'] ?? $this->input('meeting_link', '')))) {
-                $merge['meeting_link'] = $resolved['meeting_link'];
+        }
+
+        if (! trim((string) ($merge['meeting_link'] ?? $this->input('meeting_link', '')))) {
+            $resolvedLink = $this->resolveExistingMeetingLink($existing, $followUpId);
+            if ($resolvedLink !== null) {
+                $merge['meeting_link'] = $resolvedLink;
+            }
+        }
+
+        // Auto-pick sole eligible provider when team size is known and none selected.
+        if (($providerId === null || $providerId === '') && $teamSize !== null && $teamSize !== '') {
+            $options = app(DemoProviderEligibilityService::class)->optionsForTeamSize((int) $teamSize);
+            if (count($options) === 1) {
+                $only = $options[0];
+                $merge['demo_provider_employee_id'] = $only['employee_id'];
+                $merge['demo_provider_name'] = $only['name'];
+                if (! trim((string) ($merge['meeting_link'] ?? $this->input('meeting_link', '')))) {
+                    $merge['meeting_link'] = $only['demo_meeting_link'];
+                }
             }
         }
 

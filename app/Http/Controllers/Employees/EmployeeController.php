@@ -9,6 +9,7 @@ use App\Http\Requests\Employee\StoreEmployeeRequest;
 use App\Http\Requests\Employee\UpdateEmployeeRequest;
 use App\Http\Resources\EmployeeResource;
 use App\Models\Employee;
+use App\Services\Demo\DemoProviderEligibilityService;
 use App\Services\Employee\EmployeeCredentialService;
 use App\Services\Employee\EmployeeService;
 use App\Support\ApiResponse;
@@ -21,7 +22,21 @@ class EmployeeController extends Controller
     public function __construct(
         private readonly EmployeeService $employeeService,
         private readonly EmployeeCredentialService $credentialService,
+        private readonly DemoProviderEligibilityService $demoProviderEligibility,
     ) {}
+
+    public function demoProviders(Request $request): JsonResponse
+    {
+        $teamSize = (int) $request->query('team_size', 0);
+        if ($teamSize < 1) {
+            return ApiResponse::success([], 'Provide a team_size query parameter of 1 or greater.');
+        }
+
+        return ApiResponse::success(
+            $this->demoProviderEligibility->optionsForTeamSize($teamSize),
+            'Eligible demo providers loaded',
+        );
+    }
 
     public function index(Request $request): JsonResponse
     {

@@ -65,21 +65,34 @@ return [
             ]) : [],
         ],
 
-        'ca_reference' => [
-            'driver' => 'mysql',
-            'host' => env('CA_REFERENCE_DB_HOST', '127.0.0.1'),
-            'port' => env('CA_REFERENCE_DB_PORT', '3306'),
-            'database' => env('CA_REFERENCE_DB_DATABASE'),
-            'username' => env('CA_REFERENCE_DB_USERNAME'),
-            'password' => env('CA_REFERENCE_DB_PASSWORD'),
-            'unix_socket' => env('CA_REFERENCE_DB_SOCKET', ''),
-            'charset' => 'utf8mb4',
-            'collation' => 'utf8mb4_unicode_ci',
-            'prefix' => '',
-            'prefix_indexes' => true,
-            'strict' => true,
-            'engine' => null,
-        ],
+        'ca_reference' => (static function () {
+            // sqlite driver is for automated tests only — production uses mysql/MariaDB.
+            if (env('CA_REFERENCE_DB_DRIVER', 'mysql') === 'sqlite') {
+                return [
+                    'driver' => 'sqlite',
+                    'url' => env('CA_REFERENCE_DB_URL'),
+                    'database' => env('CA_REFERENCE_DB_DATABASE', database_path('ca_reference_testing.sqlite')),
+                    'prefix' => '',
+                    'foreign_key_constraints' => env('CA_REFERENCE_DB_FOREIGN_KEYS', true),
+                ];
+            }
+
+            return [
+                'driver' => 'mysql',
+                'host' => env('CA_REFERENCE_DB_HOST', '127.0.0.1'),
+                'port' => env('CA_REFERENCE_DB_PORT', '3306'),
+                'database' => env('CA_REFERENCE_DB_DATABASE'),
+                'username' => env('CA_REFERENCE_DB_USERNAME'),
+                'password' => env('CA_REFERENCE_DB_PASSWORD'),
+                'unix_socket' => env('CA_REFERENCE_DB_SOCKET', ''),
+                'charset' => 'utf8mb4',
+                'collation' => 'utf8mb4_unicode_ci',
+                'prefix' => '',
+                'prefix_indexes' => true,
+                'strict' => true,
+                'engine' => null,
+            ];
+        })(),
 
         'mysql_target' => [
             'driver' => 'mysql',
