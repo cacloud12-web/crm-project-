@@ -53,6 +53,26 @@
   }
 
   /* ─── Detail Drawer ─── */
+  function detailFieldPillClass(label) {
+    var key = String(label || '').trim().toLowerCase();
+    if (key === 'status' || key === 'stage' || key === 'google status') return 'detail-pill detail-pill--status';
+    if (key === 'priority') return 'detail-pill detail-pill--priority';
+    if (key === 'scheduled' || key === 'scheduled date' || key === 'next follow-up' || key === 'time' || key === 'demo slot') return 'detail-pill detail-pill--date';
+    if (key === 'executive' || key === 'employee' || key === 'provider' || key === 'confirmed by') return 'detail-pill detail-pill--person';
+    return '';
+  }
+
+  function renderDetailFieldHtml(field) {
+    var label = field && field.label != null ? String(field.label) : '';
+    var value = field && field.value != null && field.value !== '' ? field.value : '—';
+    var pill = detailFieldPillClass(label);
+    var valueHtml = pill ? ('<span class="' + pill + '">' + value + '</span>') : value;
+    return '<div class="detail-field">' +
+      '<span class="detail-field-label">' + label + '</span>' +
+      '<span class="detail-field-value">' + valueHtml + '</span>' +
+    '</div>';
+  }
+
   function openDetailDrawer(data) {
     if (!detailDrawer) return;
     const title = document.getElementById('detail-drawer-title');
@@ -68,14 +88,17 @@
       const fields = data.fields || Object.keys(data).filter(function (k) { return k !== 'fields' && k !== 'title' && k !== 'mode' && k !== 'firm' && k !== 'extraHtml'; }).map(function (k) {
         return { label: k.replace(/([A-Z])/g, ' $1').replace(/^./, function (s) { return s.toUpperCase(); }), value: data[k] };
       });
-      body.innerHTML = fields.map(function (f) {
-        return '<div class="detail-field"><span class="detail-field-label">' + f.label + '</span><span class="detail-field-value">' + f.value + '</span></div>';
-      }).join('') + (data.extraHtml || '');
+      var fieldsHtml = fields.length
+        ? '<div class="detail-fields-card"><div class="detail-fields-grid">' +
+          fields.map(renderDetailFieldHtml).join('') +
+          '</div></div>'
+        : '';
+      body.innerHTML = fieldsHtml + (data.extraHtml || '');
     }
     if (mode === 'profile') {
       followBtn?.classList.add('hidden');
       if (editBtn) {
-        editBtn.innerHTML = '<i data-lucide="pencil" class="h-4 w-4"></i>';
+        editBtn.innerHTML = '<i data-lucide="pencil" class="h-4 w-4" aria-hidden="true"></i><span class="detail-action-btn__label">Edit Profile</span>';
         editBtn.setAttribute('title', 'Edit Profile');
         editBtn.setAttribute('aria-label', 'Edit Profile');
         editBtn.setAttribute('data-crm-tip', 'Edit Profile');
@@ -83,10 +106,16 @@
     } else {
       followBtn?.classList.remove('hidden');
       if (editBtn) {
-        editBtn.innerHTML = '<i data-lucide="pencil" class="h-4 w-4"></i>';
-        editBtn.setAttribute('title', 'Edit');
+        editBtn.innerHTML = '<i data-lucide="pencil" class="h-4 w-4" aria-hidden="true"></i><span class="detail-action-btn__label">Edit</span>';
+        editBtn.setAttribute('title', 'Edit record');
         editBtn.setAttribute('aria-label', 'Edit');
-        editBtn.setAttribute('data-crm-tip', 'Edit');
+        editBtn.setAttribute('data-crm-tip', 'Edit record');
+      }
+      if (followBtn) {
+        followBtn.innerHTML = '<i data-lucide="phone" class="h-4 w-4" aria-hidden="true"></i><span class="detail-action-btn__label">Follow Up</span>';
+        followBtn.setAttribute('title', 'Schedule follow-up');
+        followBtn.setAttribute('aria-label', 'Follow Up');
+        followBtn.setAttribute('data-crm-tip', 'Schedule follow-up');
       }
     }
     closeAllOverlays();

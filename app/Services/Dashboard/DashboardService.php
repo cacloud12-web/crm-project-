@@ -27,10 +27,12 @@ use App\Services\FollowUp\ManagerFollowUpDashboardService;
 use App\Services\Leads\DuplicateAttemptService;
 use App\Services\Leads\EmployeeProductivityService;
 use App\Services\Rbac\EmployeeDataScopeService;
+use App\Services\Rbac\RbacService;
 use App\Services\Reports\ReportsService;
 use App\Support\Database\SqlAggregate;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use Throwable;
@@ -126,8 +128,10 @@ class DashboardService
             return $this->buildMetrics($employeeId, $range);
         });
 
-        // Attendance changes frequently; keep it outside the dashboard metrics cache.
+        // Attendance changes frequently; short-TTL cache avoids a cold query on every refresh.
         $metrics['attendance_summary'] = $this->attendanceSummaryForViewer();
+        // Keep employee selector outside org metrics cache — visibility differs by role.
+        $metrics['productivity_employees'] = $this->productivityEmployeesForPayload();
 
         return $metrics;
     }
@@ -191,7 +195,7 @@ class DashboardService
             'meetings_today' => $this->dashboardMetrics->meetingsInPeriod($employeeId, $from, $to),
             'active_employees' => $employeeId
                 ? 1
-                : Employee::query()->where('status', 'Active')->count(),
+                : (int) Cache::remember('crm:dashboard:active_employees', 60, fn () => Employee::query()->where('status', 'Active')->count()),
             'assigned_leads' => $assignedLeads,
             'unassigned_leads' => $employeeId ? 0 : max(0, $totalLeads - $assignedLeads),
             'followups_due_today' => $followUpCounts['due_today'],
@@ -260,10 +264,43 @@ class DashboardService
             return null;
         }
 
+        $ttl = (int) config('crm_cache.attendance_ttl', 45);
+        $cacheKey = 'crm:dashboard:attendance:'.$user->id.':'.now()->toDateString();
+
         try {
-            return $this->attendanceService->summary($user);
+            $summary = Cache::remember($cacheKey, $ttl, function () use ($user) {
+                return $this->attendanceService->summary($user);
+            });
+
+            return is_array($summary) ? $summary : null;
         } catch (Throwable) {
             return null;
+        }
+    }
+
+    /**
+     * Lightweight employee selector list embedded in metrics to avoid a second round-trip.
+     *
+     * @return list<array{employee_id: int, name: string, initials: string, role: ?string, city: ?string}>
+     */
+    private function productivityEmployeesForPayload(): array
+    {
+        $user = auth()->user();
+        if (! $user) {
+            return [];
+        }
+
+        try {
+            $ttl = (int) config('crm_cache.dashboard_ttl', 120);
+            $role = app(RbacService::class)->roleKey($user);
+
+            return Cache::remember(
+                'crm:dashboard:productivity_employees:'.$role.':'.$user->id,
+                $ttl,
+                fn () => $this->managerEmployeeProductivity->listEmployees($user),
+            );
+        } catch (Throwable) {
+            return [];
         }
     }
 
@@ -334,12 +371,20 @@ class DashboardService
     private function assignedLeadCount(?int $employeeId, Carbon $from, Carbon $to): int
     {
         $query = LeadAssignmentEngine::query()
-            ->where('status', 'Active')
-            ->whereHas('caMaster', fn ($q) => $q->countableInStatistics());
+            ->where('lead_assignment_engines.status', 'Active')
+            ->whereExists(function ($exists) {
+                $exists->select(DB::raw(1))
+                    ->from('ca_masters')
+                    ->whereColumn('ca_masters.ca_id', 'lead_assignment_engines.ca_id')
+                    ->where(function ($inner) {
+                        $inner->whereNull('ca_masters.mobile_no_type')
+                            ->orWhere('ca_masters.mobile_no_type', 'mobile');
+                    });
+            });
         $this->employeeDataScope->scopeLeadAssignmentQuery($query, $employeeId);
-        $this->applyDateRange($query, 'assigned_date', $from, $to);
+        $this->applyDateRange($query, 'lead_assignment_engines.assigned_date', $from, $to);
 
-        return (int) $query->distinct()->count('ca_id');
+        return (int) $query->distinct()->count('lead_assignment_engines.ca_id');
     }
 
     private function followUpCounts(?int $employeeId, Carbon $from, Carbon $to): array
@@ -438,10 +483,15 @@ class DashboardService
             ->selectRaw('COUNT(*) as total')
             ->first();
 
-        $settings = SmsSetting::query()->first();
+        $campaignCounts = SmsCampaign::query()
+            ->selectRaw('COUNT(*) as total')
+            ->selectRaw(SqlAggregate::countFilter('*', "status IN ('Draft', 'Scheduled')").' as pending_campaigns')
+            ->first();
+
+        $settings = Cache::remember('crm:sms:settings:mode', 120, fn () => SmsSetting::query()->value('mode'));
 
         return [
-            'campaigns_total' => SmsCampaign::query()->count(),
+            'campaigns_total' => (int) ($campaignCounts->total ?? 0),
             'messages_total' => (int) ($statusCounts->total ?? 0),
             'delivered' => (int) ($statusCounts->delivered ?? 0) + (int) ($statusCounts->sent ?? 0),
             'failed' => (int) ($statusCounts->failed ?? 0) + (int) ($statusCounts->api_error ?? 0),
@@ -450,26 +500,30 @@ class DashboardService
             'sent' => (int) ($statusCounts->sent ?? 0),
             'pending' => (int) ($statusCounts->pending ?? 0),
             'api_error' => (int) ($statusCounts->api_error ?? 0),
-            'pending_campaigns' => SmsCampaign::query()->whereIn('status', ['Draft', 'Scheduled'])->count(),
-            'mode' => $settings?->mode ?? SmsSetting::MODE_SIMULATION,
+            'pending_campaigns' => (int) ($campaignCounts->pending_campaigns ?? 0),
+            'mode' => $settings ?? SmsSetting::MODE_SIMULATION,
         ];
     }
 
     private function communicationSafetyMetrics(): array
     {
-        $skipped = $this->skippedLogCountsByReason();
-        $consent = ConsentTracking::query()
-            ->selectRaw(SqlAggregate::countFilter('*', "consent_status = 'Yes'").' as approved')
-            ->selectRaw(SqlAggregate::countFilter('*', "consent_status = 'No'").' as denied')
-            ->first();
+        $ttl = (int) config('crm_cache.safety_metrics_ttl', 120);
 
-        return [
-            'dnd_contacts' => DndManagement::query()->distinct('ca_id')->count('ca_id'),
-            'consent_approved' => (int) ($consent->approved ?? 0),
-            'consent_denied' => (int) ($consent->denied ?? 0),
-            'skipped_due_to_dnd' => $skipped['dnd_optout'],
-            'skipped_due_to_no_consent' => $skipped['no_consent'],
-        ];
+        return Cache::remember('crm:dashboard:safety_metrics', $ttl, function () {
+            $skipped = $this->skippedLogCountsByReason();
+            $consent = ConsentTracking::query()
+                ->selectRaw(SqlAggregate::countFilter('*', "consent_status = 'Yes'").' as approved')
+                ->selectRaw(SqlAggregate::countFilter('*', "consent_status = 'No'").' as denied')
+                ->first();
+
+            return [
+                'dnd_contacts' => DndManagement::query()->distinct('ca_id')->count('ca_id'),
+                'consent_approved' => (int) ($consent->approved ?? 0),
+                'consent_denied' => (int) ($consent->denied ?? 0),
+                'skipped_due_to_dnd' => $skipped['dnd_optout'],
+                'skipped_due_to_no_consent' => $skipped['no_consent'],
+            ];
+        });
     }
 
     private function callsTotal(?int $employeeId, Carbon $from, Carbon $to): int
@@ -654,7 +708,7 @@ class DashboardService
         return $query
             ->orderByDesc('created_at')
             ->limit(8)
-            ->get()
+            ->get(['id', 'module_name', 'action', 'record_id', 'performed_by', 'description', 'before_value', 'after_value', 'ip_address', 'created_at'])
             ->map(fn (ActivityLog $log) => (new ActivityLogResource($log))->resolve())
             ->all();
     }

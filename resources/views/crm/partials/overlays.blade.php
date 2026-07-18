@@ -134,20 +134,28 @@
   </div>
 
   <!-- Record Detail Modal -->
-  <div id="detail-drawer" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="detail-drawer-title">
-    <div class="ca-modal-panel ca-modal-panel-md">
-      <div class="ca-modal-header">
-        <div class="min-w-0">
-          <p id="detail-drawer-caption" class="text-caption text-brand-600 mb-0.5">Record Details</p>
-          <h3 id="detail-drawer-title" class="text-card-heading text-slate-900 truncate">—</h3>
+  <div id="detail-drawer" class="ca-modal detail-drawer" role="dialog" aria-modal="true" aria-labelledby="detail-drawer-title">
+    <div class="ca-modal-panel ca-modal-panel-md detail-drawer__panel">
+      <div class="ca-modal-header detail-drawer__header">
+        <div class="detail-drawer__heading min-w-0">
+          <p id="detail-drawer-caption" class="detail-drawer__eyebrow">Record Details</p>
+          <h3 id="detail-drawer-title" class="detail-drawer__title">—</h3>
         </div>
-        <button id="detail-drawer-close" class="ca-modal-close shrink-0" aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
+        <button id="detail-drawer-close" class="ca-modal-close detail-drawer__close shrink-0" type="button" aria-label="Close" title="Close" data-crm-tip="Close">
+          <i data-lucide="x" class="h-4 w-4"></i>
+        </button>
       </div>
-      <div id="detail-drawer-body" class="ca-modal-body"></div>
-      <div class="ca-modal-footer">
-        <div class="ca-modal-footer-buttons">
-        <button type="button" class="crm-toolbar-icon-btn" id="detail-edit-btn" title="Edit" aria-label="Edit"><i data-lucide="pencil" class="h-4 w-4"></i></button>
-        <button type="button" class="crm-toolbar-icon-btn crm-toolbar-icon-btn--primary" id="detail-followup-btn" title="Follow Up" aria-label="Follow Up"><i data-lucide="phone" class="h-4 w-4"></i></button>
+      <div id="detail-drawer-body" class="ca-modal-body detail-drawer__body"></div>
+      <div class="ca-modal-footer detail-drawer__footer">
+        <div class="ca-modal-footer-buttons detail-drawer__actions">
+          <button type="button" class="detail-action-btn" id="detail-edit-btn" title="Edit record" aria-label="Edit" data-crm-tip="Edit record">
+            <i data-lucide="pencil" class="h-4 w-4" aria-hidden="true"></i>
+            <span class="detail-action-btn__label">Edit</span>
+          </button>
+          <button type="button" class="detail-action-btn detail-action-btn--primary" id="detail-followup-btn" title="Schedule follow-up" aria-label="Follow Up" data-crm-tip="Schedule follow-up">
+            <i data-lucide="phone" class="h-4 w-4" aria-hidden="true"></i>
+            <span class="detail-action-btn__label">Follow Up</span>
+          </button>
         </div>
       </div>
     </div>

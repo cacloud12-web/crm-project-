@@ -18,8 +18,8 @@ use App\Services\Rbac\EmployeeDataScopeService;
 use App\Services\Rbac\RbacService;
 use App\Services\Leads\EmployeeProductivityService;
 use App\Support\Database\SqlAggregate;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 
 class EmployeeDashboardService
 {
@@ -51,8 +51,13 @@ class EmployeeDashboardService
             return $this->buildMetrics($user, $employeeId);
         });
 
-        // Attendance changes frequently; keep read-only status outside the dashboard cache.
-        $metrics['my_attendance'] = $this->attendanceService->statusForEmployee($employeeId);
+        // Attendance changes frequently; short-TTL cache avoids a cold query on every refresh.
+        $ttl = (int) config('crm_cache.attendance_ttl', 45);
+        $metrics['my_attendance'] = Cache::remember(
+            'crm:dashboard:employee_attendance:'.$employeeId.':'.now()->toDateString(),
+            $ttl,
+            fn () => $this->attendanceService->statusForEmployee($employeeId),
+        );
 
         return $metrics;
     }
@@ -76,25 +81,6 @@ class EmployeeDashboardService
             now()->endOfDay(),
         );
         $assignedLeads = $this->recentAssignedLeads($employeeId);
-
-        Log::info('Employee dashboard metrics built', [
-            'user_id' => $user->id,
-            'user_email' => $user->email,
-            'resolved_employee_id' => $employeeId,
-            'my_leads' => (int) ($leadCounts['total'] ?? 0),
-            'assigned_leads_visible' => count($assignedLeads),
-            'active_assignments' => LeadAssignmentEngine::query()
-                ->where('employee_id', $employeeId)
-                ->where('status', 'Active')
-                ->count(),
-            'assigned_lead_ids' => LeadAssignmentEngine::query()
-                ->where('employee_id', $employeeId)
-                ->where('status', 'Active')
-                ->orderByDesc('assignment_id')
-                ->limit(8)
-                ->pluck('ca_id')
-                ->all(),
-        ]);
 
         return [
             'employee_id' => $employeeId,
@@ -264,22 +250,23 @@ class EmployeeDashboardService
 
     private function assignmentStats(int $employeeId): array
     {
-        $assignments = LeadAssignmentEngine::query()
+        $todayStart = now()->startOfDay();
+        $todayEnd = now()->endOfDay();
+        $row = LeadAssignmentEngine::query()
             ->where('employee_id', $employeeId)
             ->where('status', 'Active')
-            ->get(['target_leads', 'achieved_leads', 'created_at']);
-
-        $today = now()->toDateString();
-        $assignedToday = LeadAssignmentEngine::query()
-            ->where('employee_id', $employeeId)
-            ->where('status', 'Active')
-            ->whereDate('assigned_date', $today)
-            ->count();
+            ->selectRaw('COALESCE(SUM(target_leads), 0) as target_today')
+            ->selectRaw('COALESCE(SUM(achieved_leads), 0) as achieved_today')
+            ->selectRaw(
+                SqlAggregate::countFilter('*', 'assigned_date >= ? AND assigned_date <= ?').' as assigned_today',
+                [$todayStart, $todayEnd],
+            )
+            ->first();
 
         return [
-            'target_today' => (int) $assignments->sum('target_leads'),
-            'achieved_today' => (int) $assignments->sum('achieved_leads'),
-            'assigned_today' => $assignedToday,
+            'target_today' => (int) ($row->target_today ?? 0),
+            'achieved_today' => (int) ($row->achieved_today ?? 0),
+            'assigned_today' => (int) ($row->assigned_today ?? 0),
         ];
     }
 

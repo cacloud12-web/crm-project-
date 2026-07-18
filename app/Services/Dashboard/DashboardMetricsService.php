@@ -85,11 +85,19 @@ class DashboardMetricsService
     public function assignedLeadSnapshotCount(?int $employeeId): int
     {
         $query = LeadAssignmentEngine::query()
-            ->where('status', 'Active')
-            ->whereHas('caMaster', fn (Builder $q) => $q->countableInStatistics());
+            ->where('lead_assignment_engines.status', 'Active')
+            ->whereExists(function ($exists) {
+                $exists->select(DB::raw(1))
+                    ->from('ca_masters')
+                    ->whereColumn('ca_masters.ca_id', 'lead_assignment_engines.ca_id')
+                    ->where(function ($inner) {
+                        $inner->whereNull('ca_masters.mobile_no_type')
+                            ->orWhere('ca_masters.mobile_no_type', 'mobile');
+                    });
+            });
         $this->employeeDataScope->scopeLeadAssignmentQuery($query, $employeeId);
 
-        return (int) $query->distinct()->count('ca_id');
+        return (int) $query->distinct()->count('lead_assignment_engines.ca_id');
     }
 
     /**
@@ -97,32 +105,38 @@ class DashboardMetricsService
      */
     public function followUpCounts(?int $employeeId, Carbon $from, Carbon $to): array
     {
-        $today = $from->copy()->startOfDay();
+        $todayStart = $from->copy()->startOfDay();
+        $todayEnd = $from->copy()->endOfDay();
+        $fromStart = $from->copy()->startOfDay();
+        $toEnd = $to->copy()->endOfDay();
+        $openList = $this->quotedList(['Pending', 'Scheduled', 'Open']);
+        $overdueList = $this->quotedList(self::OPEN_FOLLOWUP_STATUSES);
+        $completedList = $this->quotedList(['Completed', 'Closed']);
 
-        $dueTodayQuery = FollowUp::query()
-            ->whereIn('status', ['Pending', 'Scheduled', 'Open'])
-            ->whereDate('scheduled_date', $today->toDateString());
-        $this->employeeDataScope->scopeFollowUpQuery($dueTodayQuery, $employeeId);
+        $query = FollowUp::query();
+        $this->employeeDataScope->scopeFollowUpQuery($query, $employeeId);
 
-        $pendingQuery = FollowUp::query()
-            ->whereIn('status', ['Pending', 'Scheduled', 'Open']);
-        $this->employeeDataScope->scopeFollowUpQuery($pendingQuery, $employeeId);
-
-        $overdueQuery = FollowUp::query()
-            ->whereIn('status', self::OPEN_FOLLOWUP_STATUSES)
-            ->where('scheduled_date', '<', $today);
-        $this->employeeDataScope->scopeFollowUpQuery($overdueQuery, $employeeId);
-
-        $completedQuery = FollowUp::query()
-            ->whereIn('status', ['Completed', 'Closed']);
-        $this->employeeDataScope->scopeFollowUpQuery($completedQuery, $employeeId);
-        $this->applyDateRange($completedQuery, 'updated_at', $from, $to);
+        $row = $query
+            ->selectRaw(
+                SqlAggregate::countFilter('*', "status IN ({$openList}) AND scheduled_date >= ? AND scheduled_date <= ?").' as due_today',
+                [$todayStart, $todayEnd],
+            )
+            ->selectRaw(SqlAggregate::countFilter('*', "status IN ({$openList})").' as pending')
+            ->selectRaw(
+                SqlAggregate::countFilter('*', "status IN ({$overdueList}) AND scheduled_date < ?").' as overdue',
+                [$todayStart],
+            )
+            ->selectRaw(
+                SqlAggregate::countFilter('*', "status IN ({$completedList}) AND updated_at >= ? AND updated_at <= ?").' as completed',
+                [$fromStart, $toEnd],
+            )
+            ->first();
 
         return [
-            'due_today' => (int) $dueTodayQuery->count(),
-            'pending' => (int) $pendingQuery->count(),
-            'overdue' => (int) $overdueQuery->count(),
-            'completed' => (int) $completedQuery->count(),
+            'due_today' => (int) ($row->due_today ?? 0),
+            'pending' => (int) ($row->pending ?? 0),
+            'overdue' => (int) ($row->overdue ?? 0),
+            'completed' => (int) ($row->completed ?? 0),
         ];
     }
 

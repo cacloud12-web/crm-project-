@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Repositories\Leads\LeadPhoneNumberRepository;
 use App\Services\Notifications\NotificationService;
 use App\Services\Rbac\EmployeeDataScopeService;
+use App\Support\Database\SqlAggregate;
 use App\Support\Database\SqlDate;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -211,10 +212,19 @@ class DuplicateAttemptService
         $today = now()->startOfDay();
         $weekStart = now()->startOfWeek();
         $monthStart = now()->startOfMonth();
+        $duplicateType = DuplicateAttempt::TYPE_DUPLICATE;
+        $potentialType = DuplicateAttempt::TYPE_POTENTIAL_DUPLICATE;
 
-        $base = DuplicateAttempt::query();
+        $counts = DuplicateAttempt::query()
+            ->selectRaw('COUNT(*) as total')
+            ->selectRaw(SqlAggregate::countFilter('*', 'created_at >= ?').' as today', [$today])
+            ->selectRaw(SqlAggregate::countFilter('*', 'created_at >= ?').' as this_week', [$weekStart])
+            ->selectRaw(SqlAggregate::countFilter('*', 'created_at >= ?').' as this_month', [$monthStart])
+            ->selectRaw(SqlAggregate::countFilter('*', 'attempt_type = ?').' as duplicate_count', [$duplicateType])
+            ->selectRaw(SqlAggregate::countFilter('*', 'attempt_type = ?').' as potential_duplicate_count', [$potentialType])
+            ->first();
 
-        $recent = (clone $base)
+        $recent = DuplicateAttempt::query()
             ->with(['employee:employee_id,name', 'matchedLead:ca_id,firm_name,mobile_no'])
             ->orderByDesc('created_at')
             ->limit(10)
@@ -222,32 +232,34 @@ class DuplicateAttemptService
             ->map(fn (DuplicateAttempt $row) => $this->toListArray($row))
             ->all();
 
-        $topEmployees = DuplicateAttempt::query()
+        $topRows = DuplicateAttempt::query()
             ->select('employee_id', DB::raw('COUNT(*) as attempt_count'))
             ->where('created_at', '>=', $monthStart)
             ->whereNotNull('employee_id')
             ->groupBy('employee_id')
             ->orderByDesc('attempt_count')
             ->limit(5)
-            ->get()
-            ->map(function ($row) {
-                $employee = Employee::query()->find($row->employee_id);
+            ->get();
 
-                return [
-                    'employee_id' => (int) $row->employee_id,
-                    'employee_name' => $employee?->name ?? 'Unknown',
-                    'attempt_count' => (int) $row->attempt_count,
-                ];
-            })
+        $employeeNames = Employee::query()
+            ->whereIn('employee_id', $topRows->pluck('employee_id')->all())
+            ->pluck('name', 'employee_id');
+
+        $topEmployees = $topRows
+            ->map(fn ($row) => [
+                'employee_id' => (int) $row->employee_id,
+                'employee_name' => $employeeNames->get($row->employee_id) ?? 'Unknown',
+                'attempt_count' => (int) $row->attempt_count,
+            ])
             ->all();
 
         return [
-            'today' => (clone $base)->where('created_at', '>=', $today)->count(),
-            'this_week' => (clone $base)->where('created_at', '>=', $weekStart)->count(),
-            'this_month' => (clone $base)->where('created_at', '>=', $monthStart)->count(),
-            'total' => (clone $base)->count(),
-            'duplicate_count' => (clone $base)->where('attempt_type', DuplicateAttempt::TYPE_DUPLICATE)->count(),
-            'potential_duplicate_count' => (clone $base)->where('attempt_type', DuplicateAttempt::TYPE_POTENTIAL_DUPLICATE)->count(),
+            'today' => (int) ($counts->today ?? 0),
+            'this_week' => (int) ($counts->this_week ?? 0),
+            'this_month' => (int) ($counts->this_month ?? 0),
+            'total' => (int) ($counts->total ?? 0),
+            'duplicate_count' => (int) ($counts->duplicate_count ?? 0),
+            'potential_duplicate_count' => (int) ($counts->potential_duplicate_count ?? 0),
             'top_employees' => $topEmployees,
             'recent' => $recent,
             'trend' => $this->monthlyTrend(),

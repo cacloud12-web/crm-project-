@@ -16,35 +16,49 @@ class ManagerFollowUpDashboardService
 
     public function metrics(): array
     {
-        $today = now()->toDateString();
-        $weekEnd = now()->addDays(7)->toDateString();
         $openList = $this->quotedList(self::OPEN);
         $completedList = $this->quotedList(self::COMPLETED);
 
+        $todayStart = now()->startOfDay();
+        $todayEnd = now()->endOfDay();
+        $weekEndAt = now()->addDays(7)->endOfDay();
+
         $summary = FollowUp::query()
-            ->selectRaw(SqlAggregate::countFilter('*', "status IN ({$openList}) AND DATE(scheduled_date) = ?").' as today', [$today])
-            ->selectRaw(SqlAggregate::countFilter('*', "status IN ({$openList}) AND DATE(scheduled_date) > ?").' as upcoming', [$today])
-            ->selectRaw(SqlAggregate::countFilter('*', "status IN ({$completedList}) AND DATE(updated_at) = ?").' as completed_today', [$today])
-            ->selectRaw(SqlAggregate::countFilter('*', "status IN ('Pending', 'Scheduled', 'Open') AND DATE(scheduled_date) < ?").' as missed', [$today])
+            ->selectRaw(
+                SqlAggregate::countFilter('*', "status IN ({$openList}) AND scheduled_date >= ? AND scheduled_date <= ?").' as today',
+                [$todayStart, $todayEnd],
+            )
+            ->selectRaw(
+                SqlAggregate::countFilter('*', "status IN ({$openList}) AND scheduled_date > ?").' as upcoming',
+                [$todayEnd],
+            )
+            ->selectRaw(
+                SqlAggregate::countFilter('*', "status IN ({$completedList}) AND updated_at >= ? AND updated_at <= ?").' as completed_today',
+                [$todayStart, $todayEnd],
+            )
+            ->selectRaw(
+                SqlAggregate::countFilter('*', "status IN ('Pending', 'Scheduled', 'Open') AND scheduled_date < ?").' as missed',
+                [$todayStart],
+            )
             ->selectRaw(SqlAggregate::countFilter('*', "status = 'Overdue'").' as overdue')
-            ->selectRaw(SqlAggregate::countFilter('*', "status IN ({$openList}) AND DATE(scheduled_date) > ? AND DATE(scheduled_date) <= ?").' as upcoming_this_week', [$today, $weekEnd])
+            ->selectRaw(
+                SqlAggregate::countFilter('*', "status IN ({$openList}) AND scheduled_date > ? AND scheduled_date <= ?").' as upcoming_this_week',
+                [$todayEnd, $weekEndAt],
+            )
+            ->selectRaw(SqlAggregate::countFilter('*', "followup_type = 'Call'").' as call_total')
+            ->selectRaw(
+                SqlAggregate::countFilter('*', "followup_type = 'Call' AND status IN ({$completedList}) AND outcome IN ('Interested', 'Demo Scheduled', 'Demo Completed')").' as call_positive',
+            )
+            ->selectRaw(SqlAggregate::countFilter('*', "followup_type = 'Demo Scheduled'").' as demo_scheduled')
+            ->selectRaw(
+                SqlAggregate::countFilter('*', "followup_type = 'Demo Completed' AND status IN ({$completedList})").' as demo_completed',
+            )
             ->first();
 
-        $callStats = FollowUp::query()
-            ->where('followup_type', 'Call')
-            ->selectRaw('COUNT(*) as total')
-            ->selectRaw(SqlAggregate::countFilter('*', "status IN ({$completedList}) AND outcome IN ('Interested', 'Demo Scheduled', 'Demo Completed')").' as positive')
-            ->first();
-
-        $demoStats = FollowUp::query()
-            ->selectRaw(SqlAggregate::countFilter('*', "followup_type = 'Demo Scheduled'").' as scheduled')
-            ->selectRaw(SqlAggregate::countFilter('*', "followup_type = 'Demo Completed' AND status IN ({$completedList})").' as completed')
-            ->first();
-
-        $totalCalls = (int) ($callStats->total ?? 0);
-        $positiveCalls = (int) ($callStats->positive ?? 0);
-        $demoScheduled = (int) ($demoStats->scheduled ?? 0);
-        $demoCompleted = (int) ($demoStats->completed ?? 0);
+        $totalCalls = (int) ($summary->call_total ?? 0);
+        $positiveCalls = (int) ($summary->call_positive ?? 0);
+        $demoScheduled = (int) ($summary->demo_scheduled ?? 0);
+        $demoCompleted = (int) ($summary->demo_completed ?? 0);
 
         return [
             'today' => (int) ($summary->today ?? 0),

@@ -4373,22 +4373,27 @@ if (otherInput) {
         }
         var metrics = isEmployee ? mapEmployeeDashboardToLeadMetrics(cached.data) : cached.data;
         if (callback) callback(metrics, null, { fromCache: true });
-        loadDashboardMetricsFromDatabase(function (freshMetrics, err, meta) {
-          if (!meta || !meta.background || err) return;
-          if (isEmployeeUser()) {
-            if (!employeeDashboardData) return;
-            if (window._currentPageId === 'dashboard') {
-              paintEmployeeDashboard(employeeDashboardData);
+        // Only background-refresh when cache is older than half TTL to avoid duplicate cold builds.
+        var cacheAge = Date.now() - (cached.savedAt || 0);
+        if (cacheAge >= (DASHBOARD_CACHE_TTL_MS / 2)) {
+          loadDashboardMetricsFromDatabase(function (freshMetrics, err, meta) {
+            if (!meta || !meta.background || err) return;
+            if (isEmployeeUser()) {
+              if (!employeeDashboardData) return;
+              if (window._currentPageId === 'dashboard') {
+                paintEmployeeDashboard(employeeDashboardData);
+              }
+            } else {
+              if (!window.dashboardMetrics) return;
+              if (window._currentPageId === 'dashboard') {
+                if (freshMetrics && freshMetrics.generated_at && window.dashboardMetrics.generated_at === freshMetrics.generated_at) return;
+                paintManagerDashboard(buildDashboardDisplayMetrics(freshMetrics || window.dashboardMetrics));
+                renderDashboardCharts((freshMetrics || window.dashboardMetrics).reports);
+              }
             }
-          } else {
-            if (!window.dashboardMetrics) return;
-            if (window._currentPageId === 'dashboard') {
-              paintManagerDashboard(buildDashboardDisplayMetrics(freshMetrics || window.dashboardMetrics));
-              renderDashboardCharts((freshMetrics || window.dashboardMetrics).reports);
-            }
-          }
-          if (document.getElementById('leads-kpi-strip')) renderLeadKpis();
-        }, { force: true, background: true });
+            if (document.getElementById('leads-kpi-strip')) renderLeadKpis();
+          }, { force: true, background: true });
+        }
         return;
       }
     }
@@ -5337,40 +5342,6 @@ if (otherInput) {
     return when.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
   }
 
-  function parseDashboardMetricNumber(value) {
-    if (value === undefined || value === null || value === '') return null;
-    if (typeof value === 'number') return value;
-    var cleaned = String(value).replace(/[^0-9.\-]/g, '');
-    if (!cleaned) return null;
-    var num = parseFloat(cleaned);
-    return isNaN(num) ? null : num;
-  }
-
-  function inferKpiTrend(card, value) {
-    var num = parseDashboardMetricNumber(value);
-    if (num === null) return null;
-    var negativeKeys = ['overdue_followups', 'demo_confirmation_rejected', 'demo_confirmation_rejected_after_reschedule', 'followups_overdue'];
-    var isNegative = negativeKeys.indexOf(card.key) >= 0;
-    if (isNegative) {
-      if (num === 0) {
-        return { dir: 'up', label: 'Clear', tone: 'success' };
-      }
-      return { dir: 'down', label: 'Needs attention', tone: 'danger' };
-    }
-    if (card.key === 'conversion' || card.key === 'conversion_pct' || card.key === 'demo_ratio') {
-      var threshold = card.key === 'demo_ratio' ? 30 : 50;
-      return {
-        dir: num >= threshold ? 'up' : 'down',
-        label: num >= threshold ? 'On track' : 'Below target',
-        tone: num >= threshold ? 'success' : 'warning',
-      };
-    }
-    if (num > 0) {
-      return { dir: 'up', label: 'Active', tone: 'neutral' };
-    }
-    return { dir: 'down', label: 'None', tone: 'muted' };
-  }
-
   function renderDashboardKpiCard(card, value, mode) {
     var display = value !== undefined && value !== null && value !== '' ? value : '—';
     if (card.suffix && display !== '—') display = display + card.suffix;
@@ -5381,17 +5352,10 @@ if (otherInput) {
       : ' data-nav-page="' + card.nav + '"' +
         (card.leadFilter ? ' data-lead-filter="' + card.leadFilter + '"' : '') +
         (card.followupFilter ? ' data-followup-filter="' + card.followupFilter + '"' : '');
-    var trend = inferKpiTrend(card, value);
-    var trendHtml = trend
-      ? '<span class="mgr-kpi-trend ' + trend.dir + ' mgr-kpi-trend--' + trend.tone + '">' +
-          '<i data-lucide="' + (trend.dir === 'up' ? 'trending-up' : 'trending-down') + '" class="h-3 w-3"></i>' +
-          '<span>' + escapeHtml(trend.label) + '</span></span>'
-      : '';
     var accent = card.accent || (card.key || 'default').replace(/_/g, '-');
     return '<button type="button" class="mgr-kpi-card dash-kpi-card dash-kpi-card--premium" data-accent="' + escapeHtml(accent) + '"' + attrs + ' data-kpi="' + escapeHtml(card.label) + '">' +
       '<div class="mgr-kpi-top">' +
         '<span class="mgr-kpi-icon"><i data-lucide="' + card.icon + '" class="h-4 w-4"></i></span>' +
-        trendHtml +
       '</div>' +
       '<p class="mgr-kpi-value" data-metric="' + (card.key || '') + '">' + escapeHtml(String(display)) + '</p>' +
       '<p class="mgr-kpi-label">' + escapeHtml(card.label) + '</p>' +
@@ -6081,6 +6045,27 @@ if (otherInput) {
   function preloadDashboardMetrics() {
     if (!window.__CRM_USER__ || !window.__CRM_USER__.authenticated) return;
     loadDashboardMetricsFromDatabase(null);
+    if (!isEmployeeUser()) preloadManagerWorkflowLists();
+  }
+
+  var workflowListsPromise = null;
+  var workflowListsData = null;
+
+  function preloadManagerWorkflowLists() {
+    if (workflowListsData) return Promise.resolve(workflowListsData);
+    if (workflowListsPromise) return workflowListsPromise;
+    workflowListsPromise = apiFetch('/workflow/lists')
+      .then(function (body) {
+        workflowListsData = body.data || {};
+        return workflowListsData;
+      })
+      .catch(function () {
+        return null;
+      })
+      .finally(function () {
+        workflowListsPromise = null;
+      });
+    return workflowListsPromise;
   }
 
   function deferNonCriticalWork(fn) {
@@ -6584,9 +6569,19 @@ if (otherInput) {
     bindManagerDateFilter();
     // Always sync label/clear immediately from localStorage (don't wait for employee list).
     syncManagerEmployeeFilterLabel();
+    var embedded = (window.dashboardMetrics && window.dashboardMetrics.productivity_employees);
+    if (Array.isArray(embedded)) {
+      managerEmployeeFilterState.employees = embedded;
+      managerEmployeeFilterState.loaded = true;
+    }
     if (!managerEmployeeFilterState.loaded) {
       loadManagerEmployeeFilterOptions();
     } else {
+      if (clearStaleDashboardEmployeeFilter() && window._currentPageId === 'dashboard' && !managerEmployeeFilterState._staleCleared) {
+        managerEmployeeFilterState._staleCleared = true;
+        renderManagerDashboard();
+        return;
+      }
       renderManagerEmployeeFilterOptions();
     }
     syncManagerDateFilterLabel();
@@ -6598,6 +6593,8 @@ if (otherInput) {
     var panel = document.getElementById('mgr-employee-panel');
     var search = document.getElementById('mgr-employee-search');
     if (!combobox || !trigger || !panel || !search) return;
+    if (combobox.dataset.filterBound === '1') return;
+    combobox.dataset.filterBound = '1';
 
     trigger.addEventListener('click', function (e) {
       if (e.target.closest('#mgr-employee-clear')) return;
@@ -6666,6 +6663,8 @@ if (otherInput) {
     var applyBtn = document.getElementById('mgr-date-apply');
     var resetBtn = document.getElementById('mgr-date-reset');
     if (!combobox || !trigger || !panel) return;
+    if (combobox.dataset.filterBound === '1') return;
+    combobox.dataset.filterBound = '1';
 
     trigger.addEventListener('click', function (e) {
       e.preventDefault();
@@ -7177,7 +7176,6 @@ if (otherInput) {
       });
   }
 
-  var workflowListsData = null;
   var workflowListTab = 'demo_scheduled';
 
   function loadEmployeeWorkflowLists() {
@@ -7213,15 +7211,20 @@ if (otherInput) {
   function loadManagerWorkflowLists() {
     var panel = document.getElementById('mgr-workflow-panel');
     if (!panel) return;
-    apiFetch('/workflow/lists')
-      .then(function (body) {
-        workflowListsData = body.data || {};
-        paintManagerWorkflowLists(workflowListsData);
-      })
-      .catch(function () {
+    if (workflowListsData) {
+      paintManagerWorkflowLists(workflowListsData);
+      return;
+    }
+    var pending = preloadManagerWorkflowLists();
+    if (!pending) return;
+    pending.then(function (data) {
+      if (!data) {
         var list = document.getElementById('mgr-workflow-list');
         if (list) list.innerHTML = '<p class="text-caption text-rose-500">Unable to load workflow lists.</p>';
-      });
+        return;
+      }
+      paintManagerWorkflowLists(data);
+    });
   }
 
   function paintManagerWorkflowLists(data) {
@@ -7962,34 +7965,33 @@ if (otherInput) {
 
   function renderLeadDemoConfirmationSection(summary) {
     if (!summary || !summary.has_confirmation) {
-      return '<div class="detail-section mt-6 pt-4 border-t border-slate-200">' +
-        '<p class="text-caption font-semibold text-slate-700 mb-3">Customer Confirmation</p>' +
-        '<p class="text-caption text-slate-400">No demo confirmation yet. Schedule a demo to send confirmation SMS.</p>' +
+      return '<div class="detail-section">' +
+        '<p class="detail-section__title">Customer Confirmation</p>' +
+        '<p class="detail-section__empty">No demo confirmation yet. Schedule a demo to send confirmation SMS.</p>' +
       '</div>';
     }
-    return '<div class="detail-section mt-6 pt-4 border-t border-slate-200">' +
-      '<p class="text-caption font-semibold text-slate-700 mb-3">Customer Confirmation</p>' +
-      '<div class="grid sm:grid-cols-2 gap-3">' +
-        '<div class="detail-field"><span class="detail-field-label">Status</span><span class="detail-field-value">' + demoConfirmationStatusBadge(summary.status) + '</span></div>' +
-        '<div class="detail-field"><span class="detail-field-label">Demo Slot</span><span class="detail-field-value">' + escapeHtml(summary.demo_slot || '—') + '</span></div>' +
+    return '<div class="detail-section">' +
+      '<p class="detail-section__title">Customer Confirmation</p>' +
+      '<div class="detail-fields-card"><div class="detail-fields-grid">' +
+        '<div class="detail-field"><span class="detail-field-label">Status</span><span class="detail-field-value"><span class="detail-pill detail-pill--status">' + demoConfirmationStatusBadge(summary.status) + '</span></span></div>' +
+        '<div class="detail-field"><span class="detail-field-label">Demo Slot</span><span class="detail-field-value"><span class="detail-pill detail-pill--date">' + escapeHtml(summary.demo_slot || '—') + '</span></span></div>' +
         '<div class="detail-field"><span class="detail-field-label">Last SMS Sent</span><span class="detail-field-value">' + escapeHtml(summary.last_sms_sent_at ? formatDateTime(summary.last_sms_sent_at) : '—') + '</span></div>' +
         '<div class="detail-field"><span class="detail-field-label">Confirmation Time</span><span class="detail-field-value">' + escapeHtml(summary.confirmed_at ? formatDateTime(summary.confirmed_at) : '—') + '</span></div>' +
-        '<div class="detail-field sm:col-span-2"><span class="detail-field-label">Confirmed By</span><span class="detail-field-value">' + escapeHtml(summary.confirmed_by || '—') + '</span></div>' +
-      '</div>' +
+        '<div class="detail-field"><span class="detail-field-label">Confirmed By</span><span class="detail-field-value"><span class="detail-pill detail-pill--person">' + escapeHtml(summary.confirmed_by || '—') + '</span></span></div>' +
+      '</div></div>' +
       (summary.timeline && summary.timeline.length ? renderLeadDemoConfirmationTimeline(summary.timeline) : '') +
     '</div>';
   }
 
   function renderLeadDemoConfirmationTimeline(items) {
-    return '<div class="mt-4"><p class="text-caption font-semibold text-slate-600 mb-2">Confirmation Timeline</p>' +
+    return '<div class="detail-section__timeline"><p class="detail-section__subtitle">Confirmation Timeline</p>' +
       '<div class="space-y-2">' +
       items.map(function (item) {
-        var meta = ACTIVITY_ACTION_META[item.action] || { icon: 'activity', color: 'bg-slate-500' };
-        return '<div class="flex items-start gap-2 text-caption">' +
-          '<span class="inline-flex h-6 w-6 items-center justify-center rounded-full text-white shrink-0 ' + meta.color + '"><i data-lucide="' + meta.icon + '" class="h-3 w-3"></i></span>' +
-          '<div class="min-w-0"><p class="font-medium text-slate-700">' + escapeHtml(item.action) + '</p>' +
-          '<p class="text-slate-500">' + escapeHtml(item.description || '') + '</p>' +
-          '<p class="text-slate-400">' + escapeHtml(item.timestamp ? formatDateTime(item.timestamp) : '') + '</p></div></div>';
+        return '<div class="detail-timeline-item">' +
+          '<span class="detail-timeline-dot" aria-hidden="true"><i data-lucide="activity" class="h-3 w-3"></i></span>' +
+          '<div class="min-w-0"><p class="detail-timeline-title">' + escapeHtml(item.action) + '</p>' +
+          '<p class="detail-timeline-desc">' + escapeHtml(item.description || '') + '</p>' +
+          '<p class="detail-timeline-meta">' + escapeHtml(item.timestamp ? formatDateTime(item.timestamp) : '') + '</p></div></div>';
       }).join('') +
       '</div></div>';
   }
@@ -11883,8 +11885,8 @@ if (otherInput) {
       return;
     }
     var historyHtml = followup.ca_id
-      ? '<div class="mt-5 pt-4 border-t border-slate-100">' +
-          '<p class="text-caption font-semibold text-slate-600 mb-3">Activity History</p>' +
+      ? '<div class="detail-section">' +
+          '<p class="detail-section__title">Activity History</p>' +
           '<div id="followup-drawer-timeline" class="followup-activity-timeline followup-activity-timeline--compact">' +
             '<div class="crm-inline-loading py-4"><i data-lucide="loader-2" class="h-4 w-4 animate-spin text-brand"></i><span>Loading history…</span></div>' +
           '</div></div>'
@@ -13628,7 +13630,7 @@ if (otherInput) {
     var submitBtn = document.getElementById('add-lead-submit-btn');
     var isEdit = mode === 'edit';
 
-    if (titleText) titleText.textContent = isEdit ? 'Edit Lead' : 'Add Lead';
+    if (titleText) titleText.textContent = isEdit ? 'Edit Firm' : 'Add Lead';
     if (titleIcon) titleIcon.setAttribute('data-lucide', isEdit ? 'edit-3' : 'user-plus');
     if (submitBtn) submitBtn.innerHTML = '<i data-lucide="save" class="h-4 w-4"></i> ' + (isEdit ? 'Update Lead' : 'Save Lead');
     if (!isEdit) window._editingLeadId = '';
