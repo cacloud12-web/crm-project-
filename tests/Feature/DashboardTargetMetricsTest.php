@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\DemoSchedule;
 use App\Models\Employee;
 use App\Models\User;
@@ -17,7 +19,7 @@ class DashboardTargetMetricsTest extends TestCase
 
     public function test_daily_demo_target_is_derived_from_yearly_assignment(): void
     {
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employee();
         $year = (int) now()->year;
 
         $yearly = YearlyEmployeeTarget::query()->updateOrCreate(
@@ -33,7 +35,7 @@ class DashboardTargetMetricsTest extends TestCase
 
         app(EmployeeCalendarService::class)->regenerateForTarget($yearly);
 
-        $this->actingAs(User::query()->where('email', 'employee@ca.local')->firstOrFail());
+        $this->actingAs(CrmTestAccounts::employeeUser());
         $response = $this->getJson('/dashboard/employee')->assertOk();
 
         $progress = $response->json('data.target_progress') ?? [];
@@ -44,8 +46,8 @@ class DashboardTargetMetricsTest extends TestCase
 
     public function test_scheduling_demo_updates_employee_and_admin_dashboard_counts(): void
     {
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
-        $user = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employee();
+        $user = CrmTestAccounts::employeeUser();
         $year = (int) now()->year;
 
         YearlyEmployeeTarget::query()->updateOrCreate(
@@ -84,7 +86,7 @@ class DashboardTargetMetricsTest extends TestCase
             $this->markTestSkipped('No assigned lead available for demo scheduling test.');
         }
 
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
         $this->postJson('/workflow/demos', [
             'ca_id' => $lead->ca_id,
@@ -109,7 +111,7 @@ class DashboardTargetMetricsTest extends TestCase
         $this->assertSame($after, (int) $employeeDashboard->json('data.summary.my_demos'));
         $this->assertSame($after, (int) $employeeDashboard->json('data.summary.todays_achievement'));
 
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
         $adminDashboard = $this->getJson('/dashboard/metrics?employee_id='.$employee->employee_id)->assertOk();
         $this->assertSame($after, (int) $adminDashboard->json('data.demos_scheduled_today'));
@@ -118,7 +120,7 @@ class DashboardTargetMetricsTest extends TestCase
 
     public function test_rescheduling_demo_does_not_increment_scheduled_count(): void
     {
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employee();
         $schedule = DemoSchedule::query()
             ->where('employee_id', $employee->employee_id)
             ->whereDate('created_at', now()->toDateString())
@@ -135,7 +137,7 @@ class DashboardTargetMetricsTest extends TestCase
             ->whereNotIn('status', [DemoSchedule::STATUS_CANCELLED])
             ->count();
 
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $this->patchJson('/demo-calendar/schedules/'.$schedule->id.'/reschedule', [

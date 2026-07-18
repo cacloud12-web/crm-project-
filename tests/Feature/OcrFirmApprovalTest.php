@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaFirm;
 use App\Models\CaMaster;
 use App\Models\CaPartner;
@@ -31,7 +33,7 @@ class OcrFirmApprovalTest extends TestCase
 
     private function actingAsAdmin(): User
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         return $admin;
@@ -40,7 +42,7 @@ class OcrFirmApprovalTest extends TestCase
     /**
      * @return array{0: OcrDocument, 1: OcrParsedFirm}
      */
-    private function seedParsedFirm(User $admin, string $text = "DELHI\nSHAH & ASSOCIATES\nCA AMIT SHAH\n9876543210\namit@shah.test\n"): array
+    private function seedParsedFirm(User $admin, string $text = "DELHI\nEXAMPLE & ASSOCIATES\nCA EXAMPLE NAME\n9876543210\nexample@example.local\n"): array
     {
         $document = OcrDocument::query()->create([
             'ca_id' => null,
@@ -98,10 +100,10 @@ class OcrFirmApprovalTest extends TestCase
         OcrParsedMember::query()->updateOrCreate(
             ['ocr_parsed_firm_id' => $firm->id, 'sequence_no' => 1],
             [
-                'ca_name' => 'Amit Shah',
+                'ca_name' => 'Example CA',
                 'membership_no' => 'A12345',
                 'mobile' => '9876543210',
-                'email' => 'amit@shah.test',
+                'email' => 'example@example.local',
                 'role' => 'Partner',
                 'is_primary' => true,
                 'review_status' => 'pending',
@@ -125,7 +127,7 @@ class OcrFirmApprovalTest extends TestCase
 
         $this->assertNotNull($firm->matched_reference_firm_id);
         $this->assertTrue(
-            CaPartner::query()->where('firm_id', $firm->matched_reference_firm_id)->where('partner_name', 'Amit Shah')->exists()
+            CaPartner::query()->where('firm_id', $firm->matched_reference_firm_id)->where('partner_name', 'Example CA')->exists()
         );
         $this->assertTrue(CaFirm::query()->whereKey($firm->matched_reference_firm_id)->exists());
     }

@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\User;
 use App\Services\Rbac\RbacService;
@@ -15,8 +17,8 @@ class MasterDataLoadTest extends TestCase
 
     private function superAdmin(): User
     {
-        $user = User::query()->where('email', 'superadmin@ca.local')->first()
-            ?? User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $user = CrmTestAccounts::superAdmin()
+            ?? CrmTestAccounts::admin();
 
         return $user;
     }

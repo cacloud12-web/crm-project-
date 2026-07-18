@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
@@ -18,7 +20,7 @@ class DatabaseHealthAccessTest extends TestCase
 
     public function test_admin_cannot_access_db_health(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $this->getJson('/admin/db-health')
@@ -27,7 +29,7 @@ class DatabaseHealthAccessTest extends TestCase
 
     public function test_manager_cannot_access_db_health(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
         $this->getJson('/admin/db-health')
@@ -36,7 +38,7 @@ class DatabaseHealthAccessTest extends TestCase
 
     public function test_employee_cannot_access_db_health(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
         $this->actingAs($employee);
 
         $this->getJson('/admin/db-health')
@@ -45,7 +47,7 @@ class DatabaseHealthAccessTest extends TestCase
 
     public function test_super_admin_can_access_db_health(): void
     {
-        $superAdmin = User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
+        $superAdmin = CrmTestAccounts::superAdmin();
         $this->actingAs($superAdmin);
 
         $this->getJson('/admin/db-health')

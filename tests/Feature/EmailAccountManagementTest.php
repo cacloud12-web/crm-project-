@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\EmailSetting;
 use App\Models\User;
 use App\Services\Email\EmailImapConnectionService;
@@ -17,12 +19,12 @@ class EmailAccountManagementTest extends TestCase
 
     private function superAdmin(): User
     {
-        return User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
+        return CrmTestAccounts::superAdmin();
     }
 
     private function admin(): User
     {
-        return User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        return CrmTestAccounts::admin();
     }
 
     private function issueSmtpToken(User $user, array $payload): string

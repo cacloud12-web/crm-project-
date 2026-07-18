@@ -23,7 +23,9 @@ class DemoDataCleanupService
             ->all();
 
         $demoEmployeeIds = DB::table('employees')
-            ->whereIn('email_id', DemoDataCatalog::DEMO_EMPLOYEE_EMAILS)
+            ->where(function ($q) {
+                $q->where('email_id', 'like', 'manager.demo.exec%@example.local');
+            })
             ->pluck('employee_id')
             ->all();
 
@@ -115,9 +117,12 @@ class DemoDataCleanupService
             ->whereNotIn('email_id', $this->demoLeadEmails())
             ->delete();
 
-        // Non-demo employees
+        // Non-demo employees (keep only manager.demo.exec*@example.local markers)
         $counts['employees'] = (int) DB::table('employees')
-            ->whereNotIn('email_id', DemoDataCatalog::DEMO_EMPLOYEE_EMAILS)
+            ->where(function ($q) {
+                $q->where('email_id', 'not like', 'manager.demo.exec%@example.local')
+                    ->orWhereNull('email_id');
+            })
             ->delete();
 
         // Orphan assignments / follow-ups (after lead cleanup)

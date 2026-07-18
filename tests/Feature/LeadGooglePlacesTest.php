@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\User;
 use App\Services\Leads\LeadResearchService;
@@ -25,7 +27,7 @@ class LeadGooglePlacesTest extends TestCase
 
     private function actingAsAdmin(): User
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         return $admin;
@@ -34,8 +36,8 @@ class LeadGooglePlacesTest extends TestCase
     private function sampleLead(array $overrides = []): CaMaster
     {
         return CaMaster::query()->create(array_merge([
-            'ca_name' => 'Ajay Kumar Bhardwaj',
-            'firm_name' => 'AK Bhardwaj & Co',
+            'ca_name' => 'Example CA',
+            'firm_name' => 'Example Firm & Co',
             'status' => 'New',
         ], $overrides));
     }
@@ -47,8 +49,8 @@ class LeadGooglePlacesTest extends TestCase
 
         $query = app(\App\Services\Leads\LeadResearchService::class)->buildQuery($lead);
 
-        $this->assertStringContainsString('AK Bhardwaj & Co', $query);
-        $this->assertStringContainsString('Ajay Kumar Bhardwaj', $query);
+        $this->assertStringContainsString('Example Firm & Co', $query);
+        $this->assertStringContainsString('Example CA', $query);
         $this->assertStringContainsString('Chartered Accountant', $query);
     }
 
@@ -58,7 +60,7 @@ class LeadGooglePlacesTest extends TestCase
 
         $query = app(LeadResearchService::class)->buildQuery($lead);
 
-        $this->assertSame('AK Bhardwaj & Co Chartered Accountant', $query);
+        $this->assertSame('Example Firm & Co Chartered Accountant', $query);
     }
 
     public function test_google_lookup_builds_mobile_only_query(): void
@@ -86,7 +88,7 @@ class LeadGooglePlacesTest extends TestCase
 
         $query = app(LeadResearchService::class)->buildQuery($lead);
 
-        $this->assertStringContainsString('AK Bhardwaj & Co', $query);
+        $this->assertStringContainsString('Example Firm & Co', $query);
         $this->assertStringContainsString('Mumbai', $query);
         $this->assertStringContainsString('Maharashtra', $query);
         $this->assertStringContainsString('Chartered Accountant', $query);
@@ -120,7 +122,7 @@ class LeadGooglePlacesTest extends TestCase
             'google_places_cache' => [
                 'place' => [
                     'place_id' => 'places/chij-cached-123',
-                    'business_name' => 'AK Bhardwaj & Co',
+                    'business_name' => 'Example Firm & Co',
                     'verified_address' => '12 Park Street, Kolkata',
                 ],
             ],
@@ -146,7 +148,7 @@ class LeadGooglePlacesTest extends TestCase
                 'places' => [
                     [
                         'id' => 'places/chij-one',
-                        'displayName' => ['text' => 'AK Bhardwaj & Co Chartered Accountants'],
+                        'displayName' => ['text' => 'Example Firm & Co Chartered Accountants'],
                         'formattedAddress' => 'Kolkata, West Bengal, India',
                         'rating' => 4.6,
                         'userRatingCount' => 12,
@@ -198,7 +200,7 @@ class LeadGooglePlacesTest extends TestCase
             'places.googleapis.com/v1/places:searchText' => Http::response([
                 'places' => [[
                     'id' => 'places/chij-log-1',
-                    'displayName' => ['text' => 'AK Bhardwaj & Co'],
+                    'displayName' => ['text' => 'Example Firm & Co'],
                     'formattedAddress' => '12 Park Street, Kolkata',
                     'nationalPhoneNumber' => '+91 9876543210',
                     'rating' => 4.6,
@@ -321,7 +323,7 @@ class LeadGooglePlacesTest extends TestCase
 
     public function test_manager_can_refresh_google_data(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
         $lead = $this->sampleLead([
@@ -333,7 +335,7 @@ class LeadGooglePlacesTest extends TestCase
             'places.googleapis.com/v1/places:searchText' => Http::response([
                 'places' => [[
                     'id' => 'places/chij-new',
-                    'displayName' => ['text' => 'AK Bhardwaj & Co'],
+                    'displayName' => ['text' => 'Example Firm & Co'],
                     'formattedAddress' => 'Kolkata, West Bengal',
                 ]],
             ], 200),

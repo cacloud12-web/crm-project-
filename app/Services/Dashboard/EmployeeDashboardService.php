@@ -11,6 +11,7 @@ use App\Models\Task;
 use App\Services\Assignment\DailyEmployeeTargetService;
 use App\Services\Assignment\EmployeeTargetService;
 use App\Services\Assignment\YearlyEmployeeTargetService;
+use App\Services\Attendance\EmployeeAttendanceService;
 use App\Services\Cache\CrmCacheService;
 use App\Services\Dashboard\DemoMetricsService;
 use App\Services\Rbac\EmployeeDataScopeService;
@@ -38,6 +39,7 @@ class EmployeeDashboardService
         private readonly EmployeeTargetService $employeeTargetService,
         private readonly DemoMetricsService $demoMetrics,
         private readonly CrmCacheService $cacheService,
+        private readonly EmployeeAttendanceService $attendanceService,
     ) {}
 
     public function metrics(): array
@@ -45,9 +47,14 @@ class EmployeeDashboardService
         $user = auth()->user();
         $employeeId = $this->requireEmployeeId($user);
 
-        return $this->cacheService->rememberEmployeeDashboard($employeeId, function () use ($user, $employeeId) {
+        $metrics = $this->cacheService->rememberEmployeeDashboard($employeeId, function () use ($user, $employeeId) {
             return $this->buildMetrics($user, $employeeId);
         });
+
+        // Attendance changes frequently; keep read-only status outside the dashboard cache.
+        $metrics['my_attendance'] = $this->attendanceService->statusForEmployee($employeeId);
+
+        return $metrics;
     }
 
     private function buildMetrics($user, int $employeeId): array

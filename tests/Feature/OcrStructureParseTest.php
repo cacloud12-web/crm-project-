@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\OcrDocument;
 use App\Models\OcrParsedFirm;
 use App\Models\User;
@@ -25,7 +27,7 @@ class OcrStructureParseTest extends TestCase
 
     private function actingAsAdmin(): User
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         return $admin;
@@ -76,7 +78,7 @@ class OcrStructureParseTest extends TestCase
             'mime_type' => 'application/pdf',
             'file_size' => 800,
             'status' => OcrDocument::STATUS_COMPLETED,
-            'extracted_text' => "DELHI\nSHAH & ASSOCIATES\nCA AMIT SHAH\n",
+            'extracted_text' => "DELHI\nEXAMPLE & ASSOCIATES\nCA EXAMPLE NAME\n",
             'processed_at' => now(),
         ]);
 
@@ -119,6 +121,51 @@ class OcrStructureParseTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.parsed_firm_count', 1)
             ->assertJsonPath('data.parsed_firms.0.firm_name', 'Mehta & Co');
+
+        $this->assertSame(
+            1,
+            OcrParsedFirm::query()->where('ocr_document_id', $document->id)->count()
+        );
+
+        // Second re-structure must replace, not duplicate.
+        $this->postJson('/ocr-documents/'.$document->id.'/reparse')
+            ->assertOk()
+            ->assertJsonPath('data.parsed_firm_count', 1);
+        $this->assertSame(
+            1,
+            OcrParsedFirm::query()->where('ocr_document_id', $document->id)->count()
+        );
+    }
+
+    public function test_restructure_persists_noisy_directory_fixture_without_zero_firms(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $raw = file_get_contents(base_path('tests/Fixtures/Ocr/directory_multicolumn_sample.txt'));
+        $this->assertNotFalse($raw);
+
+        $document = OcrDocument::query()->create([
+            'ca_id' => null,
+            'uploaded_by' => $admin->id,
+            'original_filename' => 'noisy-directory.pdf',
+            'stored_filename' => 'noisy-directory.pdf',
+            'storage_disk' => 'local',
+            'storage_path' => 'ocr-documents/test/noisy-directory.pdf',
+            'mime_type' => 'application/pdf',
+            'file_size' => 2200,
+            'status' => OcrDocument::STATUS_COMPLETED,
+            'processing_mode' => 'online',
+            'extracted_text' => $raw,
+            'processed_at' => now(),
+            'parse_status' => 'failed',
+            'parsed_firm_count' => null,
+        ]);
+
+        $response = $this->postJson('/ocr-documents/'.$document->id.'/reparse')->assertOk();
+        $count = (int) $response->json('data.parsed_firm_count');
+        $this->assertGreaterThan(0, $count);
+        $this->assertSame($count, OcrParsedFirm::query()->where('ocr_document_id', $document->id)->count());
+        $response->assertJsonPath('data.parse_status', 'completed');
+        $this->assertNull($response->json('data.parse_error'));
     }
 
     public function test_deleting_document_removes_parsed_firms(): void

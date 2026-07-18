@@ -6,31 +6,35 @@ use App\Models\ActivityLog;
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\RateLimiter;
+use Tests\Concerns\CreatesCrmUsers;
 use Tests\TestCase;
 
 class LoginRateLimitTest extends TestCase
 {
+    use CreatesCrmUsers;
     use DatabaseTransactions;
 
-    private function loginPayload(string $email, string $password = 'wrong-password'): array
+    private function loginPayload(string $email, ?string $password = null): array
     {
         return [
             'email' => $email,
-            'password' => $password,
+            'password' => $password ?? 'wrong-password',
         ];
     }
 
     public function test_user_can_login_with_correct_credentials(): void
     {
-        $response = $this->post('/login', $this->loginPayload('admin@ca.local', 'password'));
+        $admin = $this->createAdmin();
+
+        $response = $this->post('/login', $this->loginPayload($admin->email, $this->testPassword()));
 
         $response->assertRedirect('/dashboard');
-        $this->assertAuthenticatedAs(User::query()->where('email', 'admin@ca.local')->firstOrFail());
+        $this->assertAuthenticatedAs($admin);
     }
 
     public function test_wrong_password_returns_generic_error_message(): void
     {
-        $email = 'wrong-pass.'.microtime(true).'@test.local';
+        $email = $this->uniqueTestEmail('wrong-pass');
 
         $response = $this->from('/login')->post('/login', $this->loginPayload($email));
 
@@ -42,7 +46,7 @@ class LoginRateLimitTest extends TestCase
 
     public function test_five_wrong_password_attempts_block_login(): void
     {
-        $email = 'block.'.microtime(true).'@test.local';
+        $email = $this->uniqueTestEmail('block');
 
         for ($i = 0; $i < 5; $i++) {
             $this->from('/login')->post('/login', $this->loginPayload($email))
@@ -56,7 +60,7 @@ class LoginRateLimitTest extends TestCase
 
     public function test_sixth_attempt_returns_lockout_message(): void
     {
-        $email = 'lockout.'.microtime(true).'@test.local';
+        $email = $this->uniqueTestEmail('lockout');
 
         for ($i = 0; $i < 5; $i++) {
             $this->post('/login', $this->loginPayload($email));
@@ -72,7 +76,8 @@ class LoginRateLimitTest extends TestCase
 
     public function test_correct_login_clears_failed_attempts_after_lock_expires(): void
     {
-        $email = 'recover.'.microtime(true).'@test.local';
+        $email = $this->uniqueTestEmail('recover');
+        $admin = $this->createAdmin();
 
         for ($i = 0; $i < 5; $i++) {
             $this->post('/login', $this->loginPayload($email));
@@ -83,7 +88,7 @@ class LoginRateLimitTest extends TestCase
 
         $this->travel(16)->minutes();
 
-        $response = $this->post('/login', $this->loginPayload('admin@ca.local', 'password'));
+        $response = $this->post('/login', $this->loginPayload($admin->email, $this->testPassword()));
 
         $response->assertRedirect('/dashboard');
 
@@ -93,12 +98,13 @@ class LoginRateLimitTest extends TestCase
 
     public function test_successful_login_after_failed_attempts_is_logged(): void
     {
-        $email = 'admin@ca.local';
+        $admin = $this->createAdmin();
+        $email = $admin->email;
 
         $this->post('/login', $this->loginPayload($email, 'wrong-password'));
         $this->post('/login', $this->loginPayload($email, 'wrong-password'));
 
-        $this->post('/login', $this->loginPayload($email, 'password'))
+        $this->post('/login', $this->loginPayload($email, $this->testPassword()))
             ->assertRedirect('/dashboard');
 
         $successLog = ActivityLog::query()
@@ -119,7 +125,7 @@ class LoginRateLimitTest extends TestCase
 
     public function test_failed_login_creates_security_activity_log(): void
     {
-        $email = 'audit.'.microtime(true).'@test.local';
+        $email = $this->uniqueTestEmail('audit');
 
         $this->post('/login', $this->loginPayload($email));
 

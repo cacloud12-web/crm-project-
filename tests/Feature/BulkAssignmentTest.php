@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\AssignmentHistory;
 use App\Models\BulkAction;
 use App\Models\CaMaster;
@@ -19,7 +21,7 @@ class BulkAssignmentTest extends TestCase
 
     private function actingAsAdmin(): User
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         return $admin;
@@ -415,7 +417,7 @@ class BulkAssignmentTest extends TestCase
 
     public function test_employee_role_cannot_bulk_assign(): void
     {
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
         $this->actingAs($employeeUser);
 
         $this->postJson('/lead-assignments/bulk', [

@@ -2,6 +2,8 @@
 
 namespace Tests\Unit;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\User;
 use App\Services\Leads\CaMasterService;
@@ -20,7 +22,7 @@ class CaMasterListingFiltersTest extends TestCase
     {
         parent::setUp();
 
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         Auth::login($admin);
 
         $ts = (string) microtime(true);

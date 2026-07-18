@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\MessageTemplate;
 use App\Models\User;
@@ -37,7 +39,7 @@ class WhatsAppProductionTemplatesTest extends TestCase
 
     private function admin(): User
     {
-        return User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        return CrmTestAccounts::admin();
     }
 
     public function test_only_production_templates_are_active_after_migration(): void

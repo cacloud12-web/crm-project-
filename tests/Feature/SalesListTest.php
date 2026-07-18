@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\Employee;
 use App\Models\SalesListEditHistory;
 use App\Models\SalesListEntry;
@@ -15,7 +17,7 @@ class SalesListTest extends TestCase
 
     public function test_manager_can_access_sales_list(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
         $this->getJson('/sales-list')
@@ -25,7 +27,7 @@ class SalesListTest extends TestCase
 
     public function test_employee_cannot_access_sales_list(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
         $this->actingAs($employee);
 
         $this->getJson('/sales-list')
@@ -34,7 +36,7 @@ class SalesListTest extends TestCase
 
     public function test_employee_cannot_update_sales_list(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
         $this->actingAs($employee);
 
         $entry = $this->makeSalesEntry();
@@ -46,7 +48,7 @@ class SalesListTest extends TestCase
 
     public function test_payment_update_recalculates_balance_and_status(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
         $entry = $this->makeSalesEntry([
@@ -68,7 +70,7 @@ class SalesListTest extends TestCase
 
     public function test_manager_can_update_full_sales_record_and_logs_history(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
         $executive = Employee::query()->firstOrFail();
@@ -121,18 +123,18 @@ class SalesListTest extends TestCase
 
         SalesListEditHistory::query()->create([
             'sales_list_entry_id' => $entry->id,
-            'user_id' => User::query()->where('email', 'manager@ca.local')->value('id'),
+            'user_id' => CrmTestAccounts::manager()->id,
             'field_name' => 'customer_name',
             'old_value' => 'Old',
             'new_value' => 'Audit Target',
             'edited_at' => now(),
         ]);
 
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
         $this->getJson('/sales-list/'.$entry->id.'/history')->assertForbidden();
 
-        $admin = User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::superAdmin();
         $this->actingAs($admin);
         $this->getJson('/sales-list/'.$entry->id.'/history')
             ->assertOk()
@@ -142,7 +144,7 @@ class SalesListTest extends TestCase
 
     public function test_sales_list_column_filters_work_together(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
         $entry = $this->makeSalesEntry([

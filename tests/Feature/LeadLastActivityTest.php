@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\CallLog;
 use App\Models\Employee;
@@ -15,7 +17,7 @@ class LeadLastActivityTest extends TestCase
 
     private function actingAsAdmin(): User
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         return $admin;

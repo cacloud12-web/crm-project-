@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Mail\CrmHtmlMail;
 use App\Models\CaMaster;
 use App\Models\EmailSetting;
@@ -17,7 +19,7 @@ class EmailSmtpTest extends TestCase
 
     private function admin(): User
     {
-        return User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        return CrmTestAccounts::admin();
     }
 
     private function seedEmailSettings(): EmailSetting

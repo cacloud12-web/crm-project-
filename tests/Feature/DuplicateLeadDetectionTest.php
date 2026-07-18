@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\DuplicateAttemptLog;
 use App\Models\Employee;
@@ -17,7 +19,7 @@ class DuplicateLeadDetectionTest extends TestCase
 
     public function test_phone_normalization_treats_country_code_variants_as_same(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $stateId = CaMaster::query()->whereNotNull('state_id')->value('state_id');
@@ -40,8 +42,8 @@ class DuplicateLeadDetectionTest extends TestCase
 
     public function test_duplicate_create_is_blocked_and_logged_for_employee(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
 
         $stateId = CaMaster::query()->whereNotNull('state_id')->value('state_id');
         $existing = CaMaster::query()->create([
@@ -93,7 +95,7 @@ class DuplicateLeadDetectionTest extends TestCase
 
     public function test_alternate_mobile_duplicate_is_blocked(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $stateId = CaMaster::query()->whereNotNull('state_id')->value('state_id');
@@ -122,7 +124,7 @@ class DuplicateLeadDetectionTest extends TestCase
 
     public function test_lead_can_be_created_when_previous_owner_was_soft_deleted(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $stateId = CaMaster::query()->whereNotNull('state_id')->value('state_id');
@@ -163,7 +165,7 @@ class DuplicateLeadDetectionTest extends TestCase
 
     public function test_soft_delete_removes_lead_phone_registry(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $stateId = CaMaster::query()->whereNotNull('state_id')->value('state_id');

@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\EmailCampaign;
 use App\Models\LeadAssignmentEngine;
@@ -15,7 +17,7 @@ class UnifiedCampaignManagementTest extends TestCase
 
     public function test_admin_can_list_unified_campaigns(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         EmailCampaign::query()->create([
@@ -42,8 +44,8 @@ class UnifiedCampaignManagementTest extends TestCase
 
     public function test_employee_cannot_see_other_users_campaigns_in_unified_list(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
+        $employee = CrmTestAccounts::employeeUser();
 
         EmailCampaign::query()->create([
             'campaign_name' => 'Admin Only Campaign',
@@ -67,7 +69,7 @@ class UnifiedCampaignManagementTest extends TestCase
 
     public function test_employee_can_view_own_campaign_detail(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
         $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();
 
         $campaign = EmailCampaign::query()->create([
@@ -92,8 +94,8 @@ class UnifiedCampaignManagementTest extends TestCase
 
     public function test_employee_cannot_view_admin_campaign_detail(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
+        $employee = CrmTestAccounts::employeeUser();
 
         $campaign = EmailCampaign::query()->create([
             'campaign_name' => 'Admin Secret Campaign',
@@ -114,7 +116,7 @@ class UnifiedCampaignManagementTest extends TestCase
 
     public function test_duplicate_campaign_creates_draft_copy(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $campaign = EmailCampaign::query()->create([

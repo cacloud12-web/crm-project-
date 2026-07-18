@@ -323,6 +323,7 @@ window.CAPages = (function () {
     return '<div class="emp-dashboard mgr-dashboard">' +
       '<header class="mgr-top card" id="emp-top-header"></header>' +
       '<section class="mgr-panel card dash-section" id="emp-daily-targets-panel"></section>' +
+      '<section id="emp-attendance-panel" class="mgr-panel card dash-section dash-attendance-panel" aria-label="My Attendance"></section>' +
       '<section class="dash-section" aria-label="Key metrics"><div class="dash-kpi-sections" id="emp-kpi-sections"></div></section>' +
       '<div id="emp-productivity-panel" class="mgr-panel card dash-productivity-panel"></div>' +
       '<div class="dash-toolbar-row">' +
@@ -432,9 +433,9 @@ window.CAPages = (function () {
   function kpis(items, opts) {
     opts = opts || {};
     var compact = !!opts.compact;
-    var gridCls = compact
+    var gridCls = opts.gridClass || (compact
       ? 'crm-kpi-grid crm-kpi-grid--compact grid grid-cols-2 md:grid-cols-4 gap-2 mb-3'
-      : 'grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 mb-6';
+      : 'grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 mb-6');
     return '<div class="' + gridCls + '">' +
       items.map(function (k) {
         var filterAttrs = k.filterKey
@@ -916,19 +917,17 @@ window.CAPages = (function () {
       { bulk: 'Bulk Export', icon: 'download' },
       { bulk: 'Bulk Status Update', icon: 'refresh-cw' },
     ];
-    return '<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 mb-6 bulk-tools-grid">' +
+    return '<div class="crm-kpi-grid crm-kpi-grid--compact bulk-tools-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 mb-3">' +
         bulkItems.map(function (item) {
           var attrs = item.nav
             ? ' data-nav-page="' + item.nav + '"'
             : ' data-bulk="' + item.bulk + '"';
-          return '<div class="card-interactive crm-kpi-card crm-kpi-card--clickable bulk-action-card"' + attrs + ' role="button" tabindex="0" aria-label="' + item.bulk + '">' +
-            '<div class="bulk-action-card__top">' +
-              '<div class="bulk-action-card__icon" aria-hidden="true">' +
-                '<i data-lucide="' + item.icon + '"></i>' +
-              '</div>' +
-              '<span class="stat-pill bg-emerald-50 text-emerald-700">Ready</span>' +
+          return '<div class="card-interactive crm-kpi-card crm-kpi-card--compact crm-kpi-card--action crm-kpi-card--clickable bulk-action-card"' + attrs + ' role="button" tabindex="0" aria-label="' + item.bulk + '">' +
+            '<div class="crm-kpi-card__icon" aria-hidden="true"><i data-lucide="' + item.icon + '" class="h-4 w-4"></i></div>' +
+            '<div class="crm-kpi-card__body">' +
+              '<p class="crm-kpi-card__label">' + item.bulk + '</p>' +
             '</div>' +
-            '<p class="bulk-action-card__title">' + item.bulk + '</p>' +
+            '<span class="stat-pill crm-kpi-card__pill bg-emerald-50 text-emerald-700">Ready</span>' +
           '</div>';
         }).join('') +
       '</div>' +
@@ -1456,7 +1455,10 @@ window.CAPages = (function () {
         { icon: 'refresh-cw', label: 'Auto (Rotation)', value: '—', trend: 'Live', valueId: 'assign-kpi-auto' },
         { icon: 'user-plus', label: 'Manual', value: '—', trend: 'Live', valueId: 'assign-kpi-manual' },
         { icon: 'target', label: 'Assigned Leads', value: '—', trend: 'Live', valueId: 'assign-kpi-target' },
-      ]) +
+      ], {
+        compact: true,
+        gridClass: 'crm-kpi-grid crm-kpi-grid--compact assign-kpi-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 mb-3',
+      }) +
       assignmentDashboardWidgets() +
       assignmentYearlyTargetsSection() +
       assignmentRotationCard() +
@@ -1725,7 +1727,7 @@ window.CAPages = (function () {
       ]) +
       table(['Visitor', 'Purpose', 'Assigned To', 'Status', 'Time In'], [
         ['', 'Mr. Gupta', 'Tax filing query', 'Reception Desk 1', '<span class="badge-warning">Waiting</span>', '10:05 AM'],
-        ['', 'Sharma & Associates', 'Demo walk-in', 'Rahul Verma', '<span class="badge-brand">In Meeting</span>', '09:45 AM'],
+        ['', 'Demo Firm 1', 'Demo walk-in', 'Demo Staff', '<span class="badge-brand">In Meeting</span>', '09:45 AM'],
         ['', 'Patel Tax', 'Document pickup', 'Reception Desk 2', '<span class="badge-success">Completed</span>', '09:30 AM'],
       ]);
   }

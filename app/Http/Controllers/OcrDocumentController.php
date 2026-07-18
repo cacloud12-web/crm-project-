@@ -195,7 +195,24 @@ class OcrDocumentController extends Controller
             return ApiResponse::error('Only completed OCR documents can be restructured.', 422);
         }
 
-        $document = $this->ocrDocumentService->reparseStructure($ocrDocument);
+        try {
+            $document = $this->ocrDocumentService->reparseStructure($ocrDocument);
+        } catch (\Throwable $exception) {
+            report($exception);
+            $fresh = $ocrDocument->fresh();
+            $parsed = is_array($fresh?->structured_data) ? ($fresh->structured_data['parsed'] ?? []) : [];
+            $error = is_array($parsed['error'] ?? null) ? $parsed['error'] : null;
+
+            return ApiResponse::error(
+                is_array($error) ? (string) ($error['message'] ?? 'Structured parsing failed.') : 'Structured parsing failed.',
+                422,
+                [
+                    'parse_status' => $fresh?->parse_status,
+                    'parse_error' => $error,
+                    'code' => is_array($error) ? ($error['code'] ?? 'parser_exception') : 'parser_exception',
+                ],
+            );
+        }
 
         return ApiResponse::success(
             (new OcrDocumentResource($document->load(['uploader:id,name,email', 'parsedFirms.members'])))->resolve(),

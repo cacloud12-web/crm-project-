@@ -1986,15 +1986,15 @@ if (otherInput) {
         return;
       }
       if (action === 'delete') {
-        if (!window.confirm('Archive this employee?')) return;
+        if (!window.confirm('Delete this user and remove them from all lists? This cannot be undone.')) return;
         apiFetch('/employees/' + encodeURIComponent(id), { method: 'DELETE' })
           .then(function () {
-            toast('Employee archived', 'success');
-            realEmployeesLoaded = false;
+            toast('User deleted successfully', 'success');
+            invalidateEmployeeCaches();
             refreshAll();
           })
           .catch(function (err) {
-            toast(err.message || 'Unable to delete employee', 'error');
+            toast(err.message || 'Unable to delete user', 'error');
           });
       }
     });
@@ -2753,6 +2753,8 @@ if (otherInput) {
 
   function configureEmployeeModalMode(mode, employee) {
     var loginFields = document.getElementById('employee-login-fields');
+    var editFields = document.getElementById('employee-edit-fields');
+    var editRoleWrap = document.getElementById('employee-edit-crm-role-wrap');
     var statusNote = document.getElementById('employee-login-status-note');
     var title = document.getElementById('add-employee-title');
     var passwordInputs = loginFields ? loginFields.querySelectorAll('[name="password"], [name="password_confirmation"]') : [];
@@ -2760,6 +2762,11 @@ if (otherInput) {
 
     if (mode === 'edit') {
       if (loginFields) loginFields.classList.add('hidden');
+      if (editFields) editFields.classList.remove('hidden');
+      if (editRoleWrap) {
+        var canEditRole = crmCanAction('employees', 'edit') && ((window.__CRM_USER__ || {}).role === 'admin' || (window.__CRM_USER__ || {}).role === 'super_admin');
+        editRoleWrap.classList.toggle('hidden', !canEditRole || !(employee && employee.user_id));
+      }
       passwordInputs.forEach(function (input) {
         input.required = false;
         input.value = '';
@@ -2772,6 +2779,7 @@ if (otherInput) {
       fillEmployeeDemoWorkTypeFields(employee || null);
     } else {
       if (loginFields) loginFields.classList.remove('hidden');
+      if (editFields) editFields.classList.add('hidden');
       passwordInputs.forEach(function (input) { input.required = true; });
       if (statusNote) statusNote.classList.add('hidden');
       configureEmployeeCrmRoleSelect();
@@ -2779,6 +2787,15 @@ if (otherInput) {
         title.innerHTML = title.innerHTML.replace('Edit Employee', 'Add Employee');
       }
       fillEmployeeDemoWorkTypeFields(null);
+    }
+  }
+
+  function invalidateEmployeeCaches() {
+    invalidateDataCaches(['employees', 'assignments', 'metrics']);
+    realEmployeesLoaded = false;
+    window._selectEmployeesLoaded = false;
+    if (window.CrmEntityLookup && typeof window.CrmEntityLookup.refreshAll === 'function') {
+      window.CrmEntityLookup.refreshAll('employee');
     }
   }
 
@@ -4208,6 +4225,7 @@ if (otherInput) {
         managerDashboardFiltersHtml();
     }
     ensureManagerEmployeeFilter();
+    if (top) bindModalTriggers(top);
     iconsIn(document.querySelector('.mgr-dashboard') || document);
   }
 
@@ -5599,6 +5617,7 @@ if (otherInput) {
     renderEmployeeActivity(data.recent_activity || []);
     renderEmployeeQuickActions();
     renderEmployeeProductivityPanel(data.productivity || {});
+    renderEmployeeAttendancePanel(data.my_attendance || null);
     initEmployeeDashboardInteractions();
     loadEmployeeWorkflowLists();
     icons();
@@ -6086,6 +6105,15 @@ if (otherInput) {
     return greeting + ', ' + displayName;
   }
 
+  function managerAttendanceHeaderBtnHtml() {
+    if (!crmCanAction('attendance', 'view')) return '';
+    var label = crmCanAction('attendance', 'edit') ? 'Manage Attendance' : 'View Attendance';
+    return '<button type="button" class="mgr-attendance-header-btn" data-open-modal="manage-attendance" title="' + escapeHtml(label) + '">' +
+      '<i data-lucide="clipboard-check" class="h-3.5 w-3.5" aria-hidden="true"></i>' +
+      '<span class="mgr-attendance-header-btn__label">' + escapeHtml(label) + '</span>' +
+    '</button>';
+  }
+
   function managerDashboardFiltersHtml() {
     if (isEmployeeUser()) return '';
     var dateOptions = [
@@ -6098,6 +6126,7 @@ if (otherInput) {
     ];
     return '<div class="mgr-top-filters" id="mgr-employee-filter">' +
       '<div class="mgr-dash-filters__controls">' +
+        managerAttendanceHeaderBtnHtml() +
         '<div class="mgr-employee-combobox mgr-filter-sm" id="mgr-employee-combobox">' +
           '<div class="mgr-employee-combobox__control">' +
             '<button type="button" class="mgr-employee-combobox__trigger" id="mgr-employee-trigger" aria-haspopup="listbox" aria-expanded="false">' +
@@ -6150,6 +6179,329 @@ if (otherInput) {
     '</div>';
   }
 
+  var attendanceUiState = {
+    date: '',
+    page: 1,
+    search: '',
+    perPage: 25,
+    loading: false,
+    items: [],
+    summary: null,
+    selected: {},
+    searchTimer: null,
+    bound: false,
+  };
+
+  function attendanceTodayIso() {
+    var d = new Date();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return d.getFullYear() + '-' + m + '-' + day;
+  }
+
+  function attendanceStatusClass(status) {
+    if (status === 'present') return 'is-present';
+    if (status === 'absent') return 'is-absent';
+    if (status === 'half_day') return 'is-half-day';
+    return '';
+  }
+
+  function attendanceSummaryStripHtml(summary) {
+    summary = summary || {};
+    return '<span class="attendance-chip attendance-chip--neutral">Employees <strong>' + Number(summary.total || 0) + '</strong></span>' +
+      '<span class="attendance-chip attendance-chip--present">Present <strong>' + Number(summary.present || 0) + '</strong></span>' +
+      '<span class="attendance-chip attendance-chip--half-day">Half Day <strong>' + Number(summary.half_day || 0) + '</strong></span>' +
+      '<span class="attendance-chip attendance-chip--absent">Absent <strong>' + Number(summary.absent || 0) + '</strong></span>' +
+      '<span class="attendance-chip attendance-chip--neutral">Not Marked <strong>' + Number(summary.not_marked || 0) + '</strong></span>';
+  }
+
+  function renderManagerAttendancePanel(summary) {
+    var panel = document.getElementById('mgr-attendance-panel');
+    if (!panel) return;
+    if (!crmCanAction('attendance', 'view')) {
+      panel.classList.add('hidden');
+      panel.innerHTML = '';
+      return;
+    }
+    panel.classList.remove('hidden');
+    var dateLabel = (summary && summary.date) ? summary.date : attendanceTodayIso();
+    panel.innerHTML =
+      '<div class="mgr-panel-head">' +
+        '<div><h3 class="mgr-panel-title"><i data-lucide="clipboard-check" class="h-5 w-5 text-brand"></i> Today\'s Attendance</h3>' +
+        '<p class="mgr-panel-subtitle">' + escapeHtml(dateLabel) + '</p></div>' +
+      '</div>' +
+      (summary
+        ? '<div class="attendance-summary-strip">' + attendanceSummaryStripHtml(summary) + '</div>'
+        : '<p class="text-sm text-slate-500">Attendance summary is unavailable right now.</p>');
+    icons();
+  }
+
+  function renderEmployeeAttendancePanel(myAttendance) {
+    var panel = document.getElementById('emp-attendance-panel');
+    if (!panel) return;
+    myAttendance = myAttendance || {};
+    var code = myAttendance.status_code || 'Not Marked';
+    var label = myAttendance.status_label || 'Not Marked';
+    var dateLabel = myAttendance.date || attendanceTodayIso();
+    var statusClass = attendanceStatusClass(myAttendance.status);
+    panel.innerHTML =
+      '<div class="mgr-panel-head">' +
+        '<div><h3 class="mgr-panel-title"><i data-lucide="clipboard-check" class="h-5 w-5 text-brand"></i> My Attendance</h3>' +
+        '<p class="mgr-panel-subtitle">Read-only status for today</p></div>' +
+      '</div>' +
+      '<div class="attendance-summary-strip">' +
+        '<span class="attendance-chip attendance-chip--neutral">Date <strong>' + escapeHtml(dateLabel) + '</strong></span>' +
+        '<span class="attendance-status-pill ' + statusClass + '" title="' + escapeHtml(label) + '">' + escapeHtml(code) + '</span>' +
+        '<span class="attendance-chip attendance-chip--neutral">' + escapeHtml(label) + '</span>' +
+      '</div>';
+  }
+
+  function syncAttendanceSummaryToDashboard(summary) {
+    if (!summary) return;
+    if (!window.dashboardMetrics) window.dashboardMetrics = {};
+    window.dashboardMetrics.attendance_summary = summary;
+    renderManagerAttendancePanel(summary);
+  }
+
+  function openAttendanceModal() {
+    if (!crmCanAction('attendance', 'view')) {
+      toast('You do not have permission to view attendance.', 'error');
+      return;
+    }
+    attendanceUiState.date = attendanceUiState.date || attendanceTodayIso();
+    attendanceUiState.page = 1;
+    attendanceUiState.search = '';
+    attendanceUiState.selected = {};
+    bindAttendanceModalControls();
+    var dateInput = document.getElementById('attendance-date-input');
+    var searchInput = document.getElementById('attendance-search-input');
+    if (dateInput) {
+      dateInput.value = attendanceUiState.date;
+      dateInput.max = attendanceTodayIso();
+    }
+    if (searchInput) searchInput.value = '';
+    loadAttendanceList();
+  }
+
+  function bindAttendanceModalControls() {
+    if (attendanceUiState.bound) return;
+    attendanceUiState.bound = true;
+    var modal = document.getElementById('modal-manage-attendance');
+    if (!modal) return;
+
+    var dateInput = document.getElementById('attendance-date-input');
+    var searchInput = document.getElementById('attendance-search-input');
+    var selectAll = document.getElementById('attendance-select-all');
+
+    if (dateInput) {
+      dateInput.addEventListener('change', function () {
+        attendanceUiState.date = dateInput.value || attendanceTodayIso();
+        attendanceUiState.page = 1;
+        attendanceUiState.selected = {};
+        loadAttendanceList();
+      });
+    }
+    if (searchInput) {
+      searchInput.addEventListener('input', function () {
+        clearTimeout(attendanceUiState.searchTimer);
+        attendanceUiState.searchTimer = setTimeout(function () {
+          attendanceUiState.search = (searchInput.value || '').trim();
+          attendanceUiState.page = 1;
+          loadAttendanceList();
+        }, 300);
+      });
+    }
+    if (selectAll) {
+      selectAll.addEventListener('change', function () {
+        var checked = !!selectAll.checked;
+        attendanceUiState.items.forEach(function (item) {
+          if (checked) attendanceUiState.selected[item.employee_id] = true;
+          else delete attendanceUiState.selected[item.employee_id];
+        });
+        renderAttendanceTableBody();
+      });
+    }
+
+    modal.addEventListener('click', function (e) {
+      var markBtn = e.target.closest('[data-attendance-mark]');
+      if (markBtn) {
+        e.preventDefault();
+        markAttendanceForEmployee(
+          parseInt(markBtn.getAttribute('data-employee-id'), 10),
+          markBtn.getAttribute('data-attendance-mark')
+        );
+        return;
+      }
+      var pageBtn = e.target.closest('[data-attendance-page]');
+      if (pageBtn) {
+        e.preventDefault();
+        attendanceUiState.page = parseInt(pageBtn.getAttribute('data-attendance-page'), 10) || 1;
+        loadAttendanceList();
+        return;
+      }
+      var rowCheck = e.target.closest('[data-attendance-select]');
+      if (rowCheck) {
+        var empId = parseInt(rowCheck.getAttribute('data-attendance-select'), 10);
+        if (rowCheck.checked) attendanceUiState.selected[empId] = true;
+        else delete attendanceUiState.selected[empId];
+      }
+    });
+  }
+
+  function loadAttendanceList() {
+    var tbody = document.getElementById('attendance-table-body');
+    var summaryEl = document.getElementById('attendance-modal-summary');
+    var paginationEl = document.getElementById('attendance-pagination');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="text-center text-slate-500 py-6">Loading attendance…</td></tr>';
+    if (summaryEl) summaryEl.innerHTML = '<span class="attendance-chip attendance-chip--neutral">Loading…</span>';
+    if (paginationEl) {
+      paginationEl.innerHTML = '';
+      paginationEl.hidden = true;
+    }
+    attendanceUiState.loading = true;
+
+    var params = new URLSearchParams({
+      date: attendanceUiState.date || attendanceTodayIso(),
+      page: String(attendanceUiState.page || 1),
+      per_page: String(attendanceUiState.perPage || 25),
+    });
+    if (attendanceUiState.search) params.set('search', attendanceUiState.search);
+
+    return apiFetch('/attendance?' + params.toString())
+      .then(function (body) {
+        var data = body.data || {};
+        attendanceUiState.items = data.items || [];
+        attendanceUiState.summary = data.summary || null;
+        attendanceUiState.loading = false;
+        if (summaryEl) summaryEl.innerHTML = attendanceSummaryStripHtml(attendanceUiState.summary);
+        syncAttendanceSummaryToDashboard(attendanceUiState.summary);
+        renderAttendanceTableBody();
+        renderAttendancePagination(data.pagination || {});
+      })
+      .catch(function (err) {
+        attendanceUiState.loading = false;
+        attendanceUiState.items = [];
+        if (tbody) {
+          tbody.innerHTML = '<tr><td colspan="4" class="text-center text-rose-600 py-6">' +
+            escapeHtml(err.message || 'Unable to load attendance.') + '</td></tr>';
+        }
+        if (summaryEl) summaryEl.innerHTML = '<span class="attendance-chip attendance-chip--absent">Failed to load</span>';
+        toast(err.message || 'Unable to load attendance.', 'error');
+      });
+  }
+
+  function renderAttendanceTableBody() {
+    var tbody = document.getElementById('attendance-table-body');
+    var selectAll = document.getElementById('attendance-select-all');
+    if (!tbody) return;
+    var canEdit = crmCanAction('attendance', 'edit');
+    if (!attendanceUiState.items.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="text-center text-slate-500 py-6">No employees found for this date.</td></tr>';
+      if (selectAll) selectAll.checked = false;
+      return;
+    }
+    tbody.innerHTML = attendanceUiState.items.map(function (item) {
+      var status = item.status || '';
+      var statusLabel = item.status_label || 'Not Marked';
+      var checked = attendanceUiState.selected[item.employee_id] ? ' checked' : '';
+      var empName = item.name || '—';
+      var metaParts = [];
+      if (item.role) metaParts.push(String(item.role));
+      if (item.city) metaParts.push(String(item.city));
+      var metaHtml = metaParts.length
+        ? '<div class="attendance-employee-meta">' + escapeHtml(metaParts.join(' · ')) + '</div>'
+        : '';
+      var markHtml = canEdit
+        ? '<div class="attendance-mark-group" role="group" aria-label="Mark attendance for ' + escapeHtml(empName) + '">' +
+            '<button type="button" class="attendance-mark-btn is-present' + (status === 'present' ? ' is-selected' : '') + '" data-attendance-mark="present" data-employee-id="' + item.employee_id + '" title="Present" aria-label="Mark ' + escapeHtml(empName) + ' Present" aria-pressed="' + (status === 'present' ? 'true' : 'false') + '">P</button>' +
+            '<button type="button" class="attendance-mark-btn is-half-day' + (status === 'half_day' ? ' is-selected' : '') + '" data-attendance-mark="half_day" data-employee-id="' + item.employee_id + '" title="Half Day" aria-label="Mark ' + escapeHtml(empName) + ' Half Day" aria-pressed="' + (status === 'half_day' ? 'true' : 'false') + '">H</button>' +
+            '<button type="button" class="attendance-mark-btn is-absent' + (status === 'absent' ? ' is-selected' : '') + '" data-attendance-mark="absent" data-employee-id="' + item.employee_id + '" title="Absent" aria-label="Mark ' + escapeHtml(empName) + ' Absent" aria-pressed="' + (status === 'absent' ? 'true' : 'false') + '">A</button>' +
+          '</div>'
+        : '<span class="attendance-employee-meta">View only</span>';
+      return '<tr>' +
+        '<td class="attendance-col-check"><input type="checkbox" data-attendance-select="' + item.employee_id + '"' + checked + (canEdit ? '' : ' disabled') + ' aria-label="Select ' + escapeHtml(empName) + '" /></td>' +
+        '<td><div class="attendance-employee-name">' + escapeHtml(empName) + '</div>' + metaHtml + '</td>' +
+        '<td class="attendance-col-status"><span class="attendance-status-pill ' + attendanceStatusClass(status) + '">' + escapeHtml(statusLabel) + '</span></td>' +
+        '<td class="attendance-col-mark">' + markHtml + '</td>' +
+      '</tr>';
+    }).join('');
+    if (selectAll) {
+      var allSelected = attendanceUiState.items.every(function (item) {
+        return !!attendanceUiState.selected[item.employee_id];
+      });
+      selectAll.checked = allSelected && attendanceUiState.items.length > 0;
+      selectAll.disabled = !canEdit;
+    }
+  }
+
+  function renderAttendancePagination(pagination) {
+    var el = document.getElementById('attendance-pagination');
+    if (!el) return;
+    var page = Number(pagination.page || 1);
+    var last = Number(pagination.last_page || 1);
+    if (last <= 1) {
+      el.innerHTML = '';
+      el.hidden = true;
+      return;
+    }
+    el.hidden = false;
+    el.innerHTML =
+      '<button type="button" class="btn-secondary" data-attendance-page="' + Math.max(1, page - 1) + '"' + (page <= 1 ? ' disabled' : '') + '>Prev</button>' +
+      '<span class="text-sm text-slate-600">Page ' + page + ' of ' + last + '</span>' +
+      '<button type="button" class="btn-secondary" data-attendance-page="' + Math.min(last, page + 1) + '"' + (page >= last ? ' disabled' : '') + '>Next</button>';
+  }
+
+  function markAttendanceForEmployee(employeeId, status) {
+    if (!crmCanAction('attendance', 'edit')) {
+      toast('You do not have permission to mark attendance.', 'error');
+      return;
+    }
+    if (!employeeId || !status) return;
+    apiFetch('/attendance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        employee_id: employeeId,
+        status: status,
+        date: attendanceUiState.date || attendanceTodayIso(),
+      }),
+    }).then(function () {
+      toast('Attendance saved.', 'success');
+      return loadAttendanceList();
+    }).catch(function (err) {
+      toast(err.message || 'Unable to save attendance.', 'error');
+    });
+  }
+
+  function bulkMarkAttendance(status) {
+    if (!crmCanAction('attendance', 'edit')) {
+      toast('You do not have permission to mark attendance.', 'error');
+      return;
+    }
+    var ids = Object.keys(attendanceUiState.selected).map(function (id) { return parseInt(id, 10); }).filter(Boolean);
+    if (!ids.length) {
+      toast('Select at least one employee.', 'info');
+      return;
+    }
+    apiFetch('/attendance/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        employee_ids: ids,
+        status: status,
+        date: attendanceUiState.date || attendanceTodayIso(),
+      }),
+    }).then(function (body) {
+      var updated = body.data && body.data.updated != null ? body.data.updated : ids.length;
+      toast('Updated attendance for ' + updated + ' employee(s).', 'success');
+      if (body.data && body.data.summary) syncAttendanceSummaryToDashboard(body.data.summary);
+      attendanceUiState.selected = {};
+      return loadAttendanceList();
+    }).catch(function (err) {
+      toast(err.message || 'Unable to save attendance.', 'error');
+    });
+  }
+
   function paintManagerDashboard(m) {
     var crmUser = window.__CRM_USER__ || {};
     var displayName = crmUser.name || 'User';
@@ -6191,6 +6543,7 @@ if (otherInput) {
     }
     renderDashboardFilterChips(m);
     renderDashboardQuickActions();
+    renderManagerAttendancePanel((window.dashboardMetrics && window.dashboardMetrics.attendance_summary) || null);
     renderSmsDashboardWidgets(m);
     renderDuplicateMonitoringPanel(m.duplicate_monitoring || metrics.duplicate_monitoring);
     renderDashboardCharts(metrics.reports);
@@ -8391,7 +8744,7 @@ if (otherInput) {
         '<td><span class="badge-success">' + escapeHtml(e.status || '—') + '</span></td>' +
         renderEmployeeActionsCell(e) +
       '</tr>';
-    }).join('') : '<tr><td colspan="10" class="text-center text-slate-500 p-4">No employees yet.</td></tr>';
+    }).join('') : '<tr><td colspan="10" class="text-center text-slate-500 p-4">No employees found. Add an employee to get started.</td></tr>';
     bindCrmRowActions(el);
     syncInboxChecks('employees-data-table');
   }
@@ -8437,6 +8790,10 @@ if (otherInput) {
     form.querySelector('[name="email_id"]').value = employee.email_id || '';
     form.querySelector('[name="mobile_no"]').value = employee.mobile_no || '';
     form.querySelector('[name="date_of_joining"]').value = (employee.date_of_joining || '').slice(0, 10);
+    var statusField = form.querySelector('[name="status"]');
+    if (statusField) statusField.value = employee.status || 'Active';
+    var editRoleField = document.getElementById('employee-edit-crm-role');
+    if (editRoleField && employee.crm_role) editRoleField.value = employee.crm_role;
     fillEmployeeDemoWorkTypeFields(employee);
     configureEmployeeModalMode('edit', employee);
     if (window.CA_STATE_CITY) {
@@ -10876,37 +11233,20 @@ if (otherInput) {
       d.setHours(hour, minute, 0, 0);
       return d.toISOString();
     }
-    var demos = [
-      { activity_type: 'Call Completed', activity_label: 'Call Completed', firm_name: 'Sharma & Associates', ca_name: 'R. Sharma', employee_name: 'Rahul Sharma', status: 'Completed', notes: 'Customer interested in GST module demo.', occurred_at: at(0, 10, 30) },
-      { activity_type: 'Demo Scheduled', activity_label: 'Demo Scheduled', firm_name: 'ABC & Co', ca_name: 'Neha Gupta', employee_name: 'Neha Gupta', status: 'Scheduled', notes: 'Demo booked for GST module.', occurred_at: at(0, 9, 15) },
-      { activity_type: 'WhatsApp Sent', activity_label: 'WhatsApp Sent', firm_name: 'Patel Tax Consultants', ca_name: 'V. Patel', employee_name: 'Amit Verma', status: 'Sent', notes: 'Shared product brochure and pricing sheet.', occurred_at: at(0, 11, 45) },
-      { activity_type: 'Follow-up Added', activity_label: 'Follow-up Added', firm_name: 'Kumar & Sons CA', ca_name: 'S. Kumar', employee_name: 'Priya Mehta', status: 'Open', notes: 'Follow-up set for pricing discussion.', occurred_at: at(0, 14, 20) },
-      { activity_type: 'Email Sent', activity_label: 'Email Sent', firm_name: 'Singh Financial Services', ca_name: 'A. Singh', employee_name: 'Rahul Sharma', status: 'Delivered', notes: 'Sent demo confirmation email.', occurred_at: at(0, 16, 5) },
-      { activity_type: 'Customer Requested Callback', activity_label: 'Customer Requested Callback', firm_name: 'Reddy Associates', ca_name: 'K. Reddy', employee_name: 'Neha Gupta', status: 'Pending', notes: 'Requested callback after 4 PM today.', occurred_at: at(0, 15, 10) },
-      { activity_type: 'Demo Rescheduled', activity_label: 'Demo Rescheduled', firm_name: 'Mehta & Co', ca_name: 'R. Mehta', employee_name: 'Amit Verma', status: 'Rescheduled', notes: 'Moved demo from morning to afternoon slot.', occurred_at: at(1, 11, 0) },
-      { activity_type: 'Call Completed', activity_label: 'Call Completed', firm_name: 'Joshi Tax Advisors', ca_name: 'P. Joshi', employee_name: 'Priya Mehta', status: 'Completed', notes: 'Discussed annual compliance package.', occurred_at: at(1, 10, 0) },
-      { activity_type: 'Lead Assigned', activity_label: 'Lead Assigned', firm_name: 'Bansal & Partners', ca_name: 'M. Bansal', employee_name: 'Rahul Sharma', status: 'Assigned', notes: 'Lead assigned from inbound enquiry.', occurred_at: at(1, 9, 30) },
-      { activity_type: 'Status Changed', activity_label: 'Status Changed', firm_name: 'Iyer Consultants', ca_name: 'L. Iyer', employee_name: 'Neha Gupta', status: 'Negotiation', notes: 'Moved from Interested to Negotiation.', occurred_at: at(1, 17, 45) },
-      { activity_type: 'Demo Completed', activity_label: 'Demo Completed', firm_name: 'Gupta & Associates', ca_name: 'S. Gupta', employee_name: 'Amit Verma', status: 'Completed', notes: 'Demo completed successfully. Positive feedback.', occurred_at: at(2, 15, 30) },
-      { activity_type: 'Remarks Updated', activity_label: 'Remarks Updated', firm_name: 'Nair Tax Solutions', ca_name: 'D. Nair', employee_name: 'Priya Mehta', status: 'Updated', notes: 'Added notes on team size and current software.', occurred_at: at(2, 13, 15) },
-      { activity_type: 'SMS Sent', activity_label: 'SMS Sent', firm_name: 'Desai & Co', ca_name: 'H. Desai', employee_name: 'Rahul Sharma', status: 'Sent', notes: 'Reminder SMS for tomorrow\'s demo.', occurred_at: at(2, 18, 0) },
-      { activity_type: 'Follow-up Added', activity_label: 'Follow-up Added', firm_name: 'Chopra Associates', ca_name: 'N. Chopra', employee_name: 'Neha Gupta', status: 'Open', notes: 'Scheduled follow-up after proposal review.', occurred_at: at(3, 10, 45) },
-      { activity_type: 'Call Completed', activity_label: 'Call Completed', firm_name: 'Malhotra CA Firm', ca_name: 'V. Malhotra', employee_name: 'Amit Verma', status: 'No Answer', notes: 'No answer — will retry tomorrow.', occurred_at: at(3, 11, 30) },
-      { activity_type: 'Demo Cancelled', activity_label: 'Demo Cancelled', firm_name: 'Rao & Associates', ca_name: 'T. Rao', employee_name: 'Priya Mehta', status: 'Cancelled', notes: 'Client cancelled due to audit season workload.', occurred_at: at(4, 14, 0) },
-      { activity_type: 'Email Sent', activity_label: 'Email Sent', firm_name: 'Kapoor Tax Services', ca_name: 'R. Kapoor', employee_name: 'Rahul Sharma', status: 'Delivered', notes: 'Sent revised quotation with 10% discount.', occurred_at: at(4, 16, 20) },
-      { activity_type: 'WhatsApp Sent', activity_label: 'WhatsApp Sent', firm_name: 'Verma Consultants', ca_name: 'A. Verma', employee_name: 'Neha Gupta', status: 'Read', notes: 'Shared meeting link for product walkthrough.', occurred_at: at(5, 12, 10) },
-      { activity_type: 'Demo Scheduled', activity_label: 'Demo Scheduled', firm_name: 'Pillai & Co', ca_name: 'S. Pillai', employee_name: 'Amit Verma', status: 'Scheduled', notes: 'Demo scheduled for billing module.', occurred_at: at(6, 10, 0) },
-      { activity_type: 'Status Changed', activity_label: 'Status Changed', firm_name: 'Saxena Associates', ca_name: 'P. Saxena', employee_name: 'Priya Mehta', status: 'Demo Scheduled', notes: 'Pipeline stage updated after qualification call.', occurred_at: at(7, 9, 0) },
-      { activity_type: 'Call Completed', activity_label: 'Call Completed', firm_name: 'Bhatt Tax Advisors', ca_name: 'G. Bhatt', employee_name: 'Rahul Sharma', status: 'Interested', notes: 'Interested in multi-user license.', occurred_at: at(8, 15, 45) },
-      { activity_type: 'Follow-up Completed', activity_label: 'Follow-up Completed', firm_name: 'Trivedi & Sons', ca_name: 'M. Trivedi', employee_name: 'Neha Gupta', status: 'Completed', notes: 'Closed follow-up after successful onboarding call.', occurred_at: at(9, 11, 20) },
-      { activity_type: 'Lead Assigned', activity_label: 'Lead Assigned', firm_name: 'Agarwal CA Practice', ca_name: 'R. Agarwal', employee_name: 'Amit Verma', status: 'Assigned', notes: 'Reassigned from unassigned queue.', occurred_at: at(10, 10, 30) },
-      { activity_type: 'Demo Completed', activity_label: 'Demo Completed', firm_name: 'Mishra & Partners', ca_name: 'K. Mishra', employee_name: 'Priya Mehta', status: 'Completed', notes: 'Walkthrough completed. Awaiting management approval.', occurred_at: at(12, 14, 30) },
-      { activity_type: 'Remarks Updated', activity_label: 'Remarks Updated', firm_name: 'Dubey Consultants', ca_name: 'S. Dubey', employee_name: 'Rahul Sharma', status: 'Updated', notes: 'Updated objection: price sensitivity noted.', occurred_at: at(14, 16, 0) },
-      { activity_type: 'Email Sent', activity_label: 'Email Sent', firm_name: 'Sethi & Associates', ca_name: 'A. Sethi', employee_name: 'Neha Gupta', status: 'Delivered', notes: 'Case study email sent for reference.', occurred_at: at(18, 10, 15) },
-      { activity_type: 'Customer Requested Callback', activity_label: 'Customer Requested Callback', firm_name: 'Khanna Tax Hub', ca_name: 'V. Khanna', employee_name: 'Amit Verma', status: 'Pending', notes: 'Asked to call back next Monday morning.', occurred_at: at(20, 9, 45) },
-      { activity_type: 'Call Completed', activity_label: 'Call Completed', firm_name: 'Bhardwaj & Co', ca_name: 'D. Bhardwaj', employee_name: 'Priya Mehta', status: 'Not Interested', notes: 'Using competitor product. Not exploring switch now.', occurred_at: at(25, 11, 0) },
-      { activity_type: 'Demo Scheduled', activity_label: 'Demo Scheduled', firm_name: 'Chawla Associates', ca_name: 'N. Chawla', employee_name: 'Rahul Sharma', status: 'Scheduled', notes: 'Initial discovery demo booked.', occurred_at: at(28, 14, 0) },
-    ];
+    var types = ['Call Completed', 'Demo Scheduled', 'WhatsApp Sent', 'Follow-up Added', 'Email Sent'];
+    var demos = [];
+    for (var i = 0; i < 12; i++) {
+      demos.push({
+        activity_type: types[i % types.length],
+        activity_label: types[i % types.length],
+        firm_name: 'Demo Firm ' + ((i % 5) + 1),
+        ca_name: 'Demo CA ' + ((i % 5) + 1),
+        employee_name: 'Demo Employee ' + ((i % 3) + 1),
+        status: 'Completed',
+        notes: 'Offline demo activity row ' + (i + 1),
+        occurred_at: at(i, 9 + (i % 6), (i * 7) % 60),
+      });
+    }
     return demos.map(function (item, idx) {
       var occurred = new Date(item.occurred_at);
       return Object.assign({ activity_id: 'demo-' + (idx + 1) }, item, {
@@ -15868,6 +16208,13 @@ if (otherInput) {
           return;
         }
 
+        if (modalKey === 'manage-attendance') {
+          openExclusiveCrmModal(modal);
+          icons();
+          openAttendanceModal();
+          return;
+        }
+
         openExclusiveCrmModal(modal);
         icons();
 
@@ -16161,7 +16508,9 @@ if (otherInput) {
       } else {
         fd.delete('password');
         fd.delete('password_confirmation');
-        fd.delete('crm_role');
+        if (!document.getElementById('employee-edit-crm-role-wrap') || document.getElementById('employee-edit-crm-role-wrap').classList.contains('hidden')) {
+          fd.delete('crm_role');
+        }
       }
       var url = editingId ? '/employees/' + editingId : '/employees';
       var options = { method: 'POST', body: fd };
@@ -16178,7 +16527,7 @@ if (otherInput) {
           if (window.CA_STATE_CITY) {
             window.CA_STATE_CITY.resetFormLocations(e.target);
           }
-          realEmployeesLoaded = false;
+          invalidateEmployeeCaches();
           refreshAll();
           toast(editingId ? 'Employee updated successfully' : 'Employee saved successfully', 'success');
         })

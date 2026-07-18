@@ -2,6 +2,8 @@
 
 namespace Tests\Unit;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\User;
 use App\Services\Activity\ActivityLogService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -14,7 +16,7 @@ class ActivityLogPerformerTest extends TestCase
 
     public function test_resolve_performer_uses_authenticated_user_name(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->first();
+        $admin = CrmTestAccounts::admin();
         $this->assertNotNull($admin);
 
         Auth::login($admin);
@@ -31,7 +33,7 @@ class ActivityLogPerformerTest extends TestCase
 
     public function test_log_writes_authenticated_user_as_performed_by(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->first();
+        $admin = CrmTestAccounts::admin();
         $this->assertNotNull($admin);
         Auth::login($admin);
 

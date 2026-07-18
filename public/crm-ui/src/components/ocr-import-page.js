@@ -728,7 +728,17 @@
           return renderFirmCard(firm, can);
         }).join('') + '</div>';
       } else if (parseStatus === 'failed') {
-        html += '<p class="ocr-panel__error mt-3">Structured parsing failed. You can retry structuring or review the raw text.</p>';
+        var parseErr = item.parse_error
+          || (item.structured_data && item.structured_data.parsed && item.structured_data.parsed.error)
+          || null;
+        var errMsg = (parseErr && parseErr.message)
+          ? String(parseErr.message)
+          : 'Structured parsing failed. You can retry structuring or review the raw text.';
+        var errCode = (parseErr && parseErr.code) ? String(parseErr.code) : '';
+        html += '<div class="ocr-panel__error mt-3">' +
+          '<p>' + esc(errMsg) + '</p>' +
+          (errCode ? '<p class="text-caption mt-1">Error code: ' + esc(errCode) + '</p>' : '') +
+        '</div>';
       } else {
         html += '<p class="text-caption text-slate-500 mt-3">No firms could be detected automatically. Review the optional raw text below.</p>';
       }

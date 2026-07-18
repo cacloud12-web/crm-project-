@@ -103,6 +103,7 @@ class RolePermissionsController extends Controller
         $q = trim((string) $request->query('q', ''));
         $query = User::query()
             ->whereIn('crm_role', ['employee', 'manager', 'admin'])
+            ->where('is_active', true)
             ->orderBy('name')
             ->limit(50);
 

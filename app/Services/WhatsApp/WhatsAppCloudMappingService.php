@@ -584,14 +584,16 @@ class WhatsAppCloudMappingService
     {
         $fallbacks = (array) config('whatsapp_cloud.meta_parameter_fallbacks', []);
 
+        $preview = config('crm_defaults.template_preview', []);
+
         return [
-            '{{name}}' => 'Rajesh Kumar',
-            '{{client_name}}' => 'Rajesh Kumar',
-            '{{CLIENT_NAME}}' => 'Rajesh Kumar',
-            '{{firm_name}}' => 'Test Firm',
-            '{{mobile}}' => '9876543210',
-            '{{city}}' => 'Mumbai',
-            '{{state}}' => 'Maharashtra',
+            '{{name}}' => $preview['ca_name'] ?? 'Sample Client',
+            '{{client_name}}' => $preview['ca_name'] ?? 'Sample Client',
+            '{{CLIENT_NAME}}' => $preview['ca_name'] ?? 'Sample Client',
+            '{{firm_name}}' => $preview['firm_name'] ?? 'Sample Firm',
+            '{{mobile}}' => '9000000000',
+            '{{city}}' => $preview['city'] ?? 'Sample City',
+            '{{state}}' => $preview['state'] ?? 'Sample State',
             '{{demo_date}}' => now()->format('d M Y'),
             '{{demo_time}}' => now()->format('h:i A'),
             '{{employee_name}}' => 'CRM Test',
@@ -605,7 +607,7 @@ class WhatsAppCloudMappingService
             '{{EXPENSE_ID}}' => (string) ($fallbacks['expense_id'] ?? 'EXP-2026-0001'),
             '{{SERVICE_NAME}}' => (string) ($fallbacks['service_name'] ?? 'GST Return Filing'),
             '{{INVOICE_DATE}}' => (string) ($fallbacks['invoice_date'] ?? '10-July-2026'),
-            '{{1}}' => 'Rajesh Kumar',
+            '{{1}}' => $preview['ca_name'] ?? 'Sample Client',
             '{{2}}' => 'GST Return',
             '{{3}}' => '24-June-2025',
             '{{4}}' => '10,150',

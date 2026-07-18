@@ -2,19 +2,23 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\Employee;
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Hash;
+use Tests\Concerns\CreatesCrmUsers;
 use Tests\TestCase;
 
 class EmployeeCredentialTest extends TestCase
 {
+    use CreatesCrmUsers;
     use DatabaseTransactions;
 
     private function actingAsAdmin(): User
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         return $admin;
@@ -22,7 +26,7 @@ class EmployeeCredentialTest extends TestCase
 
     private function actingAsEmployeeUser(): User
     {
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
         $this->actingAs($employeeUser);
 
         return $employeeUser;
@@ -124,7 +128,7 @@ class EmployeeCredentialTest extends TestCase
     {
         $this->actingAsEmployeeUser();
 
-        $target = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $target = CrmTestAccounts::employee();
 
         $this->postJson("/employees/{$target->employee_id}/reset-password", [
             'password' => 'BlockedPass1',
@@ -138,7 +142,7 @@ class EmployeeCredentialTest extends TestCase
         $newPassword = 'NewEmployeePass123';
 
         $this->postJson('/auth/change-password', [
-            'current_password' => 'password',
+            'current_password' => $this->testPassword(),
             'password' => $newPassword,
             'password_confirmation' => $newPassword,
         ])->assertForbidden();
@@ -146,7 +150,7 @@ class EmployeeCredentialTest extends TestCase
 
     public function test_manager_cannot_assign_admin_crm_role(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
         $ts = (string) microtime(true);
 

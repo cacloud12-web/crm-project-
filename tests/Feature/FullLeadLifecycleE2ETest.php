@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\ActivityLog;
 use App\Models\AssignmentHistory;
 use App\Models\CaMaster;
@@ -39,7 +41,7 @@ class FullLeadLifecycleE2ETest extends TestCase
         $firm = 'Lifecycle Firm '.$suffix;
 
         // ── Super Admin imports a lead via CSV ─────────────────────────────
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $csv = "CA Name,Firm Name,Mobile No,Email\n"
@@ -78,9 +80,9 @@ class FullLeadLifecycleE2ETest extends TestCase
         $this->assertSame($mobile, (string) $lead->mobile_no);
 
         // ── Manager assigns to Present employee ────────────────────────────
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
+        $employee = CrmTestAccounts::employee();
+        $employeeUser = CrmTestAccounts::employeeUser();
         $employeeUser->forceFill(['last_seen_at' => now(), 'is_active' => true])->save();
 
         $this->actingAs($manager);
@@ -224,7 +226,7 @@ class FullLeadLifecycleE2ETest extends TestCase
             'status' => 'New',
         ]);
 
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
         $this->actingAs($employeeUser);
 
         $list = $this->getJson('/ca-masters?per_page=100&search='.urlencode('Orphan Firm '.$suffix));

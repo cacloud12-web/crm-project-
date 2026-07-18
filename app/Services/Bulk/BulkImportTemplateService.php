@@ -23,17 +23,17 @@ class BulkImportTemplateService
     ];
 
     public const SAMPLE_ROW = [
-        'R. Sharma',
-        'Sharma & Associates',
-        '9876543210',
-        'ca@sharma.com',
-        '27AABCS1234L1Z5',
-        'Maharashtra',
-        'Mumbai',
+        'Sample CA',
+        'Sample Firm Pvt Ltd',
+        '9000000000',
+        'sample@example.com',
+        '00AAAAA0000A1Z5',
+        'Sample State',
+        'Sample City',
         'Website',
         '12',
         'Tally',
-        'https://sharma.in',
+        'https://example.com',
         '5',
         'Hot',
     ];

@@ -15,6 +15,12 @@ class CrmDemoCleanupCommand extends Command
 
     public function handle(DemoDataCleanupService $cleanupService): int
     {
+        if (app()->environment('production')) {
+            $this->error('crm:demo-cleanup is blocked in production.');
+
+            return self::FAILURE;
+        }
+
         if (! $this->option('force')) {
             $this->error('This command deletes QA/test transactional data. Re-run with --force to continue.');
             $this->line('Master tables (states, cities, source_leads, team_size_masters, role_masters, users) are preserved.');

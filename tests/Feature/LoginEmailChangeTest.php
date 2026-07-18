@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Mail\CrmHtmlMail;
 use App\Models\EmailSetting;
 use App\Models\LoginEmailChangeRequest;
@@ -11,10 +13,12 @@ use App\Services\Email\EmailSmtpDispatchService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
+use Tests\Concerns\CreatesCrmUsers;
 use Tests\TestCase;
 
 class LoginEmailChangeTest extends TestCase
 {
+    use CreatesCrmUsers;
     use DatabaseTransactions;
 
     private LoginEmailChangeService $loginEmailChangeService;
@@ -32,7 +36,7 @@ class LoginEmailChangeTest extends TestCase
 
     private function superAdmin(): User
     {
-        return User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
+        return CrmTestAccounts::superAdmin();
     }
 
     private function actingAsSuperAdmin(): User
@@ -44,12 +48,12 @@ class LoginEmailChangeTest extends TestCase
     }
 
     /** @return array<string, string> */
-    private function changePayload(User $user, string $newEmail, string $password = 'password'): array
+    private function changePayload(User $user, string $newEmail, ?string $password = null): array
     {
         return [
             'new_email' => $newEmail,
             'new_email_confirmation' => $newEmail,
-            'current_password' => $password,
+            'current_password' => $password ?? $this->testPassword(),
             'current_email' => $user->email,
         ];
     }
@@ -201,9 +205,9 @@ class LoginEmailChangeTest extends TestCase
     public function test_non_super_admin_users_are_denied_access(): void
     {
         $deniedUsers = [
-            'admin@ca.local',
-            'manager@ca.local',
-            'employee@ca.local',
+            CrmTestAccounts::admin()->email,
+            CrmTestAccounts::manager()->email,
+            CrmTestAccounts::employeeUser()->email,
         ];
 
         foreach ($deniedUsers as $email) {
@@ -235,7 +239,7 @@ class LoginEmailChangeTest extends TestCase
             'blocked.'.uniqid().'@example.com',
             'blocked.'.uniqid().'@test.com',
             'blocked.'.uniqid().'@mailinator.com',
-            'blocked.'.uniqid().'@ca.local',
+            'blocked.'.uniqid().'@example.local',
         ];
 
         foreach ($blockedEmails as $blockedEmail) {
@@ -434,12 +438,13 @@ class LoginEmailChangeTest extends TestCase
     public function test_expired_verification_link_is_rejected(): void
     {
         $user = $this->superAdmin();
+        $originalEmail = (string) $user->email;
         $newEmail = $this->uniqueGmail('expired');
         $plainToken = Str::random(64);
 
         LoginEmailChangeRequest::query()->create([
             'user_id' => $user->id,
-            'old_email' => $user->email,
+            'old_email' => $originalEmail,
             'new_email' => $newEmail,
             'status' => LoginEmailChangeRequest::STATUS_PENDING,
             'token_hash' => $this->loginEmailChangeService->hashToken($plainToken),
@@ -458,7 +463,7 @@ class LoginEmailChangeTest extends TestCase
             'status' => LoginEmailChangeRequest::STATUS_EXPIRED,
         ]);
 
-        $this->assertSame('superadmin@ca.local', $user->fresh()->email);
+        $this->assertSame($originalEmail, $user->fresh()->email);
     }
 
     public function test_verify_updates_login_email_and_sends_completion_notifications(): void

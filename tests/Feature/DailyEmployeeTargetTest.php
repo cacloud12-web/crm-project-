@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CallLog;
 use App\Models\CaMaster;
 use App\Models\DailyEmployeeTarget;
@@ -16,22 +18,22 @@ class DailyEmployeeTargetTest extends TestCase
 
     private function adminUser(): User
     {
-        return User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        return CrmTestAccounts::admin();
     }
 
     private function managerUser(): User
     {
-        return User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        return CrmTestAccounts::manager();
     }
 
     private function employeeUser(): User
     {
-        return User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        return CrmTestAccounts::employeeUser();
     }
 
     private function employee(): Employee
     {
-        return Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        return CrmTestAccounts::employee();
     }
 
     public function test_admin_can_assign_daily_target_to_employee(): void

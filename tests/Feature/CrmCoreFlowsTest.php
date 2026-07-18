@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\City;
 use App\Models\Employee;
@@ -17,7 +19,7 @@ class CrmCoreFlowsTest extends TestCase
 
     private function actingAsAdmin(): User
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         return $admin;
@@ -188,7 +190,7 @@ class CrmCoreFlowsTest extends TestCase
             'status' => 'New',
         ]);
 
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->first();
+        $employee = CrmTestAccounts::employee();
         $this->assertNotNull($employee);
 
         $this->postJson('/lead-assignments', [
@@ -219,7 +221,7 @@ class CrmCoreFlowsTest extends TestCase
 
     public function test_employee_rbac_scopes_ca_master_list(): void
     {
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
         $this->actingAs($employeeUser);
 
         $response = $this->getJson('/ca-masters?per_page=50');

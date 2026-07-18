@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\ActivityLog;
 use App\Models\CaMaster;
 use App\Models\Employee;
@@ -19,7 +21,7 @@ class CrmSecurityEnhancementsTest extends TestCase
 
     public function test_bulk_import_rejects_empty_file(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $file = UploadedFile::fake()->create('empty.csv', 0, 'text/csv');
@@ -31,7 +33,7 @@ class CrmSecurityEnhancementsTest extends TestCase
 
     public function test_bulk_import_rejects_invalid_extension(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $file = UploadedFile::fake()->create('malware.exe', 100, 'application/octet-stream');
@@ -43,7 +45,7 @@ class CrmSecurityEnhancementsTest extends TestCase
 
     public function test_bulk_import_is_rate_limited(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         RateLimiter::clear('bulk-import:user:'.$admin->id);
@@ -69,7 +71,7 @@ class CrmSecurityEnhancementsTest extends TestCase
 
     public function test_follow_up_remarks_are_sanitized_on_store(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $lead = CaMaster::query()->firstOrFail();
@@ -87,7 +89,7 @@ class CrmSecurityEnhancementsTest extends TestCase
 
     public function test_manager_cannot_see_sms_api_key_in_settings(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
         $response = $this->getJson('/sms-settings');
@@ -104,7 +106,7 @@ class CrmSecurityEnhancementsTest extends TestCase
 
     public function test_employee_cannot_access_sms_settings(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
         $this->actingAs($employee);
 
         $this->getJson('/sms-settings')->assertForbidden();

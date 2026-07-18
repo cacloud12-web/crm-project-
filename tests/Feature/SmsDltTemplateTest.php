@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\Employee;
 use App\Models\LeadAssignmentEngine;
@@ -21,17 +23,17 @@ class SmsDltTemplateTest extends TestCase
 
     private function admin(): User
     {
-        return User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        return CrmTestAccounts::admin();
     }
 
     private function employee(): User
     {
-        return User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        return CrmTestAccounts::employeeUser();
     }
 
     private function assignLeadToEmployee(CaMaster $lead): void
     {
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employee();
         LeadAssignmentEngine::query()->updateOrCreate(
             ['ca_id' => $lead->ca_id, 'status' => 'Active'],
             ['employee_id' => $employee->employee_id, 'assigned_date' => now()->toDateString()],
@@ -41,8 +43,8 @@ class SmsDltTemplateTest extends TestCase
     private function updateLeadMobile(CaMaster $lead, string $mobile = '9876543210'): void
     {
         $lead->update([
-            'ca_name' => 'Rahul Sharma',
-            'firm_name' => 'Sharma Tax',
+            'ca_name' => 'Example CA',
+            'firm_name' => 'Example Firm',
             'mobile_no' => $mobile,
             'normalized_mobile' => $mobile,
         ]);
@@ -112,7 +114,7 @@ class SmsDltTemplateTest extends TestCase
         ]);
 
         $response->assertOk();
-        $response->assertJsonPath('data.preview', 'Hello Rahul Sharma, welcome to Sharma Tax.');
+        $response->assertJsonPath('data.preview', 'Hello Example CA, welcome to Example Firm.');
         $response->assertJsonPath('data.dlt_template_id', '1107161234567890123');
     }
 
@@ -159,7 +161,7 @@ class SmsDltTemplateTest extends TestCase
             'template_name' => $template->template_name,
             'dlt_template_id' => '1107161234567890123',
             'sms_status' => SmsLogStatus::SENT,
-            'message' => 'Hello Rahul Sharma, welcome to Sharma Tax.',
+            'message' => 'Hello Example CA, welcome to Example Firm.',
         ]);
 
         Http::assertSent(function ($request) {
@@ -167,7 +169,7 @@ class SmsDltTemplateTest extends TestCase
 
             return ($body['sender'] ?? null) === 'CACLOD'
                 && ($body['mobileno'] ?? null) === '9876543210'
-                && ($body['text'] ?? null) === 'Hello Rahul Sharma, welcome to Sharma Tax.'
+                && ($body['text'] ?? null) === 'Hello Example CA, welcome to Example Firm.'
                 && ($body['templateid'] ?? null) === '1107161234567890123';
         });
     }

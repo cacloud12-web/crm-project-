@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\Employee;
 use App\Models\EmployeeAttendance;
 use App\Models\User;
@@ -29,7 +31,7 @@ class EmployeeAttendanceTest extends TestCase
 
     private function actingAsAdmin(): User
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         return $admin;
@@ -37,7 +39,7 @@ class EmployeeAttendanceTest extends TestCase
 
     private function actingAsManager(): User
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
         return $manager;
@@ -45,7 +47,7 @@ class EmployeeAttendanceTest extends TestCase
 
     private function actingAsEmployee(): User
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
         $this->actingAs($employee);
 
         return $employee;
@@ -79,7 +81,7 @@ class EmployeeAttendanceTest extends TestCase
             ->assertOk()
             ->assertJsonStructure([
                 'data' => [
-                    'attendance_summary' => ['date', 'total', 'present', 'absent', 'not_marked'],
+                    'attendance_summary' => ['date', 'total', 'present', 'half_day', 'absent', 'not_marked'],
                 ],
             ]);
     }
@@ -92,7 +94,7 @@ class EmployeeAttendanceTest extends TestCase
             ->assertOk()
             ->assertJsonPath('success', true)
             ->assertJsonStructure([
-                'data' => ['date', 'total', 'present', 'absent', 'not_marked'],
+                'data' => ['date', 'total', 'present', 'half_day', 'absent', 'not_marked'],
             ]);
     }
 
@@ -215,11 +217,62 @@ class EmployeeAttendanceTest extends TestCase
         ])->assertStatus(422);
     }
 
+    public function test_admin_can_mark_half_day_attendance(): void
+    {
+        $this->actingAsAdmin();
+        $employee = $this->scopedTeamEmployee();
+        $today = now()->toDateString();
+
+        $this->postJson('/attendance', [
+            'employee_id' => $employee->employee_id,
+            'status' => 'half_day',
+            'date' => $today,
+        ])->assertOk()
+            ->assertJsonPath('data.status', 'half_day')
+            ->assertJsonPath('data.status_label', 'Half Day');
+
+        $summary = $this->getJson('/attendance/summary?date='.$today)->assertOk()->json('data');
+        $this->assertGreaterThanOrEqual(1, (int) $summary['half_day']);
+        $this->assertArrayHasKey('not_marked', $summary);
+    }
+
+    public function test_employee_dashboard_exposes_readonly_my_attendance(): void
+    {
+        $user = $this->actingAsEmployee();
+        $employee = Employee::query()->where('email_id', $user->email)->first()
+            ?? Employee::query()->where('user_id', $user->id)->first();
+
+        if (! $employee) {
+            $this->markTestSkipped('No employee profile linked for test employee');
+        }
+
+        $today = now()->toDateString();
+        EmployeeAttendance::query()
+            ->where('employee_id', $employee->employee_id)
+            ->whereDate('attendance_date', $today)
+            ->delete();
+
+        EmployeeAttendance::query()->create([
+            'employee_id' => $employee->employee_id,
+            'attendance_date' => $today,
+            'status' => 'present',
+            'marked_by' => CrmTestAccounts::admin()->id ?: 1,
+        ]);
+
+        $response = $this->getJson('/dashboard/employee')->assertOk();
+        $this->assertArrayNotHasKey('attendance_summary', $response->json('data') ?? []);
+        $response->assertJsonPath('data.my_attendance.date', $today)
+            ->assertJsonPath('data.my_attendance.status', 'present')
+            ->assertJsonPath('data.my_attendance.status_code', 'P')
+            ->assertJsonPath('data.my_attendance.status_label', 'Present');
+    }
+
     public function test_employee_dashboard_does_not_expose_attendance_management_summary(): void
     {
         $this->actingAsEmployee();
 
         $response = $this->getJson('/dashboard/employee')->assertOk();
         $this->assertArrayNotHasKey('attendance_summary', $response->json('data') ?? []);
+        $this->assertArrayHasKey('my_attendance', $response->json('data') ?? []);
     }
 }

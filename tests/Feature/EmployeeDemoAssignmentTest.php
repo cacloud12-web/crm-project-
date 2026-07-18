@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\City;
 use App\Models\Employee;
@@ -17,7 +19,7 @@ class EmployeeDemoAssignmentTest extends TestCase
 
     private function actingAsAdmin(): User
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         return $admin;
@@ -50,7 +52,7 @@ class EmployeeDemoAssignmentTest extends TestCase
             'password' => 'SecurePass123',
             'password_confirmation' => 'SecurePass123',
             'work_type' => 'demo_provider',
-            'demo_meeting_link' => 'https://meet.google.com/demo-emp',
+            'demo_meeting_link' => 'https://meet.example.com/demo-emp',
             'demo_min_team_size' => 1,
             'demo_max_team_size' => 25,
             'active_for_demo' => true,
@@ -70,7 +72,7 @@ class EmployeeDemoAssignmentTest extends TestCase
             'password' => 'SecurePass123',
             'password_confirmation' => 'SecurePass123',
             'work_type' => 'both',
-            'demo_meeting_link' => 'https://meet.google.com/both-emp',
+            'demo_meeting_link' => 'https://meet.example.com/both-emp',
             'demo_min_team_size' => 10,
             'demo_max_team_size' => 100,
             'active_for_demo' => true,
@@ -107,22 +109,22 @@ class EmployeeDemoAssignmentTest extends TestCase
         $ts = (string) microtime(true);
 
         $eligible = Employee::query()->create([
-            'name' => 'Priya Sharma '.$ts,
-            'email_id' => "priya.{$ts}@test.local",
+            'name' => 'Demo Provider A '.$ts,
+            'email_id' => "provider.a.{$ts}@test.local",
             'status' => 'Active',
             'work_type' => 'demo_provider',
-            'demo_meeting_link' => 'https://meet.google.com/priya',
+            'demo_meeting_link' => 'https://meet.example.com/provider-a',
             'demo_min_team_size' => 701,
             'demo_max_team_size' => 725,
             'active_for_demo' => true,
         ]);
 
         $large = Employee::query()->create([
-            'name' => 'Rahul Verma '.$ts,
-            'email_id' => "rahul.{$ts}@test.local",
+            'name' => 'Demo Provider B '.$ts,
+            'email_id' => "provider.b.{$ts}@test.local",
             'status' => 'Active',
             'work_type' => 'both',
-            'demo_meeting_link' => 'https://meet.google.com/rahul',
+            'demo_meeting_link' => 'https://meet.example.com/provider-b',
             'demo_min_team_size' => 720,
             'demo_max_team_size' => 800,
             'active_for_demo' => true,
@@ -133,7 +135,7 @@ class EmployeeDemoAssignmentTest extends TestCase
             'email_id' => "inactive.{$ts}@test.local",
             'status' => 'Active',
             'work_type' => 'demo_provider',
-            'demo_meeting_link' => 'https://meet.google.com/inactive',
+            'demo_meeting_link' => 'https://meet.example.com/inactive',
             'demo_min_team_size' => 701,
             'demo_max_team_size' => 800,
             'active_for_demo' => false,
@@ -183,11 +185,11 @@ class EmployeeDemoAssignmentTest extends TestCase
         $ts = (string) microtime(true);
 
         $provider = Employee::query()->create([
-            'name' => 'Priya Sharma',
+            'name' => 'Demo Provider Save',
             'email_id' => "provider.save.{$ts}@test.local",
             'status' => 'Active',
             'work_type' => 'both',
-            'demo_meeting_link' => 'https://meet.google.com/priya-save',
+            'demo_meeting_link' => 'https://meet.example.com/provider-save',
             'demo_min_team_size' => 1,
             'demo_max_team_size' => 50,
             'active_for_demo' => true,
@@ -207,8 +209,8 @@ class EmployeeDemoAssignmentTest extends TestCase
 
         $response->assertJsonPath('data.team_size', 20)
             ->assertJsonPath('data.demo_provider_employee_id', $provider->employee_id)
-            ->assertJsonPath('data.demo_provider_name', 'Priya Sharma')
-            ->assertJsonPath('data.meeting_link', 'https://meet.google.com/priya-save');
+            ->assertJsonPath('data.demo_provider_name', 'Demo Provider Save')
+            ->assertJsonPath('data.meeting_link', 'https://meet.example.com/provider-save');
 
         $this->deleteJson('/ca-masters/'.$lead->ca_id)->assertOk();
     }

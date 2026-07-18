@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\DuplicateAttemptLog;
 use App\Models\Employee;
@@ -21,7 +23,7 @@ class QualityControlTest extends TestCase
 
     public function test_invalid_mobile_is_blocked_on_create(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $stateId = CaMaster::query()->whereNotNull('state_id')->value('state_id');
@@ -38,7 +40,7 @@ class QualityControlTest extends TestCase
 
     public function test_duplicate_email_is_blocked(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $stateId = CaMaster::query()->whereNotNull('state_id')->value('state_id');
@@ -66,7 +68,7 @@ class QualityControlTest extends TestCase
 
     public function test_duplicate_gst_is_blocked(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $stateId = CaMaster::query()->whereNotNull('state_id')->value('state_id');
@@ -91,8 +93,8 @@ class QualityControlTest extends TestCase
 
     public function test_assigned_employee_can_update_lead(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
         $this->actingAs($employee);
 
         $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();
@@ -114,7 +116,7 @@ class QualityControlTest extends TestCase
     {
         $manager = User::query()->where('crm_role', 'manager')->first();
         if (! $manager) {
-            $manager = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+            $manager = CrmTestAccounts::admin();
         }
         $this->actingAs($manager);
 
@@ -127,10 +129,10 @@ class QualityControlTest extends TestCase
 
     public function test_lead_ownership_service_blocks_unassigned_employee(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
         $other = Employee::query()
             ->where('status', 'Active')
-            ->where('email_id', '!=', 'employee@ca.local')
+            ->where('email_id', '!=', CrmTestAccounts::employee()->email_id)
             ->firstOrFail();
 
         $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();
@@ -148,7 +150,7 @@ class QualityControlTest extends TestCase
 
     public function test_wrong_number_status_records_quality_history(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();
@@ -167,8 +169,8 @@ class QualityControlTest extends TestCase
 
     public function test_productivity_score_updates_after_unique_lead_create(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
+        $employeeModel = CrmTestAccounts::employee();
         $this->actingAs($admin);
 
         $stateId = CaMaster::query()->whereNotNull('state_id')->value('state_id');
@@ -185,7 +187,7 @@ class QualityControlTest extends TestCase
 
         $lead = CaMaster::query()->where('firm_name', 'QC Firm')->firstOrFail();
 
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
         $this->actingAs($employee);
         $metrics = app(EmployeeProductivityService::class)->employeeDailyMetrics((int) $employeeModel->employee_id);
         $this->assertGreaterThanOrEqual(1, $metrics['unique_leads']);
@@ -200,8 +202,8 @@ class QualityControlTest extends TestCase
 
     public function test_duplicate_attempt_increments_productivity_penalty(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
         $stateId = CaMaster::query()->whereNotNull('state_id')->value('state_id');
 
         $existing = CaMaster::query()->create([

@@ -46,7 +46,7 @@
       <p class="text-caption text-emerald-600 mt-4 text-center">{{ session('status') }}</p>
     @endif
 
-    <p class="text-caption text-slate-400 mt-6 text-center">Demo: manager@ca.local / password</p>
+    <p class="text-caption text-slate-400 mt-6 text-center">Contact your administrator for access credentials.</p>
   </div>
 </body>
 </html>

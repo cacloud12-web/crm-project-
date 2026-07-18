@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\FollowUp;
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -13,7 +15,7 @@ class FollowUpActionsTest extends TestCase
 
     public function test_follow_ups_list_includes_followup_id_for_action_menu(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
         $response = $this->getJson('/follow-ups?per_page=5');
@@ -30,7 +32,7 @@ class FollowUpActionsTest extends TestCase
 
     public function test_follow_ups_list_includes_mobile_number_from_related_lead(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
         $followUp = FollowUp::query()
@@ -61,7 +63,7 @@ class FollowUpActionsTest extends TestCase
 
     public function test_manager_can_view_single_follow_up(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
         $followUp = FollowUp::query()->first();
@@ -76,7 +78,7 @@ class FollowUpActionsTest extends TestCase
 
     public function test_follow_ups_per_page_only_allows_standard_sizes(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
         foreach ([10, 25, 50, 100, 200] as $size) {
@@ -100,7 +102,7 @@ class FollowUpActionsTest extends TestCase
 
     public function test_employee_can_view_own_follow_up(): void
     {
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
         $this->actingAs($employeeUser);
 
         $employeeId = \App\Models\Employee::query()->where('user_id', $employeeUser->id)->value('employee_id');
@@ -115,7 +117,7 @@ class FollowUpActionsTest extends TestCase
 
     public function test_manager_can_mark_follow_up_completed(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
         $followUp = FollowUp::query()
@@ -137,7 +139,7 @@ class FollowUpActionsTest extends TestCase
 
     public function test_manager_can_mark_demo_scheduled_completed_when_meeting_link_exists(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
         $followUp = FollowUp::query()
@@ -159,7 +161,7 @@ class FollowUpActionsTest extends TestCase
 
     public function test_employee_cannot_update_another_employees_follow_up(): void
     {
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
         $this->actingAs($employeeUser);
 
         $employeeId = \App\Models\Employee::query()->where('user_id', $employeeUser->id)->value('employee_id');
@@ -178,7 +180,7 @@ class FollowUpActionsTest extends TestCase
 
     public function test_manager_can_schedule_follow_up_without_create_permission(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
         $lead = \App\Models\CaMaster::query()->firstOrFail();

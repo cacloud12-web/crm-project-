@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\City;
 use App\Models\State;
 use App\Models\User;
@@ -48,7 +50,7 @@ class IndiaStateCityTest extends TestCase
 
     public function test_lookup_states_api_returns_flat_array_for_manager(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
 
         $response = $this->actingAs($manager)->getJson('/lookups/states', [
             'X-Requested-With' => 'XMLHttpRequest',
@@ -95,7 +97,7 @@ class IndiaStateCityTest extends TestCase
     {
         \App\Models\SourceLead::query()->firstOrCreate(['source_name' => 'Website']);
 
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
 
         $response = $this->actingAs($employee)->getJson('/lookups/sources', [
             'X-Requested-With' => 'XMLHttpRequest',
@@ -146,7 +148,7 @@ class IndiaStateCityTest extends TestCase
             'firm_name' => 'Mismatch Test Firm',
             'ca_name' => 'Mismatch CA',
             'mobile_no' => '9999900001',
-            'email_id' => 'mismatch.test@ca.local',
+            'email_id' => 'mismatch.test@example.local',
             'state_id' => $maharashtra->state_id,
             'city_id' => $bengaluru->city_id,
             'status' => 'New',
@@ -164,7 +166,7 @@ class IndiaStateCityTest extends TestCase
 
         $response = $this->actingAs($this->admin())->postJson('/employees', [
             'name' => 'Mismatch Employee',
-            'email_id' => 'mismatch.employee@ca.local',
+            'email_id' => 'mismatch.employee@example.local',
             'mobile_no' => '9999900002',
             'state_id' => $maharashtra->state_id,
             'city_id' => $bengaluru->city_id,
@@ -192,6 +194,6 @@ class IndiaStateCityTest extends TestCase
 
     private function admin()
     {
-        return User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        return CrmTestAccounts::admin();
     }
 }

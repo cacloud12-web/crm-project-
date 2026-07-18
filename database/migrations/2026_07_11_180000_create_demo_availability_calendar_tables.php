@@ -85,7 +85,7 @@ return new class extends Migration
             });
         }
 
-        $this->seedProvidersFromConfig();
+        // Schema only — do not seed personal or demo provider rows from migrations.
         $this->backfillScheduleProviders();
     }
 
@@ -108,39 +108,11 @@ return new class extends Migration
         Schema::dropIfExists('demo_providers');
     }
 
-    private function seedProvidersFromConfig(): void
+    private function seedDefaultProviders(): void
     {
-        if (DB::table('demo_providers')->exists()) {
-            return;
-        }
-
-        $defaults = [
-            ['start' => '10:00:00', 'end' => '19:00:00', 'break_start' => '13:00:00', 'break_end' => '14:00:00'],
-        ];
-        $workingDays = [1, 2, 3, 4, 5, 6];
-        $sort = 0;
-
-        foreach (config('demo_providers.tiers', []) as $tier) {
-            $sort++;
-            DB::table('demo_providers')->insert([
-                'name' => (string) ($tier['provider'] ?? 'Provider '.$sort),
-                'default_meeting_link' => (string) ($tier['meeting_link'] ?? ''),
-                'min_team_size' => isset($tier['min']) ? (int) $tier['min'] : null,
-                'max_team_size' => $tier['max'] !== null ? (int) $tier['max'] : null,
-                'slot_duration_minutes' => 60,
-                'buffer_minutes' => 15,
-                'max_demos_per_day' => 6,
-                'work_start_time' => $defaults[0]['start'],
-                'work_end_time' => $defaults[0]['end'],
-                'break_start_time' => $defaults[0]['break_start'],
-                'break_end_time' => $defaults[0]['break_end'],
-                'working_days' => json_encode($workingDays),
-                'is_active' => true,
-                'sort_order' => $sort,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-        }
+        // Removed: migrations must not insert provider names, meeting links, or demo rows.
+        // Marked fixtures: DemoProviderTestFixtureSeeder / DemoProvider::factory()->demo()
+        // Production: create providers via Settings → Demo Providers.
     }
 
     private function backfillScheduleProviders(): void

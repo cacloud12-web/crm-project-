@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
@@ -12,7 +14,7 @@ class ReportsFeatureTest extends TestCase
 
     private function admin(): User
     {
-        return User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        return CrmTestAccounts::admin();
     }
 
     public function test_admin_can_load_reports_summary(): void
@@ -148,7 +150,7 @@ class ReportsFeatureTest extends TestCase
 
     public function test_employee_cannot_access_reports(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
         $this->actingAs($employee);
 
         $this->getJson('/reports')->assertForbidden();

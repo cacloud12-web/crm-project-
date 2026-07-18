@@ -963,10 +963,17 @@ class OcrDocumentService
     {
         $this->ensureCanAccessDocument($document);
 
+        $structured = is_array($document->structured_data) ? $document->structured_data : [];
+        if (isset($structured['parsed']) && is_array($structured['parsed'])) {
+            $structured['parsed']['error'] = null;
+        }
+
         $document->update([
             'parse_status' => null,
             'parsed_firm_count' => null,
             'parsed_at' => null,
+            'structured_data' => $structured,
+            'processing_progress' => 'Structuring OCR results',
         ]);
 
         return $this->structurePersistService->parseAndPersist($document->fresh());

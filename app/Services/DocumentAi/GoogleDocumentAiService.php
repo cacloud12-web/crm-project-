@@ -163,9 +163,38 @@ class GoogleDocumentAiService
             $paragraphs = [];
             foreach ($page->getParagraphs() as $paragraph) {
                 $paragraphText = TextAnchorHelper::extract($text, $paragraph->getLayout()?->getTextAnchor());
-                if ($paragraphText !== '') {
-                    $paragraphs[] = $paragraphText;
+                if ($paragraphText === '') {
+                    continue;
                 }
+
+                $x = null;
+                $y = null;
+                try {
+                    $vertices = $paragraph->getLayout()?->getBoundingPoly()?->getNormalizedVertices();
+                    if ($vertices) {
+                        $xs = [];
+                        $ys = [];
+                        foreach ($vertices as $vertex) {
+                            $xs[] = (float) $vertex->getX();
+                            $ys[] = (float) $vertex->getY();
+                        }
+                        if ($xs !== [] && $ys !== []) {
+                            $x = round(array_sum($xs) / count($xs), 4);
+                            $y = round(array_sum($ys) / count($ys), 4);
+                        }
+                    }
+                } catch (\Throwable) {
+                    // Bounding boxes are optional; text-only paragraphs still help structuring.
+                }
+
+                $entry = ['text' => $paragraphText];
+                if ($x !== null) {
+                    $entry['x'] = $x;
+                }
+                if ($y !== null) {
+                    $entry['y'] = $y;
+                }
+                $paragraphs[] = $entry;
             }
 
             $pageConfidence = $page->getLayout()?->getConfidence();
@@ -177,6 +206,8 @@ class GoogleDocumentAiService
                 'page_number' => $index + 1,
                 'languages' => array_values(array_unique($pageLanguages)),
                 'paragraph_count' => count($paragraphs),
+                'paragraphs' => $paragraphs,
+                'confidence' => $pageConfidence !== null ? (float) $pageConfidence : null,
             ];
         }
 

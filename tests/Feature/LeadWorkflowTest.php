@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\City;
 use App\Models\DemoReminder;
@@ -20,7 +22,7 @@ class LeadWorkflowTest extends TestCase
 
     private function actingAsAdmin(): User
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         return $admin;
@@ -227,8 +229,8 @@ class LeadWorkflowTest extends TestCase
 
     public function test_employee_cannot_see_purchased_list(): void
     {
-        $user = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $user = CrmTestAccounts::employeeUser();
+        $employee = CrmTestAccounts::employee();
 
         $lead = $this->createLead();
         PurchasedCustomer::query()->create([

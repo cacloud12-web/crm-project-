@@ -251,7 +251,7 @@ class DashboardService
     }
 
     /**
-     * @return array{date: string, total: int, present: int, absent: int, not_marked: int}|null
+     * @return array{date: string, total: int, present: int, half_day: int, absent: int, not_marked: int}|null
      */
     private function attendanceSummaryForViewer(): ?array
     {

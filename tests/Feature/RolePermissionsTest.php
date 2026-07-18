@@ -2,17 +2,18 @@
 
 namespace Tests\Feature;
 
-use App\Models\User;
 use App\Services\Rbac\PermissionService;
 use App\Services\Rbac\RbacMatrixService;
 use App\Services\Rbac\RbacService;
 use App\Services\Rbac\RbacUserOverrideService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Schema;
+use Tests\Concerns\CreatesCrmUsers;
 use Tests\TestCase;
 
 class RolePermissionsTest extends TestCase
 {
+    use CreatesCrmUsers;
     use DatabaseTransactions;
 
     protected function setUp(): void
@@ -23,7 +24,7 @@ class RolePermissionsTest extends TestCase
 
     public function test_super_admin_can_load_role_permissions_matrix(): void
     {
-        $superAdmin = User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
+        $superAdmin = $this->createSuperAdmin();
         $this->actingAs($superAdmin);
 
         $this->getJson('/admin/role-permissions')
@@ -38,7 +39,7 @@ class RolePermissionsTest extends TestCase
 
     public function test_manager_cannot_access_role_permissions_api(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = $this->createManager();
         $this->actingAs($manager);
 
         $this->getJson('/admin/role-permissions')->assertForbidden();
@@ -46,7 +47,7 @@ class RolePermissionsTest extends TestCase
 
     public function test_employee_cannot_access_role_permissions_api(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = $this->createEmployeeUser();
         $this->actingAs($employee);
 
         $this->getJson('/admin/role-permissions')->assertForbidden();
@@ -54,7 +55,7 @@ class RolePermissionsTest extends TestCase
 
     public function test_super_admin_can_save_and_reset_role_permissions(): void
     {
-        $superAdmin = User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
+        $superAdmin = $this->createSuperAdmin();
         $this->actingAs($superAdmin);
 
         $this->putJson('/admin/role-permissions', [
@@ -78,7 +79,7 @@ class RolePermissionsTest extends TestCase
 
     public function test_admin_cannot_update_role_permissions(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = $this->createAdmin();
         $this->actingAs($admin);
 
         $this->putJson('/admin/role-permissions', [
@@ -89,7 +90,7 @@ class RolePermissionsTest extends TestCase
 
     public function test_legacy_campaigns_action_is_normalized_and_save_succeeds(): void
     {
-        $superAdmin = User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
+        $superAdmin = $this->createSuperAdmin();
         $this->actingAs($superAdmin);
 
         $response = $this->putJson('/admin/role-permissions', [
@@ -97,7 +98,6 @@ class RolePermissionsTest extends TestCase
             'grants' => [
                 'dashboard' => ['view'],
                 'leads' => ['view'],
-                // Legacy ghost key that previously caused grants.campaigns.0 invalid
                 'campaigns' => ['campaigns'],
             ],
         ]);
@@ -116,7 +116,7 @@ class RolePermissionsTest extends TestCase
 
     public function test_employee_permissions_persist_after_reload(): void
     {
-        $superAdmin = User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
+        $superAdmin = $this->createSuperAdmin();
         $this->actingAs($superAdmin);
 
         $this->putJson('/admin/role-permissions', [
@@ -136,8 +136,8 @@ class RolePermissionsTest extends TestCase
 
     public function test_employee_without_communication_view_gets_api_403(): void
     {
-        $superAdmin = User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $superAdmin = $this->createSuperAdmin();
+        $employee = $this->createEmployeeUser();
 
         $this->actingAs($superAdmin);
         $this->putJson('/admin/role-permissions', [
@@ -159,8 +159,8 @@ class RolePermissionsTest extends TestCase
 
     public function test_employee_with_view_but_without_send_email_cannot_send(): void
     {
-        $superAdmin = User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $superAdmin = $this->createSuperAdmin();
+        $employee = $this->createEmployeeUser();
 
         $this->actingAs($superAdmin);
         $this->putJson('/admin/role-permissions', [
@@ -189,15 +189,9 @@ class RolePermissionsTest extends TestCase
             $this->markTestSkipped('crm_user_permission_overrides table missing');
         }
 
-        $superAdmin = User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
-        $ankit = User::query()->create([
-            'name' => 'Ankit Bhardwaj',
-            'email' => 'ankit.rbac.test@ca.local',
-            'password' => bcrypt('password'),
-            'crm_role' => 'employee',
-            'is_active' => true,
-        ]);
-        $soniya = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $superAdmin = $this->createSuperAdmin();
+        $allowedEmployee = $this->createEmployeeUser(['name' => 'Test User Allowed']);
+        $deniedEmployee = $this->createEmployeeUser(['name' => 'Test User Baseline']);
 
         $this->actingAs($superAdmin);
         $this->putJson('/admin/role-permissions', [
@@ -210,24 +204,24 @@ class RolePermissionsTest extends TestCase
         ])->assertOk();
 
         $this->putJson('/admin/role-permissions/users', [
-            'user_id' => $ankit->id,
+            'user_id' => $allowedEmployee->id,
             'allows' => ['campaigns' => ['view']],
             'denies' => [],
         ])->assertOk()->assertJsonPath('success', true);
 
         app(RbacMatrixService::class)->flushCache();
-        app(RbacUserOverrideService::class)->forgetUserCache($ankit->id);
-        app(RbacUserOverrideService::class)->forgetUserCache($soniya->id);
+        app(RbacUserOverrideService::class)->forgetUserCache($allowedEmployee->id);
+        app(RbacUserOverrideService::class)->forgetUserCache($deniedEmployee->id);
 
         $rbac = app(RbacService::class);
-        $this->assertTrue($rbac->can($ankit->fresh(), 'campaigns', 'view'));
-        $this->assertFalse($rbac->can($soniya->fresh(), 'campaigns', 'view'));
-        $this->assertTrue(app(PermissionService::class)->can($ankit->fresh(), 'communication.view'));
+        $this->assertTrue($rbac->can($allowedEmployee->fresh(), 'campaigns', 'view'));
+        $this->assertFalse($rbac->can($deniedEmployee->fresh(), 'campaigns', 'view'));
+        $this->assertTrue(app(PermissionService::class)->can($allowedEmployee->fresh(), 'communication.view'));
 
-        $this->actingAs($ankit);
+        $this->actingAs($allowedEmployee);
         $this->getJson('/campaigns')->assertOk();
 
-        $this->actingAs($soniya);
+        $this->actingAs($deniedEmployee);
         $this->getJson('/campaigns')->assertForbidden();
     }
 
@@ -237,15 +231,9 @@ class RolePermissionsTest extends TestCase
             $this->markTestSkipped('crm_user_permission_overrides table missing');
         }
 
-        $superAdmin = User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
-        $soniya = User::query()->create([
-            'name' => 'Soniya',
-            'email' => 'soniya.rbac.test@ca.local',
-            'password' => bcrypt('password'),
-            'crm_role' => 'employee',
-            'is_active' => true,
-        ]);
-        $other = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $superAdmin = $this->createSuperAdmin();
+        $blockedEmployee = $this->createEmployeeUser(['name' => 'Test User Blocked']);
+        $otherEmployee = $this->createEmployeeUser(['name' => 'Test User Other']);
 
         $this->actingAs($superAdmin);
         $this->putJson('/admin/role-permissions', [
@@ -258,20 +246,20 @@ class RolePermissionsTest extends TestCase
         ])->assertOk();
 
         $this->putJson('/admin/role-permissions/users', [
-            'user_id' => $soniya->id,
+            'user_id' => $blockedEmployee->id,
             'allows' => [],
             'denies' => ['campaigns' => ['view']],
         ])->assertOk();
 
         app(RbacMatrixService::class)->flushCache();
-        app(RbacUserOverrideService::class)->forgetUserCache($soniya->id);
-        app(RbacUserOverrideService::class)->forgetUserCache($other->id);
+        app(RbacUserOverrideService::class)->forgetUserCache($blockedEmployee->id);
+        app(RbacUserOverrideService::class)->forgetUserCache($otherEmployee->id);
 
         $rbac = app(RbacService::class);
-        $this->assertFalse($rbac->can($soniya->fresh(), 'campaigns', 'view'));
-        $this->assertTrue($rbac->can($other->fresh(), 'campaigns', 'view'));
+        $this->assertFalse($rbac->can($blockedEmployee->fresh(), 'campaigns', 'view'));
+        $this->assertTrue($rbac->can($otherEmployee->fresh(), 'campaigns', 'view'));
 
-        $this->actingAs($soniya);
+        $this->actingAs($blockedEmployee);
         $this->getJson('/campaigns')->assertForbidden();
     }
 
@@ -281,8 +269,8 @@ class RolePermissionsTest extends TestCase
             $this->markTestSkipped('crm_user_permission_overrides table missing');
         }
 
-        $superAdmin = User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $superAdmin = $this->createSuperAdmin();
+        $employee = $this->createEmployeeUser();
 
         $this->actingAs($superAdmin);
         $this->putJson('/admin/role-permissions', [
@@ -312,7 +300,7 @@ class RolePermissionsTest extends TestCase
 
     public function test_invalid_permission_key_returns_useful_validation_error(): void
     {
-        $superAdmin = User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
+        $superAdmin = $this->createSuperAdmin();
         $this->actingAs($superAdmin);
 
         $this->putJson('/admin/role-permissions', [

@@ -6,6 +6,7 @@ use App\Models\Employee;
 use App\Models\User;
 use App\Services\Activity\ActivityLogService;
 use App\Services\Rbac\RbacService;
+use App\Services\User\UserLifecycleService;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
@@ -14,6 +15,7 @@ class EmployeeCredentialService
     public function __construct(
         private readonly RbacService $rbacService,
         private readonly ActivityLogService $activityLogService,
+        private readonly UserLifecycleService $userLifecycleService,
     ) {}
 
     /** @return list<string> */
@@ -34,10 +36,25 @@ class EmployeeCredentialService
 
     public function createLoginForEmployee(Employee $employee, string $password, string $crmRole = 'employee'): User
     {
-        if (User::query()->where('email', $employee->email_id)->exists()) {
+        $existing = User::withTrashed()->where('email', $employee->email_id)->first();
+
+        if ($existing && ! $existing->trashed()) {
             throw ValidationException::withMessages([
                 'email_id' => ['A login account already exists for this email.'],
             ]);
+        }
+
+        if ($existing && $existing->trashed()) {
+            $existing->restore();
+            $existing->update([
+                'name' => $employee->name,
+                'password' => $password,
+                'crm_role' => $crmRole,
+                'is_active' => ($employee->status ?? 'Active') === 'Active',
+            ]);
+            $employee->update(['user_id' => $existing->id]);
+
+            return $existing;
         }
 
         $user = User::query()->create([
@@ -68,10 +85,15 @@ class EmployeeCredentialService
             return;
         }
 
+        $willBeActive = ($employee->status ?? 'Active') === 'Active';
+        if ($user->is_active && ! $willBeActive) {
+            $this->userLifecycleService->assertCanDeactivateUser($user);
+        }
+
         $user->update([
             'name' => $employee->name,
             'email' => $employee->email_id,
-            'is_active' => ($employee->status ?? 'Active') === 'Active',
+            'is_active' => $willBeActive,
         ]);
 
         if ($employee->user_id !== $user->id) {
@@ -87,7 +109,35 @@ class EmployeeCredentialService
             return;
         }
 
+        $this->userLifecycleService->assertCanDeactivateUser($user);
         $user->update(['is_active' => false]);
+    }
+
+    public function removeLoginForEmployee(Employee $employee): void
+    {
+        $user = $employee->user;
+
+        if (! $user) {
+            return;
+        }
+
+        $this->userLifecycleService->deactivateAndSoftDelete($user);
+        $employee->update(['user_id' => null]);
+    }
+
+    public function syncCrmRoleForEmployee(Employee $employee, string $crmRole, ?User $actor): void
+    {
+        $user = $employee->user;
+
+        if (! $user || ! in_array($crmRole, $this->assignableRoles($actor), true)) {
+            throw ValidationException::withMessages([
+                'crm_role' => ['You cannot assign the selected CRM role.'],
+            ]);
+        }
+
+        $this->userLifecycleService->assertCanChangeRole($user, $crmRole);
+
+        $user->update(['crm_role' => $crmRole]);
     }
 
     public function changeOwnPassword(User $user, string $currentPassword, string $newPassword): void
@@ -149,9 +199,13 @@ class EmployeeCredentialService
             ->whereNull('user_id')
             ->orderBy('employee_id')
             ->each(function (Employee $employee) use ($password, &$stats) {
-                $existingUser = User::query()->where('email', $employee->email_id)->first();
+                $existingUser = User::withTrashed()->where('email', $employee->email_id)->first();
 
                 if ($existingUser) {
+                    if ($existingUser->trashed()) {
+                        $existingUser->restore();
+                        $existingUser->update(['is_active' => ($employee->status ?? 'Active') === 'Active']);
+                    }
                     $employee->update(['user_id' => $existingUser->id]);
                     $stats['linked']++;
 
@@ -192,13 +246,13 @@ class EmployeeCredentialService
     private function resolveUser(Employee $employee, ?string $previousEmail = null): ?User
     {
         if ($employee->user_id) {
-            return User::query()->find($employee->user_id);
+            return User::withTrashed()->find($employee->user_id);
         }
 
         if ($previousEmail) {
-            return User::query()->where('email', $previousEmail)->first();
+            return User::withTrashed()->where('email', $previousEmail)->first();
         }
 
-        return User::query()->where('email', $employee->email_id)->first();
+        return User::withTrashed()->where('email', $employee->email_id)->first();
     }
 }

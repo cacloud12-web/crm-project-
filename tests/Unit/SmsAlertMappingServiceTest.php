@@ -45,7 +45,7 @@ class SmsAlertMappingServiceTest extends TestCase
             'apikey' => 'secret-key',
             'sender' => 'TESTID',
             'mobileno' => '9876543210',
-            'text' => 'Hello Rahul',
+            'text' => 'Hello Client',
         ]);
 
         $this->assertSame('******', $masked['apikey']);

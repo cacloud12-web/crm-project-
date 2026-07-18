@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\City;
 use App\Models\DemoSchedule;
@@ -35,8 +37,8 @@ class CaMasterStatusSyncTest extends TestCase
 
     public function test_demo_scheduled_follow_up_updates_master_data_status(): void
     {
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
+        $employee = CrmTestAccounts::employee();
         $lead = $this->createLead();
 
         LeadAssignmentEngine::query()->create([
@@ -55,7 +57,7 @@ class CaMasterStatusSyncTest extends TestCase
             'followup_type' => 'Demo Scheduled',
             'scheduled_date' => now()->addDay()->setTime(11, 0)->toDateTimeString(),
             'remarks' => 'Product walkthrough',
-            'meeting_link' => 'https://meet.google.com/demo-sync',
+            'meeting_link' => 'https://meet.example.com/demo-sync',
         ])->assertCreated();
 
         $this->assertDatabaseHas('ca_masters', [
@@ -66,8 +68,8 @@ class CaMasterStatusSyncTest extends TestCase
 
     public function test_purchased_demo_result_updates_master_data_status_to_purchased(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
+        $employee = CrmTestAccounts::employee();
         $lead = $this->createLead();
 
         $schedule = DemoSchedule::query()->create([
@@ -101,7 +103,7 @@ class CaMasterStatusSyncTest extends TestCase
 
     public function test_master_data_status_filter_returns_only_matching_records(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $interested = $this->createLead('Interested');
         $this->createLead('Demo Scheduled');
 

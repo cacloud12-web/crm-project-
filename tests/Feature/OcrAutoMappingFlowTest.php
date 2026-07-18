@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\OcrDocument;
 use App\Models\OcrParsedFirm;
@@ -38,7 +40,7 @@ class OcrAutoMappingFlowTest extends TestCase
 
     private function actingAsAdmin(): User
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         return $admin;
@@ -166,7 +168,7 @@ class OcrAutoMappingFlowTest extends TestCase
         }
 
         $admin = $this->actingAsAdmin();
-        $document = $this->makeDocument($admin, "DELHI\nRaw Name & Co.\nAMIT SHARMA\n");
+        $document = $this->makeDocument($admin, "DELHI\nRaw Name & Co.\nEXAMPLE CA\n");
         app(OcrStructurePersistService::class)->parseAndPersist($document);
         $firm = OcrParsedFirm::query()->where('ocr_document_id', $document->id)->firstOrFail();
 
@@ -183,16 +185,16 @@ class OcrAutoMappingFlowTest extends TestCase
     {
         $payload = app(MasterDataMatchingService::class)->normalizePayload([
             'firm_name' => '  Acme & Co. ',
-            'ca_name' => '  Priya Sharma ',
+            'ca_name' => '  Test User ',
             'phone' => '09876543210',
-            'email' => 'Priya@Example.COM',
+            'email' => 'demo@example.local',
             'gst_no' => '27aaaaa0000a1z5',
         ]);
 
         $this->assertSame('Acme & Co.', $payload['firm_name']);
-        $this->assertSame('Priya Sharma', $payload['ca_name']);
+        $this->assertSame('Test User', $payload['ca_name']);
         $this->assertSame('09876543210', $payload['mobile_no']);
-        $this->assertSame('Priya@Example.COM', $payload['email_id']);
+        $this->assertSame('demo@example.local', $payload['email_id']);
         $this->assertSame('27aaaaa0000a1z5', $payload['gst_no']);
         $this->assertNotNull($payload['normalized_firm_name']);
         $this->assertNotNull($payload['normalized_mobile']);

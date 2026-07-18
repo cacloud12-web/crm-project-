@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\SmsTemplate;
 use App\Models\User;
@@ -14,7 +16,7 @@ class CampaignScheduleValidationTest extends TestCase
 
     public function test_email_campaign_rejects_past_scheduled_at(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();
@@ -33,7 +35,7 @@ class CampaignScheduleValidationTest extends TestCase
 
     public function test_email_campaign_allows_blank_scheduled_at(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();
@@ -51,7 +53,7 @@ class CampaignScheduleValidationTest extends TestCase
 
     public function test_sms_campaign_rejects_past_scheduled_at(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();
@@ -83,7 +85,7 @@ class CampaignScheduleValidationTest extends TestCase
 
     public function test_follow_up_rejects_past_scheduled_date_on_create(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();

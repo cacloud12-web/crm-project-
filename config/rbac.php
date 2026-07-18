@@ -126,6 +126,7 @@ return [
         'leads',
         'employees',
         'assignment',
+        'attendance',
         'campaigns',
         'followups',
         'sales_list',

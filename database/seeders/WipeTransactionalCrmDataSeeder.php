@@ -8,20 +8,14 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Hard wipe of CRM transactional / dummy data.
- * Keeps: Super Admin + System Admin users, RBAC, states/cities,
+ * Hard wipe of CRM transactional / dummy data (local/UAT only).
+ * Keeps: Super Admin + Admin role users, RBAC, states/cities,
  * lookup masters, templates, integration settings.
  *
  * Run: php artisan db:seed --class=WipeTransactionalCrmDataSeeder --force
  */
 class WipeTransactionalCrmDataSeeder extends Seeder
 {
-    /** @var list<string> */
-    private const KEEP_USER_EMAILS = [
-        'superadmin@ca.local',
-        'admin@ca.local',
-    ];
-
     /** @var list<string> */
     private const WIPE_TABLES = [
         'lead_phone_numbers',
@@ -102,6 +96,12 @@ class WipeTransactionalCrmDataSeeder extends Seeder
 
     public function run(): void
     {
+        if (app()->environment('production')) {
+            $this->command?->error('WipeTransactionalCrmDataSeeder is blocked in production.');
+
+            return;
+        }
+
         $driver = Schema::getConnection()->getDriverName();
         $counts = [];
 
@@ -131,19 +131,12 @@ class WipeTransactionalCrmDataSeeder extends Seeder
 
             if (Schema::hasTable('users')) {
                 $counts['users'] = (int) DB::table('users')
-                    ->whereNotIn('email', self::KEEP_USER_EMAILS)
+                    ->whereNotIn('crm_role', ['super_admin', 'admin'])
                     ->delete();
             }
 
-            DB::table('users')->where('email', 'superadmin@ca.local')->update([
-                'crm_role' => 'super_admin',
-                'is_active' => 1,
-                'name' => 'Super Admin',
-            ]);
-            DB::table('users')->where('email', 'admin@ca.local')->update([
-                'crm_role' => 'admin',
-                'is_active' => 1,
-            ]);
+            DB::table('users')->where('crm_role', 'super_admin')->update(['is_active' => 1]);
+            DB::table('users')->where('crm_role', 'admin')->update(['is_active' => 1]);
         } finally {
             if ($driver === 'mysql') {
                 DB::statement('SET FOREIGN_KEY_CHECKS=1');
@@ -153,7 +146,7 @@ class WipeTransactionalCrmDataSeeder extends Seeder
         Cache::flush();
 
         $this->command?->info('Transactional CRM data wiped (no demo reseed).');
-        $this->command?->info('Kept users: '.implode(', ', self::KEEP_USER_EMAILS));
+        $this->command?->info('Kept users with roles: super_admin, admin');
         if ($counts !== []) {
             $this->command?->table(
                 ['Table', 'Rows removed'],

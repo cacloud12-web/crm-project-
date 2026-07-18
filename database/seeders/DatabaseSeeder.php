@@ -17,8 +17,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             IndiaStatesCitiesSeeder::class,
             CrmMasterDataSeeder::class,
-            CrmUserSeeder::class,
-            ManagerDemoSeeder::class,
+            CrmBootstrapSeeder::class,
             RbacPermissionSeeder::class,
             CrmTemplateVariablesSeeder::class,
             CrmDefaultTemplatesSeeder::class,

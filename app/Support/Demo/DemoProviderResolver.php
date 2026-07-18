@@ -7,7 +7,7 @@ use App\Models\DemoProvider;
 class DemoProviderResolver
 {
     /**
-     * @return array{provider: string, meeting_link: string, demo_provider_id?: int}|null
+     * @return array{provider: string, meeting_link: string, demo_provider_id: int}|null
      */
     public static function resolve(?int $teamSize): ?array
     {
@@ -29,32 +29,14 @@ class DemoProviderResolver
                 return $max === null || $teamSize <= $max;
             });
 
-        if ($fromDb) {
-            return [
-                'provider' => $fromDb->name,
-                'meeting_link' => (string) ($fromDb->default_meeting_link ?? ''),
-                'demo_provider_id' => $fromDb->id,
-            ];
+        if (! $fromDb) {
+            return null;
         }
 
-        foreach (config('demo_providers.tiers', []) as $tier) {
-            $min = (int) ($tier['min'] ?? 1);
-            $max = $tier['max'] ?? null;
-
-            if ($teamSize < $min) {
-                continue;
-            }
-
-            if ($max !== null && $teamSize > (int) $max) {
-                continue;
-            }
-
-            return [
-                'provider' => (string) ($tier['provider'] ?? ''),
-                'meeting_link' => (string) ($tier['meeting_link'] ?? ''),
-            ];
-        }
-
-        return null;
+        return [
+            'provider' => $fromDb->name,
+            'meeting_link' => (string) ($fromDb->default_meeting_link ?? ''),
+            'demo_provider_id' => $fromDb->id,
+        ];
     }
 }

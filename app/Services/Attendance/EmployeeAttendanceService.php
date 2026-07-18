@@ -68,6 +68,7 @@ class EmployeeAttendanceService
                 'date' => $day->toDateString(),
                 'total' => 0,
                 'present' => 0,
+                'half_day' => 0,
                 'absent' => 0,
                 'not_marked' => 0,
             ];
@@ -81,13 +82,15 @@ class EmployeeAttendanceService
             ->pluck('aggregate', 'status');
 
         $present = (int) ($counts[EmployeeAttendance::STATUS_PRESENT] ?? 0);
+        $halfDay = (int) ($counts[EmployeeAttendance::STATUS_HALF_DAY] ?? 0);
         $absent = (int) ($counts[EmployeeAttendance::STATUS_ABSENT] ?? 0);
-        $marked = $present + $absent;
+        $marked = $present + $halfDay + $absent;
 
         return [
             'date' => $day->toDateString(),
             'total' => $total,
             'present' => $present,
+            'half_day' => $halfDay,
             'absent' => $absent,
             'not_marked' => max(0, $total - $marked),
         ];
@@ -143,9 +146,7 @@ class EmployeeAttendanceService
                 'team' => $employee->role ?? '—',
                 'city' => $employee->city?->city_name,
                 'status' => $row?->status,
-                'status_label' => $row
-                    ? ucfirst((string) $row->status)
-                    : 'Not Marked',
+                'status_label' => $this->statusLabel($row?->status),
                 'marked_by' => $row?->marked_by,
                 'remarks' => $row?->remarks,
                 'updated_at' => $row?->updated_at?->toIso8601String(),
@@ -172,7 +173,7 @@ class EmployeeAttendanceService
 
         if (! in_array($status, EmployeeAttendance::STATUSES, true)) {
             throw ValidationException::withMessages([
-                'status' => ['Attendance status must be present or absent.'],
+                'status' => ['Attendance status must be present, half_day, or absent.'],
             ]);
         }
 
@@ -193,7 +194,7 @@ class EmployeeAttendanceService
             'employee_id' => $record->employee_id,
             'attendance_date' => $record->attendance_date?->toDateString(),
             'status' => $record->status,
-            'status_label' => ucfirst((string) $record->status),
+            'status_label' => $this->statusLabel($record->status),
             'marked_by' => $record->marked_by,
             'remarks' => $record->remarks,
         ];
@@ -211,7 +212,7 @@ class EmployeeAttendanceService
 
         if (! in_array($status, EmployeeAttendance::STATUSES, true)) {
             throw ValidationException::withMessages([
-                'status' => ['Attendance status must be present or absent.'],
+                'status' => ['Attendance status must be present, half_day, or absent.'],
             ]);
         }
 
@@ -304,6 +305,44 @@ class EmployeeAttendanceService
         }
 
         return $query;
+    }
+
+    /**
+     * Read-only attendance status for a single employee (own dashboard view).
+     *
+     * @return array{date: string, status: ?string, status_code: string, status_label: string}
+     */
+    public function statusForEmployee(int $employeeId, ?string $date = null): array
+    {
+        $day = $this->resolveDate($date);
+        $row = EmployeeAttendance::query()
+            ->where('employee_id', $employeeId)
+            ->whereDate('attendance_date', $day->toDateString())
+            ->first();
+
+        $status = $row?->status;
+
+        return [
+            'date' => $day->toDateString(),
+            'status' => $status,
+            'status_code' => match ($status) {
+                EmployeeAttendance::STATUS_PRESENT => 'P',
+                EmployeeAttendance::STATUS_HALF_DAY => 'H',
+                EmployeeAttendance::STATUS_ABSENT => 'A',
+                default => 'Not Marked',
+            },
+            'status_label' => $this->statusLabel($status),
+        ];
+    }
+
+    private function statusLabel(?string $status): string
+    {
+        return match ($status) {
+            EmployeeAttendance::STATUS_PRESENT => 'Present',
+            EmployeeAttendance::STATUS_HALF_DAY => 'Half Day',
+            EmployeeAttendance::STATUS_ABSENT => 'Absent',
+            default => 'Not Marked',
+        };
     }
 
     private function assertEmployeeInScope(User $viewer, int $employeeId): void

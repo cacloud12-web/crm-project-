@@ -26,6 +26,14 @@ class ManagerDemoSeeder extends Seeder
 {
     public function run(): void
     {
+        if (app()->environment('production')) {
+            if ($this->command) {
+                $this->command->error('ManagerDemoSeeder is blocked in production.');
+            }
+
+            return;
+        }
+
         $this->trimDuplicateDemoCampaigns();
         $this->normalizeLegacyDemoLabels();
 
@@ -37,15 +45,15 @@ class ManagerDemoSeeder extends Seeder
 
         $leads = [];
         $leadDefs = [
-            ['firm' => 'Sharma & Co', 'ca' => 'R. Sharma', 'status' => 'Hot', 'rating' => 5],
-            ['firm' => 'Jain Associates', 'ca' => 'P. Jain', 'status' => 'Pipeline', 'rating' => 4],
-            ['firm' => 'Iyer Partners', 'ca' => 'K. Iyer', 'status' => 'Demo Scheduled', 'rating' => 5],
-            ['firm' => 'Patel Tax', 'ca' => 'A. Patel', 'status' => 'Warm', 'rating' => 3],
-            ['firm' => 'Bose Consultants', 'ca' => 'S. Bose', 'status' => 'New', 'rating' => 4],
+            ['firm' => 'Demo Firm A', 'ca' => 'Demo CA A', 'status' => 'Hot', 'rating' => 5],
+            ['firm' => 'Demo Firm B', 'ca' => 'Demo CA B', 'status' => 'Pipeline', 'rating' => 4],
+            ['firm' => 'Demo Firm C', 'ca' => 'Demo CA C', 'status' => 'Demo Scheduled', 'rating' => 5],
+            ['firm' => 'Demo Firm D', 'ca' => 'Demo CA D', 'status' => 'Warm', 'rating' => 3],
+            ['firm' => 'Demo Firm E', 'ca' => 'Demo CA E', 'status' => 'New', 'rating' => 4],
         ];
 
         foreach ($leadDefs as $i => $def) {
-            $email = 'manager.demo.lead'.($i + 1).'@ca.local';
+            $email = 'manager.demo.lead'.($i + 1).'@example.local';
             $leads[] = CaMaster::query()->updateOrCreate(
                 ['email_id' => $email],
                 [
@@ -65,9 +73,9 @@ class ManagerDemoSeeder extends Seeder
 
         $employees = [];
         $empDefs = [
-            ['name' => 'Priya Sharma', 'email' => 'employee@ca.local', 'mobile' => '9000000001'],
-            ['name' => 'Anita Desai', 'email' => 'manager.demo.exec2@ca.local', 'mobile' => '9000000002'],
-            ['name' => 'Vikram Singh', 'email' => 'manager.demo.exec3@ca.local', 'mobile' => '9000000003'],
+            ['name' => 'Demo Employee 1', 'email' => 'manager.demo.exec1@example.local', 'mobile' => '9000000001'],
+            ['name' => 'Demo Employee 2', 'email' => 'manager.demo.exec2@example.local', 'mobile' => '9000000002'],
+            ['name' => 'Demo Employee 3', 'email' => 'manager.demo.exec3@example.local', 'mobile' => '9000000003'],
         ];
 
         foreach ($empDefs as $def) {
@@ -82,9 +90,6 @@ class ManagerDemoSeeder extends Seeder
                 ],
             );
         }
-
-        User::query()->where('email', 'employee@ca.local')->update(['name' => 'Priya Sharma']);
-
         for ($i = 0; $i < 3; $i++) {
             LeadAssignmentEngine::query()->updateOrCreate(
                 [
@@ -126,7 +131,7 @@ class ManagerDemoSeeder extends Seeder
         $emailService = app(EmailCampaignService::class);
         $smsService = app(SmsCampaignService::class);
 
-        $admin = User::query()->where('email', 'admin@ca.local')->first();
+        $admin = User::query()->whereIn('crm_role', ['admin', 'super_admin'])->where('is_active', true)->orderBy('id')->first();
         if ($admin) {
             Auth::login($admin);
         }
@@ -200,7 +205,7 @@ class ManagerDemoSeeder extends Seeder
         }
 
         Employee::query()
-            ->whereIn('email_id', DemoDataCatalog::DEMO_EMPLOYEE_EMAILS)
+            ->where('email_id', 'like', 'manager.demo.exec%@example.local')
             ->get(['employee_id', 'name'])
             ->each(function (Employee $employee): void {
                 $clean = DemoDataCatalog::stripVisiblePrefix($employee->name);

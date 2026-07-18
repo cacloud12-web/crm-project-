@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\AssignmentHistory;
 use App\Models\CaMaster;
 use App\Models\City;
@@ -16,6 +18,8 @@ use App\Models\YearlyEmployeeTarget;
 use App\Services\Dashboard\DashboardService;
 use App\Services\Reports\ReportsService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\Hash;
+use Database\Factories\UserFactory;
 use Illuminate\Support\Carbon;
 use Tests\TestCase;
 
@@ -28,22 +32,22 @@ class AssignmentReportsE2ETest extends TestCase
 
     private function admin(): User
     {
-        return User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        return CrmTestAccounts::admin();
     }
 
     private function manager(): User
     {
-        return User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        return CrmTestAccounts::manager();
     }
 
     private function employeeUser(): User
     {
-        return User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        return CrmTestAccounts::employeeUser();
     }
 
     private function seededEmployee(): Employee
     {
-        return Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        return CrmTestAccounts::employee();
     }
 
     private function createEmployee(string $label): Employee
@@ -131,7 +135,7 @@ class AssignmentReportsE2ETest extends TestCase
         $otherUser = User::query()->create([
             'name' => $otherEmployee->name,
             'email' => $otherEmployee->email_id,
-            'password' => bcrypt('password'),
+            'password' => Hash::make(UserFactory::TEST_PASSWORD),
             'crm_role' => 'employee',
             'is_active' => true,
         ]);

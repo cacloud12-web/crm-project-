@@ -2,8 +2,11 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\City;
+use App\Models\DemoProvider;
 use App\Models\DemoSchedule;
 use App\Models\Employee;
 use App\Models\FollowUp;
@@ -17,26 +20,28 @@ class FollowUpDemoFieldsTest extends TestCase
 {
     use DatabaseTransactions;
 
-    public function test_demo_provider_resolver_tiers(): void
+    public function test_demo_provider_resolver_uses_database_tiers(): void
     {
-        $this->assertSame('Ankit Bhardwaj', DemoProviderResolver::resolve(1)['provider']);
-        $this->assertSame('https://meet.google.com/mcq-jrnh-uea', DemoProviderResolver::resolve(1)['meeting_link']);
+        $tiers = $this->seedDemoProviders();
+
+        $this->assertSame($tiers[0]['name'], DemoProviderResolver::resolve(1)['provider']);
+        $this->assertSame($tiers[0]['link'], DemoProviderResolver::resolve(1)['meeting_link']);
 
         $mid = DemoProviderResolver::resolve(5);
-        $this->assertSame('Dev Aggarwal', $mid['provider']);
-        $this->assertSame('https://meet.google.com/awm-gsft-xov', $mid['meeting_link']);
+        $this->assertSame($tiers[1]['name'], $mid['provider']);
+        $this->assertSame($tiers[1]['link'], $mid['meeting_link']);
 
         $large = DemoProviderResolver::resolve(15);
-        $this->assertSame('Kamal Sharma', $large['provider']);
-        $this->assertSame('https://meet.google.com/ouq-sxne-jwn', $large['meeting_link']);
+        $this->assertSame($tiers[2]['name'], $large['provider']);
+        $this->assertSame($tiers[2]['link'], $large['meeting_link']);
     }
 
     public function test_demo_scheduled_follow_up_stores_team_provider_and_link_from_lead_team_size(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
-        $provider = $this->createEligibleProvider('Dev Aggarwal', 1, 10, 'https://meet.google.com/awm-gsft-xov');
+        $provider = $this->createEligibleProvider('Fixture Mid', 1, 10, 'https://meet.example.com/fixture-mid');
         $lead = $this->createLeadWithTeamSize(8);
         $scheduled = now()->addDays(3)->setTime(15, 30);
 
@@ -51,20 +56,20 @@ class FollowUpDemoFieldsTest extends TestCase
 
         $response->assertCreated()
             ->assertJsonPath('data.team_size', 8)
-            ->assertJsonPath('data.demo_provider_name', 'Dev Aggarwal')
+            ->assertJsonPath('data.demo_provider_name', 'Fixture Mid')
             ->assertJsonPath('data.demo_provider_employee_id', $provider->employee_id)
-            ->assertJsonPath('data.meeting_link', 'https://meet.google.com/awm-gsft-xov');
+            ->assertJsonPath('data.meeting_link', 'https://meet.example.com/fixture-mid');
 
         $this->deleteJson('/ca-masters/'.$lead->ca_id)->assertOk();
     }
 
     public function test_changing_team_size_recalculates_provider_and_link(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
-        $small = $this->createEligibleProvider('Ankit Bhardwaj', 1, 1, 'https://meet.google.com/mcq-jrnh-uea');
-        $large = $this->createEligibleProvider('Kamal Sharma', 11, 50, 'https://meet.google.com/ouq-sxne-jwn');
+        $small = $this->createEligibleProvider('Fixture Small', 1, 1, 'https://meet.example.com/fixture-small');
+        $large = $this->createEligibleProvider('Fixture Large', 11, 50, 'https://meet.example.com/fixture-large');
         $lead = $this->createLeadWithTeamSize(1);
         $scheduled = now()->addDays(2)->setTime(11, 0);
 
@@ -83,16 +88,16 @@ class FollowUpDemoFieldsTest extends TestCase
             'demo_provider_employee_id' => $large->employee_id,
         ])->assertOk()
             ->assertJsonPath('data.team_size', 12)
-            ->assertJsonPath('data.demo_provider_name', 'Kamal Sharma')
+            ->assertJsonPath('data.demo_provider_name', 'Fixture Large')
             ->assertJsonPath('data.demo_provider_employee_id', $large->employee_id)
-            ->assertJsonPath('data.meeting_link', 'https://meet.google.com/ouq-sxne-jwn');
+            ->assertJsonPath('data.meeting_link', 'https://meet.example.com/fixture-large');
 
         $this->deleteJson('/ca-masters/'.$lead->ca_id)->assertOk();
     }
 
     public function test_demo_scheduled_requires_team_size_when_unavailable(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $lead = $this->createLeadWithTeamSize(null);
@@ -110,7 +115,7 @@ class FollowUpDemoFieldsTest extends TestCase
 
     public function test_demo_scheduled_succeeds_when_sms_api_key_cannot_be_decrypted(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $settings = \App\Models\SmsSetting::query()->first();
@@ -121,7 +126,7 @@ class FollowUpDemoFieldsTest extends TestCase
             ])->save();
         }
 
-        $provider = $this->createEligibleProvider('Dev Aggarwal', 1, 10, 'https://meet.google.com/awm-gsft-xov');
+        $provider = $this->createEligibleProvider('Fixture Mid', 1, 10, 'https://meet.example.com/fixture-mid');
         $lead = $this->createLeadWithTeamSize(8);
         $scheduled = now()->addDays(3)->setTime(15, 30);
 
@@ -138,7 +143,7 @@ class FollowUpDemoFieldsTest extends TestCase
 
     public function test_non_demo_follow_up_does_not_require_meeting_link(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $lead = $this->createLeadWithTeamSize(3);
@@ -157,10 +162,10 @@ class FollowUpDemoFieldsTest extends TestCase
 
     public function test_demo_scheduled_can_be_marked_completed_using_existing_meeting_link(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
-        $provider = $this->createEligibleProvider('Dev Aggarwal', 1, 10, 'https://meet.google.com/awm-gsft-xov');
+        $provider = $this->createEligibleProvider('Fixture Mid', 1, 10, 'https://meet.example.com/fixture-mid');
         $lead = $this->createLeadWithTeamSize(8);
         $scheduled = now()->addDays(3)->setTime(15, 30);
 
@@ -183,7 +188,7 @@ class FollowUpDemoFieldsTest extends TestCase
 
     public function test_demo_scheduled_can_be_marked_completed_when_link_exists_on_demo_schedule_only(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $lead = $this->createLeadWithTeamSize(8);
@@ -201,7 +206,7 @@ class FollowUpDemoFieldsTest extends TestCase
             'ca_id' => $lead->ca_id,
             'followup_id' => $followUp->followup_id,
             'demo_at' => $scheduled,
-            'meeting_link' => 'https://meet.google.com/demo-schedule-only',
+            'meeting_link' => 'https://meet.example.com/demo-schedule-only',
             'status' => 'scheduled',
         ]);
 
@@ -211,6 +216,31 @@ class FollowUpDemoFieldsTest extends TestCase
             ->assertJsonPath('data.status', 'Completed');
 
         $this->deleteJson('/ca-masters/'.$lead->ca_id)->assertOk();
+    }
+
+    private function seedDemoProviders(): array
+    {
+        DemoProvider::query()->delete();
+        $suffix = uniqid('fp', true);
+        $tiers = [
+            ['name' => 'Fixture Small '.$suffix, 'link' => 'https://meet.example.com/small-'.$suffix, 'min' => 1, 'max' => 1, 'sort' => 1],
+            ['name' => 'Fixture Mid '.$suffix, 'link' => 'https://meet.example.com/mid-'.$suffix, 'min' => 2, 'max' => 10, 'sort' => 2],
+            ['name' => 'Fixture Large '.$suffix, 'link' => 'https://meet.example.com/large-'.$suffix, 'min' => 11, 'max' => null, 'sort' => 3],
+        ];
+
+        foreach ($tiers as $tier) {
+            DemoProvider::query()->create([
+                'name' => $tier['name'],
+                'default_meeting_link' => $tier['link'],
+                'min_team_size' => $tier['min'],
+                'max_team_size' => $tier['max'],
+                'sort_order' => $tier['sort'],
+                'is_active' => true,
+                'is_demo' => true,
+            ]);
+        }
+
+        return $tiers;
     }
 
     private function createEligibleProvider(string $name, int $min, int $max, string $link): Employee

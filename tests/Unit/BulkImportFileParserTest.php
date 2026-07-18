@@ -18,7 +18,7 @@ class BulkImportFileParserTest extends TestCase
 
         $this->assertSame(BulkImportTemplateService::TEMPLATE_HEADERS, $parsed['headers']);
         $this->assertCount(1, $parsed['rows']);
-        $this->assertSame('Sharma & Associates', $parsed['rows'][0]['firm_name']);
-        $this->assertSame('R. Sharma', $parsed['rows'][0]['ca_name']);
+        $this->assertSame('Sample Firm Pvt Ltd', $parsed['rows'][0]['firm_name']);
+        $this->assertSame('Sample CA', $parsed['rows'][0]['ca_name']);
     }
 }

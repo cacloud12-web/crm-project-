@@ -2,11 +2,13 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class DemoProvider extends Model
 {
+    use HasFactory;
     protected $fillable = [
         'name',
         'default_meeting_link',
@@ -21,6 +23,7 @@ class DemoProvider extends Model
         'break_end_time',
         'working_days',
         'is_active',
+        'is_demo',
         'sort_order',
     ];
 
@@ -29,6 +32,7 @@ class DemoProvider extends Model
         return [
             'working_days' => 'array',
             'is_active' => 'boolean',
+            'is_demo' => 'boolean',
         ];
     }
 

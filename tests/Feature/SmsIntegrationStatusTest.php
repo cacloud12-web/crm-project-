@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\ActivityLog;
 use App\Models\SmsSetting;
 use App\Models\User;
@@ -15,7 +17,7 @@ class SmsIntegrationStatusTest extends TestCase
 
     private function admin(): User
     {
-        return User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        return CrmTestAccounts::admin();
     }
 
     private function seedSmsSettings(array $overrides = []): SmsSetting

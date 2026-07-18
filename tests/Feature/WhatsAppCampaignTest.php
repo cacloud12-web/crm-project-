@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\ConsentTracking;
 use App\Models\DndManagement;
@@ -22,7 +24,7 @@ class WhatsAppCampaignTest extends TestCase
 
     private function admin(): User
     {
-        return User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        return CrmTestAccounts::admin();
     }
 
     private function seedWhatsAppSettings(array $overrides = []): WhatsAppSetting

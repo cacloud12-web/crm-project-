@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\User;
 use App\Services\Activity\ActivityLogService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -13,7 +15,7 @@ class ProductionReadinessTest extends TestCase
 
     private function actingAsAdmin(): User
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         return $admin;

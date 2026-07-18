@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\DuplicateAttempt;
 use App\Models\DuplicateAttemptLog;
@@ -19,7 +21,7 @@ class BulkCaMasterImportTest extends TestCase
 
     private function actingAsAdmin(): User
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         return $admin;
@@ -543,7 +545,7 @@ class BulkCaMasterImportTest extends TestCase
             'skipped_records' => 0,
             'failed_records' => 0,
             'initiated_by' => null,
-            'imported_by' => 'admin@ca.local',
+            'imported_by' => CrmTestAccounts::admin()->email,
             'status' => 'Completed',
             'started_at' => now(),
             'completed_at' => now(),
@@ -607,7 +609,7 @@ class BulkCaMasterImportTest extends TestCase
             'updated_at' => now(),
         ], 'bulk_action_id');
 
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
         $this->actingAs($employee);
 
         $this->deleteJson('/ca-masters/bulk-import/history/'.$bulkActionId)

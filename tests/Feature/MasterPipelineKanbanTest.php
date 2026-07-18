@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\City;
 use App\Models\State;
@@ -32,7 +34,7 @@ class MasterPipelineKanbanTest extends TestCase
 
     public function test_master_kanban_returns_four_sales_stages(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $this->createLead('New');
@@ -61,7 +63,7 @@ class MasterPipelineKanbanTest extends TestCase
 
     public function test_legacy_statuses_map_to_master_pipeline_stages(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $demoScheduled = $this->createLead('Demo Scheduled');
@@ -82,7 +84,7 @@ class MasterPipelineKanbanTest extends TestCase
 
     public function test_status_patch_accepts_master_pipeline_statuses(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $lead = $this->createLead('New');
@@ -108,7 +110,7 @@ class MasterPipelineKanbanTest extends TestCase
 
     public function test_sales_pipeline_still_uses_seven_stages_without_master_param(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $response = $this->getJson('/ca-masters/kanban?per_stage=10');
@@ -123,7 +125,7 @@ class MasterPipelineKanbanTest extends TestCase
 
     public function test_listing_filters_by_master_pipeline_stage(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $newLead = $this->createLead('New');
@@ -162,7 +164,7 @@ class MasterPipelineKanbanTest extends TestCase
 
     public function test_segment_counts_support_master_pipeline_stages(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $response = $this->getJson('/ca-masters/segment-counts?pipeline=master')->assertOk();

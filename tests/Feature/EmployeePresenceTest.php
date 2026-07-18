@@ -2,14 +2,19 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\Employee;
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Tests\Concerns\CreatesCrmUsers;
 use Tests\TestCase;
 
 class EmployeePresenceTest extends TestCase
 {
+    use CreatesCrmUsers;
     use DatabaseTransactions;
 
     protected function setUp(): void
@@ -23,17 +28,16 @@ class EmployeePresenceTest extends TestCase
 
     public function test_login_marks_user_online(): void
     {
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        // Local DBs may have rotated demo passwords — set a known hash inside this transaction.
+        $employeeUser = CrmTestAccounts::employeeUser();
         $employeeUser->forceFill([
             'last_seen_at' => null,
-            'password' => bcrypt('password'),
+            'password' => Hash::make($this->testPassword()),
             'is_active' => true,
         ])->save();
 
         $this->postJson('/login', [
-            'email' => 'employee@ca.local',
-            'password' => 'password',
+            'email' => $employeeUser->email,
+            'password' => $this->testPassword(),
         ])->assertOk();
 
         $employeeUser->refresh();
@@ -43,8 +47,8 @@ class EmployeePresenceTest extends TestCase
 
     public function test_heartbeat_updates_own_presence_only(): void
     {
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
+        $manager = CrmTestAccounts::manager();
         $managerSeen = now()->subHours(2);
         $manager->forceFill(['last_seen_at' => $managerSeen])->save();
         $employeeUser->forceFill(['last_seen_at' => now()->subMinutes(10)])->save();
@@ -73,7 +77,7 @@ class EmployeePresenceTest extends TestCase
 
     public function test_logout_clears_presence(): void
     {
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
         $employeeUser->forceFill(['last_seen_at' => now()])->save();
 
         $this->actingAs($employeeUser)
@@ -86,7 +90,7 @@ class EmployeePresenceTest extends TestCase
 
     public function test_bulk_assignment_employees_omit_presence_fields(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
         $response = $this->getJson('/lead-assignments/bulk/employees?per_page=25');
@@ -103,7 +107,7 @@ class EmployeePresenceTest extends TestCase
 
     public function test_stale_last_seen_is_offline_in_employee_api(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
         $employee = Employee::query()->whereNotNull('user_id')->with('user')->first();

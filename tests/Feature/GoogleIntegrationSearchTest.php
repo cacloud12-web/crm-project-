@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -25,7 +27,7 @@ class GoogleIntegrationSearchTest extends TestCase
 
     private function actingAsAdmin(): User
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         return $admin;
@@ -34,8 +36,8 @@ class GoogleIntegrationSearchTest extends TestCase
     private function sampleLead(array $overrides = []): CaMaster
     {
         return CaMaster::query()->create(array_merge([
-            'ca_name' => 'Ajay Kumar Bhardwaj',
-            'firm_name' => 'AK Bhardwaj & Co',
+            'ca_name' => 'Example CA',
+            'firm_name' => 'Example Firm & Co',
             'status' => 'New',
         ], $overrides));
     }
@@ -50,7 +52,7 @@ class GoogleIntegrationSearchTest extends TestCase
                 'places' => [
                     [
                         'id' => 'places/chij-one',
-                        'displayName' => ['text' => 'AK Bhardwaj & Co Chartered Accountants'],
+                        'displayName' => ['text' => 'Example Firm & Co Chartered Accountants'],
                         'formattedAddress' => 'Kolkata, West Bengal, India',
                         'rating' => 4.6,
                         'userRatingCount' => 12,
@@ -68,7 +70,7 @@ class GoogleIntegrationSearchTest extends TestCase
         $response->assertOk();
         $response->assertJsonPath('data.status', 'OK');
         $response->assertJsonPath('data.results.0.place_id', 'places/chij-one');
-        $response->assertJsonPath('data.results.0.business_name', 'AK Bhardwaj & Co Chartered Accountants');
+        $response->assertJsonPath('data.results.0.business_name', 'Example Firm & Co Chartered Accountants');
         $response->assertJsonPath('data.results.0.phone', '+91 98765 43210');
         $response->assertJsonPath('data.results.0.website', 'https://example.com');
         $response->assertJsonPath('data.results.0.rating', 4.6);

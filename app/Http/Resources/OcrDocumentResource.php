@@ -38,6 +38,7 @@ class OcrDocumentResource extends JsonResource
             'parse_status' => $this->parse_status,
             'parsed_firm_count' => $this->parsed_firm_count,
             'parsed_at' => $this->parsed_at?->toIso8601String(),
+            'parse_error' => $this->parseErrorPayload(),
             'original_filename' => $this->original_filename,
             'mime_type' => $this->mime_type,
             'file_size' => $this->file_size,
@@ -178,6 +179,29 @@ class OcrDocumentResource extends JsonResource
         }
 
         return 'Large-document processing is not configured. Please contact the administrator.';
+    }
+
+    /**
+     * @return array{code: string, message: string}|null
+     */
+    private function parseErrorPayload(): ?array
+    {
+        $data = is_array($this->structured_data) ? $this->structured_data : [];
+        $error = $data['parsed']['error'] ?? null;
+        if (! is_array($error)) {
+            return null;
+        }
+
+        $code = trim((string) ($error['code'] ?? ''));
+        $message = trim((string) ($error['message'] ?? ''));
+        if ($code === '' && $message === '') {
+            return null;
+        }
+
+        return [
+            'code' => $code !== '' ? $code : 'parser_exception',
+            'message' => $message !== '' ? $message : 'Structured parsing failed.',
+        ];
     }
 
     private function formatFileSize(int $bytes): string

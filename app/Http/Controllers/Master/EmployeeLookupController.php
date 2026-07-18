@@ -20,8 +20,14 @@ class EmployeeLookupController extends Controller
     public function executives(): JsonResponse
     {
         $query = Employee::query()
-            ->with(['city'])
-            ->where('status', 'Active');
+            ->with(['city', 'user'])
+            ->where('status', 'Active')
+            ->where(function ($inner) {
+                $inner->whereNull('user_id')
+                    ->orWhereHas('user', function ($userQuery) {
+                        $userQuery->where('is_active', true);
+                    });
+            });
 
         $scopedEmployeeId = $this->dataScopeService->scopedEmployeeId(auth()->user());
 

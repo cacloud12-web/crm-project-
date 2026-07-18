@@ -45,7 +45,7 @@
           <div><label class="text-caption font-medium text-slate-600 mb-1.5 block">Existing Software</label><select class="input-field"><option>Any</option><option>Tally</option><option>Zoho</option><option>None</option><option>Busy</option></select></div>
           <div><label class="text-caption font-medium text-slate-600 mb-1.5 block">Rating Min</label><select class="input-field"><option>Any</option><option>5 stars</option><option>4+ stars</option><option>3+ stars</option></select></div>
           <div><label class="text-caption font-medium text-slate-600 mb-1.5 block">Newly Established</label><select class="input-field"><option>Any</option><option>Yes</option><option>No</option></select></div>
-          <div><label class="text-caption font-medium text-slate-600 mb-1.5 block">Assigned To</label><select class="input-field"><option>All Employees</option><option>Rahul Verma</option><option>Priya Sharma</option><option>Anita Desai</option></select></div>
+          <div><label class="text-caption font-medium text-slate-600 mb-1.5 block">Assigned To</label><select class="input-field" id="filter-assigned-to" data-crm-entity-lookup="employee" data-crm-lookup-empty-label="All Employees" data-crm-lookup-placeholder="Search employee…"><option value="">All Employees</option></select></div>
         </div>
 
         <div class="filter-time-section">
@@ -168,8 +168,8 @@
         <input type="hidden" name="ca_id" id="form-lead-ca-id" value="" />
         <div class="ca-modal-body">
           <div class="grid sm:grid-cols-2 gap-4">
-            <div><label class="form-label">Firm Name <span class="text-rose-500">*</span></label><input name="firm_name" class="input-field" required placeholder="Sharma & Associates" autocomplete="organization" /></div>
-            <div><label class="form-label">CA Name <span class="text-rose-500">*</span></label><input name="ca_name" class="input-field" required placeholder="R. Sharma" autocomplete="name" /></div>
+            <div><label class="form-label">Firm Name <span class="text-rose-500">*</span></label><input name="firm_name" class="input-field" required placeholder="Sample Firm Pvt Ltd" autocomplete="organization" /></div>
+            <div><label class="form-label">CA Name <span class="text-rose-500">*</span></label><input name="ca_name" class="input-field" required placeholder="Sample CA" autocomplete="name" /></div>
             <div><label class="form-label">Phone / Mobile</label><input name="mobile_no" id="form-lead-mobile-no" class="input-field" type="tel" inputmode="numeric" placeholder="9876543210" autocomplete="tel" /><p id="form-lead-mobile-hint" class="hidden text-caption text-slate-500 mt-1">Primary mobile cannot be changed once saved.</p><div id="form-lead-duplicate-warning" class="hidden mt-2 rounded-xl border border-red-200 bg-red-50 p-3 text-caption text-red-800"></div></div>
             <div><label class="form-label">Alternate Mobile</label><input name="alternate_mobile_no" class="input-field" type="tel" inputmode="numeric" placeholder="9123456789" autocomplete="tel" /></div>
             <div class="sc-location-pair sm:col-span-2 grid sm:grid-cols-2 gap-4">
@@ -252,8 +252,8 @@
         <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
       </div>
       <form id="form-add-employee" class="ca-modal-body space-y-4">
-        <div><label class="form-label">Full Name</label><input name="name" class="input-field" required placeholder="Priya Sharma" /></div>
-        <div><label class="form-label">Login Email</label><input name="email_id" type="email" class="input-field" required placeholder="priya@firm.local" autocomplete="off" /></div>
+        <div><label class="form-label">Full Name</label><input name="name" class="input-field" required placeholder="Full name" /></div>
+        <div><label class="form-label">Login Email</label><input name="email_id" type="email" class="input-field" required placeholder="name@company.local" autocomplete="off" /></div>
         <div><label class="form-label">Mobile</label><input name="mobile_no" class="input-field" required /></div>
         <div class="sc-location-pair">
           <div><label class="form-label">State</label><select name="state_id" class="input-field"><option value="">Select state</option></select></div>
@@ -288,6 +288,24 @@
             <input name="active_for_demo" type="checkbox" id="employee-active-for-demo" value="1" class="rounded border-slate-300" />
             Active for demo assignment
           </label>
+        </div>
+        <div id="employee-edit-fields" class="hidden space-y-4 border-t border-slate-100 pt-4">
+          <p class="text-card-heading text-sm">Account</p>
+          <div>
+            <label class="form-label" for="employee-status">Status</label>
+            <select name="status" id="employee-status" class="input-field">
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </select>
+          </div>
+          <div id="employee-edit-crm-role-wrap" class="hidden">
+            <label class="form-label" for="employee-edit-crm-role">CRM Access Role</label>
+            <select name="crm_role" id="employee-edit-crm-role" class="input-field">
+              <option value="employee">Employee</option>
+              <option value="manager">Manager</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
         </div>
         <div id="employee-login-fields" class="space-y-4 border-t border-slate-100 pt-4">
           <p class="text-card-heading text-sm">Login Credentials</p>
@@ -1368,36 +1386,35 @@
   </div>
 
   <!-- Attendance Management Modal -->
-  <div id="modal-manage-attendance" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="manage-attendance-title">
-    <div class="ca-modal-panel ca-modal-panel-lg">
-      <div class="ca-modal-header">
+  <div id="modal-manage-attendance" class="ca-modal attendance-modal" role="dialog" aria-modal="true" aria-labelledby="manage-attendance-title">
+    <div class="ca-modal-panel attendance-modal__panel">
+      <div class="ca-modal-header attendance-modal__header">
         <h3 id="manage-attendance-title" class="ca-modal-title">
           <span class="ca-modal-icon"><i data-lucide="clipboard-check" class="h-5 w-5"></i></span>
           Today’s Attendance
         </h3>
         <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
       </div>
-      <div class="ca-modal-body space-y-3">
+      <div class="ca-modal-body attendance-modal__body">
         <div class="attendance-toolbar">
-          <div>
+          <div class="attendance-toolbar__date">
             <label class="form-label" for="attendance-date-input">Date</label>
-            <input type="date" id="attendance-date-input" class="input-field" data-allow-past />
+            <input type="date" id="attendance-date-input" class="input-field" data-crm-date-input data-allow-past data-hide-preview aria-label="Attendance date" />
           </div>
           <div class="attendance-toolbar__search">
             <label class="form-label" for="attendance-search-input">Search</label>
             <input type="search" id="attendance-search-input" class="input-field" placeholder="Search employee…" autocomplete="off" />
           </div>
         </div>
-        <div class="attendance-summary-strip" id="attendance-modal-summary"></div>
-        <div class="crm-table-container scrollbar-thin max-h-96 overflow-auto">
+        <div class="attendance-summary-strip" id="attendance-modal-summary" aria-live="polite"></div>
+        <div class="attendance-table-wrap crm-table-container scrollbar-thin">
           <table class="ca-table w-full attendance-table">
             <thead>
               <tr>
-                <th style="width:2.25rem"><input type="checkbox" id="attendance-select-all" aria-label="Select all visible employees" /></th>
+                <th class="attendance-col-check"><input type="checkbox" id="attendance-select-all" aria-label="Select all visible employees" /></th>
                 <th>Employee</th>
-                
-                <th>Status</th>
-                <th>Mark Attendance</th>
+                <th class="attendance-col-status">Status</th>
+                <th class="attendance-col-mark">Mark Attendance</th>
               </tr>
             </thead>
             <tbody id="attendance-table-body"></tbody>
@@ -1405,9 +1422,9 @@
         </div>
         <div id="attendance-pagination" class="attendance-pagination"></div>
       </div>
-      <div class="ca-modal-footer">
+      <div class="ca-modal-footer attendance-modal__footer">
         <div class="ca-modal-footer-buttons">
-          <button type="button" class="btn-secondary" data-close-crm-modal>Close</button>
+          <button type="button" class="btn-secondary btn-sm" data-close-crm-modal>Close</button>
         </div>
       </div>
     </div>

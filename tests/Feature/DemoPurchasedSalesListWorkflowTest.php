@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\AssignmentHistory;
 use App\Models\CaMaster;
 use App\Models\City;
@@ -38,8 +40,8 @@ class DemoPurchasedSalesListWorkflowTest extends TestCase
 
     public function test_follow_up_demo_scheduled_creates_demo_schedule(): void
     {
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
+        $employee = CrmTestAccounts::employee();
         $lead = $this->createLead();
 
         LeadAssignmentEngine::query()->create([
@@ -59,7 +61,7 @@ class DemoPurchasedSalesListWorkflowTest extends TestCase
             'scheduled_date' => now()->addDay()->setTime(11, 0)->toDateTimeString(),
             'remarks' => 'Product walkthrough',
             'team_size' => 8,
-            'meeting_link' => 'https://meet.google.com/awm-gsft-xov',
+            'meeting_link' => 'https://meet.example.com/demo-provider-2',
         ]);
 
         $response->assertCreated();
@@ -75,7 +77,7 @@ class DemoPurchasedSalesListWorkflowTest extends TestCase
         $this->assertDatabaseHas('follow_ups', [
             'followup_id' => $followupId,
             'team_size' => 8,
-            'meeting_link' => 'https://meet.google.com/awm-gsft-xov',
+            'meeting_link' => 'https://meet.example.com/demo-provider-2',
         ]);
     }
 
@@ -92,8 +94,8 @@ class DemoPurchasedSalesListWorkflowTest extends TestCase
             'status' => 'Active',
             'date_of_joining' => now()->toDateString(),
         ]);
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
+        $employee = CrmTestAccounts::employee();
         $lead = $this->createLead();
 
         LeadAssignmentEngine::query()->create([
@@ -153,7 +155,7 @@ class DemoPurchasedSalesListWorkflowTest extends TestCase
         $this->actingAs($employeeUser);
         $this->getJson('/sales-list')->assertForbidden();
 
-        $managerUser = User::query()->where('email', 'manager@ca.local')->firstOrFail();
+        $managerUser = CrmTestAccounts::manager();
         $this->actingAs($managerUser);
         $this->getJson('/sales-list')
             ->assertOk()
@@ -168,8 +170,8 @@ class DemoPurchasedSalesListWorkflowTest extends TestCase
 
     public function test_manager_can_edit_sales_list_after_purchase(): void
     {
-        $managerUser = User::query()->where('email', 'manager@ca.local')->firstOrFail();
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $managerUser = CrmTestAccounts::manager();
+        $employee = CrmTestAccounts::employee();
         $lead = $this->createLead();
 
         $schedule = DemoSchedule::query()->create([
@@ -182,7 +184,7 @@ class DemoPurchasedSalesListWorkflowTest extends TestCase
             'firm_name' => $lead->firm_name,
         ]);
 
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
         $this->postJson('/workflow/demos/'.$schedule->id.'/result', [
             'result' => 'Purchased',

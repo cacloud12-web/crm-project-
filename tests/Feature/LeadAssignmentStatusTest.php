@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\ActivityLog;
 use App\Models\AssignmentHistory;
 use App\Models\CaMaster;
@@ -17,10 +19,10 @@ class LeadAssignmentStatusTest extends TestCase
 
     public function test_admin_can_pause_and_resume_assignment(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employee();
         $lead = CaMaster::query()->create([
             'firm_name' => 'Pause Test Firm',
             'ca_name' => 'Pause CA',
@@ -79,10 +81,10 @@ class LeadAssignmentStatusTest extends TestCase
 
     public function test_employee_cannot_pause_assignment(): void
     {
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
         $this->actingAs($employeeUser);
 
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employee();
         $lead = CaMaster::query()->create([
             'firm_name' => 'Employee Pause Block',
             'ca_name' => 'Employee CA',

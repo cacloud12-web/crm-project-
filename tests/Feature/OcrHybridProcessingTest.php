@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Jobs\CheckBatchOcrStatusJob;
 use App\Jobs\FinalizeBatchOcrResultJob;
 use App\Jobs\ProcessOcrDocumentJob;
@@ -64,7 +66,7 @@ class OcrHybridProcessingTest extends TestCase
 
     private function actingAsAdmin(): User
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         return $admin;
@@ -138,7 +140,7 @@ class OcrHybridProcessingTest extends TestCase
 
         Queue::fake();
 
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
         $this->actingAs($employee);
 
         $this->post('/ocr-documents', [

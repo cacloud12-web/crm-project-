@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
@@ -12,32 +14,33 @@ class ProfileUpdateTest extends TestCase
 
     public function test_super_admin_can_update_own_profile_name_but_not_login_email(): void
     {
-        $user = User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
+        $user = CrmTestAccounts::superAdmin();
         $this->actingAs($user);
 
+        $originalEmail = $user->email;
         $response = $this->putJson('/auth/profile', [
             'name' => 'Super Admin Updated',
-            'email' => 'superadmin.updated@ca.local',
+            'email' => 'superadmin.updated.'.uniqid().'@example.local',
         ]);
 
         $response->assertOk()
             ->assertJsonPath('data.name', 'Super Admin Updated')
-            ->assertJsonPath('data.email', 'superadmin@ca.local');
+            ->assertJsonPath('data.email', $originalEmail);
 
         User::query()->whereKey($user->id)->update([
-            'name' => 'Super Admin',
-            'email' => 'superadmin@ca.local',
+            'name' => 'Test Super Admin',
+            'email' => $originalEmail,
         ]);
     }
 
     public function test_employee_user_can_update_profile_and_linked_employee_record(): void
     {
-        $user = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $user = CrmTestAccounts::employeeUser();
         $this->actingAs($user);
 
         $response = $this->putJson('/auth/profile', [
             'name' => 'Employee Updated',
-            'email' => 'employee@ca.local',
+            'email' => $user->email,
             'designation' => 'Senior Sales Executive',
             'mobile_no' => '9876543210',
         ]);
@@ -48,12 +51,12 @@ class ProfileUpdateTest extends TestCase
 
     public function test_profile_email_must_be_unique(): void
     {
-        $user = User::query()->where('email', 'superadmin@ca.local')->firstOrFail();
+        $user = CrmTestAccounts::superAdmin();
         $this->actingAs($user);
 
         $response = $this->putJson('/auth/profile', [
             'name' => 'Super Admin',
-            'email' => 'admin@ca.local',
+            'email' => CrmTestAccounts::admin()->email,
         ]);
 
         $response->assertUnprocessable()

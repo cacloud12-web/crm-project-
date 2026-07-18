@@ -40,9 +40,11 @@ class DemoAvailabilityService
 
         $resolved = DemoProviderResolver::resolve($teamSize);
 
-        return $resolved
-            ? DemoProvider::query()->where('is_active', true)->where('name', $resolved['provider'])->first()
-            : null;
+        if ($resolved && ! empty($resolved['demo_provider_id'])) {
+            return DemoProvider::query()->where('is_active', true)->find($resolved['demo_provider_id']);
+        }
+
+        return null;
     }
 
     /**

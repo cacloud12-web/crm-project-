@@ -4,6 +4,7 @@ namespace App\Http\Requests\Employee;
 
 use App\Http\Requests\Employee\Concerns\ValidatesEmployeeDemoWorkType;
 use App\Models\Employee;
+use App\Rules\AssignableCrmRole;
 use App\Rules\CityBelongsToState;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -29,18 +30,19 @@ class UpdateEmployeeRequest extends FormRequest
                 'required',
                 'email',
                 'max:255',
-                Rule::unique('employees', 'email_id')->ignore($employeeId, 'employee_id'),
+                Rule::unique('employees', 'email_id')->ignore($employeeId, 'employee_id')->whereNull('deleted_at'),
                 Rule::unique('users', 'email')->ignore(
                     optional(Employee::find($employeeId))->user_id,
                     'id',
-                ),
+                )->whereNull('deleted_at'),
             ],
             'mobile_no' => 'nullable|string|max:20',
             'state_id' => 'nullable|integer|exists:states,state_id',
             'city_id' => ['nullable', 'integer', 'exists:cities,city_id', new CityBelongsToState],
             'role' => 'nullable|string|max:255',
+            'crm_role' => ['sometimes', 'required', 'string', 'in:employee,manager,admin', new AssignableCrmRole],
             'date_of_joining' => 'nullable|date',
-            'status' => 'nullable|string|max:255',
+            'status' => 'nullable|string|in:Active,Inactive',
         ], $this->employeeDemoWorkTypeRules(true));
     }
 

@@ -556,10 +556,18 @@
     });
   }
 
+  function refreshAll(kind) {
+    document.querySelectorAll('select[data-crm-entity-lookup' + (kind ? '="' + kind + '"' : '') + ']').forEach(function (selectEl) {
+      var api = get(selectEl);
+      if (api && typeof api.refresh === 'function') api.refresh();
+    });
+  }
+
   global.CrmEntityLookup = {
     enhance: enhance,
     enhanceAll: enhanceAll,
     get: get,
     setValue: setValue,
+    refreshAll: refreshAll,
   };
 })(window);

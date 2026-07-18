@@ -12,6 +12,7 @@ use App\Models\SmsLog;
 use App\Models\WaMessageLog;
 use App\Policies\CaMasterPolicy;
 use App\Services\Leads\LeadQualityHistoryService;
+use App\Support\Database\UsersTableSchema;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Database\Events\ConnectionEstablished;
@@ -40,6 +41,7 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->registerMysqlGrammar();
         $this->registerSqliteGrammar();
+        $this->registerUsersTableSchemaGuard();
         Gate::policy(CaMaster::class, CaMasterPolicy::class);
         Gate::policy(\App\Models\OcrDocument::class, \App\Policies\OcrDocumentPolicy::class);
         Event::listen(LeadSaved::class, RefreshEmployeeProductivityOnLeadSaved::class);
@@ -79,6 +81,22 @@ class AppServiceProvider extends ServiceProvider
             }
 
             $connection->setQueryGrammar(new SqliteGrammar($connection));
+            UsersTableSchema::ensureSoftDeletesColumn();
+        });
+    }
+
+    private function registerUsersTableSchemaGuard(): void
+    {
+        if (config('database.default') === 'sqlite') {
+            return;
+        }
+
+        Event::listen(ConnectionEstablished::class, function (ConnectionEstablished $event): void {
+            if (! in_array($event->connection->getDriverName(), ['mysql', 'pgsql'], true)) {
+                return;
+            }
+
+            UsersTableSchema::ensureSoftDeletesColumn();
         });
     }
 

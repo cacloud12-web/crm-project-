@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\Employee;
 use App\Models\LeadAssignmentEngine;
@@ -15,7 +17,7 @@ class CaMasterSecurityTest extends TestCase
 
     public function test_employee_cannot_delete_lead(): void
     {
-        $user = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $user = CrmTestAccounts::employeeUser();
         $this->actingAs($user);
 
         $lead = CaMaster::query()->firstOrFail();
@@ -29,8 +31,8 @@ class CaMasterSecurityTest extends TestCase
         app(\App\Services\Rbac\RbacDatabaseService::class)->resetRoleToDefault('employee');
         app(\App\Services\Rbac\RbacMatrixService::class)->flushCache();
 
-        $user = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $user = CrmTestAccounts::employeeUser();
+        $employee = CrmTestAccounts::employee();
         $this->actingAs($user);
 
         $stateId = CaMaster::query()->whereNotNull('state_id')->value('state_id');
@@ -68,7 +70,7 @@ class CaMasterSecurityTest extends TestCase
 
     public function test_deactivated_user_session_is_invalidated_on_next_request(): void
     {
-        $user = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $user = CrmTestAccounts::employeeUser();
         $this->actingAs($user);
 
         $user->update(['is_active' => false]);

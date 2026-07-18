@@ -6,7 +6,7 @@ final class DemoDataCatalog
 {
     public const DEMO_LEAD_EMAIL_PREFIX = 'manager.demo.lead';
 
-    public const DEMO_LEAD_EMAIL_DOMAIN = '@ca.local';
+    public const DEMO_LEAD_EMAIL_DOMAIN = '@example.local';
 
     /** @var array<string, string> */
     public const DEMO_CAMPAIGN_NAMES = [
@@ -22,12 +22,8 @@ final class DemoDataCatalog
         'Manager Demo — SMS',
     ];
 
-    /** @var list<string> */
-    public const DEMO_EMPLOYEE_EMAILS = [
-        'employee@ca.local',
-        'manager.demo.exec2@ca.local',
-        'manager.demo.exec3@ca.local',
-    ];
+    /** Documented test-only email domains — never personal identities. */
+    public const TEST_EMAIL_DOMAINS = ['example.local', 'example.test', 'test.local', 'ca.local'];
 
     /** @var list<string> */
     public const QA_LEAD_PATTERNS = [
@@ -69,6 +65,27 @@ final class DemoDataCatalog
 
         return str_starts_with($email, self::DEMO_LEAD_EMAIL_PREFIX)
             && str_ends_with($email, self::DEMO_LEAD_EMAIL_DOMAIN);
+    }
+
+    public static function isDemoEmployeeEmail(?string $email): bool
+    {
+        if (! $email) {
+            return false;
+        }
+
+        return str_starts_with($email, 'manager.demo.exec')
+            && str_ends_with($email, self::DEMO_LEAD_EMAIL_DOMAIN);
+    }
+
+    public static function isTestEmailDomain(?string $email): bool
+    {
+        if (! $email || ! str_contains($email, '@')) {
+            return false;
+        }
+
+        $domain = strtolower(substr($email, strrpos($email, '@') + 1));
+
+        return in_array($domain, self::TEST_EMAIL_DOMAINS, true);
     }
 
     /**

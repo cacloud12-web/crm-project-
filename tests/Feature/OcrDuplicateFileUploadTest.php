@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\OcrDocument;
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -31,7 +33,7 @@ class OcrDuplicateFileUploadTest extends TestCase
 
     public function test_duplicate_checksum_blocks_reimport_without_force(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $contents = '%PDF-1.4 duplicate-hash-body-'.uniqid('', true);

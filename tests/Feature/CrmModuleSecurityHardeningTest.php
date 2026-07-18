@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\Employee;
 use App\Models\FollowUp;
@@ -16,7 +18,7 @@ class CrmModuleSecurityHardeningTest extends TestCase
 
     public function test_employee_cannot_delete_assignment_they_cannot_access(): void
     {
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
         $this->actingAs($employeeUser);
 
         $employeeId = Employee::query()->where('user_id', $employeeUser->id)->value('employee_id');
@@ -34,7 +36,7 @@ class CrmModuleSecurityHardeningTest extends TestCase
 
     public function test_assignment_update_uses_scoped_find(): void
     {
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
         $this->actingAs($employeeUser);
 
         $employeeId = Employee::query()->where('user_id', $employeeUser->id)->value('employee_id');
@@ -53,7 +55,7 @@ class CrmModuleSecurityHardeningTest extends TestCase
 
     public function test_follow_up_cannot_be_moved_to_inaccessible_lead(): void
     {
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
         $this->actingAs($employeeUser);
 
         $employeeId = Employee::query()->where('user_id', $employeeUser->id)->value('employee_id');
@@ -73,7 +75,7 @@ class CrmModuleSecurityHardeningTest extends TestCase
 
     public function test_invalid_followup_type_is_rejected(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $lead = CaMaster::query()->firstOrFail();
@@ -90,7 +92,7 @@ class CrmModuleSecurityHardeningTest extends TestCase
 
     public function test_employee_cannot_list_another_employees_tasks(): void
     {
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
         $this->actingAs($employeeUser);
 
         $employeeId = Employee::query()->where('user_id', $employeeUser->id)->value('employee_id');
@@ -119,7 +121,7 @@ class CrmModuleSecurityHardeningTest extends TestCase
 
     public function test_employee_cannot_reassign_follow_up_to_another_employee(): void
     {
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
         $this->actingAs($employeeUser);
 
         $employeeId = Employee::query()->where('user_id', $employeeUser->id)->value('employee_id');

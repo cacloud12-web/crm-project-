@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\MasterImportBatch;
 use App\Models\MasterMappingDecision;
@@ -128,7 +130,7 @@ class MasterImportBatchRollbackTest extends TestCase
             $this->markTestSkipped('master_import_batches missing — run migrations.');
         }
 
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $stats = app(MasterDataMappingService::class)->processBatch('api', 'rollback-http-1', [

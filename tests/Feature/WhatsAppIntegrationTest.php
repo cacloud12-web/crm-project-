@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\MessageTemplate;
 use App\Models\User;
 use App\Models\WhatsAppSetting;
@@ -15,7 +17,7 @@ class WhatsAppIntegrationTest extends TestCase
 
     private function admin(): User
     {
-        return User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        return CrmTestAccounts::admin();
     }
 
     private function seedWhatsAppSettings(array $overrides = []): WhatsAppSetting

@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\Employee;
 use App\Models\User;
@@ -17,8 +19,8 @@ class ManagerAssignmentPermissionTest extends TestCase
 
     public function test_manager_can_create_single_lead_assignment(): void
     {
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $manager = CrmTestAccounts::manager();
+        $employee = CrmTestAccounts::employee();
         $suffix = (string) random_int(100000, 999999);
 
         $lead = CaMaster::query()->create([
@@ -46,8 +48,8 @@ class ManagerAssignmentPermissionTest extends TestCase
 
     public function test_employee_cannot_create_lead_assignment(): void
     {
-        $employeeUser = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employeeUser = CrmTestAccounts::employeeUser();
+        $employee = CrmTestAccounts::employee();
         $suffix = (string) random_int(100000, 999999);
 
         $lead = CaMaster::query()->create([

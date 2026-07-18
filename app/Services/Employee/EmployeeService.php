@@ -7,6 +7,7 @@ use App\Services\Activity\ActivityLogService;
 use App\Services\Concerns\SearchesListings;
 use App\Services\Master\LookupResolverService;
 use App\Services\Notifications\NotificationService;
+use App\Services\User\UserLifecycleService;
 use Illuminate\Support\Collection;
 
 class EmployeeService
@@ -18,6 +19,7 @@ class EmployeeService
         private readonly ActivityLogService $activityLogService,
         private readonly NotificationService $notificationService,
         private readonly EmployeeCredentialService $credentialService,
+        private readonly UserLifecycleService $userLifecycleService,
     ) {}
 
     public function search(array $params = []): array
@@ -81,6 +83,10 @@ class EmployeeService
 
         $this->credentialService->syncUserFromEmployee($employee, $previousEmail);
 
+        if (array_key_exists('crm_role', $data) && $employee->user) {
+            $this->credentialService->syncCrmRoleForEmployee($employee, (string) $data['crm_role'], auth()->user());
+        }
+
         $this->activityLogService->log(
             'EMPLOYEE_MASTER',
             'Update Employee',
@@ -96,8 +102,15 @@ class EmployeeService
     public function delete(Employee $employee): void
     {
         $before = $this->auditSnapshot($employee);
+        $user = $employee->user;
 
-        $this->credentialService->deactivateLogin($employee);
+        if ($user) {
+            $this->userLifecycleService->assertCanDeleteUser($user);
+        }
+
+        if ($user) {
+            $this->credentialService->removeLoginForEmployee($employee);
+        }
 
         $this->activityLogService->log(
             'EMPLOYEE_MASTER',

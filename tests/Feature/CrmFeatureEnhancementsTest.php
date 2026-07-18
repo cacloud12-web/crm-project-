@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\ApprovalRequest;
 use App\Models\CaMaster;
 use App\Models\Employee;
@@ -18,7 +20,7 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_lead_can_be_filtered_by_mobile_missing_segment(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $ts = (string) microtime(true);
@@ -38,7 +40,7 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_lead_view_is_recorded_when_opened(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $lead = CaMaster::query()->firstOrFail();
@@ -56,8 +58,8 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_employee_cannot_update_restricted_lead_fields(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
         $this->actingAs($employee);
 
         $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();
@@ -84,8 +86,8 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_employee_can_update_alternate_mobile_on_assigned_lead(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
         $this->actingAs($employee);
 
         $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();
@@ -116,8 +118,8 @@ class CrmFeatureEnhancementsTest extends TestCase
         app(\App\Services\Rbac\RbacDatabaseService::class)->resetRoleToDefault('employee');
         app(\App\Services\Rbac\RbacMatrixService::class)->flushCache();
 
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
         $this->actingAs($employee);
 
         $stateId = CaMaster::query()->whereNotNull('state_id')->value('state_id');
@@ -148,8 +150,8 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_lead_lock_blocks_another_employee_from_editing(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
         $otherEmployee = Employee::query()
             ->where('employee_id', '!=', $employeeModel->employee_id)
             ->firstOrFail();
@@ -178,8 +180,8 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_lead_lock_is_released_after_successful_update(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
         $this->actingAs($employee);
 
         $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();
@@ -204,8 +206,8 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_admin_bypasses_lead_lock(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
+        $employeeModel = CrmTestAccounts::employee();
 
         $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();
         $lead->update([
@@ -227,8 +229,8 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_stale_lead_lock_expires_after_ttl(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
         $otherEmployee = Employee::query()
             ->where('employee_id', '!=', $employeeModel->employee_id)
             ->firstOrFail();
@@ -254,8 +256,8 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_employee_sensitive_status_change_requires_approval(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
         $this->actingAs($employee);
 
         $lead = CaMaster::query()->firstOrFail();
@@ -271,9 +273,9 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_employee_can_submit_approval_request_and_manager_can_approve(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $manager = User::query()->where('email', 'manager@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
+        $manager = CrmTestAccounts::manager();
+        $employeeModel = CrmTestAccounts::employee();
 
         $lead = CaMaster::query()->where('status', '!=', 'Lost')->firstOrFail();
         LeadAssignmentEngine::query()->updateOrCreate(
@@ -304,7 +306,7 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_lead_tags_and_priority_can_be_set(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();
@@ -323,8 +325,8 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_employee_can_fill_empty_email_once_then_locked(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
         $this->actingAs($employee);
 
         $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();
@@ -352,8 +354,8 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_employee_can_fill_empty_primary_mobile_once_then_locked(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
         $this->actingAs($employee);
 
         $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();
@@ -381,8 +383,8 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_employee_cannot_change_assigned_executive(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
         $otherExecutive = Employee::query()
             ->where('employee_id', '!=', $employeeModel->employee_id)
             ->where('status', 'Active')
@@ -409,8 +411,8 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_lead_resource_includes_employee_locked_fields(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
         $this->actingAs($employee);
 
         $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();
@@ -432,8 +434,8 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_employee_can_update_rating_status_and_source_on_assigned_lead(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
         $this->actingAs($employee);
 
         $lead = CaMaster::query()->whereNotNull('state_id')->firstOrFail();
@@ -468,8 +470,8 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_employee_cannot_update_executive_assignment(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeModel = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
         $otherExecutive = Employee::query()
             ->where('status', 'Active')
             ->where('employee_id', '!=', $employeeModel->employee_id)
@@ -497,7 +499,7 @@ class CrmFeatureEnhancementsTest extends TestCase
 
     public function test_lead_update_with_executive_id_creates_assignment(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $employee = Employee::query()->where('status', 'Active')->firstOrFail();
         $this->actingAs($admin);
 

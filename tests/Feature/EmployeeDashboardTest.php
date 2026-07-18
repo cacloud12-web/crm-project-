@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Models\CaMaster;
 use App\Models\Employee;
 use App\Models\LeadAssignmentEngine;
@@ -9,15 +11,17 @@ use App\Models\User;
 use App\Models\YearlyEmployeeTarget;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Hash;
+use Tests\Concerns\CreatesCrmUsers;
 use Tests\TestCase;
 
 class EmployeeDashboardTest extends TestCase
 {
+    use CreatesCrmUsers;
     use DatabaseTransactions;
 
     private function employeeUser(): User
     {
-        return User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        return CrmTestAccounts::employeeUser();
     }
 
     public function test_employee_can_load_employee_dashboard(): void
@@ -41,7 +45,7 @@ class EmployeeDashboardTest extends TestCase
                 ],
             ]);
 
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employee();
         $this->assertSame((int) $employee->employee_id, (int) $response->json('data.employee_id'));
     }
 
@@ -54,7 +58,7 @@ class EmployeeDashboardTest extends TestCase
 
     public function test_admin_cannot_load_employee_dashboard_endpoint(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $this->getJson('/dashboard/employee')->assertForbidden();
@@ -74,7 +78,7 @@ class EmployeeDashboardTest extends TestCase
         $this->actingAs($this->employeeUser());
 
         $this->postJson('/auth/change-password', [
-            'current_password' => 'password',
+            'current_password' => $this->testPassword(),
             'password' => 'NewEmployeePass123',
             'password_confirmation' => 'NewEmployeePass123',
         ])->assertForbidden();
@@ -100,7 +104,7 @@ class EmployeeDashboardTest extends TestCase
 
     public function test_employee_dashboard_reflects_assigned_lead_count(): void
     {
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employee();
         $user = $this->employeeUser();
 
         $unassigned = CaMaster::query()
@@ -113,7 +117,7 @@ class EmployeeDashboardTest extends TestCase
             $this->markTestSkipped('Not enough unassigned leads in database.');
         }
 
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
         $this->postJson('/lead-assignments/bulk', [
             'ca_ids' => array_slice($unassigned, 0, 2),
@@ -136,7 +140,7 @@ class EmployeeDashboardTest extends TestCase
 
     public function test_assigned_lead_appears_on_employee_dashboard_after_single_assignment(): void
     {
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employee();
         $caId = CaMaster::query()
             ->whereDoesntHave('leadAssignments', fn ($q) => $q->where('status', 'Active'))
             ->value('ca_id');
@@ -145,7 +149,7 @@ class EmployeeDashboardTest extends TestCase
             $this->markTestSkipped('No unassigned lead available.');
         }
 
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
         $this->postJson('/lead-assignments', [
             'ca_id' => $caId,
@@ -172,9 +176,9 @@ class EmployeeDashboardTest extends TestCase
 
     public function test_reassignment_moves_lead_between_employee_dashboards(): void
     {
-        $employeeA = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employeeA = CrmTestAccounts::employee();
         $employeeB = Employee::query()->updateOrCreate(
-            ['email_id' => 'employee.dashboard.test.b@ca.local'],
+            ['email_id' => 'employee.dashboard.test.b@example.local'],
             [
                 'name' => 'Dashboard Test B',
                 'mobile_no' => '9000000099',
@@ -183,11 +187,11 @@ class EmployeeDashboardTest extends TestCase
             ],
         );
         $userB = User::query()->updateOrCreate(
-            ['email' => 'employee.dashboard.test.b@ca.local'],
+            ['email' => 'employee.dashboard.test.b@example.local'],
             [
                 'name' => 'Dashboard Test B',
                 'crm_role' => 'employee',
-                'password' => Hash::make('password'),
+                'password' => Hash::make($this->testPassword()),
                 'is_active' => true,
             ],
         );
@@ -201,7 +205,7 @@ class EmployeeDashboardTest extends TestCase
             $this->markTestSkipped('No unassigned lead available.');
         }
 
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         $this->postJson('/lead-assignments', [
@@ -249,7 +253,7 @@ class EmployeeDashboardTest extends TestCase
 
     public function test_employee_dashboard_includes_yearly_target_when_assigned(): void
     {
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employee();
         $year = (int) now()->year;
 
         YearlyEmployeeTarget::query()->updateOrCreate(
@@ -283,7 +287,7 @@ class EmployeeDashboardTest extends TestCase
             $items = $items['data'];
         }
 
-        $employee = Employee::query()->where('email_id', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employee();
         $allowed = LeadAssignmentEngine::query()
             ->where('employee_id', $employee->employee_id)
             ->where('status', 'Active')
@@ -303,7 +307,7 @@ class EmployeeDashboardTest extends TestCase
         $user = User::query()->create([
             'name' => 'Orphan Employee',
             'email' => $email,
-            'password' => Hash::make('password'),
+            'password' => Hash::make($this->testPassword()),
             'crm_role' => 'employee',
             'is_active' => true,
         ]);

@@ -8,8 +8,11 @@ use App\Models\OcrParsedFirm;
 use App\Models\OcrParsedMember;
 use App\Services\Mapping\DataNormalizationService;
 use App\Services\Mapping\MasterDataMappingService;
+use Illuminate\Database\QueryException;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Throwable;
 
 /**
@@ -29,62 +32,192 @@ class OcrStructurePersistService
     public function parseAndPersist(OcrDocument $document): OcrDocument
     {
         $text = (string) ($document->displayText() ?? '');
+        $layout = is_array($document->structured_data) ? $document->structured_data : [];
+        $layoutBlockCount = $this->countLayoutBlocks($layout);
+
         $document->update([
             'parse_status' => 'processing',
             'processing_progress' => 'Structuring OCR results',
         ]);
 
+        Log::info('ocr.document.structure_start', [
+            'ocr_document_id' => $document->id,
+            'raw_text_length' => mb_strlen($text),
+            'layout_block_count' => $layoutBlockCount,
+            'parser' => 'OcrStructureParserService',
+        ]);
+
         try {
-            $parsed = $this->parser->parse($text);
+            if (trim($text) === '' && $layoutBlockCount < 1) {
+                $this->replaceParsedRecords($document, []);
+                $this->storeParseOutcome($document, [
+                    'parser_version' => OcrStructureParserService::PARSER_VERSION,
+                    'firm_count' => 0,
+                    'heading_count' => 0,
+                    'skipped_blocks' => 0,
+                    'strategy' => 'empty',
+                    'error' => [
+                        'code' => 'raw_ocr_text_missing',
+                        'message' => 'Raw OCR text is missing. Re-run OCR or paste corrected text, then re-structure.',
+                    ],
+                ], completeness: [
+                    'needs_review' => true,
+                    'warnings' => ['Raw OCR text missing.'],
+                    'firm_count' => 0,
+                ], status: 'completed');
+
+                $document->update(['processing_progress' => 'Completed']);
+
+                return $document->fresh(['parsedFirms.members']);
+            }
+
+            $parsed = $this->parser->parse($text, $layout);
             $completeness = $this->evaluateCompleteness($document, $parsed, $text);
             $this->replaceParsedRecords($document, $parsed['firms']);
 
-            $structured = is_array($document->structured_data) ? $document->structured_data : [];
-            $structured['parsed'] = [
+            if ((int) ($parsed['firm_count'] ?? 0) === 0 && trim($text) !== '') {
+                $completeness['needs_review'] = true;
+                $completeness['warnings'][] = 'No candidate firm headings produced structured firms.';
+            }
+
+            $this->storeParseOutcome($document, [
                 'parser_version' => $parsed['parser_version'],
                 'firm_count' => $parsed['firm_count'],
                 'heading_count' => $parsed['heading_count'] ?? null,
                 'skipped_blocks' => $parsed['skipped_blocks'] ?? 0,
-                'parsed_at' => now()->toIso8601String(),
+                'strategy' => $parsed['strategy'] ?? 'line_based',
+                'candidate_firm_count' => $parsed['candidate_firm_count'] ?? ($parsed['heading_count'] ?? null),
+                'error' => null,
                 'completeness' => $completeness,
-            ];
-
-            $document->update([
-                'parse_status' => 'completed',
-                'parsed_firm_count' => $parsed['firm_count'],
-                'parsed_at' => now(),
-                'structured_data' => $structured,
-                'processing_progress' => ! empty($completeness['needs_review'])
-                    ? 'Completed with extraction warnings — mapping next'
-                    : 'Mapping to Master Data',
-            ]);
+            ], $completeness, 'completed');
 
             Log::info('ocr.document.structured', [
                 'ocr_document_id' => $document->id,
                 'firm_count' => $parsed['firm_count'],
                 'heading_count' => $parsed['heading_count'] ?? null,
+                'candidate_firm_count' => $parsed['candidate_firm_count'] ?? null,
                 'skipped_blocks' => $parsed['skipped_blocks'] ?? 0,
+                'strategy' => $parsed['strategy'] ?? 'line_based',
                 'parser_version' => $parsed['parser_version'],
                 'completeness' => $completeness,
             ]);
 
             $this->dispatchMapping($document->fresh(), (int) $parsed['firm_count']);
         } catch (Throwable $exception) {
+            $error = $this->classifyStructureException($exception, $text);
+
             Log::warning('ocr.document.structure_failed', [
                 'ocr_document_id' => $document->id,
+                'error_code' => $error['code'],
                 'error' => class_basename($exception),
                 'message' => $exception->getMessage(),
             ]);
 
+            $structured = is_array($document->fresh()->structured_data) ? $document->fresh()->structured_data : [];
+            $structured['parsed'] = array_merge(
+                is_array($structured['parsed'] ?? null) ? $structured['parsed'] : [],
+                [
+                    'parsed_at' => now()->toIso8601String(),
+                    'error' => $error,
+                ],
+            );
+
             $document->update([
                 'parse_status' => 'failed',
                 'processing_progress' => 'Failed',
+                'structured_data' => $structured,
             ]);
 
             throw $exception;
         }
 
         return $document->fresh(['parsedFirms.members']);
+    }
+
+    /**
+     * @param  array<string, mixed>  $parsedMeta
+     * @param  array<string, mixed>  $completeness
+     */
+    private function storeParseOutcome(OcrDocument $document, array $parsedMeta, array $completeness, string $status): void
+    {
+        $structured = is_array($document->structured_data) ? $document->structured_data : [];
+        $structured['parsed'] = array_merge($parsedMeta, [
+            'parsed_at' => now()->toIso8601String(),
+            'completeness' => $completeness,
+        ]);
+
+        $document->update([
+            'parse_status' => $status,
+            'parsed_firm_count' => (int) ($parsedMeta['firm_count'] ?? 0),
+            'parsed_at' => now(),
+            'structured_data' => $structured,
+            'processing_progress' => $status === 'failed'
+                ? 'Failed'
+                : (! empty($completeness['needs_review'])
+                    ? 'Completed with extraction warnings — mapping next'
+                    : 'Mapping to Master Data'),
+        ]);
+    }
+
+    /**
+     * @return array{code: string, message: string}
+     */
+    private function classifyStructureException(Throwable $exception, string $text): array
+    {
+        $message = trim($exception->getMessage());
+
+        if ($exception instanceof QueryException || str_contains($message, 'no column named') || str_contains($message, 'Unknown column')) {
+            return [
+                'code' => 'schema_mismatch',
+                'message' => 'Structured firm storage schema is missing required columns. Apply pending OCR staging migrations, then re-structure.',
+            ];
+        }
+
+        if (trim($text) === '') {
+            return [
+                'code' => 'raw_ocr_text_missing',
+                'message' => 'Raw OCR text is missing.',
+            ];
+        }
+
+        if (str_contains(mb_strtolower($message), 'json')) {
+            return [
+                'code' => 'invalid_json_output',
+                'message' => 'Parser produced invalid structured output.',
+            ];
+        }
+
+        return [
+            'code' => 'parser_exception',
+            'message' => 'Structured parsing failed. You can retry structuring or review the raw text.',
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $layout
+     */
+    private function countLayoutBlocks(array $layout): int
+    {
+        $pages = $layout['pages'] ?? null;
+        if (! is_array($pages)) {
+            return 0;
+        }
+
+        $count = 0;
+        foreach ($pages as $page) {
+            if (! is_array($page)) {
+                continue;
+            }
+            if (isset($page['paragraphs']) && is_array($page['paragraphs'])) {
+                $count += count($page['paragraphs']);
+            } elseif (isset($page['blocks']) && is_array($page['blocks'])) {
+                $count += count($page['blocks']);
+            } else {
+                $count += (int) ($page['paragraph_count'] ?? 0);
+            }
+        }
+
+        return $count;
     }
 
     private function dispatchMapping(OcrDocument $document, int $firmCount): void
@@ -195,6 +328,8 @@ class OcrStructurePersistService
      */
     private function replaceParsedRecords(OcrDocument $document, array $firms): void
     {
+        $this->ensureParsedStagingColumns();
+
         // Replace-on-retry keeps staging idempotent (no duplicate firm rows).
         DB::transaction(function () use ($document, $firms) {
             OcrParsedMember::query()
@@ -221,7 +356,7 @@ class OcrStructurePersistService
                     $rawState = $this->rawString($firmData['state'] ?? null);
                     $rawPincode = $this->rawString($firmData['pincode'] ?? null);
 
-                    $firm = OcrParsedFirm::query()->create([
+                    $firmAttrs = $this->attributesForTable('ocr_parsed_firms', [
                         'ocr_document_id' => $document->id,
                         'sequence_no' => (int) ($firmData['sequence_no'] ?? 1),
                         'raw_firm_name' => $rawFirmName,
@@ -272,6 +407,8 @@ class OcrStructurePersistService
                         'field_meta' => $firmData['field_meta'] ?? null,
                     ]);
 
+                    $firm = OcrParsedFirm::query()->create($firmAttrs);
+
                     $memberRows = [];
                     foreach ($members as $index => $member) {
                         $rawCaName = $this->rawString($member['ca_name'] ?? ($member['raw_ca_name'] ?? null));
@@ -279,7 +416,7 @@ class OcrStructurePersistService
                         $rawMemMobile = $this->rawString($member['mobile'] ?? null);
                         $rawMemEmail = $this->rawString($member['email'] ?? null);
                         $rawMemPan = $this->rawString($member['pan_no'] ?? null);
-                        $memberRows[] = [
+                        $row = $this->attributesForTable('ocr_parsed_members', [
                             'ocr_parsed_firm_id' => $firm->id,
                             'sequence_no' => (int) ($member['sequence_no'] ?? ($index + 1)),
                             'raw_ca_name' => $rawCaName,
@@ -294,7 +431,7 @@ class OcrStructurePersistService
                             'overall_confidence' => $member['overall_confidence'] ?? null,
                             'page_number' => $member['page_number'] ?? ($firmData['page_number'] ?? null),
                             'review_status' => 'pending',
-                            'source_data' => json_encode([
+                            'source_data' => [
                                 'raw' => [
                                     'ca_name' => $rawCaName,
                                     'membership_no' => $rawMemNo,
@@ -310,17 +447,136 @@ class OcrStructurePersistService
                                     'pan_no' => $this->normalizer->pan($rawMemPan),
                                 ],
                                 'field_meta' => $member['field_meta'] ?? null,
-                            ]),
-                            'field_meta' => isset($member['field_meta']) ? json_encode($member['field_meta']) : null,
+                            ],
+                            'field_meta' => $member['field_meta'] ?? null,
                             'created_at' => now(),
                             'updated_at' => now(),
-                        ];
+                        ]);
+
+                        if (isset($row['source_data']) && is_array($row['source_data'])) {
+                            $row['source_data'] = json_encode($row['source_data']);
+                        }
+                        if (isset($row['field_meta']) && is_array($row['field_meta'])) {
+                            $row['field_meta'] = json_encode($row['field_meta']);
+                        }
+
+                        $memberRows[] = $row;
                     }
 
                     if ($memberRows !== []) {
                         OcrParsedMember::query()->insert($memberRows);
                     }
                 }
+            }
+        });
+    }
+
+    /**
+     * @param  array<string, mixed>  $attributes
+     * @return array<string, mixed>
+     */
+    private function attributesForTable(string $table, array $attributes): array
+    {
+        // Never cache across schema repairs — migrate/self-heal can add columns mid-process.
+        $columns = array_flip(Schema::getColumnListing($table));
+
+        return array_intersect_key($attributes, $columns);
+    }
+
+    /**
+     * Self-heal older CRM DBs where ocr_parsed_* tables predate staging columns.
+     * Additive only — does not replace artisan migrations for new environments.
+     */
+    private function ensureParsedStagingColumns(): void
+    {
+        if (! Schema::hasTable('ocr_parsed_firms')) {
+            return;
+        }
+
+        // Fast path once the critical mapping column exists on this connection.
+        if (Schema::hasColumn('ocr_parsed_firms', 'raw_firm_name')
+            && Schema::hasColumn('ocr_parsed_firms', 'crm_ca_id')
+            && Schema::hasTable('ocr_parsed_members')
+            && Schema::hasColumn('ocr_parsed_members', 'raw_ca_name')) {
+            return;
+        }
+
+        Schema::table('ocr_parsed_firms', function (Blueprint $table) {
+            if (! Schema::hasColumn('ocr_parsed_firms', 'raw_firm_name')) {
+                $table->string('raw_firm_name')->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_firms', 'normalized_firm_name')) {
+                $table->string('normalized_firm_name')->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_firms', 'district')) {
+                $table->string('district', 120)->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_firms', 'partner_count')) {
+                $table->unsignedInteger('partner_count')->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_firms', 'matched_reference_firm_id')) {
+                $table->unsignedBigInteger('matched_reference_firm_id')->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_firms', 'source_data')) {
+                $table->json('source_data')->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_firms', 'notes')) {
+                $table->text('notes')->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_firms', 'crm_ca_id')) {
+                $table->unsignedBigInteger('crm_ca_id')->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_firms', 'matched_ca_id')) {
+                $table->unsignedBigInteger('matched_ca_id')->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_firms', 'match_status')) {
+                $table->string('match_status', 40)->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_firms', 'match_confidence')) {
+                $table->decimal('match_confidence', 5, 4)->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_firms', 'match_reason')) {
+                $table->string('match_reason', 190)->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_firms', 'match_candidates')) {
+                $table->json('match_candidates')->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_firms', 'mapped_at')) {
+                $table->timestamp('mapped_at')->nullable();
+            }
+        });
+
+        if (! Schema::hasTable('ocr_parsed_members')) {
+            return;
+        }
+
+        Schema::table('ocr_parsed_members', function (Blueprint $table) {
+            if (! Schema::hasColumn('ocr_parsed_members', 'raw_ca_name')) {
+                $table->string('raw_ca_name')->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_members', 'normalized_ca_name')) {
+                $table->string('normalized_ca_name')->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_members', 'pan_no')) {
+                $table->string('pan_no', 20)->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_members', 'is_primary')) {
+                $table->boolean('is_primary')->default(false);
+            }
+            if (! Schema::hasColumn('ocr_parsed_members', 'page_number')) {
+                $table->unsignedInteger('page_number')->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_members', 'matched_reference_member_id')) {
+                $table->unsignedBigInteger('matched_reference_member_id')->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_members', 'review_status')) {
+                $table->string('review_status', 32)->default('pending');
+            }
+            if (! Schema::hasColumn('ocr_parsed_members', 'source_data')) {
+                $table->json('source_data')->nullable();
+            }
+            if (! Schema::hasColumn('ocr_parsed_members', 'notes')) {
+                $table->text('notes')->nullable();
             }
         });
     }

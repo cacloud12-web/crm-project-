@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use Tests\Support\CrmTestAccounts;
+
 use App\Jobs\ProcessOcrDocumentJob;
 use App\Models\CaMaster;
 use App\Models\LeadAssignmentEngine;
@@ -36,7 +38,7 @@ class OcrDocumentTest extends TestCase
 
     private function actingAsAdmin(): User
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
 
         return $admin;
@@ -126,7 +128,7 @@ class OcrDocumentTest extends TestCase
 
     public function test_unauthorised_employee_cannot_upload_for_unassigned_lead(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
         $this->actingAs($employee);
         $lead = $this->unassignedLeadForEmployee($employee);
 
@@ -305,7 +307,7 @@ class OcrDocumentTest extends TestCase
     public function test_employee_cannot_access_another_employees_document(): void
     {
         $admin = $this->actingAsAdmin();
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
         $lead = $this->unassignedLeadForEmployee($employee);
 
         $document = OcrDocument::query()->create([
@@ -326,8 +328,8 @@ class OcrDocumentTest extends TestCase
 
     public function test_assigned_employee_can_view_document(): void
     {
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
-        $employeeId = \App\Models\Employee::query()->where('email_id', 'employee@ca.local')->value('employee_id');
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeId = CrmTestAccounts::employee()->employee_id;
         $lead = $this->createLead();
 
         LeadAssignmentEngine::query()->updateOrCreate(
@@ -439,7 +441,7 @@ class OcrDocumentTest extends TestCase
 
         OcrDocument::query()->create([
             'ca_id' => null,
-            'uploaded_by' => User::query()->where('email', 'admin@ca.local')->value('id'),
+            'uploaded_by' => CrmTestAccounts::admin()->id,
             'original_filename' => 'alpha-invoice.pdf',
             'stored_filename' => 'alpha.pdf',
             'storage_disk' => 'local',
@@ -451,7 +453,7 @@ class OcrDocumentTest extends TestCase
 
         OcrDocument::query()->create([
             'ca_id' => null,
-            'uploaded_by' => User::query()->where('email', 'admin@ca.local')->value('id'),
+            'uploaded_by' => CrmTestAccounts::admin()->id,
             'original_filename' => 'beta-statement.pdf',
             'stored_filename' => 'beta.pdf',
             'storage_disk' => 'local',
@@ -488,7 +490,7 @@ class OcrDocumentTest extends TestCase
             'extracted_text' => 'secret text',
         ]);
 
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
         $this->actingAs($employee);
 
         $this->getJson('/ocr-documents/'.$document->id)->assertForbidden();
@@ -640,7 +642,7 @@ class OcrDocumentTest extends TestCase
             'status' => OcrDocument::STATUS_COMPLETED,
         ]);
 
-        $employee = User::query()->where('email', 'employee@ca.local')->firstOrFail();
+        $employee = CrmTestAccounts::employeeUser();
         $this->actingAs($employee);
 
         $this->deleteJson('/ocr-documents/'.$document->id)->assertForbidden();
