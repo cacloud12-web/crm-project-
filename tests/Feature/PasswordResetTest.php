@@ -2,8 +2,6 @@
 
 namespace Tests\Feature;
 
-use Tests\Support\CrmTestAccounts;
-
 use App\Models\User;
 use App\Services\Auth\PasswordResetService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;

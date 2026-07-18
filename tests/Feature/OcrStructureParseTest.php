@@ -120,7 +120,7 @@ class OcrStructureParseTest extends TestCase
         $this->postJson('/ocr-documents/'.$document->id.'/reparse')
             ->assertOk()
             ->assertJsonPath('data.parsed_firm_count', 1)
-            ->assertJsonPath('data.parsed_firms.0.firm_name', 'Mehta & Co');
+            ->assertJsonPath('data.parsed_firms.0.firm_name', 'MEHTA & CO');
 
         $this->assertSame(
             1,
