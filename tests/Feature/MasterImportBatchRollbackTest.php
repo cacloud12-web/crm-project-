@@ -25,6 +25,9 @@ class MasterImportBatchRollbackTest extends TestCase
             'crm_mapping.auto_apply_exact' => true,
             'crm_mapping.auto_create_unmatched' => true,
             'crm_mapping.auto_update_min_confidence' => 0.90,
+            'ocr_safety.require_verification' => false,
+            'ocr_safety.auto_create' => true,
+            'ocr_safety.auto_update' => true,
         ]);
         app(\App\Services\Rbac\RbacDatabaseService::class)->ensureConfigDefaultGrants();
         app(\App\Services\Rbac\RbacMatrixService::class)->flushCache();

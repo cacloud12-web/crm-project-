@@ -14,6 +14,7 @@ class CaPartner extends Model
     protected $fillable = [
         'firm_id',
         'partner_name',
+        'normalized_partner_name',
         'membership_number',
         'designation',
         'mobile',

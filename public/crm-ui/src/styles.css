@@ -16396,6 +16396,65 @@ body.ra-drawer-open .crm-header {
   border-radius: 0.25rem;
   box-decoration-break: clone;
 }
+.ocr-review-triptych {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+}
+.ocr-review-pane {
+  min-width: 0;
+}
+.ocr-review-invalid {
+  color: #b91c1c;
+  font-weight: 600;
+}
+.ocr-firm-card--collision,
+.ocr-firm-card--invalid {
+  border-color: #fecaca;
+}
+.ocr-firm-card--review {
+  border-color: #fcd34d;
+}
+.ocr-firm-card__technical summary {
+  user-select: none;
+}
+.ocr-entity-pipeline__list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+.ocr-entity-pipeline__row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto 1fr;
+  gap: 0.35rem 0.5rem;
+  align-items: center;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+.ocr-entity-pipeline__row--mismatch {
+  background: #fff1f2;
+  color: #b91c1c;
+}
+.ocr-entity-pipeline__arrow {
+  color: #94a3b8;
+}
+.ocr-entity-pipeline__type {
+  font-weight: 600;
+  color: #0f766e;
+}
+.ocr-entity-pipeline__field {
+  color: #475569;
+}
+@media (max-width: 900px) {
+  .ocr-review-triptych {
+    grid-template-columns: 1fr;
+  }
+}
 .ocr-low-conf-tag {
   font-size: 0.65rem;
   font-weight: 700;

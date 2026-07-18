@@ -67,6 +67,16 @@ return [
     'field_confidence_review_min' => (float) env('CRM_MAPPING_FIELD_CONFIDENCE_MIN', 0.55),
 
     /*
+    | Minimum overall field confidence required before auto-create/update Master Data.
+    | Rows below this are staged for manual review — never silently saved.
+    | Prefer OCR_MIN_REQUIRED_FIELD_CONFIDENCE (fail-closed default 0.99).
+    */
+    'auto_apply_field_confidence_min' => (float) env(
+        'OCR_MIN_REQUIRED_FIELD_CONFIDENCE',
+        env('CRM_MAPPING_AUTO_APPLY_FIELD_MIN', 0.99),
+    ),
+
+    /*
     | Mapping chunk size for large OCR documents (indexed batch match per chunk).
     */
     'map_chunk_size' => max(25, (int) env('CRM_MAPPING_MAP_CHUNK', 200)),
@@ -104,8 +114,9 @@ return [
 
     /*
     | Max firms to import inline for Master CA OCR (larger files use ImportMasterCaOcrJob).
+    | Keep this high enough for multi-page directory PDFs so imports finish without a queue worker.
     */
-    'master_ca_sync_max_firms' => max(10, (int) env('CRM_MAPPING_MASTER_CA_SYNC_MAX', 100)),
+    'master_ca_sync_max_firms' => max(50, (int) env('CRM_MAPPING_MASTER_CA_SYNC_MAX', 500)),
     'master_ca_import_chunk' => max(25, (int) env('CRM_MAPPING_MASTER_CA_CHUNK', 200)),
 
     'source_types' => [

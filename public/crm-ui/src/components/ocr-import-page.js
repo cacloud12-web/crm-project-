@@ -70,7 +70,10 @@
 
   function isActiveStatus(status, item) {
     var stage = item && item.pipeline_stage;
-    if (stage === 'uploading' || stage === 'ocr' || stage === 'parsing' || stage === 'mapping') return true;
+    if (stage === 'uploading' || stage === 'ocr' || stage === 'parsing' || stage === 'mapping'
+      || stage === 'validating' || stage === 'importing' || stage === 'updating') {
+      return true;
+    }
     return status === 'pending'
       || status === 'queued'
       || status === 'uploading_to_cloud'
@@ -510,11 +513,10 @@
     return '<div class="ocr-import-detail__meta-row"><span class="text-caption text-slate-500">' + esc(label) + '</span><span>' + value + '</span></div>';
   }
 
-  function firmField(label, value, fieldKey, lowFields) {
+  function firmField(label, value) {
     if (value == null || value === '') return '';
-    var low = Array.isArray(lowFields) && fieldKey && lowFields.indexOf(fieldKey) >= 0;
-    return '<div class="ocr-firm-card__field' + (low ? ' ocr-firm-card__field--low-confidence' : '') + '">' +
-      '<span class="ocr-firm-card__label">' + esc(label) + (low ? ' <span class="ocr-low-conf-tag">low confidence</span>' : '') + '</span>' +
+    return '<div class="ocr-firm-card__field">' +
+      '<span class="ocr-firm-card__label">' + esc(label) + '</span>' +
       '<span class="ocr-firm-card__value">' + esc(value) + '</span></div>';
   }
 
@@ -524,6 +526,8 @@
     if (status === 'duplicate') return 'Duplicate';
     if (status === 'auto_mapped') return 'Auto-updated';
     if (status === 'auto_created') return 'Auto-created';
+    if (status === 'matched') return 'Matched';
+    if (status === 'verified') return 'Verified';
     if (status === 'needs_review') return 'Needs review';
     if (status === 'conflict') return 'Conflict';
     if (status === 'rejected') return 'Rejected';
@@ -559,31 +563,38 @@
     return 0;
   }
 
-  function renderMappingProgressDashboard(item, mapping, importBatch) {
+    function renderMappingProgressDashboard(item, mapping, importBatch) {
     var isMaster = (item && item.import_type) === 'master_ca';
+    var report = (item && item.reconciliation)
+      || (item && item.structured_data && item.structured_data.reconciliation)
+      || (item && item.structured_data && item.structured_data.parsed && item.structured_data.parsed.reconciliation)
+      || {};
     var masterImport = (item && item.structured_data && item.structured_data.master_import) || {};
     var stages = isMaster
       ? ['Uploading', 'OCR', 'Parsing', 'Validating', 'Importing', 'Completed']
       : ['Uploading', 'OCR', 'Parsing', 'Mapping', 'Updating/Creating', 'Completed'];
     var active = mappingStageIndex(item, importBatch);
+    var total = report.parsed_rows != null ? report.parsed_rows
+      : ((importBatch && importBatch.total_records != null) ? importBatch.total_records
+        : (isMaster ? (masterImport.processed || 0) : (mapping.processed || 0)));
+    var verified = report.exact_verified != null ? report.exact_verified
+      : (isMaster ? (masterImport.verified || 0) : (mapping.verified || 0));
+    var review = report.needs_review != null ? report.needs_review
+      : ((importBatch && importBatch.review_count != null) ? importBatch.review_count
+        : (isMaster ? (masterImport.review || 0) : (mapping.needs_review || 0)));
+    var conflict = report.conflicts != null ? report.conflicts
+      : ((importBatch && importBatch.duplicate_count != null) ? importBatch.duplicate_count
+        : (isMaster ? (masterImport.duplicates || masterImport.conflict || 0) : (mapping.conflicts || 0)));
+    var invalid = report.invalid != null ? report.invalid : 0;
+    var failed = report.failed != null ? report.failed
+      : ((importBatch && importBatch.failed_count != null) ? importBatch.failed_count
+        : (isMaster ? (masterImport.failed || 0) : 0));
     var created = isMaster
       ? ((importBatch && importBatch.created_count != null) ? importBatch.created_count : (masterImport.imported || 0))
       : ((importBatch && importBatch.created_count != null) ? importBatch.created_count : (mapping.auto_created || 0));
     var updated = isMaster
       ? ((importBatch && importBatch.updated_count != null) ? importBatch.updated_count : (masterImport.updated || 0))
       : ((importBatch && importBatch.updated_count != null) ? importBatch.updated_count : (mapping.auto_updated || 0));
-    var review = isMaster
-      ? ((importBatch && importBatch.review_count != null) ? importBatch.review_count : (masterImport.review || 0))
-      : ((importBatch && importBatch.review_count != null) ? importBatch.review_count : (mapping.needs_review || 0));
-    var conflict = isMaster
-      ? ((importBatch && importBatch.duplicate_count != null) ? importBatch.duplicate_count : (masterImport.duplicates || 0))
-      : ((importBatch && importBatch.conflict_count != null) ? importBatch.conflict_count : (mapping.conflicts || 0));
-    var failed = (importBatch && importBatch.failed_count != null)
-      ? importBatch.failed_count
-      : (isMaster ? (masterImport.failed || 0) : 0);
-    var total = (importBatch && importBatch.total_records != null)
-      ? importBatch.total_records
-      : (isMaster ? (masterImport.processed || 0) : (mapping.processed || 0));
     var pct = importBatch && importBatch.progress_pct != null ? importBatch.progress_pct : (active >= 5 ? 100 : null);
     var html = '<div class="ocr-mapping-dashboard mt-3">';
     html += '<p class="text-caption text-slate-600 mb-2"><strong>' + esc(item.import_type_label || (isMaster ? 'Master CA Data' : 'Sales Team Data')) + '</strong></p>';
@@ -597,11 +608,13 @@
       html += '<div class="ocr-mapping-dashboard__bar"><span style="width:' + Math.max(0, Math.min(100, pct)) + '%"></span></div>';
     }
     html += '<p class="text-caption text-slate-500 mt-2">Total ' + esc(String(total)) +
+      ' · Exact verified ' + esc(String(verified)) +
+      ' · Needs review ' + esc(String(review)) +
+      ' · Conflicts ' + esc(String(conflict)) +
+      ' · Invalid ' + esc(String(invalid)) +
       (isMaster
-        ? (' · ' + esc(String(created)) + ' imported · ' + esc(String(updated)) + ' updated · ' +
-          esc(String(conflict)) + ' duplicate · ' + esc(String(review)) + ' review · ' + esc(String(failed)) + ' failed')
-        : (' · ' + esc(String(created)) + ' created · ' + esc(String(updated)) + ' updated · ' +
-          esc(String(review)) + ' review · ' + esc(String(conflict)) + ' conflict · ' + esc(String(failed)) + ' failed')) +
+        ? (' · ' + esc(String(created)) + ' imported · ' + esc(String(updated)) + ' updated · ' + esc(String(failed)) + ' failed')
+        : (' · ' + esc(String(created)) + ' created · ' + esc(String(updated)) + ' updated · ' + esc(String(failed)) + ' failed')) +
       '</p>';
     if (importBatch && importBatch.rollbackable && importBatch.id) {
       html += '<button type="button" class="btn-secondary btn-sm mt-2" data-ocr-rollback-batch="' +
@@ -613,82 +626,72 @@
 
   function firmMatchesFilter(firm, filter) {
     if (!filter || filter === 'all') return true;
+    var status = firm.status || '';
     var matchStatus = firm.match_status || '';
     var review = firm.review_status || 'pending';
-    if (filter === 'auto_created') return matchStatus === 'auto_created';
-    if (filter === 'auto_updated') return matchStatus === 'auto_mapped';
-    if (filter === 'needs_review') return matchStatus === 'needs_review' || (!matchStatus && review === 'pending');
-    if (filter === 'conflict') return matchStatus === 'conflict';
-    if (filter === 'failed') return matchStatus === 'failed' || matchStatus === 'rejected' || review === 'rejected';
+    if (filter === 'verified') return status === 'Verified' || matchStatus === 'matched' || matchStatus === 'verified';
+    if (filter === 'needs_review') return status === 'Needs Review' || matchStatus === 'needs_review' || (!matchStatus && review === 'pending' && status !== 'Invalid' && status !== 'Verified' && status !== 'Conflict');
+    if (filter === 'conflict') return status === 'Conflict' || matchStatus === 'conflict';
+    if (filter === 'invalid') return status === 'Invalid';
+    if (filter === 'failed') return status === 'Rejected' || matchStatus === 'failed' || matchStatus === 'rejected' || review === 'rejected';
     return true;
   }
 
   function renderFirmCard(firm, can) {
-    var members = Array.isArray(firm.members) ? firm.members : [];
     var review = firm.review_status || 'pending';
     var matchStatus = firm.match_status || '';
+    var status = firm.status || matchStatusLabel(matchStatus) || review || 'Needs Review';
     var caId = firm.crm_ca_id || firm.ca_id || null;
-    var isApproved = review === 'approved' || matchStatus === 'auto_mapped' || matchStatus === 'auto_created';
-    var isRejected = review === 'rejected' || matchStatus === 'rejected';
-    var needsManual = !isApproved && !isRejected && (matchStatus === 'needs_review' || matchStatus === 'conflict' || matchStatus === '' || matchStatus === 'pending');
-    var lowFields = Array.isArray(firm.low_confidence_fields) ? firm.low_confidence_fields : [];
-    var partnersHtml = members.length
-      ? '<ul class="ocr-firm-card__partners">' + members.map(function (m) {
-          return '<li><i data-lucide="check" class="h-3.5 w-3.5 text-emerald-600" aria-hidden="true"></i> ' +
-            esc(m.ca_name || '—') +
-            (m.role ? ' <span class="text-caption text-slate-500">(' + esc(m.role) + ')</span>' : '') +
-            (m.membership_no ? ' <span class="text-caption text-slate-500">· ' + esc(m.membership_no) + '</span>' : '') +
-          '</li>';
-        }).join('') + '</ul>'
-      : '<p class="text-caption text-slate-500 mt-2">No partners detected</p>';
+    var importedStatuses = ['imported', 'updated_official', 'duplicate', 'auto_mapped', 'auto_created'];
+    var isApproved = review === 'approved' || importedStatuses.indexOf(matchStatus) >= 0 || !!caId;
+    var isRejected = review === 'rejected' || matchStatus === 'rejected' || status === 'Rejected';
+    var canApprove = firm.can_approve != null ? !!firm.can_approve : (can.update && !isApproved && !isRejected);
+    var canCorrect = firm.can_correct != null ? !!firm.can_correct : canApprove;
+    var canReject = firm.can_reject != null ? !!firm.can_reject : canApprove;
+    var needsManual = canApprove || canCorrect || canReject;
+    var userMessage = firm.user_message || '';
+    var matchType = firm.match_type || 'Not Checked';
+    var caName = firm.ca_name || '';
+    var statusClassName = 'needs_review';
+    if (status === 'Verified' || matchStatus === 'verified' || matchStatus === 'matched') statusClassName = 'matched';
+    else if (status === 'Conflict' || matchStatus === 'conflict') statusClassName = 'conflict';
+    else if (status === 'Invalid') statusClassName = 'conflict';
+    else if (status === 'Rejected') statusClassName = 'failed';
+    var cardStateClass = status === 'Invalid' ? ' ocr-firm-card--invalid'
+      : (status === 'Verified' ? ' ocr-firm-card--verified'
+        : (status === 'Needs Review' || needsManual ? ' ocr-firm-card--review' : ''));
 
     var actionsHtml = '';
     if (can.update && needsManual) {
       actionsHtml = '<div class="ocr-firm-card__actions">' +
         '<label class="ocr-firm-card__select"><input type="checkbox" data-ocr-firm-select value="' + esc(firm.id) + '" /> Select</label>' +
-        '<button type="button" class="btn-secondary btn-xs" data-ocr-firm-review="approved" data-ocr-firm-id="' + esc(firm.id) + '">' +
-          (matchStatus === 'conflict' ? 'Confirm match' : 'Approve') +
-        '</button>' +
-        '<button type="button" class="btn-secondary btn-xs text-rose-600" data-ocr-firm-review="rejected" data-ocr-firm-id="' + esc(firm.id) + '">Reject</button>' +
+        (canApprove ? '<button type="button" class="btn-secondary btn-xs" data-ocr-firm-review="approved" data-ocr-firm-id="' + esc(firm.id) + '">' +
+          (status === 'Conflict' ? 'Confirm match' : 'Accept') +
+        '</button>' : '') +
+        (canCorrect ? '<button type="button" class="btn-secondary btn-xs" data-ocr-firm-correct="' + esc(firm.id) + '">Correct</button>' : '') +
+        (canReject ? '<button type="button" class="btn-secondary btn-xs text-rose-600" data-ocr-firm-review="rejected" data-ocr-firm-id="' + esc(firm.id) + '">Reject</button>' : '') +
       '</div>';
     } else if (isApproved && caId) {
       actionsHtml = '<div class="ocr-firm-card__actions">' +
-        '<span class="text-caption text-emerald-700">' +
-          esc(matchStatusLabel(matchStatus) || 'Linked') + ' · CA #' + esc(caId) +
-          (firm.match_reason ? ' · ' + esc(firm.match_reason) : '') +
-        '</span>' +
+        '<span class="text-caption text-emerald-700">Linked to Master</span>' +
       '</div>';
     }
 
-    return '<article class="ocr-firm-card" data-ocr-firm-id="' + esc(firm.id) + '" data-ocr-match-status="' + esc(matchStatus || review) + '">' +
+    return '<article class="ocr-firm-card' + cardStateClass + '" data-ocr-firm-id="' + esc(firm.id) + '" data-ocr-match-status="' + esc(matchStatus || review) + '">' +
       '<div class="ocr-firm-card__top">' +
         '<div>' +
-          '<h4 class="ocr-firm-card__title' + (lowFields.indexOf('firm_name') >= 0 ? ' ocr-firm-card__title--low-confidence' : '') + '">' +
-            esc(firm.firm_name || 'Untitled firm') +
-          '</h4>' +
-          (firm.city ? '<p class="text-caption text-slate-500">' + esc(firm.city) + (firm.state ? ', ' + esc(firm.state) : '') +
-            (firm.page_number != null ? ' · p.' + esc(firm.page_number) : '') + '</p>' : '') +
+          '<h4 class="ocr-firm-card__title">' + esc(firm.firm_name || 'Untitled firm') + '</h4>' +
+          (firm.city ? '<p class="text-caption text-slate-500">' + esc(firm.city) + '</p>' : '') +
+          (userMessage ? '<p class="text-caption ' + (status === 'Invalid' ? 'text-rose-700' : (matchType === 'Ready to accept' ? 'text-slate-600' : 'text-amber-700')) + '">' + esc(userMessage) + '</p>' : '') +
         '</div>' +
-        '<span class="ocr-firm-card__badge ocr-firm-card__badge--' + esc(matchStatus || review || 'pending') + '">' +
-          esc(matchStatusLabel(matchStatus) || review) +
-        '</span>' +
+        '<span class="ocr-firm-card__badge ocr-firm-card__badge--' + esc(statusClassName) + '">' + esc(status) + '</span>' +
       '</div>' +
       '<div class="ocr-firm-card__grid">' +
-        firmField('Firm Type', firm.firm_type) +
-        firmField('Address', firm.address, 'address', lowFields) +
-        firmField('PIN Code', firm.pincode, 'pincode', lowFields) +
-        firmField('FRN', firm.frn, 'frn', lowFields) +
-        firmField('GST', firm.gst_no, 'gst_no', lowFields) +
-        firmField('PAN', firm.pan_no, 'pan_no', lowFields) +
-        firmField('Phone', firm.phone, 'phone', lowFields) +
-        firmField('Email', firm.email, 'email', lowFields) +
-        firmField('Website', firm.website) +
-        (firm.match_confidence != null ? firmField('Match confidence', Math.round(Number(firm.match_confidence) * 100) + '%') : '') +
-        (caId ? firmField('Master CA ID', caId) : '') +
-      '</div>' +
-      '<div class="mt-3">' +
-        '<p class="ocr-firm-card__label">Partners</p>' +
-        partnersHtml +
+        firmField('Firm Name', firm.firm_name) +
+        firmField('CA Name', caName) +
+        firmField('City', firm.city) +
+        firmField('Match Type', matchType) +
+        firmField('Status', status) +
       '</div>' +
       actionsHtml +
     '</article>';
@@ -724,7 +727,6 @@
         metaRow('Uploaded', esc(formatDate(item.created_at))) +
         metaRow('Processed', esc(formatDate(item.processed_at))) +
         metaRow('Pages', esc(item.page_count != null ? String(item.page_count) : (item.total_pages != null ? String(item.total_pages) : '—'))) +
-        (item.average_confidence != null ? metaRow('Confidence', esc(String(item.average_confidence))) : '') +
       '</div>';
 
     if (item.batch_notice) {
@@ -771,25 +773,43 @@
         html += '<p class="ocr-panel__processing mt-3"><i data-lucide="loader-2" class="h-3.5 w-3.5 animate-spin"></i> Converting OCR text into structured CA records…</p>';
       } else if (firms.length) {
         var mapping = (item.structured_data && item.structured_data.mapping) || {};
-        var completeness = (item.structured_data && item.structured_data.parsed && item.structured_data.parsed.completeness) || {};
-        var quality = (item.structured_data && item.structured_data.parsed && item.structured_data.parsed.quality_report) || {};
-        if (quality.total_rows_detected != null || quality.total_firms_parsed != null) {
-          html += '<div class="ocr-quality-report mt-2">' +
-            '<p class="text-caption text-slate-600"><strong>OCR Quality Report</strong> · ' +
-            'Pages ' + esc(String(quality.total_pages != null ? quality.total_pages : '—')) +
-            ' (' + esc(String(quality.pages_with_text != null ? quality.pages_with_text : '—')) + ' with text) · ' +
-            'Rows ' + esc(String(quality.total_rows_detected != null ? quality.total_rows_detected : '—')) +
-            ' · Parsed ' + esc(String(quality.total_firms_parsed != null ? quality.total_firms_parsed : '—')) +
-            ' · Missing ' + esc(String(quality.missing_row_count != null ? quality.missing_row_count : 0)) +
-            ' · Dup rows ' + esc(String(quality.duplicate_row_count != null ? quality.duplicate_row_count : 0)) +
-            ' · Accuracy ' + esc(String(quality.parsing_accuracy != null ? quality.parsing_accuracy + '%' : '—')) +
-            (quality.ocr_confidence != null ? ' · OCR conf ' + esc(String(Math.round(Number(quality.ocr_confidence) * 100) / 100)) : '') +
-            '</p></div>';
+        var report = item.reconciliation
+          || (item.structured_data && item.structured_data.reconciliation)
+          || (item.structured_data && item.structured_data.parsed && item.structured_data.parsed.reconciliation)
+          || {};
+        var quality = (item.structured_data && item.structured_data.parsed && item.structured_data.parsed.quality_report)
+          || (item.structured_data && item.structured_data.quality_report) || {};
+        var statusCounts = {
+          Verified: report.exact_verified != null ? report.exact_verified : 0,
+          'Needs Review': report.needs_review != null ? report.needs_review : 0,
+          Conflict: report.conflicts != null ? report.conflicts : 0,
+          Invalid: report.invalid != null ? report.invalid : 0,
+          Rejected: report.rejected != null ? report.rejected : 0
+        };
+        if (report.exact_verified == null) {
+          statusCounts = { Verified: 0, 'Needs Review': 0, Conflict: 0, Invalid: 0, Rejected: 0 };
+          firms.forEach(function (f) {
+            var s = f.status || 'Needs Review';
+            if (statusCounts[s] == null) statusCounts[s] = 0;
+            statusCounts[s]++;
+          });
         }
-        if (completeness.warnings && completeness.warnings.length) {
-          html += '<div class="ocr-completeness-warn mt-2">' + completeness.warnings.map(function (w) {
-            return '<p class="text-caption text-amber-700">⚠ ' + esc(w) + '</p>';
-          }).join('') + '</div>';
+        var rowCoverage = report.row_coverage_percent != null ? report.row_coverage_percent
+          : (quality.row_coverage != null ? quality.row_coverage
+            : (quality.parsing_accuracy != null ? quality.parsing_accuracy : null));
+        if (report.detected_rows != null || quality.total_rows_detected != null || quality.total_firms_parsed != null || firms.length) {
+          html += '<div class="ocr-quality-report mt-2">' +
+            '<p class="text-caption text-slate-600">' +
+            'Detected rows ' + esc(String(report.detected_rows != null ? report.detected_rows : (quality.total_rows_detected != null ? quality.total_rows_detected : firms.length))) +
+            ' · Parsed ' + esc(String(report.parsed_rows != null ? report.parsed_rows : (quality.total_firms_parsed != null ? quality.total_firms_parsed : firms.length))) +
+            ' · Valid three-field ' + esc(String(report.valid_three_field_rows != null ? report.valid_three_field_rows : statusCounts.Verified + statusCounts['Needs Review'] + statusCounts.Conflict)) +
+            ' · Exact verified ' + esc(String(statusCounts.Verified || 0)) +
+            ' · Needs review ' + esc(String(statusCounts['Needs Review'] || 0)) +
+            ' · Conflicts ' + esc(String(statusCounts.Conflict || 0)) +
+            ' · Invalid ' + esc(String(statusCounts.Invalid || 0)) +
+            ' · Rejected ' + esc(String(statusCounts.Rejected || 0)) +
+            (rowCoverage != null ? ' · Row Coverage: ' + esc(String(rowCoverage) + '%') : '') +
+            '</p></div>';
         }
         var importBatch = item.import_batch || (item.structured_data && item.structured_data.import_batch) || null;
         if (importBatch || mapping.processed != null) {
@@ -798,16 +818,15 @@
         html += '<div class="ocr-firm-bulk-toolbar mt-3">' +
           '<select id="ocr-firm-filter" class="input-field input-field--sm" data-ocr-firm-filter>' +
             '<option value="all">All firms</option>' +
-            '<option value="auto_created">Auto-created</option>' +
-            '<option value="auto_updated">Auto-updated</option>' +
+            '<option value="verified">Verified</option>' +
             '<option value="needs_review">Needs review</option>' +
             '<option value="conflict">Conflict</option>' +
-            '<option value="failed">Rejected / failed</option>' +
+            '<option value="invalid">Invalid</option>' +
+            '<option value="failed">Rejected</option>' +
           '</select>' +
           (can.update
-            ? '<button type="button" class="btn-primary btn-sm" data-ocr-approve-safe="' + id + '">Approve All Safe</button>' +
-              '<button type="button" class="btn-secondary btn-sm" data-ocr-reject-selected="' + id + '">Reject selected</button>' +
-              '<button type="button" class="btn-secondary btn-sm" data-ocr-retry-mapping="' + id + '">Retry mapping</button>'
+            ? '<button type="button" class="btn-secondary btn-sm" data-ocr-reject-selected="' + id + '">Reject selected</button>' +
+              '<button type="button" class="btn-secondary btn-sm" data-ocr-retry-mapping="' + id + '">Re-run extraction</button>'
             : '') +
         '</div>';
         html += '<div class="ocr-firm-cards" data-ocr-firm-cards>' + firms.map(function (firm) {
@@ -826,25 +845,13 @@
           (errCode ? '<p class="text-caption mt-1">Error code: ' + esc(errCode) + '</p>' : '') +
         '</div>';
       } else {
-        html += '<p class="text-caption text-slate-500 mt-3">No firms could be detected automatically. Review the optional raw text below.</p>';
+        html += '<p class="text-caption text-slate-500 mt-3">No firms could be detected automatically.</p>';
       }
 
       html += '<div class="ocr-panel__editor-actions mt-4">' +
         fileActions +
         (can.update ? '<button type="button" class="btn-secondary btn-sm" data-ocr-import-reparse="' + id + '">Re-structure</button>' : '') +
-        '<button type="button" class="btn-secondary btn-sm" data-ocr-toggle-raw>Show raw OCR text</button>' +
       '</div>';
-
-      html +=
-        '<div class="mt-4 ocr-raw-text-panel hidden" id="ocr-import-raw-panel">' +
-          '<label class="form-label" for="ocr-import-text">Raw OCR Text (advanced)</label>' +
-          '<textarea id="ocr-import-text" class="input-field ocr-panel__textarea" rows="10">' + esc(textValue) + '</textarea>' +
-          '<div class="ocr-panel__editor-actions mt-3">' +
-            '<button type="button" class="btn-secondary btn-sm" data-ocr-import-copy>Copy Text</button>' +
-            (can.update ? '<button type="button" class="btn-primary btn-sm" data-ocr-import-save="' + id + '">Save Corrections</button>' : '') +
-          '</div>' +
-          '<p class="text-caption text-slate-500 mt-2">Raw text is kept for audit only. Primary review uses structured firm cards above.</p>' +
-        '</div>';
 
       html += '</div>';
     }
@@ -1078,6 +1085,10 @@
         .then(function (body) {
           toast((body && body.message) || 'Safe records approved.', 'success');
           openDetail(approveDocId, true);
+          loadList().catch(function () {});
+          if (window.CA_CRM && typeof window.CA_CRM.loadLeadsFromDatabase === 'function') {
+            window.CA_CRM.loadLeadsFromDatabase(function () {});
+          }
         })
         .catch(function (err) { toast(err.message || 'Approve All Safe failed.', 'error'); })
         .finally(function () { approveSafeBtn.disabled = false; });
@@ -1183,14 +1194,71 @@
         }
         toast(msg, 'success');
         openDetail(docId, true);
+        loadList().catch(function () {});
+        // Refresh Master Data → All Firms so the new row appears without a full page reload.
+        if (status === 'approved' && data.ca_id && window.CA_CRM) {
+          if (typeof window.CA_CRM.loadLeadsFromDatabase === 'function') {
+            window.CA_CRM.loadLeadsFromDatabase(function () {});
+          } else if (typeof window.CA_CRM.refreshLeads === 'function') {
+            window.CA_CRM.refreshLeads();
+          }
+        }
       }).catch(function (err) {
-        toast(err.message || 'Unable to update review status.', 'error');
+        toast(err.message || 'Review update failed.', 'error');
         if (siblingActions) {
           siblingActions.querySelectorAll('button').forEach(function (btn) { btn.disabled = false; });
         } else {
           reviewBtn.disabled = false;
         }
       });
+      return;
+    }
+
+    var correctBtn = e.target.closest('[data-ocr-firm-correct]');
+    if (correctBtn && pageRoot && pageRoot.contains(correctBtn)) {
+      e.preventDefault();
+      var correctFirmId = correctBtn.getAttribute('data-ocr-firm-correct');
+      var correctDocId = state.selectedId;
+      if (!correctFirmId || !correctDocId) return;
+      var card = correctBtn.closest('.ocr-firm-card');
+      var currentName = card ? (card.querySelector('.ocr-firm-card__title') || {}).textContent : '';
+      var currentCa = '';
+      var currentCity = '';
+      if (card) {
+        card.querySelectorAll('.ocr-firm-card__field').forEach(function (field) {
+          var lab = field.querySelector('.ocr-firm-card__label');
+          var val = field.querySelector('.ocr-firm-card__value');
+          if (!lab || !val) return;
+          var label = (lab.textContent || '').trim();
+          if (label === 'CA Name') currentCa = (val.textContent || '').trim();
+          if (label === 'City') currentCity = (val.textContent || '').trim();
+        });
+      }
+      var firmName = window.prompt('Correct Firm Name (leave blank to skip):', (currentName || '').trim());
+      if (firmName === null) return;
+      var caName = window.prompt('Correct CA Name (leave blank to skip):', currentCa);
+      if (caName === null) return;
+      var city = window.prompt('Correct City (leave blank to skip):', currentCity);
+      if (city === null) return;
+      var payload = {};
+      if (firmName !== '') payload.firm_name = firmName;
+      if (caName !== '') payload.ca_name = caName;
+      if (city !== '') payload.city = city;
+      if (Object.keys(payload).length === 0) {
+        toast('No corrections entered.', 'warning');
+        return;
+      }
+      correctBtn.disabled = true;
+      apiFetch('/ocr-documents/' + encodeURIComponent(correctDocId) + '/firms/' + encodeURIComponent(correctFirmId) + '/fields', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).then(function (body) {
+        toast((body && body.message) || 'Fields corrected. Approve when verified.', 'success');
+        openDetail(correctDocId, true);
+      }).catch(function (err) {
+        toast(err.message || 'Field correction failed.', 'error');
+      }).finally(function () { correctBtn.disabled = false; });
       return;
     }
 

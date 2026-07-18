@@ -1,0 +1,49 @@
+{
+  "input": {
+    "firm_name": "Shah & Associates",
+    "ca_name": "Amit Shah",
+    "address": "12 MG Road, Andheri",
+    "pincode": "400053",
+    "phone": "9876543210",
+    "membership_no": "MEM123456",
+    "frn": "FRN998877",
+    "members": [
+      {
+        "ca_name": "Amit Shah",
+        "membership_no": "MEM123456"
+      }
+    ],
+    "field_meta": {
+      "firm_name": { "confidence": 0.99 },
+      "ca_name": { "confidence": 0.99 },
+      "address": { "confidence": 0.99 },
+      "pincode": { "confidence": 0.99 },
+      "phone": { "confidence": 0.99 },
+      "membership_no": { "confidence": 0.99 },
+      "frn": { "confidence": 0.99 }
+    },
+    "overall_confidence": 0.99,
+    "raw": {
+      "firm_name": "Shah & Associates",
+      "membership_no": "MEM123456",
+      "pincode": "400053",
+      "phone": "9876543210",
+      "frn": "FRN998877"
+    },
+    "parsed": {
+      "firm_name": "Shah & Associates",
+      "membership_no": "MEM123456",
+      "pincode": "400053",
+      "phone": "9876543210",
+      "frn": "FRN998877"
+    }
+  },
+  "assert_firm_name": "Shah & Associates",
+  "assert_collision_empty": [
+    "ADDRESS_IN_PARTNER_FIELD",
+    "PIN_IN_MEMBERSHIP_FIELD",
+    "MOBILE_IN_FIRM_NAME",
+    "ROW_MERGE_SUSPECTED",
+    "ROW_SPLIT_SUSPECTED"
+  ]
+}

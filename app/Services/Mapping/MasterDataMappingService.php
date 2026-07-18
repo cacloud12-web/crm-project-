@@ -117,6 +117,14 @@ class MasterDataMappingService
             $payloads[] = $payload;
         }
 
+        foreach ($payloads as $i => $payload) {
+            // Only OCR staging is untrusted. Excel/CSV bulk and sales_team spreadsheet imports stay on mapping policy.
+            if (in_array($sourceType, ['ocr', 'master_ca'], true)) {
+                $payloads[$i]['_untrusted_ocr'] = true;
+                $payloads[$i]['_source_type'] = $sourceType;
+            }
+        }
+
         $batch = $this->resolveOrCreateBatch($sourceType, $sourceRef, count($payloads), $actorId, $meta);
         $finalize = ! array_key_exists('finalize', $meta ?? []) || (bool) ($meta['finalize'] ?? true);
         $index = $this->matching->buildIndex($payloads, $profile);
@@ -267,6 +275,15 @@ class MasterDataMappingService
             );
         }
 
+        $isSales = $doc && $doc->import_type === OcrDocument::IMPORT_SALES_TEAM;
+        $profile = $isSales
+            ? MasterDataMatchingService::PROFILE_STATE_FIRM_CA
+            : (config('ocr_workflow.mode') === 'firm_ca_city'
+                ? MasterDataMatchingService::PROFILE_FIRM_CA_CITY
+                : (string) config('crm_mapping.default_matching_profile', MasterDataMatchingService::PROFILE_IDENTIFIER_FIRST));
+        $sourceType = $isSales ? OcrDocument::IMPORT_SALES_TEAM : 'ocr';
+        $sourceName = $isSales ? 'Sales Team Import' : 'OCR Import';
+
         $chunkSize = max(25, (int) config('crm_mapping.map_chunk_size', 200));
         $stats = [
             'processed' => 0,
@@ -277,7 +294,7 @@ class MasterDataMappingService
             'skipped' => 0,
             'decisions' => [],
             'import_batch_id' => null,
-            'matching_profile' => MasterDataMatchingService::PROFILE_STATE_FIRM_CA,
+            'matching_profile' => $profile,
         ];
 
         $pendingQuery = OcrParsedFirm::query()
@@ -296,7 +313,7 @@ class MasterDataMappingService
         $batch = null;
         if ($expectedTotal > 0 && Schema::hasTable('master_import_batches')) {
             $batch = MasterImportBatch::query()->create([
-                'source_type' => OcrDocument::IMPORT_SALES_TEAM,
+                'source_type' => $sourceType,
                 'source_ref' => (string) $ocrDocumentId,
                 'file_name' => $doc?->original_filename,
                 'file_hash' => $doc?->checksum,
@@ -312,26 +329,29 @@ class MasterDataMappingService
         }
 
         if ($doc) {
-            $doc->update(['processing_progress' => 'Mapping sales records to Master Data']);
+            $doc->update([
+                'processing_progress' => $isSales
+                    ? 'Mapping sales records to Master Data'
+                    : 'Mapping OCR records to Master Data',
+            ]);
         }
 
         (clone $pendingQuery)
             ->with('members')
             ->orderBy('sequence_no')
-            ->chunkById($chunkSize, function ($firms) use ($ocrDocumentId, $actorId, $batch, $expectedTotal, &$stats) {
+            ->chunkById($chunkSize, function ($firms) use ($ocrDocumentId, $actorId, $batch, $expectedTotal, $profile, $sourceType, $sourceName, &$stats) {
                 $rows = $firms->map(fn (OcrParsedFirm $firm) => $this->firmToMappingRow($firm))->all();
                 if ($rows === []) {
                     return;
                 }
-                // Sales-team OCR always uses state_firm_ca against official Master CA.
-                $chunkStats = $this->processBatch(OcrDocument::IMPORT_SALES_TEAM, (string) $ocrDocumentId, $rows, $actorId, [
+                $chunkStats = $this->processBatch($sourceType, (string) $ocrDocumentId, $rows, $actorId, [
                     'import_batch_id' => $batch?->id,
                     'file_name' => $batch?->file_name,
                     'file_hash' => $batch?->file_hash,
                     'finalize' => false,
                     'expected_total' => $expectedTotal,
-                    'matchingProfile' => MasterDataMatchingService::PROFILE_STATE_FIRM_CA,
-                    'source_name' => 'Sales Team Import',
+                    'matchingProfile' => $profile,
+                    'source_name' => $sourceName,
                 ]);
                 foreach (['processed', 'auto_updated', 'auto_created', 'needs_review', 'conflicts', 'skipped'] as $key) {
                     $stats[$key] += (int) ($chunkStats[$key] ?? 0);
@@ -400,6 +420,7 @@ class MasterDataMappingService
             'partner_count' => $firm->partner_count ?: $firm->members->count(),
             'overall_confidence' => $firm->overall_confidence,
             'field_meta' => $firm->field_meta,
+            '_validation' => is_array($source['validation'] ?? null) ? $source['validation'] : null,
             'members' => $firm->members->map(fn ($m) => [
                 'ca_name' => $m->ca_name ?: $m->raw_ca_name,
                 'membership_no' => $m->membership_no,
@@ -480,6 +501,7 @@ class MasterDataMappingService
     {
         $profile = $this->matching->resolveProfile($profile ?? ($payload['_matching_profile'] ?? null));
         $isSales = $profile === MasterDataMatchingService::PROFILE_STATE_FIRM_CA;
+        $isUntrustedOcr = ! empty($payload['_untrusted_ocr']);
 
         $autoExact = (bool) config('crm_mapping.auto_apply_exact', true);
         $autoCreate = $isSales
@@ -492,6 +514,44 @@ class MasterDataMappingService
             ? (float) config('crm_mapping.profiles.state_firm_ca.review_min', 0.70)
             : (float) config('crm_mapping.review_min_confidence', 0.55);
         $fuzzyAutoMin = (float) config('crm_mapping.fuzzy_auto_update_min', 0.97);
+
+        // Fail-closed OCR policy overrides mapping auto-write flags.
+        if ($isUntrustedOcr) {
+            if ((bool) config('ocr_safety.require_verification', true)) {
+                return MasterMappingDecision::DECISION_NEEDS_REVIEW;
+            }
+            if (! (bool) config('ocr_safety.auto_create', false)) {
+                $autoCreate = false;
+            }
+            if (! (bool) config('ocr_safety.auto_update', false)) {
+                $autoExact = false;
+                $autoMin = 1.01; // unreachable — forces review for updates
+            }
+            if (! (bool) config('ocr_safety.allow_fuzzy_auto_apply', false)) {
+                $fuzzyAutoMin = 1.01;
+            }
+        }
+
+        // Firm+CA+City OCR workflow: never auto-write; missing any of 3 → review.
+        if ($profile === MasterDataMatchingService::PROFILE_FIRM_CA_CITY) {
+            if ($match->isConflict()) {
+                return MasterMappingDecision::DECISION_CONFLICT;
+            }
+            $firm = trim((string) ($payload['normalized_firm_name'] ?? $payload['firm_name'] ?? ''));
+            $ca = trim((string) ($payload['normalized_ca_name'] ?? $payload['ca_name'] ?? ''));
+            $city = trim((string) ($payload['normalized_city'] ?? $payload['city'] ?? ''));
+            if ($firm === '' || $ca === '' || $city === '') {
+                return MasterMappingDecision::DECISION_NEEDS_REVIEW;
+            }
+            if ($match->isExact() && (bool) config('ocr_safety.require_verification', true)) {
+                return MasterMappingDecision::DECISION_NEEDS_REVIEW;
+            }
+            if ($match->isExact() && (bool) config('ocr_safety.auto_update', false)) {
+                return MasterMappingDecision::DECISION_AUTO_UPDATE;
+            }
+
+            return MasterMappingDecision::DECISION_NEEDS_REVIEW;
+        }
 
         if ($match->isConflict()) {
             return MasterMappingDecision::DECISION_CONFLICT;
@@ -542,8 +602,8 @@ class MasterDataMappingService
     }
 
     /**
-     * Gate auto-apply only on overall / firm-name confidence.
-     * Other low-confidence fields are highlighted in the UI but do not block exact matches.
+     * Gate auto-apply on overall confidence and critical field confidence.
+     * Low-confidence / invalid OCR must never silently modify Master Data.
      *
      * @param  array<string, mixed>  $payload
      */
@@ -556,10 +616,21 @@ class MasterDataMappingService
         }
 
         $meta = is_array($payload['field_meta'] ?? null) ? $payload['field_meta'] : [];
-        $firmMeta = is_array($meta['firm_name'] ?? null) ? $meta['firm_name'] : [];
-        $firmConfidence = $firmMeta['confidence'] ?? null;
+        $critical = ['firm_name', 'ca_name', 'frn', 'membership_no', 'phone', 'gst_no', 'pan_no', 'address'];
+        foreach ($critical as $field) {
+            $entry = is_array($meta[$field] ?? null) ? $meta[$field] : [];
+            $conf = $entry['confidence'] ?? null;
+            if ($conf !== null && (float) $conf < $threshold) {
+                return true;
+            }
+        }
 
-        return $firmConfidence !== null && (float) $firmConfidence < $threshold;
+        $validation = is_array($payload['_validation'] ?? null) ? $payload['_validation'] : null;
+        if ($validation && empty($validation['auto_apply_ok'])) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -952,12 +1023,12 @@ class MasterDataMappingService
 
         // Persist source text as-is; normalized_* columns are for matching/dedupe only.
         $data = [
-            'ca_name' => $payload['ca_name'] ?: ($payload['firm_name'] ?: 'Unknown'),
-            'firm_name' => $payload['firm_name'],
+            'ca_name' => ($payload['ca_name'] ?? null) ?: (($payload['firm_name'] ?? null) ?: 'Unknown'),
+            'firm_name' => $payload['firm_name'] ?? null,
             'normalized_firm_name' => $payload['normalized_firm_name'] ?? $this->normalizer->firmName($payload['firm_name'] ?? null),
             'normalized_ca_name' => $payload['normalized_ca_name'] ?? $this->normalizer->caName($payload['ca_name'] ?? null),
             'normalized_state' => $payload['normalized_state'] ?? $this->normalizer->state($payload['state'] ?? null),
-            'mobile_no' => $payload['mobile_no'] ?: $phone,
+            'mobile_no' => ($payload['mobile_no'] ?? null) ?: $phone,
             'alternate_mobile_no' => $payload['alternate_mobile_no'] ?? null,
             'email_id' => $payload['email_id'] ?? null,
             'gst_no' => $payload['gst_no'] ?? null,

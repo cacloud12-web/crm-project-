@@ -23,6 +23,11 @@ trait PreparesCrmDatabase
     {
         if (! static::$crmDatabasePrepared) {
             Artisan::call('migrate', ['--force' => true]);
+            Artisan::call('migrate', [
+                '--database' => 'ca_reference',
+                '--path' => config('ca_reference.migrations_path', 'database/migrations/ca_reference'),
+                '--force' => true,
+            ]);
             $this->seed(DatabaseSeeder::class);
             CrmTestAccounts::bootstrap();
             $this->seed(DemoProviderTestFixtureSeeder::class);

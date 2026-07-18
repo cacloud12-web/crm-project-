@@ -11,6 +11,15 @@ namespace App\Services\Ocr;
  */
 class OcrSpreadsheetTableParser
 {
+    public function __construct(
+        private readonly ?OcrEntityClassificationService $classifier = null,
+    ) {}
+
+    private function entities(): OcrEntityClassificationService
+    {
+        return $this->classifier ?? new OcrEntityClassificationService;
+    }
+
     private const HEADERS = [
         'date', 'ca name', 'firm name', 'mobile number', 'mobile', 'phone',
         's.no', 's no', 's. no', 'sr no', 'sr.no', 'sr. no', 'serial', 'sno',
@@ -361,7 +370,7 @@ class OcrSpreadsheetTableParser
             $dateExtra = $columnDump['firms'][$dumpIndex] ?? $dateExtra;
         }
 
-        [$firmName, $caName] = $this->assembleNames($preParts, $dateExtra, $postParts);
+        [$firmName, $caName, $address, $classifications, $extraPartners] = $this->assembleNames($preParts, $dateExtra, $postParts);
         if (($firmName === null || $firmName === '') && ($caName === null || $caName === '')) {
             $firmName = 'Row '.$anchor['serial'];
         }
@@ -370,26 +379,13 @@ class OcrSpreadsheetTableParser
         }
 
         $members = [];
-        if ($caName !== null && $caName !== '') {
-            $members[] = [
-                'sequence_no' => 1,
-                'ca_name' => $caName,
-                'membership_no' => null,
-                'mobile' => $phone,
-                'email' => null,
-                'role' => 'Partner',
-                'overall_confidence' => 0.75,
-                'field_meta' => [
-                    'ca_name' => [
-                        'value' => $caName,
-                        'confidence' => 0.75,
-                        'source_line' => $anchor['serial_idx'] + 1,
-                        'page_number' => $anchor['page'],
-                        'source_text' => $caName,
-                    ],
-                ],
-                'is_primary' => true,
-            ];
+        if ($caName !== null && $caName !== '' && $this->entities()->isPerson($caName)) {
+            $members[] = $this->memberRow($caName, $phone, $anchor, true);
+        }
+        foreach ($extraPartners as $partnerName) {
+            if ($this->entities()->isPerson($partnerName)) {
+                $members[] = $this->memberRow($partnerName, null, $anchor, false);
+            }
         }
 
         $fieldMeta = array_filter([
@@ -416,7 +412,7 @@ class OcrSpreadsheetTableParser
             'frn' => null,
             'gst_no' => null,
             'pan_no' => null,
-            'address' => null,
+            'address' => $address,
             'city' => null,
             'state' => null,
             'pincode' => null,
@@ -433,6 +429,7 @@ class OcrSpreadsheetTableParser
             'row_serial' => $anchor['serial'],
             'row_date' => $anchor['date'],
             'unclassified_lines' => [],
+            'entity_classifications' => $classifications,
         ];
     }
 
@@ -466,44 +463,81 @@ class OcrSpreadsheetTableParser
     }
 
     /**
+     * @param  array<string, mixed>  $anchor
+     * @return array<string, mixed>
+     */
+    private function memberRow(string $caName, ?string $phone, array $anchor, bool $primary): array
+    {
+        return [
+            'sequence_no' => 1,
+            'ca_name' => $caName,
+            'membership_no' => null,
+            'mobile' => $phone,
+            'email' => null,
+            'role' => 'Partner',
+            'overall_confidence' => 0.75,
+            'field_meta' => [
+                'ca_name' => [
+                    'value' => $caName,
+                    'confidence' => 0.75,
+                    'source_line' => $anchor['serial_idx'] + 1,
+                    'page_number' => $anchor['page'],
+                    'source_text' => $caName,
+                ],
+            ],
+            'is_primary' => $primary,
+        ];
+    }
+
+    /**
+     * Content-based field assembly — never assign by line order alone.
+     *
      * @param  list<string>  $preParts
      * @param  list<string>  $postParts
-     * @return array{0: ?string, 1: ?string}
+     * @return array{0: ?string, 1: ?string, 2: ?string, 3: list<array<string, mixed>>, 4: list<string>}
      */
     private function assembleNames(array $preParts, string $dateExtra, array $postParts): array
     {
-        $pre = trim(implode(' ', $preParts));
-        $post = trim(implode(' ', $postParts));
-        $extra = trim($dateExtra);
-
-        $ca = $pre !== '' ? $pre : null;
-        $firmBits = array_values(array_filter([$extra, $post], static fn ($v) => $v !== ''));
-        $firm = $firmBits !== [] ? trim(implode(' ', $firmBits)) : '';
-
-        // Continuation-only firm ("& Associates", "Co.") — prepend CA/pre name.
-        if ($firm !== '' && preg_match('/^(&\s*)?(co\.?|and\s+co\.?|associates|company|llp|pvt\.?\s*ltd\.?|private\s+limited|accountants?)$/i', $firm)) {
-            $firm = trim(($pre !== '' ? $pre.' ' : '').$firm);
+        $lines = [];
+        foreach ($preParts as $line) {
+            $lines[] = $line;
+        }
+        if (trim($dateExtra) !== '') {
+            $lines[] = trim($dateExtra);
+        }
+        foreach ($postParts as $line) {
+            $lines[] = $line;
         }
 
-        // Date line already has full firm; pre is CA.
-        if ($extra !== '' && preg_match('/(&\s*co\.?|associates|company|llp|pvt)/i', $extra)) {
-            $firm = $this->collapseEchoedName(trim(($pre !== '' && ! str_contains(mb_strtolower($extra), mb_strtolower($this->significantTokens($pre))) ? $pre.' ' : '').$extra.($post !== '' ? ' '.$post : '')));
-        } elseif ($firm === '' && $pre !== '') {
-            $firm = $pre;
+        if ($lines === []) {
+            return [null, null, null, [], []];
+        }
+
+        $mapped = $this->entities()->mapLinesToFields($lines);
+        $firm = $mapped['firm_name'];
+        $ca = $mapped['ca_name'];
+        $address = $mapped['address'];
+        $classifications = $mapped['classifications'];
+        $extraPartners = [];
+        foreach ($mapped['partners'] as $i => $partner) {
+            if ($i === 0 && $ca !== null) {
+                continue;
+            }
+            $extraPartners[] = $partner['ca_name'];
+        }
+
+        // Continuation-only firm suffix glued to firm from classifier.
+        if ($firm !== null) {
+            $firm = $this->collapseEchoedName($firm);
+        }
+        if ($ca !== null) {
+            $ca = $this->collapseEchoedName($ca);
+        }
+        if ($firm !== null && $ca !== null && mb_strtolower($ca) === mb_strtolower($firm) && ! preg_match('/(&|associates|company|llp|co\.?)/i', $firm)) {
             $ca = null;
-        } elseif ($firm === '' && $extra !== '') {
-            $firm = $extra;
         }
 
-        $firm = $this->collapseEchoedName($firm);
-        $ca = $ca !== null ? $this->collapseEchoedName($ca) : null;
-
-        // If firm equals CA, keep as firm and clear CA only when no partner suffix.
-        if ($ca !== null && $firm !== '' && mb_strtolower($ca) === mb_strtolower($firm) && ! preg_match('/(&|associates|company|llp|co\.?)/i', $firm)) {
-            $ca = null;
-        }
-
-        return [$firm !== '' ? $firm : null, $ca];
+        return [$firm, $ca, $address, $classifications, $extraPartners];
     }
 
     private function significantTokens(string $text): string

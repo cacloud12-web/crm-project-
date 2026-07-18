@@ -31,6 +31,11 @@ class MasterDataMappingEngineTest extends TestCase
             'crm_mapping.auto_update_min_confidence' => 0.90,
             'crm_mapping.review_min_confidence' => 0.55,
             'crm_mapping.sync_max_firms' => 50,
+            'ocr_safety.require_verification' => false,
+            'ocr_safety.auto_create' => true,
+            'ocr_safety.auto_update' => true,
+            'ocr_safety.allow_bulk_approve_safe' => true,
+            'ocr_safety.min_required_field_confidence' => 0.90,
         ]);
         app(\App\Services\Rbac\RbacDatabaseService::class)->ensureConfigDefaultGrants();
         app(\App\Services\Rbac\RbacMatrixService::class)->flushCache();
@@ -50,25 +55,47 @@ class MasterDataMappingEngineTest extends TestCase
             $this->markTestSkipped('Mapping engine migration not applied.');
         }
 
+        config(['crm_mapping.queue_after_ocr_parse' => false]);
         $admin = $this->actingAsAdmin();
         $before = CaMaster::query()->count();
 
+        $unique = 'UNIQUE MAPPING FIRM '.strtoupper(uniqid()).' & CO';
         $document = OcrDocument::query()->create([
             'uploaded_by' => $admin->id,
             'original_filename' => 'map-auto.pdf',
             'stored_filename' => 'map-auto.pdf',
             'storage_disk' => 'local',
-            'storage_path' => 'ocr-documents/test/map-auto.pdf',
+            'storage_path' => 'ocr-documents/test/map-auto-'.uniqid('', true).'.pdf',
             'mime_type' => 'application/pdf',
             'file_size' => 800,
             'status' => OcrDocument::STATUS_COMPLETED,
-            'extracted_text' => "PUNE\nUNIQUE MAPPING FIRM & CO\nRAJ UNIQUE\n",
+            'extracted_text' => "MAHARASHTRA\n{$unique}\nRAJ UNIQUE ".uniqid()."\n",
             'processed_at' => now(),
         ]);
 
         app(OcrStructurePersistService::class)->parseAndPersist($document);
 
         $firm = OcrParsedFirm::query()->where('ocr_document_id', $document->id)->firstOrFail();
+        $firm->update([
+            'firm_name' => $unique,
+            'normalized_firm_name' => mb_strtoupper($unique),
+            'overall_confidence' => 0.96,
+            'field_meta' => [
+                'firm_name' => ['confidence' => 0.97, 'value' => $unique],
+                'state' => ['confidence' => 0.95, 'value' => 'Maharashtra'],
+            ],
+            'state' => 'Maharashtra',
+            'frn' => 'FRN'.random_int(100000, 999999),
+            'source_data' => array_merge(is_array($firm->source_data) ? $firm->source_data : [], [
+                'validation' => ['ok' => true, 'auto_apply_ok' => true, 'errors' => [], 'warnings' => [], 'fields' => []],
+            ]),
+            'match_status' => null,
+            'crm_ca_id' => null,
+            'review_status' => OcrParsedFirm::REVIEW_PENDING,
+        ]);
+        app(MasterDataMappingService::class)->processOcrDocument((int) $document->id, (int) $admin->id);
+        $firm->refresh();
+
         $this->assertSame('auto_created', $firm->match_status);
         $this->assertNotNull($firm->crm_ca_id);
         $this->assertSame(OcrParsedFirm::REVIEW_APPROVED, $firm->review_status);
@@ -113,8 +140,16 @@ class MasterDataMappingEngineTest extends TestCase
         $firm->update([
             'gst_no' => '27EEEEEE4444E1Z5',
             'address' => '12 MG ROAD',
+            'state' => 'Maharashtra',
             'overall_confidence' => 0.95,
-            'field_meta' => ['firm_name' => ['confidence' => 0.95]],
+            'field_meta' => [
+                'firm_name' => ['confidence' => 0.95],
+                'gst_no' => ['confidence' => 0.98],
+                'state' => ['confidence' => 0.95],
+            ],
+            'source_data' => array_merge(is_array($firm->source_data) ? $firm->source_data : [], [
+                'validation' => ['ok' => true, 'auto_apply_ok' => true, 'errors' => [], 'warnings' => [], 'fields' => []],
+            ]),
             'review_status' => 'pending',
             'crm_ca_id' => null,
             'match_status' => null,

@@ -1,0 +1,36 @@
+{
+  "cases": [
+    {
+      "name": "anmol_setia_block",
+      "input": "ANMOL SETIA & ASSOCIATES\nURBAN ESTATE HUDA\nANMOL SETIA\nABOHAR - 562848",
+      "expected": {
+        "firm_name": "ANMOL SETIA & ASSOCIATES",
+        "ca_name": "ANMOL SETIA",
+        "partners": [],
+        "partners_must_not_contain": ["URBAN ESTATE HUDA"],
+        "address_contains": ["URBAN ESTATE", "ABOHAR"],
+        "membership_no": "562848"
+      }
+    },
+    {
+      "name": "gupta_ayushi_block",
+      "input": "GUPTA AYUSHI & ASSOCIATES\nAYUSHI GUPTA\n1ST FLOOR SCO-4\nNEW SURAJ NAGAR\nANAJ MANDI\nAMBALA CANTT-133001",
+      "expected": {
+        "firm_name": "GUPTA AYUSHI & ASSOCIATES",
+        "ca_name": "AYUSHI GUPTA",
+        "partners": [],
+        "partners_must_not_contain": ["ANAJ MANDI", "NEW SURAJ NAGAR", "URBAN ESTATE HUDA"],
+        "address_contains": ["ANAJ MANDI", "NEW SURAJ NAGAR"],
+        "pincode": "133001"
+      }
+    }
+  ],
+  "classifications": {
+    "URBAN ESTATE HUDA": "ADDRESS",
+    "ANAJ MANDI": "ADDRESS",
+    "NEW SURAJ NAGAR": "ADDRESS",
+    "AYUSHI GUPTA": "PERSON",
+    "ANMOL SETIA": "PERSON",
+    "133001": "UNKNOWN"
+  }
+}

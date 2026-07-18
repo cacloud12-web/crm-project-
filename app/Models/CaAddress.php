@@ -16,6 +16,7 @@ class CaAddress extends Model
         'address_line_1',
         'address_line_2',
         'city',
+        'normalized_city',
         'state',
         'pin_code',
         'country',

@@ -20,7 +20,21 @@ class BulkImportFileParser
             throw new RuntimeException('Unable to read the uploaded file.');
         }
 
-        $extension = strtolower($file->getClientOriginalExtension());
+        return $this->parsePath($path, strtolower($file->getClientOriginalExtension()));
+    }
+
+    /**
+     * Parse a CSV/XLSX file from an absolute path (CLI / queued imports).
+     *
+     * @return array{headers: list<string>, rows: list<array<string, string>>}
+     */
+    public function parsePath(string $path, ?string $extension = null): array
+    {
+        if (! is_file($path) || ! is_readable($path)) {
+            throw new RuntimeException('Unable to read the import file: '.$path);
+        }
+
+        $extension = strtolower($extension ?: pathinfo($path, PATHINFO_EXTENSION));
 
         return match ($extension) {
             'csv', 'txt' => $this->parseCsv($path),

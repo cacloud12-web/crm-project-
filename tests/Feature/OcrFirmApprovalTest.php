@@ -26,7 +26,14 @@ class OcrFirmApprovalTest extends TestCase
         parent::setUp();
         Storage::fake('local');
         // Manual-approve tests seed staging without auto-mapping.
-        config(['crm_mapping.queue_after_ocr_parse' => false]);
+        config([
+            'crm_mapping.queue_after_ocr_parse' => false,
+            'ocr_safety.require_verification' => true,
+            'ocr_safety.auto_create' => false,
+            'ocr_safety.auto_update' => false,
+            'ocr_safety.allow_bulk_approve_safe' => false,
+            'ocr_safety.reject_on_field_collision' => true,
+        ]);
         app(\App\Services\Rbac\RbacDatabaseService::class)->ensureConfigDefaultGrants();
         app(\App\Services\Rbac\RbacMatrixService::class)->flushCache();
     }
@@ -196,5 +203,135 @@ class OcrFirmApprovalTest extends TestCase
         $ids = collect($items)->pluck('ca_id')->map(fn ($id) => (int) $id)->all();
 
         $this->assertContains($caId, $ids, 'Approved OCR firm should appear in All Firms / ca-masters API.');
+    }
+
+    public function test_master_ca_approve_inserts_into_ca_masters_and_completes_document(): void
+    {
+        if (! Schema::hasColumn('ocr_documents', 'import_type')) {
+            $this->markTestSkipped('import_type column missing — run migration');
+        }
+
+        $admin = $this->actingAsAdmin();
+        $document = OcrDocument::query()->create([
+            'uploaded_by' => $admin->id,
+            'original_filename' => 'master-approve.pdf',
+            'stored_filename' => 'master-approve.pdf',
+            'storage_disk' => 'local',
+            'storage_path' => 'ocr-documents/test/master-approve-'.uniqid('', true).'.pdf',
+            'mime_type' => 'application/pdf',
+            'file_size' => 900,
+            'checksum' => hash('sha256', uniqid('', true)),
+            'status' => OcrDocument::STATUS_COMPLETED,
+            'import_type' => OcrDocument::IMPORT_MASTER_CA,
+            'parse_status' => 'completed',
+            'parsed_firm_count' => 1,
+            'processing_progress' => 'Importing official Master CA records',
+            'processed_at' => now(),
+        ]);
+
+        $firm = OcrParsedFirm::query()->create([
+            'ocr_document_id' => $document->id,
+            'sequence_no' => 1,
+            'firm_name' => 'Master Approve Associates',
+            'raw_firm_name' => 'Master Approve Associates',
+            'frn' => 'FRNMA'.random_int(100000, 999999),
+            'state' => 'Delhi',
+            'review_status' => OcrParsedFirm::REVIEW_PENDING,
+            'match_status' => 'needs_review',
+            'match_reason' => 'insufficient_official_identity',
+        ]);
+        OcrParsedMember::query()->create([
+            'ocr_parsed_firm_id' => $firm->id,
+            'sequence_no' => 1,
+            'ca_name' => 'Master Approve CA',
+            'membership_no' => 'MEMMA'.random_int(100000, 999999),
+            'is_primary' => true,
+            'review_status' => 'pending',
+        ]);
+
+        $before = CaMaster::query()->count();
+
+        $response = $this->patchJson('/ocr-documents/'.$document->id.'/firms/'.$firm->id.'/review', [
+            'review_status' => 'approved',
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.review_status', 'approved');
+
+        $caId = (int) $response->json('data.ca_id');
+        $this->assertGreaterThan(0, $caId);
+        $this->assertSame($before + 1, CaMaster::query()->count());
+        $this->assertDatabaseHas('ocr_parsed_firms', [
+            'id' => $firm->id,
+            'review_status' => 'approved',
+            'crm_ca_id' => $caId,
+        ]);
+        $this->assertContains(
+            $firm->fresh()->match_status,
+            ['imported', 'updated_official', 'duplicate', 'auto_created'],
+        );
+
+        $document->refresh();
+        $this->assertSame('Completed', $document->processing_progress);
+        $this->assertSame('completed', $document->pipelineStage());
+
+        $this->getJson('/ca-masters/'.$caId)->assertOk()->assertJsonPath('data.ca_id', $caId);
+    }
+
+    public function test_master_ca_approve_all_safe_does_not_throw(): void
+    {
+        if (! Schema::hasColumn('ocr_documents', 'import_type')) {
+            $this->markTestSkipped('import_type column missing — run migration');
+        }
+
+        $admin = $this->actingAsAdmin();
+        $document = OcrDocument::query()->create([
+            'uploaded_by' => $admin->id,
+            'original_filename' => 'master-safe.pdf',
+            'stored_filename' => 'master-safe.pdf',
+            'storage_disk' => 'local',
+            'storage_path' => 'ocr-documents/test/master-safe-'.uniqid('', true).'.pdf',
+            'mime_type' => 'application/pdf',
+            'file_size' => 900,
+            'checksum' => hash('sha256', uniqid('', true)),
+            'status' => OcrDocument::STATUS_COMPLETED,
+            'import_type' => OcrDocument::IMPORT_MASTER_CA,
+            'parse_status' => 'completed',
+            'parsed_firm_count' => 1,
+            'processing_progress' => 'Importing official Master CA records',
+            'processed_at' => now(),
+        ]);
+
+        $firm = OcrParsedFirm::query()->create([
+            'ocr_document_id' => $document->id,
+            'sequence_no' => 1,
+            'firm_name' => 'Safe Master Firm',
+            'frn' => 'FRNSAFE'.random_int(100000, 999999),
+            'state' => 'Maharashtra',
+            'review_status' => OcrParsedFirm::REVIEW_PENDING,
+            'match_status' => null,
+        ]);
+        OcrParsedMember::query()->create([
+            'ocr_parsed_firm_id' => $firm->id,
+            'sequence_no' => 1,
+            'ca_name' => 'Safe Master CA',
+            'membership_no' => 'MEMSAFE'.random_int(100000, 999999),
+            'is_primary' => true,
+            'review_status' => 'pending',
+        ]);
+
+        $this->postJson('/ocr-documents/'.$document->id.'/approve-safe')
+            ->assertStatus(422);
+
+        // Fail-closed: bulk stays off; individual Approve verified still writes Master.
+        $this->patchJson('/ocr-documents/'.$document->id.'/firms/'.$firm->id.'/review', [
+            'review_status' => 'approved',
+        ])->assertOk()->assertJsonPath('success', true);
+
+        $firm->refresh();
+        $this->assertNotNull($firm->crm_ca_id);
+        $this->assertSame('approved', $firm->review_status);
+        $this->assertSame('Completed', $document->fresh()->processing_progress);
     }
 }

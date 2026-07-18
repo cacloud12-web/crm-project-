@@ -13,6 +13,7 @@ class CaFirm extends Model
 
     protected $fillable = [
         'firm_name',
+        'normalized_firm_name',
         'frn',
         'firm_type',
         'partner_count',

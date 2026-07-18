@@ -24,7 +24,7 @@ return [
     'Mizoram' => ['Aizawl', 'Lunglei', 'Champhai', 'Serchhip'],
     'Nagaland' => ['Kohima', 'Dimapur', 'Mokokchung', 'Tuensang'],
     'Odisha' => ['Bhubaneswar', 'Cuttack', 'Rourkela', 'Berhampur', 'Sambalpur', 'Puri'],
-    'Punjab' => ['Ludhiana', 'Amritsar', 'Jalandhar', 'Patiala', 'Bathinda', 'Mohali', 'Pathankot'],
+    'Punjab' => ['Ludhiana', 'Amritsar', 'Jalandhar', 'Patiala', 'Bathinda', 'Mohali', 'Pathankot', 'Abohar', 'Firozpur', 'Moga'],
     'Rajasthan' => ['Jaipur', 'Jodhpur', 'Udaipur', 'Kota', 'Ajmer', 'Bikaner', 'Alwar', 'Bhilwara'],
     'Sikkim' => ['Gangtok', 'Namchi', 'Gyalshing', 'Mangan'],
     'Tamil Nadu' => ['Chennai', 'Coimbatore', 'Madurai', 'Tiruchirappalli', 'Salem', 'Tirunelveli', 'Erode', 'Vellore'],

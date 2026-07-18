@@ -45,6 +45,18 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(CaMaster::class, CaMasterPolicy::class);
         Gate::policy(\App\Models\OcrDocument::class, \App\Policies\OcrDocumentPolicy::class);
         Event::listen(LeadSaved::class, RefreshEmployeeProductivityOnLeadSaved::class);
+        Event::listen(
+            \Illuminate\Console\Events\CommandStarting::class,
+            \App\Listeners\GuardCaReferenceMigratePath::class,
+        );
+        // Laravel skips Symfony→Laravel command event rerouting during unit tests;
+        // re-enable so the ca_reference migrate path guard is testable and still enforced.
+        if ($this->app->runningUnitTests()) {
+            $kernel = $this->app->make(\Illuminate\Contracts\Console\Kernel::class);
+            if (method_exists($kernel, 'rerouteSymfonyCommandEvents')) {
+                $kernel->rerouteSymfonyCommandEvents();
+            }
+        }
         $this->registerCommunicationQualityHooks();
 
         $this->registerLoginRateLimiter();

@@ -5,7 +5,7 @@ namespace App\Services\Mapping;
 /**
  * Immutable match outcome from MasterDataMatchingService.
  *
- * @phpstan-type Candidate array{ca_id: int, score: float, matched_on: string, firm_name: ?string, ca_name: ?string}
+ * @phpstan-type Candidate array{ca_id: ?int, score: float, matched_on: string, firm_name: ?string, ca_name: ?string, reference_firm_id?: ?int}
  */
 final class MatchResult
 {
@@ -27,6 +27,7 @@ final class MatchResult
         public readonly ?string $matchedOn,
         public readonly array $candidates,
         public readonly string $reason,
+        public readonly ?int $referenceFirmId = null,
     ) {}
 
     public static function unmatched(string $reason = 'no_candidates'): self
@@ -37,7 +38,7 @@ final class MatchResult
     /**
      * @param  list<Candidate>  $candidates
      */
-    public static function exact(int $caId, string $matchedOn, array $candidates = []): self
+    public static function exact(int $caId, string $matchedOn, array $candidates = [], ?int $referenceFirmId = null): self
     {
         if ($candidates === []) {
             $candidates = [[
@@ -46,10 +47,32 @@ final class MatchResult
                 'matched_on' => $matchedOn,
                 'firm_name' => null,
                 'ca_name' => null,
+                'reference_firm_id' => $referenceFirmId,
             ]];
         }
 
-        return new self(self::STATUS_EXACT, 1.0, $caId, $matchedOn, $candidates, $matchedOn);
+        return new self(self::STATUS_EXACT, 1.0, $caId, $matchedOn, $candidates, $matchedOn, $referenceFirmId);
+    }
+
+    /**
+     * Exact official CA reference hit (firm + CA + city). Optional linked Master ca_id.
+     *
+     * @param  list<Candidate>  $candidates
+     */
+    public static function exactReference(int $referenceFirmId, string $matchedOn, array $candidates = [], ?int $caId = null): self
+    {
+        if ($candidates === []) {
+            $candidates = [[
+                'ca_id' => $caId,
+                'score' => 1.0,
+                'matched_on' => $matchedOn,
+                'firm_name' => null,
+                'ca_name' => null,
+                'reference_firm_id' => $referenceFirmId,
+            ]];
+        }
+
+        return new self(self::STATUS_EXACT, 1.0, $caId, $matchedOn, $candidates, $matchedOn, $referenceFirmId);
     }
 
     /**
@@ -74,6 +97,7 @@ final class MatchResult
             $matchedOn,
             $candidates,
             $matchedOn,
+            $top['reference_firm_id'] ?? null,
         );
     }
 
@@ -101,6 +125,7 @@ final class MatchResult
             'status' => $this->status,
             'confidence' => $this->confidence,
             'ca_id' => $this->caId,
+            'reference_firm_id' => $this->referenceFirmId,
             'matched_on' => $this->matchedOn,
             'candidates' => $this->candidates,
             'reason' => $this->reason,

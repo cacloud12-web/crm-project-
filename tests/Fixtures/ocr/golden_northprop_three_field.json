@@ -1,0 +1,43 @@
+{
+  "_meta": {
+    "document": "northprop_first_4_pages.pdf",
+    "scope": "firm_name + ca_name + city only",
+    "source": "Manually verified against Document AI paragraph geometry + ICAI section headers (ABOHAR / AMBALA / AMRITSAR). Not generated from parser field guesses.",
+    "coverage": "Required regression subset (15 firms). Full 245-row golden requires page-by-page human transcription.",
+    "city_evidence": [
+      "ABOHAR header ~y=0.062 left column — early firms (ANMOL SETIA, BAGAI, BANSAL, DINESH, LOVISH, ANMOL ARJUN)",
+      "AMBALA header ~y=0.258 mid column — HARSHIL and later page-1 left firms share that Y-band",
+      "NEETU BHATIA appears on page 4 under AMRITSAR section",
+      "MIGLANI & CO / BRIJ SHARMA & CO under AMRITSAR"
+    ]
+  },
+  "records": [
+    {"page_number": 1, "row_number": 1, "firm_name": "ANMOL SETIA & ASSOCIATES", "ca_name": "ANMOL SETIA", "city": "ABOHAR"},
+    {"page_number": 1, "row_number": 2, "firm_name": "BAGAI & ASSOCIATES", "ca_name": "ITIE BAGAI", "city": "ABOHAR"},
+    {"page_number": 1, "row_number": 3, "firm_name": "BANSAL SANDEEP AND ASSOCIATES", "ca_name": "SANDEEP BANSAL", "city": "ABOHAR"},
+    {"page_number": 1, "row_number": 4, "firm_name": "DINESH PUJARA & ASSOCIATES", "ca_name": "PUJARA DINESH", "city": "ABOHAR"},
+    {"page_number": 4, "row_number": 5, "firm_name": "NEETU BHATIA & ASSOCIATES", "ca_name": "NEETU BHATIA", "city": "AMRITSAR"},
+    {"page_number": 1, "row_number": 6, "firm_name": "RAMESH AHUJA & ASSOCIATES", "ca_name": "RAMESH KUMAR", "city": "AMBALA"},
+    {"page_number": 1, "row_number": 7, "firm_name": "S AJAY & CO", "ca_name": "AJAY SHARMA", "city": "AMBALA"},
+    {"page_number": 1, "row_number": 8, "firm_name": "S JUNEJA & ASSOCIATES", "ca_name": "SAKSHI JUNEJA", "city": "AMBALA"},
+    {"page_number": 1, "row_number": 9, "firm_name": "HARSHIL & ASSOCIATES", "ca_name": "HARSHIL", "city": "AMBALA"},
+    {"page_number": 1, "row_number": 10, "firm_name": "K B JHAMB & ASSOCIATES", "ca_name": "KAMAL BHUSHAN JHAMB", "city": "AMBALA"},
+    {"page_number": 4, "row_number": 11, "firm_name": "MIGLANI & CO", "ca_name": "KUSHAL MIGLANI", "city": "AMRITSAR"},
+    {"page_number": 1, "row_number": 12, "firm_name": "LOVISH GARG AND ASSOCIATES", "ca_name": "LOVISH GARG", "city": "ABOHAR"},
+    {"page_number": 1, "row_number": 13, "firm_name": "ANMOL ARJUN & ASSOCIATES", "ca_name": "ANMOL ARJUN", "city": "ABOHAR"},
+    {"page_number": 1, "row_number": 14, "firm_name": "KUMAR RAJ & ASSOCIATES", "ca_name": "RAJ KUMAR", "city": "AMBALA"},
+    {"page_number": 3, "row_number": 15, "firm_name": "BRIJ SHARMA & CO", "ca_name": "BRIJ BHUSHAN SHARMA", "city": "AMRITSAR"}
+  ],
+  "must_never_be_ca_name": [
+    "ANAJ MANDI",
+    "URBAN ESTATE HUDA",
+    "NEW SURAJ NAGAR",
+    "CHARTERED ACCOUNTANTS",
+    "GOBIND NAGRI"
+  ],
+  "must_never_be_city": [
+    "ANMOL",
+    "HARSHIL",
+    "NEETU"
+  ]
+}

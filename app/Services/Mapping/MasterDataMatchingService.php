@@ -18,9 +18,12 @@ class MasterDataMatchingService
 
     public const PROFILE_STATE_FIRM_CA = 'state_firm_ca';
 
+    public const PROFILE_FIRM_CA_CITY = 'firm_ca_city';
+
     public function __construct(
         private readonly DataNormalizationService $normalizer,
         private readonly StateFirmCaMatchingProfile $stateFirmCaProfile,
+        private readonly FirmCaCityMatchingProfile $firmCaCityProfile,
     ) {}
 
     /**
@@ -301,6 +304,9 @@ class MasterDataMatchingService
     public function match(array $payload, array $index, ?string $profile = null): MatchResult
     {
         $profile = $this->resolveProfile($profile ?? ($index['profile'] ?? null));
+        if ($profile === self::PROFILE_FIRM_CA_CITY || ($profile !== self::PROFILE_STATE_FIRM_CA && config('ocr_workflow.mode') === 'firm_ca_city' && ($index['source'] ?? null) === 'ocr')) {
+            return $this->firmCaCityProfile->match($payload);
+        }
         if ($profile === self::PROFILE_STATE_FIRM_CA) {
             return $this->stateFirmCaProfile->match($payload, $index);
         }
@@ -558,6 +564,9 @@ class MasterDataMatchingService
     public function resolveProfile(?string $profile): string
     {
         $profile = $profile ?: (string) config('crm_mapping.default_matching_profile', self::PROFILE_IDENTIFIER_FIRST);
+        if ($profile === self::PROFILE_FIRM_CA_CITY || $profile === 'firm_ca_city') {
+            return self::PROFILE_FIRM_CA_CITY;
+        }
         if ($profile === self::PROFILE_STATE_FIRM_CA || $profile === 'sales_team') {
             return self::PROFILE_STATE_FIRM_CA;
         }

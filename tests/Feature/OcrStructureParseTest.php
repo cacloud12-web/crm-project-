@@ -58,10 +58,10 @@ class OcrStructureParseTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.has_structured_data', true)
             ->assertJsonPath('data.parsed_firm_count', 2)
-            ->assertJsonPath('data.parsed_firms.0.firm_name', 'Agrawal Girepunje & Associates')
-            ->assertJsonPath('data.parsed_firms.0.city', 'Abhanpur')
-            ->assertJsonPath('data.parsed_firms.0.members.0.ca_name', 'Sunil Kumar Girepunje')
-            ->assertJsonPath('data.parsed_firms.1.firm_name', 'Agrawal Piyush & Co');
+            ->assertJsonPath('data.parsed_firms.0.firm_name', 'AGRAWAL GIREPUNJE & ASSOCIATES')
+            ->assertJsonPath('data.parsed_firms.0.city', 'ABHANPUR')
+            ->assertJsonPath('data.parsed_firms.0.ca_name', 'SUNIL KUMAR GIREPUNJE')
+            ->assertJsonPath('data.parsed_firms.1.firm_name', 'AGRAWAL PIYUSH & CO');
     }
 
     public function test_firm_review_approve_and_reject(): void

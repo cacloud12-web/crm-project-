@@ -34,6 +34,12 @@ class OcrImportModeTest extends TestCase
             'document-ai.credentials' => $this->writeFakeCredentials(),
             'document-ai.max_file_mb' => 10,
             'document-ai.sync_small_files' => false,
+            // Mode tests assert intentional Master CA auto-import when policy allows.
+            'ocr_safety.require_verification' => false,
+            'ocr_safety.auto_create' => true,
+            'ocr_safety.auto_update' => true,
+            'ocr_safety.allow_bulk_approve_safe' => true,
+            'ocr_safety.min_required_field_confidence' => 0.90,
         ]);
         app(\App\Services\Rbac\RbacDatabaseService::class)->ensureConfigDefaultGrants();
         app(\App\Services\Rbac\RbacMatrixService::class)->flushCache();

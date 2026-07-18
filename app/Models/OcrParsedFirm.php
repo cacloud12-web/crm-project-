@@ -47,6 +47,9 @@ class OcrParsedFirm extends Model
         'source_data',
         'notes',
         'field_meta',
+        'row_number',
+        'bounding_box',
+        'validation_errors',
     ];
 
     protected function casts(): array
@@ -55,6 +58,8 @@ class OcrParsedFirm extends Model
             'field_meta' => 'array',
             'source_data' => 'array',
             'match_candidates' => 'array',
+            'bounding_box' => 'array',
+            'validation_errors' => 'array',
             'overall_confidence' => 'decimal:4',
             'match_confidence' => 'decimal:4',
             'sequence_no' => 'integer',

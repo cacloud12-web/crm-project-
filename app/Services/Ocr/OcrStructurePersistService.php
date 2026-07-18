@@ -27,13 +27,16 @@ class OcrStructurePersistService
         private readonly DataNormalizationService $normalizer,
         private readonly MasterDataMappingService $mappingService,
         private readonly MasterCaDirectImportService $masterCaImporter,
+        private readonly OcrDocumentAiTableParser $tableParser,
+        private readonly OcrLayoutDirectoryParser $layoutParser,
+        private readonly OcrSourceVerificationService $sourceVerifier,
     ) {}
 
     public function parseAndPersist(OcrDocument $document): OcrDocument
     {
         $text = (string) ($document->displayText() ?? '');
-        $layout = is_array($document->structured_data) ? $document->structured_data : [];
-        $layoutBlockCount = $this->countLayoutBlocks($layout);
+        $structuredExisting = is_array($document->structured_data) ? $document->structured_data : [];
+        $layoutBlockCount = $this->countLayoutBlocks($structuredExisting);
 
         $document->update([
             'parse_status' => 'processing',
@@ -50,15 +53,8 @@ class OcrStructurePersistService
         try {
             if (trim($text) === '' && $layoutBlockCount < 1) {
                 $this->replaceParsedRecords($document, []);
-                $quality = [
-                    'status' => 'empty',
-                    'warnings' => ['Raw OCR text missing.'],
-                ];
-                $completeness = [
-                    'needs_review' => true,
-                    'warnings' => ['Raw OCR text missing.'],
-                    'firm_count' => 0,
-                ];
+                $quality = ['status' => 'empty', 'warnings' => ['Raw OCR text missing.']];
+                $completeness = ['needs_review' => true, 'warnings' => ['Raw OCR text missing.'], 'firm_count' => 0];
                 $this->storeParseOutcome($document, [
                     'parser_version' => OcrStructureParserService::PARSER_VERSION,
                     'parse_mode' => 'none',
@@ -73,13 +69,49 @@ class OcrStructurePersistService
                     ],
                     'quality_report' => $quality,
                 ], $completeness, 'completed');
-
                 $document->update(['processing_progress' => 'Completed']);
 
                 return $document->fresh(['parsedFirms.members']);
             }
 
-            $parsed = $this->parser->parse($text, $layout);
+            $structuredExisting = is_array($document->structured_data) ? $document->structured_data : [];
+            $docAiTables = is_array($structuredExisting['tables'] ?? null) ? $structuredExisting['tables'] : [];
+            if ($docAiTables === [] && is_array($structuredExisting['pages'] ?? null)) {
+                foreach ($structuredExisting['pages'] as $page) {
+                    if (is_array($page['tables'] ?? null)) {
+                        foreach ($page['tables'] as $table) {
+                            $docAiTables[] = $table;
+                        }
+                    }
+                }
+            }
+
+            $tableParsed = $docAiTables !== [] ? $this->tableParser->parseTables($docAiTables) : null;
+            if ($tableParsed !== null && ($tableParsed['firms'] ?? []) !== []) {
+                $parsed = [
+                    'parser_version' => OcrStructureParserService::PARSER_VERSION.'+tables',
+                    'parse_mode' => $tableParsed['parse_mode'],
+                    'firm_count' => count($tableParsed['firms']),
+                    'firms' => $tableParsed['firms'],
+                    'rows_detected' => $tableParsed['rows_detected'],
+                    'heading_count' => null,
+                    'skipped_blocks' => 0,
+                    'skipped_details' => [],
+                    'missing_serials' => [],
+                    'duplicate_serials' => [],
+                    'duplicate_firms' => [],
+                ];
+            } elseif ($this->layoutParser->canParse($structuredExisting)) {
+                $layoutParsed = $this->layoutParser->parse($structuredExisting);
+                if ($layoutParsed !== null && ($layoutParsed['firms'] ?? []) !== []) {
+                    $parsed = $layoutParsed;
+                } else {
+                    $parsed = $this->parser->parse($text, $structuredExisting);
+                }
+            } else {
+                $parsed = $this->parser->parse($text, $structuredExisting);
+            }
+
             $quality = $this->buildQualityReport($document, $parsed, $text);
             $completeness = $this->evaluateCompleteness($document, $parsed, $text, $quality);
             $this->replaceParsedRecords($document, $parsed['firms']);
@@ -89,7 +121,21 @@ class OcrStructurePersistService
                 $completeness['warnings'][] = 'No candidate firm headings produced structured firms.';
             }
 
-            $this->storeParseOutcome($document, [
+            $structured = is_array($document->fresh()?->structured_data) ? $document->fresh()->structured_data : $structuredExisting;
+            // Preserve Document AI tables/entities while attaching parse quality.
+            $structured['tables'] = $docAiTables;
+            $reconciliation = $this->buildReconciliationReport($parsed['firms'] ?? [], $quality);
+            $quality['reconciliation'] = $reconciliation;
+            $quality['pipeline_counts'] = array_merge($quality['pipeline_counts'] ?? [], [
+                'exact_matches' => 0,
+                'needs_review' => $reconciliation['needs_review'],
+                'conflicts' => 0,
+                'rejected' => 0,
+                'failed' => $reconciliation['failed'],
+                'accounted_for' => $reconciliation['accounted_for'],
+            ]);
+
+            $structured['parsed'] = [
                 'parser_version' => $parsed['parser_version'],
                 'parse_mode' => $parsed['parse_mode'] ?? null,
                 'firm_count' => $parsed['firm_count'],
@@ -100,12 +146,28 @@ class OcrStructurePersistService
                 'missing_serials' => $parsed['missing_serials'] ?? [],
                 'duplicate_serials' => $parsed['duplicate_serials'] ?? [],
                 'duplicate_firms' => $parsed['duplicate_firms'] ?? [],
-                'strategy' => $parsed['strategy'] ?? ($parsed['parse_mode'] ?? 'line_based'),
-                'candidate_firm_count' => $parsed['candidate_firm_count'] ?? ($parsed['heading_count'] ?? null),
-                'page_stats' => $parsed['page_stats'] ?? null,
-                'error' => null,
+                'parsed_at' => now()->toIso8601String(),
+                'completeness' => $completeness,
                 'quality_report' => $quality,
-            ], $completeness, 'completed');
+                'reconciliation' => $reconciliation,
+                'used_document_ai_tables' => $tableParsed !== null,
+                'workflow_mode' => config('ocr_workflow.mode', 'firm_ca_city'),
+            ];
+
+            $isMaster = $document->isMasterCaImport();
+            $document->update([
+                'parse_status' => 'completed',
+                'parsed_firm_count' => $parsed['firm_count'],
+                'parsed_at' => now(),
+                'structured_data' => $structured,
+                'processing_progress' => $isMaster
+                    ? (! empty($completeness['needs_review'])
+                        ? 'Completed with extraction warnings — validating next'
+                        : 'Validating official Master records')
+                    : (! empty($completeness['needs_review'])
+                        ? 'Completed with extraction warnings — mapping next'
+                        : 'Mapping to Master Data'),
+            ]);
 
             Log::info('ocr.document.structured', [
                 'ocr_document_id' => $document->id,
@@ -113,12 +175,11 @@ class OcrStructurePersistService
                 'firm_count' => $parsed['firm_count'],
                 'rows_detected' => $parsed['rows_detected'] ?? $parsed['firm_count'],
                 'heading_count' => $parsed['heading_count'] ?? null,
-                'candidate_firm_count' => $parsed['candidate_firm_count'] ?? null,
                 'skipped_blocks' => $parsed['skipped_blocks'] ?? 0,
                 'skipped_details' => $parsed['skipped_details'] ?? [],
                 'parse_mode' => $parsed['parse_mode'] ?? null,
-                'strategy' => $parsed['strategy'] ?? null,
                 'parser_version' => $parsed['parser_version'],
+                'used_document_ai_tables' => $tableParsed !== null,
                 'quality_report' => $quality,
                 'completeness' => $completeness,
             ]);
@@ -126,7 +187,6 @@ class OcrStructurePersistService
             $this->dispatchPostParse($document->fresh(), (int) $parsed['firm_count']);
         } catch (Throwable $exception) {
             $error = $this->classifyStructureException($exception, $text);
-
             Log::error('ocr.pipeline.structure_failed', [
                 'step' => 'parse_and_persist',
                 'ocr_document_id' => $document->id,
@@ -173,15 +233,13 @@ class OcrStructurePersistService
         $isMaster = $document->isMasterCaImport();
         $progress = 'Failed';
         if ($status !== 'failed') {
-            if ($isMaster) {
-                $progress = ! empty($completeness['needs_review'])
+            $progress = $isMaster
+                ? (! empty($completeness['needs_review'])
                     ? 'Completed with extraction warnings — validating next'
-                    : 'Validating official Master records';
-            } else {
-                $progress = ! empty($completeness['needs_review'])
+                    : 'Validating official Master records')
+                : (! empty($completeness['needs_review'])
                     ? 'Completed with extraction warnings — mapping next'
-                    : 'Mapping to Master Data';
-            }
+                    : 'Mapping to Master Data');
         }
 
         $document->update([
@@ -231,6 +289,8 @@ class OcrStructurePersistService
      * @param  array<string, mixed>  $layout
      */    /**
      * @param  array<string, mixed>  $layout
+     */    /**
+     * @param  array<string, mixed>  $layout
      */
     private function countLayoutBlocks(array $layout): int
     {
@@ -254,8 +314,7 @@ class OcrStructurePersistService
         }
 
         return $count;
-    }
-    private function dispatchPostParse(OcrDocument $document, int $firmCount): void
+    }    private function dispatchPostParse(OcrDocument $document, int $firmCount): void
     {
         if ($firmCount < 1) {
             $document->update(['processing_progress' => 'Completed']);
@@ -275,17 +334,27 @@ class OcrStructurePersistService
     private function dispatchMasterCaImport(OcrDocument $document, int $firmCount): void
     {
         $actorId = auth()->id();
-        $syncMax = (int) config('crm_mapping.master_ca_sync_max_firms', 100);
+        $syncMax = (int) config('crm_mapping.master_ca_sync_max_firms', 500);
+        $queue = (string) config('queue.default', 'sync');
+        // sync/null run jobs in-process; database/redis need `php artisan queue:work`.
+        $asyncQueueNeedsWorker = in_array($queue, ['database', 'redis', 'beanstalkd', 'sqs'], true);
+        $runInline = $firmCount <= $syncMax || $asyncQueueNeedsWorker;
 
         Log::info('ocr.pipeline.step', [
             'step' => 'master_ca_import_start',
             'ocr_document_id' => $document->id,
             'firm_count' => $firmCount,
-            'inline' => $firmCount <= $syncMax,
+            'inline' => $runInline,
+            'queue' => $queue,
+            'sync_max' => $syncMax,
         ]);
 
-        if ($firmCount <= $syncMax) {
+        if ($runInline) {
             try {
+                if (function_exists('set_time_limit')) {
+                    @set_time_limit(max(180, min(900, 60 + ($firmCount * 2))));
+                }
+                $document->update(['processing_progress' => 'Importing official Master CA records']);
                 $stats = $this->masterCaImporter->processDocument((int) $document->id, $actorId ? (int) $actorId : null);
                 Log::info('ocr.pipeline.step', [
                     'step' => 'master_ca_import_completed',
@@ -298,7 +367,17 @@ class OcrStructurePersistService
                 Log::error('ocr.pipeline.inline_master_import_failed', [
                     'ocr_document_id' => $document->id,
                     'error_message' => $e->getMessage(),
+                    'exception' => $e::class,
                 ]);
+                if (! $asyncQueueNeedsWorker) {
+                    $document->update([
+                        'error_code' => 'master_import_failed',
+                        'error_message' => mb_substr($e->getMessage(), 0, 2000),
+                        'processing_progress' => 'Import failed — '.$e->getMessage(),
+                    ]);
+
+                    return;
+                }
                 $document->update([
                     'error_code' => 'master_import_failed',
                     'error_message' => mb_substr($e->getMessage(), 0, 2000),
@@ -308,12 +387,60 @@ class OcrStructurePersistService
         }
 
         ImportMasterCaOcrJob::dispatch((int) $document->id, $actorId ? (int) $actorId : null);
-        $document->update(['processing_progress' => 'Importing official Master CA records']);
+        $document->update([
+            'processing_progress' => $asyncQueueNeedsWorker
+                ? 'Queued for Master CA import — run: php artisan queue:work'
+                : 'Importing official Master CA records',
+        ]);
         Log::info('ocr.pipeline.step', [
             'step' => 'master_ca_import_job_dispatched',
             'ocr_document_id' => $document->id,
             'firm_count' => $firmCount,
+            'queue' => $queue,
         ]);
+    }
+
+    /**
+     * Finish Master CA imports left on "Importing…" when the queue worker never ran.
+     */
+    public function resumeStuckMasterCaImport(OcrDocument $document, ?int $actorId = null): ?array
+    {
+        if (! $document->isMasterCaImport() || $document->parse_status !== 'completed') {
+            return null;
+        }
+
+        $progress = mb_strtolower((string) ($document->processing_progress ?? ''));
+        $stuckImporting = str_contains($progress, 'importing') || str_contains($progress, 'queued for master ca');
+        if (! $stuckImporting && ! str_contains($progress, 'import failed')) {
+            return null;
+        }
+
+        $pending = OcrParsedFirm::query()
+            ->where('ocr_document_id', $document->id)
+            ->whereNull('crm_ca_id')
+            ->where(function ($q) {
+                $q->whereNull('match_status')
+                    ->orWhereIn('match_status', ['pending', 'unmatched', 'needs_review', 'failed']);
+            })
+            ->count();
+
+        if ($pending < 1) {
+            $document->update(['processing_progress' => 'Completed']);
+
+            return ['processed' => 0, 'resumed' => false];
+        }
+
+        Log::info('ocr.pipeline.step', [
+            'step' => 'master_ca_import_resume',
+            'ocr_document_id' => $document->id,
+            'pending_firms' => $pending,
+        ]);
+
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(max(180, min(900, 60 + ($pending * 2))));
+        }
+
+        return $this->masterCaImporter->processDocument((int) $document->id, $actorId);
     }
 
     private function dispatchSalesMapping(OcrDocument $document, int $firmCount): void
@@ -449,7 +576,9 @@ class OcrStructurePersistService
             'rows_detected' => $rowsDetected,
             'heading_count' => $rowsDetected,
             'skipped_blocks' => $skipped,
-            'parsing_accuracy' => $quality['parsing_accuracy'] ?? null,
+            'parsing_accuracy' => $quality['row_coverage'] ?? ($quality['parsing_accuracy'] ?? null),
+            'row_coverage' => $quality['row_coverage'] ?? ($quality['parsing_accuracy'] ?? null),
+            'valid_three_field_rows' => $quality['valid_three_field_rows'] ?? null,
             'needs_review' => $needsReview,
             'warnings' => $warnings,
         ];
@@ -508,15 +637,40 @@ class OcrStructurePersistService
         }
 
         $expected = max($rowsDetected, $firmsParsed);
-        $accuracy = $expected > 0
+        $rowCoverage = $expected > 0
             ? round(min(100, ($firmsParsed / $expected) * 100), 2)
             : ($firmsParsed > 0 ? 100.0 : 0.0);
+
+        $mergeWarnings = 0;
+        $splitWarnings = 0;
+        $validThreeField = 0;
+        $invalidRows = 0;
+        foreach ($parsed['firms'] ?? [] as $firm) {
+            if (! empty($firm['row_merge_suspected']) || ! empty($firm['merge_suspected'])) {
+                if (! empty($firm['row_merge_evidence'])) {
+                    $mergeWarnings++;
+                }
+            }
+            if (! empty($firm['row_split_suspected']) || ! empty($firm['split_suspected'])) {
+                $splitWarnings++;
+            }
+            $missing = is_array($firm['missing_required_fields'] ?? null) ? $firm['missing_required_fields'] : [];
+            if ($missing === [] && ($firm['firm_name'] ?? null) && ($firm['ca_name'] ?? null) && ($firm['city'] ?? null)) {
+                $validThreeField++;
+            } else {
+                $invalidRows++;
+            }
+        }
 
         $report = [
             'total_pages' => $pageCount,
             'pages_with_text' => $pagesWithText,
+            'total_source_rows' => $rowsDetected,
             'total_rows_detected' => $rowsDetected,
+            'total_ocr_rows' => $firmsParsed,
             'total_firms_parsed' => $firmsParsed,
+            'valid_three_field_rows' => $validThreeField,
+            'invalid_scoped_rows' => $invalidRows,
             'missing_rows' => $missingSerials,
             'missing_row_count' => count($missingSerials),
             'duplicate_rows' => $duplicateSerials,
@@ -524,16 +678,31 @@ class OcrStructurePersistService
             'duplicate_firms' => $duplicateFirms,
             'unique_firm_estimate' => (int) ($parsed['unique_firm_estimate'] ?? max(0, $firmsParsed - count($duplicateFirms))),
             'ocr_confidence' => $document->average_confidence,
-            'parsing_accuracy' => $accuracy,
+            // Row coverage = parsed/detected source rows. NEVER call this OCR accuracy.
+            'row_coverage' => $rowCoverage,
+            'parsing_accuracy' => $rowCoverage, // legacy key kept for older clients; UI must label as Row Coverage
             'parse_mode' => $parsed['parse_mode'] ?? null,
             'skipped_details' => $parsed['skipped_details'] ?? [],
             'per_page' => array_values($perPage),
+            'merged_row_warnings' => $mergeWarnings,
+            'split_row_warnings' => $splitWarnings,
             'pipeline_counts' => [
+                'source_pages' => $pageCount,
                 'pdf_pages' => $pageCount,
                 'ocr_pages_with_text' => $pagesWithText,
+                'source_rows' => $rowsDetected,
                 'rows_detected' => $rowsDetected,
+                'ocr_rows' => $firmsParsed,
+                'parsed_rows' => $firmsParsed,
                 'firms_parsed' => $firmsParsed,
+                'valid_three_field_rows' => $validThreeField,
+                'invalid_scoped_rows' => $invalidRows,
+                'missing_rows' => count($missingSerials),
+                'merged_row_warnings' => $mergeWarnings,
+                'split_row_warnings' => $splitWarnings,
                 'ready_for_mapping' => $firmsParsed,
+                'row_coverage' => $rowCoverage,
+                'reconcile_note' => 'row_coverage = accounted_source_rows / detected_source_rows; not OCR field accuracy',
             ],
         ];
 
@@ -541,7 +710,7 @@ class OcrStructurePersistService
             ['ocr_document_id' => $document->id],
             $report['pipeline_counts'],
             [
-                'parsing_accuracy' => $accuracy,
+                'row_coverage' => $rowCoverage,
                 'missing_rows' => $missingSerials,
                 'duplicate_rows' => $duplicateSerials,
             ],
@@ -567,69 +736,195 @@ class OcrStructurePersistService
 
             foreach (array_chunk($firms, self::FIRM_INSERT_CHUNK) as $chunk) {
                 foreach ($chunk as $firmData) {
-                    $members = $firmData['members'] ?? [];
+                    $firmData = $this->sanitizeFirmData($firmData);
+                    $members = $this->isThreeFieldMode() ? [] : ($firmData['members'] ?? []);
                     unset($firmData['members']);
 
-                    $rawFirmName = $this->rawString($firmData['firm_name'] ?? ($firmData['raw_firm_name'] ?? null));
-                    $rawFrn = $this->rawString($firmData['frn'] ?? null);
-                    $rawGst = $this->rawString($firmData['gst_no'] ?? null);
-                    $rawPan = $this->rawString($firmData['pan_no'] ?? null);
-                    $rawPhone = $this->rawString($firmData['phone'] ?? null);
-                    $rawEmail = $this->rawString($firmData['email'] ?? null);
-                    $rawAddress = $this->rawString($firmData['address'] ?? null);
-                    $rawCity = $this->rawString($firmData['city'] ?? null);
-                    $rawState = $this->rawString($firmData['state'] ?? null);
-                    $rawPincode = $this->rawString($firmData['pincode'] ?? null);
+                    $parsedFirmName = $this->rawString($firmData['firm_name'] ?? null);
+                    $rawFirmName = $this->rawString($firmData['raw_firm_name'] ?? null) ?? $parsedFirmName;
+                    $rawFrn = $this->isThreeFieldMode() ? null : $this->rawString($firmData['frn'] ?? null);
+                    $rawGst = $this->isThreeFieldMode() ? null : $this->rawString($firmData['gst_no'] ?? null);
+                    $rawPan = $this->isThreeFieldMode() ? null : $this->rawString($firmData['pan_no'] ?? null);
+                    $rawPhone = $this->isThreeFieldMode() ? null : $this->rawString($firmData['phone'] ?? null);
+                    $rawEmail = $this->isThreeFieldMode() ? null : $this->rawString($firmData['email'] ?? null);
+                    $rawAddress = $this->isThreeFieldMode() ? null : $this->rawString($firmData['address'] ?? null);
+                    $parsedCity = $this->rawString($firmData['city'] ?? null);
+                    $rawCity = $this->rawString($firmData['raw_city'] ?? null) ?? $parsedCity;
+                    $rawState = $this->isThreeFieldMode() ? null : $this->rawString($firmData['state'] ?? null);
+                    $rawPincode = $this->isThreeFieldMode() ? null : $this->rawString($firmData['pincode'] ?? null);
+                    $parsedCaName = $this->rawString($firmData['ca_name'] ?? ($members[0]['ca_name'] ?? null));
+                    $rawCaName = $this->rawString($firmData['raw_ca_name'] ?? ($members[0]['raw_ca_name'] ?? null)) ?? $parsedCaName;
+                    $rawMembership = $this->isThreeFieldMode() ? null : $this->rawString($firmData['membership_no'] ?? ($members[0]['membership_no'] ?? null));
+
+                    $rawPayload = $this->isThreeFieldMode()
+                        ? [
+                            'firm_name' => $rawFirmName,
+                            'ca_name' => $rawCaName,
+                            'city' => $rawCity,
+                        ]
+                        : [
+                            'firm_name' => $rawFirmName,
+                            'frn' => $rawFrn,
+                            'gst_no' => $rawGst,
+                            'pan_no' => $rawPan,
+                            'phone' => $rawPhone,
+                            'email' => $rawEmail,
+                            'address' => $rawAddress,
+                            'city' => $rawCity,
+                            'state' => $rawState,
+                            'pincode' => $rawPincode,
+                            'ca_name' => $rawCaName,
+                            'membership_no' => $rawMembership,
+                        ];
+                    $parsedPayload = $this->isThreeFieldMode()
+                        ? [
+                            'firm_name' => $parsedFirmName,
+                            'ca_name' => $parsedCaName,
+                            'city' => $parsedCity,
+                        ]
+                        : [
+                            'firm_name' => $rawFirmName,
+                            'frn' => $rawFrn,
+                            'gst_no' => $rawGst,
+                            'pan_no' => $rawPan,
+                            'phone' => $rawPhone,
+                            'pincode' => $rawPincode,
+                            'membership_no' => $rawMembership,
+                            'ca_name' => $rawCaName,
+                            'city' => $rawCity,
+                        ];
+                    $validation = $this->sourceVerifier->verify(array_merge($firmData, [
+                        'firm_name' => $parsedFirmName ?? $rawFirmName,
+                        'ca_name' => $parsedCaName ?? $rawCaName,
+                        'city' => $parsedCity ?? $rawCity,
+                        'membership_no' => $rawMembership,
+                        'raw' => $rawPayload,
+                        'parsed' => $parsedPayload,
+                    ]));
+
+                    $overallConfidence = $firmData['overall_confidence'] ?? $validation['overall_confidence'];
+                    if ($this->isThreeFieldMode()) {
+                        $blocking = array_flip(config('ocr_workflow.blocking_codes', []));
+                        $ignored = array_flip(config('ocr_workflow.ignored_decision_codes', []));
+                        $scopedCodes = [];
+                        foreach ($validation['collision_codes'] ?? [] as $code) {
+                            if (isset($ignored[$code])) {
+                                continue;
+                            }
+                            if (isset($blocking[$code]) || str_starts_with((string) $code, 'MISSING_')) {
+                                $scopedCodes[] = $code;
+                            }
+                        }
+                        $hardFail = $validation['errors'] !== [] || empty($validation['ok']);
+                        // Do not quarantine solely because require_verification prevents auto-apply.
+                        $quarantine = $hardFail || $scopedCodes !== [];
+                        $validationErrors = array_values(array_unique(array_merge(
+                            $validation['errors'],
+                            $scopedCodes,
+                        )));
+                    } else {
+                        $hardFail = $validation['errors'] !== [] || empty($validation['ok']);
+                        $quarantine = $hardFail || empty($validation['verified']);
+                        $validationErrors = array_values(array_unique(array_merge(
+                            $validation['errors'],
+                            $validation['collision_codes'] ?? [],
+                        )));
+                    }
+
+                    $displayFirmName = $this->isThreeFieldMode() ? ($parsedFirmName ?? $rawFirmName) : $rawFirmName;
+                    $displayCity = $this->isThreeFieldMode() ? ($parsedCity ?? $rawCity) : $rawCity;
+                    $displayCaName = $this->isThreeFieldMode() ? ($parsedCaName ?? $rawCaName) : $rawCaName;
 
                     $firm = OcrParsedFirm::query()->create([
                         'ocr_document_id' => $document->id,
                         'sequence_no' => (int) ($firmData['sequence_no'] ?? 1),
                         'raw_firm_name' => $rawFirmName,
-                        'firm_name' => $rawFirmName,
-                        'normalized_firm_name' => $this->normalizer->firmName($rawFirmName),
-                        'firm_type' => $firmData['firm_type'] ?? null,
+                        'firm_name' => $displayFirmName,
+                        'normalized_firm_name' => $this->normalizer->firmName($displayFirmName),
+                        'firm_type' => $this->isThreeFieldMode() ? null : ($firmData['firm_type'] ?? null),
                         'frn' => $rawFrn,
                         'gst_no' => $rawGst,
                         'pan_no' => $rawPan,
                         'address' => $rawAddress,
-                        'city' => $rawCity,
-                        'district' => $this->rawString($firmData['district'] ?? null),
+                        'city' => $displayCity,
+                        'district' => $this->isThreeFieldMode() ? null : $this->rawString($firmData['district'] ?? null),
                         'state' => $rawState,
                         'pincode' => $rawPincode,
                         'phone' => $rawPhone,
                         'email' => $rawEmail,
-                        'website' => $this->rawString($firmData['website'] ?? null),
-                        'partner_count' => count($members) > 0 ? count($members) : ($firmData['partner_count'] ?? null),
+                        'website' => $this->isThreeFieldMode() ? null : $this->rawString($firmData['website'] ?? null),
+                        'partner_count' => $this->isThreeFieldMode() ? null : (count($members) > 0 ? count($members) : ($firmData['partner_count'] ?? null)),
                         'review_status' => $firmData['review_status'] ?? OcrParsedFirm::REVIEW_PENDING,
-                        'overall_confidence' => $firmData['overall_confidence'] ?? null,
+                        // Fail-closed: unverified / colliding rows never leave Needs Review automatically.
+                        'match_status' => $quarantine ? 'needs_review' : ($firmData['match_status'] ?? null),
+                        'match_reason' => $quarantine
+                            ? ($validation['errors'][0] ?? ($validation['collision_codes'][0] ?? 'awaiting_verification'))
+                            : ($firmData['match_reason'] ?? null),
+                        'overall_confidence' => $overallConfidence,
                         'page_number' => $firmData['page_number'] ?? null,
+                        'row_number' => $firmData['row_number'] ?? ($firmData['row_serial'] ?? $firmData['sequence_no'] ?? null),
+                        'bounding_box' => $this->isThreeFieldMode() ? null : ($firmData['bounding_boxes'] ?? ($firmData['bounding_box'] ?? null)),
+                        'validation_errors' => $validationErrors !== [] ? $validationErrors : null,
                         'source_data' => [
-                            'raw' => [
-                                'firm_name' => $rawFirmName,
-                                'frn' => $rawFrn,
-                                'gst_no' => $rawGst,
-                                'pan_no' => $rawPan,
-                                'phone' => $rawPhone,
-                                'email' => $rawEmail,
-                                'address' => $rawAddress,
-                                'city' => $rawCity,
-                                'state' => $rawState,
-                                'pincode' => $rawPincode,
+                            'raw' => $rawPayload,
+                            'parsed' => $parsedPayload,
+                            'normalized' => $this->isThreeFieldMode()
+                                ? [
+                                    'firm_name' => $this->normalizer->firmName($displayFirmName),
+                                    'ca_name' => $this->normalizer->caName($displayCaName),
+                                    'city' => $this->normalizer->city($displayCity),
+                                ]
+                                : [
+                                    'firm_name' => $this->normalizer->firmName($rawFirmName),
+                                    'frn' => $this->normalizer->frn($rawFrn),
+                                    'gst_no' => $this->normalizer->gst($rawGst),
+                                    'pan_no' => $this->normalizer->pan($rawPan),
+                                    'phone' => $this->normalizer->phone($rawPhone),
+                                    'email' => $this->normalizer->email($rawEmail),
+                                    'pincode' => $this->normalizer->postalCode($rawPincode),
+                                    'ca_name' => $this->normalizer->caName($rawCaName),
+                                    'membership_no' => $this->normalizer->membershipNumber($rawMembership),
+                                    'city' => $this->normalizer->city($rawCity),
+                                ],
+                            'validation' => [
+                                'ok' => $validation['ok'],
+                                'verified' => $validation['verified'],
+                                'auto_apply_ok' => $validation['auto_apply_ok'],
+                                'errors' => $validation['errors'],
+                                'warnings' => $validation['warnings'],
+                                'collision_codes' => $validation['collision_codes'],
+                                'collision_messages' => $validation['collision_messages'],
+                                'fields' => $validation['fields'],
+                                'require_verification' => $validation['require_verification'],
                             ],
-                            'normalized' => [
-                                'firm_name' => $this->normalizer->firmName($rawFirmName),
-                                'frn' => $this->normalizer->frn($rawFrn),
-                                'gst_no' => $this->normalizer->gst($rawGst),
-                                'pan_no' => $this->normalizer->pan($rawPan),
-                                'phone' => $this->normalizer->phone($rawPhone),
-                                'email' => $this->normalizer->email($rawEmail),
-                                'pincode' => $this->normalizer->postalCode($rawPincode),
-                            ],
-                            'unclassified_lines' => $firmData['unclassified_lines'] ?? [],
-                            'field_meta' => $firmData['field_meta'] ?? null,
-                            'source_lines' => $firmData['source_lines'] ?? null,
+                            'unclassified_lines' => $this->isThreeFieldMode() ? [] : ($firmData['unclassified_lines'] ?? []),
+                            'field_meta' => $this->isThreeFieldMode()
+                                ? array_intersect_key(
+                                    is_array($firmData['field_meta'] ?? null) ? $firmData['field_meta'] : [],
+                                    array_flip(['firm_name', 'ca_name', 'city']),
+                                )
+                                : ($firmData['field_meta'] ?? null),
+                            'source_lines' => $this->isThreeFieldMode() ? null : ($firmData['source_lines'] ?? null),
+                            'row_number' => $firmData['row_number'] ?? ($firmData['row_serial'] ?? $firmData['sequence_no'] ?? null),
+                            'bounding_boxes' => $this->isThreeFieldMode() ? null : ($firmData['bounding_boxes'] ?? null),
+                            'extraction_source' => $firmData['extraction_source'] ?? ($firmData['parse_mode'] ?? 'text_parser'),
+                            'entity_classifications' => $this->isThreeFieldMode() ? [] : ($firmData['entity_classifications'] ?? []),
+                            'unknown_tokens' => $this->isThreeFieldMode() ? [] : ($firmData['unknown_tokens'] ?? []),
+                            'ignored_tokens' => $this->isThreeFieldMode() ? [] : ($firmData['ignored_tokens'] ?? []),
+                            'field_confidences' => $this->isThreeFieldMode() ? null : ($firmData['field_confidences'] ?? null),
+                            'ca_name' => $displayCaName,
+                            'ca_role' => $this->isThreeFieldMode() ? null : ($firmData['ca_role'] ?? null),
+                            'structural_confidence' => $firmData['structural_confidence'] ?? null,
+                            'parser_confidence' => $firmData['parser_confidence'] ?? null,
+                            'reconstructed_text' => $this->isThreeFieldMode() ? null : ($firmData['reconstructed_text'] ?? null),
+                            'column_number' => $firmData['column_number'] ?? null,
                         ],
-                        'field_meta' => $firmData['field_meta'] ?? null,
+                        'field_meta' => $this->isThreeFieldMode()
+                            ? array_intersect_key(
+                                is_array($firmData['field_meta'] ?? null) ? $firmData['field_meta'] : [],
+                                array_flip(['firm_name', 'ca_name', 'city']),
+                            )
+                            : ($firmData['field_meta'] ?? null),
                     ]);
 
                     $memberRows = [];
@@ -683,6 +978,107 @@ class OcrStructurePersistService
                 }
             }
         });
+    }
+
+
+    private function isThreeFieldMode(): bool
+    {
+        return config('ocr_workflow.mode', 'firm_ca_city') === 'firm_ca_city';
+    }
+
+    /**
+     * @param  array<string, mixed>  $firmData
+     * @return array<string, mixed>
+     */
+    private function sanitizeFirmData(array $firmData): array
+    {
+        if (! $this->isThreeFieldMode()) {
+            return $firmData;
+        }
+
+        $parsedCa = $this->rawString($firmData['ca_name'] ?? null);
+        $rawCa = $this->rawString($firmData['raw_ca_name'] ?? null) ?? $parsedCa;
+        if ($parsedCa === null && is_array($firmData['members'] ?? null) && ($firmData['members'][0]['ca_name'] ?? null)) {
+            $parsedCa = $this->rawString($firmData['members'][0]['ca_name']);
+            $rawCa = $this->rawString($firmData['members'][0]['raw_ca_name'] ?? null) ?? $parsedCa;
+        }
+        $parsedFirm = $this->rawString($firmData['firm_name'] ?? null);
+        $rawFirm = $this->rawString($firmData['raw_firm_name'] ?? null) ?? $parsedFirm;
+        $parsedCity = $this->rawString($firmData['city'] ?? null);
+        $rawCity = $this->rawString($firmData['raw_city'] ?? null) ?? $parsedCity;
+        $fieldMeta = is_array($firmData['field_meta'] ?? null) ? $firmData['field_meta'] : [];
+        $fieldMeta = array_intersect_key($fieldMeta, array_flip(['firm_name', 'ca_name', 'city']));
+
+        return array_merge($firmData, [
+            'firm_name' => $parsedFirm,
+            'raw_firm_name' => $rawFirm,
+            'ca_name' => $parsedCa,
+            'raw_ca_name' => $rawCa,
+            'city' => $parsedCity,
+            'raw_city' => $rawCity,
+            'firm_type' => null,
+            'frn' => null,
+            'gst_no' => null,
+            'pan_no' => null,
+            'address' => null,
+            'state' => null,
+            'pincode' => null,
+            'phone' => null,
+            'email' => null,
+            'website' => null,
+            'membership_no' => null,
+            'ca_role' => null,
+            'members' => [],
+            'field_meta' => $fieldMeta,
+            'partner_count' => null,
+        ]);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $firms
+     * @return array<string, int|list>
+     */
+    private function buildReconciliationReport(array $firms, array $quality): array
+    {
+        $sourceRows = (int) ($quality['total_source_rows'] ?? count($firms));
+        $parsedRows = count($firms);
+        $needsReview = 0;
+        $exactReady = 0;
+        $missingCity = 0;
+        $missingCa = 0;
+        $missingFirm = 0;
+        foreach ($firms as $firm) {
+            $missing = is_array($firm['missing_required_fields'] ?? null) ? $firm['missing_required_fields'] : [];
+            if (in_array('city', $missing, true) || empty($firm['city'])) {
+                $missingCity++;
+            }
+            if (in_array('ca_name', $missing, true) || empty($firm['ca_name'])) {
+                $missingCa++;
+            }
+            if (in_array('firm_name', $missing, true) || empty($firm['firm_name'])) {
+                $missingFirm++;
+            }
+            if ($missing !== [] || ! empty($firm['ambiguous_layout']) || ! empty($firm['low_confidence_fields'])) {
+                $needsReview++;
+            } else {
+                $exactReady++;
+            }
+        }
+
+        return [
+            'source_rows' => $sourceRows,
+            'parsed_rows' => $parsedRows,
+            'exact_match_candidates' => $exactReady,
+            'needs_review' => $needsReview,
+            'conflicts' => 0,
+            'rejected' => 0,
+            'failed' => max(0, $sourceRows - $parsedRows),
+            'missing_firm_name' => $missingFirm,
+            'missing_ca_name' => $missingCa,
+            'missing_city' => $missingCity,
+            'accounted_for' => $parsedRows + max(0, $sourceRows - $parsedRows),
+            'every_source_row_accounted' => ($parsedRows + max(0, $sourceRows - $parsedRows)) === $sourceRows,
+        ];
     }
 
     private function rawString(mixed $value): ?string

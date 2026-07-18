@@ -9,15 +9,22 @@ namespace App\Services\Ocr;
  */
 class OcrStructureParserService
 {
-    public const PARSER_VERSION = '2.1.0';
+    public const PARSER_VERSION = '2.2.0';
 
     public function __construct(
         private readonly ?OcrSpreadsheetTableParser $spreadsheetParser = null,
+        private readonly ?OcrEntityClassificationService $entityClassifier = null,
+        private readonly ?OcrDirectoryRecordParser $recordParser = null,
     ) {}
 
     private function spreadsheet(): OcrSpreadsheetTableParser
     {
-        return $this->spreadsheetParser ?? new OcrSpreadsheetTableParser;
+        return $this->spreadsheetParser ?? new OcrSpreadsheetTableParser($this->entities());
+    }
+
+    private function entities(): OcrEntityClassificationService
+    {
+        return $this->entityClassifier ?? new OcrEntityClassificationService;
     }
 
     private const NOISE_EXACT = [
@@ -29,11 +36,9 @@ class OcrStructureParserService
 
     private const FIRM_MARKERS = [
         '& associates', 'and associates', '& co', '& co.', 'and co', 'and co.',
-        '& cd', '& c0', '& company', 'and company',
         'llp', 'pvt ltd', 'pvt. ltd', 'private limited', 'chartered accountant',
-        'chartered accountants', 'associates',
+        'chartered accountants', '& company', 'and company', 'associates',
         'consultants', 'advisors', 'advisory', '& sons', 'and sons',
-        '& company',
     ];
 
     private const PERSON_PREFIXES = [
@@ -76,6 +81,7 @@ class OcrStructureParserService
             $duplicateFirms = [];
             foreach ($firms as $firm) {
                 $phone = preg_replace('/\D+/', '', (string) ($firm['phone'] ?? '')) ?: null;
+                $key = mb_strtolower(trim((string) ($firm['firm_name'] ?? ''))).'|'.($phone ?? '');
                 if ($phone && isset($uniquePhones[$phone])) {
                     $duplicateFirms[] = [
                         'firm_name' => $firm['firm_name'] ?? null,
@@ -101,14 +107,12 @@ class OcrStructureParserService
                 'duplicate_serials' => $sheet['duplicate_serials'] ?? [],
                 'duplicate_firms' => $duplicateFirms,
                 'unique_firm_estimate' => count($firms) - count($duplicateFirms),
-                'candidate_firm_count' => count($firms),
                 'firms' => $firms,
             ];
         }
 
         $strategy = 'line_based';
         $sourceText = $rawText;
-
         $layoutText = $this->rebuildTextFromLayout($layoutMetadata);
         if ($layoutText !== null && trim($layoutText) !== '') {
             $sourceText = $layoutText;
@@ -119,51 +123,66 @@ class OcrStructureParserService
             return array_merge($this->emptyResult('empty_ocr_text'), [
                 'strategy' => 'empty',
                 'candidate_firm_count' => 0,
-                'parse_mode' => 'none',
             ]);
         }
 
         $lines = $this->prepareLines($sourceText);
         if ($lines === [] && trim($rawText) !== '') {
-            // Fallback when layout rebuild produced nothing useful.
             $lines = $this->prepareLines($rawText);
             $strategy = 'line_based_fallback';
         }
-
         if ($lines === []) {
             return array_merge($this->emptyResult($strategy === 'layout_aware' ? 'layout_empty' : 'no_content_lines_after_noise_filter'), [
                 'strategy' => $strategy === 'layout_aware' ? 'layout_empty' : 'empty',
                 'candidate_firm_count' => 0,
-                'parse_mode' => 'directory',
             ]);
         }
 
         $pageStats = $this->pageStats($lines);
         $blocks = $this->splitIntoFirmBlocks($lines);
-        $parsedBlocks = $this->firmsFromBlocksDetailed($blocks);
-        $firms = $parsedBlocks['firms'];
-        $skippedDetails = $parsedBlocks['skipped_details'];
-        $skippedBlocks = $parsedBlocks['skipped_blocks'];
-        $candidateCount = count($blocks);
+        $firms = [];
+        $sequence = 1;
+        $skippedBlocks = 0;
+        $skippedDetails = [];
+        $headingCount = count($blocks);
+
+        foreach ($blocks as $block) {
+            $firm = $this->parseFirmBlock($block, $sequence);
+            if ($firm === null) {
+                $skippedBlocks++;
+                $hint = (string) ($block['firm_hint'] ?? '');
+                $skippedDetails[] = [
+                    'serial' => null,
+                    'reason' => 'empty_firm_block_no_identity',
+                    'snippet' => mb_substr($hint !== '' ? $hint : ($block['lines'][0]['text'] ?? ''), 0, 80),
+                ];
+                continue;
+            }
+            $firms[] = $firm;
+            $sequence++;
+        }
 
         if ($firms === [] && $strategy === 'layout_aware') {
             $fallbackLines = $this->prepareLines($rawText);
             $fallbackBlocks = $this->splitIntoFirmBlocks($fallbackLines);
-            $fallbackParsed = $this->firmsFromBlocksDetailed($fallbackBlocks);
-            if ($fallbackParsed['firms'] !== []) {
-                $firms = $fallbackParsed['firms'];
-                $blocks = $fallbackBlocks;
-                $skippedDetails = $fallbackParsed['skipped_details'];
-                $skippedBlocks = $fallbackParsed['skipped_blocks'];
-                $candidateCount = count($fallbackBlocks);
+            foreach ($fallbackBlocks as $block) {
+                $firm = $this->parseFirmBlock($block, $sequence);
+                if ($firm === null) {
+                    continue;
+                }
+                $firms[] = $firm;
+                $sequence++;
+            }
+            if ($firms !== []) {
                 $strategy = 'line_based_fallback';
+                $headingCount = count($fallbackBlocks);
                 $pageStats = $this->pageStats($fallbackLines);
             }
         }
 
         if ($firms === []) {
             $conservative = $this->conservativeFallbackParse($lines);
-            if ($conservative['firms'] !== []) {
+            if (($conservative['firms'] ?? []) !== []) {
                 return array_merge($conservative, [
                     'parser_version' => self::PARSER_VERSION,
                     'parse_mode' => 'directory',
@@ -182,62 +201,19 @@ class OcrStructureParserService
         return [
             'parser_version' => self::PARSER_VERSION,
             'parse_mode' => 'directory',
+            'strategy' => $strategy,
             'firm_count' => count($firms),
-            'heading_count' => count($blocks),
-            'rows_detected' => count($blocks),
+            'heading_count' => $headingCount,
+            'rows_detected' => $headingCount,
             'skipped_blocks' => $skippedBlocks,
             'skipped_details' => $skippedDetails,
             'missing_serials' => [],
             'duplicate_serials' => [],
             'duplicate_firms' => [],
             'unique_firm_estimate' => count($firms),
-            'candidate_firm_count' => $candidateCount,
-            'strategy' => $strategy,
+            'candidate_firm_count' => $headingCount,
             'page_stats' => $pageStats,
             'firms' => $firms,
-        ];
-    }
-
-    /**
-     * @param  list<array{city: ?string, city_meta: ?array, firm_hint?: ?string, firm_hint_line?: ?array, lines: list<array{text: string, line_no: int, page: int|null}>}>  $blocks
-     * @return list<array<string, mixed>>
-     */
-    private function firmsFromBlocks(array $blocks): array
-    {
-        return $this->firmsFromBlocksDetailed($blocks)['firms'];
-    }
-
-    /**
-     * @param  list<array{city: ?string, city_meta: ?array, firm_hint?: ?string, firm_hint_line?: ?array, lines: list<array{text: string, line_no: int, page: int|null}>}>  $blocks
-     * @return array{firms: list<array<string, mixed>>, skipped_blocks: int, skipped_details: list<array<string, mixed>>}
-     */
-    private function firmsFromBlocksDetailed(array $blocks): array
-    {
-        $firms = [];
-        $sequence = 1;
-        $skippedBlocks = 0;
-        $skippedDetails = [];
-
-        foreach ($blocks as $block) {
-            $firm = $this->parseFirmBlock($block, $sequence);
-            if ($firm === null) {
-                $skippedBlocks++;
-                $hint = (string) ($block['firm_hint'] ?? '');
-                $skippedDetails[] = [
-                    'serial' => null,
-                    'reason' => 'empty_firm_block_no_identity',
-                    'snippet' => mb_substr($hint !== '' ? $hint : ($block['lines'][0]['text'] ?? ''), 0, 80),
-                ];
-                continue;
-            }
-            $firms[] = $firm;
-            $sequence++;
-        }
-
-        return [
-            'firms' => $firms,
-            'skipped_blocks' => $skippedBlocks,
-            'skipped_details' => $skippedDetails,
         ];
     }
 
@@ -278,6 +254,228 @@ class OcrStructureParserService
             'pages_with_text' => count($perPage),
             'lines_per_page' => $perPage,
         ];
+    }
+
+    /**
+     * @return list<array{text: string, line_no: int, page: int|null}>
+     */
+    private function prepareLines(string $rawText): array
+    {
+        $rawText = str_replace(["\r\n", "\r"], "\n", $rawText);
+        $rawText = $this->repairBrokenFirmSuffixes($rawText);
+        $chunks = preg_split("/\n+/", $rawText) ?: [];
+        $seen = [];
+        $lines = [];
+        $lineNo = 0;
+        $page = 1;
+
+        foreach ($chunks as $chunk) {
+            $text = trim(preg_replace('/\s+/u', ' ', $chunk) ?? '');
+            if ($text === '') {
+                continue;
+            }
+
+            $text = $this->normalizeOcrFirmTypos($text);
+
+            // Form-feed or explicit page markers from some OCR dumps.
+            if (preg_match('/^---+ ?page\s*(\d+)\s*---+$/i', $text, $m)) {
+                $page = (int) $m[1];
+                continue;
+            }
+            if ($text === "\f" || strtolower($text) === 'page break') {
+                $page++;
+                continue;
+            }
+
+            if ($this->isNoiseLine($text)) {
+                continue;
+            }
+
+            $key = mb_strtolower($text);
+            // Drop immediate duplicate consecutive lines; keep non-consecutive duplicates
+            // only when they look like firm names (directories often repeat city headers).
+            if (isset($seen[$key]) && ($seen[$key] === $lineNo - 1) && ! $this->looksLikeFirmName($text)) {
+                continue;
+            }
+
+            $lineNo++;
+            $seen[$key] = $lineNo;
+            $lines[] = [
+                'text' => $text,
+                'line_no' => $lineNo,
+                'page' => $page,
+            ];
+        }
+
+        return $lines;
+    }
+
+    /**
+     * Join OCR wraps such as "GIN AGARWAL AND\nOCIATES" → "... AND ASSOCIATES".
+     */
+    private function repairBrokenFirmSuffixes(string $rawText): string
+    {
+        $patterns = [
+            '/\bAND\s*\n\s*(ASSOCIATES|OCIATES|COMPANY|CO\.?)\b/iu' => 'AND $1',
+            '/\b&\s*\n\s*(ASSOCIATES|OCIATES|COMPANY|CO\.?)\b/iu' => '& $1',
+            '/\b(AGARWAL|AGRAWAL|GOYAL|SHAH|MEHTA|SINGHAL)\s*\n\s*(AND\s+ASSOCIATES|&\s*ASSOCIATES|&\s*CO)\b/iu' => '$1 $2',
+            '/\bOCIATES\b/iu' => 'ASSOCIATES',
+        ];
+
+        foreach ($patterns as $pattern => $replacement) {
+            $rawText = preg_replace($pattern, $replacement, $rawText) ?? $rawText;
+        }
+
+        return $rawText;
+    }
+
+    private function normalizeOcrFirmTypos(string $text): string
+    {
+        $text = preg_replace('/&\s*CD\b/i', '& CO', $text) ?? $text;
+        $text = preg_replace('/&\s*C0\b/i', '& CO', $text) ?? $text;
+        $text = preg_replace('/\bAND\s+OCIATES\b/i', 'AND ASSOCIATES', $text) ?? $text;
+        $text = preg_replace('/&\s*OCIATES\b/i', '& ASSOCIATES', $text) ?? $text;
+
+        return $text;
+    }
+
+    private function isNoiseLine(string $text): bool
+    {
+        $lower = mb_strtolower($text);
+        if (in_array($lower, self::NOISE_EXACT, true)) {
+            return true;
+        }
+
+        if (preg_match('/^[\W_]+$/u', $text)) {
+            return true;
+        }
+
+        if (mb_strlen($text) <= 1) {
+            return true;
+        }
+
+        // UI chrome / repeated directory headings.
+        if (preg_match('/^(list of|directory of|index of|table of contents)\b/i', $text)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  list<array{text: string, line_no: int, page: int|null}>  $lines
+     * @return list<array{city: ?string, city_meta: ?array, lines: list<array{text: string, line_no: int, page: int|null}>}>
+     */
+    private function splitIntoFirmBlocks(array $lines): array
+    {
+        $blocks = [];
+        $currentCity = null;
+        $currentCityMeta = null;
+        $current = null;
+
+        foreach ($lines as $line) {
+            $text = $line['text'];
+
+            // City headers before address absorb — "ABU ROAD" must start a new city, not join prior firm.
+            if ($this->looksLikeCityHeader($text, $line)) {
+                if ($current !== null && $this->looksLikePersonName($text)) {
+                    $current['lines'][] = $line;
+                    continue;
+                }
+                // Locality / street lines inside an open firm stay with that firm.
+                if ($current !== null && $this->entities()->isAddress($text) && ! $this->isStrongCityDirectoryHeader($text)) {
+                    $current['lines'][] = $line;
+                    continue;
+                }
+                $currentCity = trim($text);
+                $currentCityMeta = $this->fieldMeta($currentCity, 0.72, $line);
+                continue;
+            }
+
+            if ($current !== null && $this->entities()->isAddress($text)) {
+                $current['lines'][] = $line;
+                continue;
+            }
+
+            if ($this->looksLikeFirmName($text)) {
+                if ($current !== null && ($current['lines'] !== [] || ! empty($current['firm_hint']))) {
+                    $blocks[] = $current;
+                }
+                $current = [
+                    'city' => $currentCity,
+                    'city_meta' => $currentCityMeta,
+                    'firm_hint' => $text,
+                    'firm_hint_line' => $line,
+                    'lines' => [],
+                ];
+                continue;
+            }
+
+            if ($current === null) {
+                // Orphan content before first firm — start a soft block if it looks useful.
+                if ($this->looksLikePersonName($text) || $this->extractPincode($text) || $this->extractGst($text)) {
+                    $current = [
+                        'city' => $currentCity,
+                        'city_meta' => $currentCityMeta,
+                        'firm_hint' => null,
+                        'firm_hint_line' => null,
+                        'lines' => [$line],
+                    ];
+                }
+                continue;
+            }
+
+            $current['lines'][] = $line;
+        }
+
+        if ($current !== null && ($current['lines'] !== [] || ! empty($current['firm_hint']))) {
+            $blocks[] = $current;
+        }
+
+        return $blocks;
+    }
+
+    private function recordParser(): OcrDirectoryRecordParser
+    {
+        return $this->recordParser ?? new OcrDirectoryRecordParser($this->entities());
+    }
+
+    /**
+     * @param  array{city: ?string, city_meta: ?array, firm_hint?: ?string, firm_hint_line?: ?array, lines: list<array{text: string, line_no: int, page: int|null}>}  $block
+     * @return array<string, mixed>|null
+     */
+    private function parseFirmBlock(array $block, int $sequence): ?array
+    {
+        $tokens = [];
+        if (! empty($block['firm_hint'])) {
+            $line = $block['firm_hint_line'] ?? ['line_no' => null, 'page' => null, 'text' => $block['firm_hint']];
+            $tokens[] = [
+                'text' => (string) $block['firm_hint'],
+                'page' => $line['page'] ?? null,
+                'line_no' => $line['line_no'] ?? null,
+                'x_center' => 0.1,
+            ];
+        }
+        foreach ($block['lines'] as $line) {
+            $tokens[] = [
+                'text' => $line['text'],
+                'page' => $line['page'] ?? null,
+                'line_no' => $line['line_no'] ?? null,
+                'x_center' => 0.1,
+            ];
+        }
+        if ($tokens === []) {
+            return null;
+        }
+
+        $parsed = $this->recordParser()->parseBlock($tokens, [
+            'sequence_no' => $sequence,
+            'section_city' => $block['city'] ?? null,
+            'page' => $tokens[0]['page'] ?? null,
+            'extraction_source' => 'directory_text',
+        ]);
+
+        return $parsed;
     }
 
     /**
@@ -497,412 +695,6 @@ class OcrStructureParserService
         return false;
     }
 
-    /**
-     * @return list<array{text: string, line_no: int, page: int|null}>
-     */
-    private function prepareLines(string $rawText): array
-    {
-        $rawText = str_replace(["\r\n", "\r"], "\n", $rawText);
-        $rawText = $this->repairBrokenFirmSuffixes($rawText);
-        $chunks = preg_split("/\n+/", $rawText) ?: [];
-        $seen = [];
-        $lines = [];
-        $lineNo = 0;
-        $page = 1;
-
-        foreach ($chunks as $chunk) {
-            $text = trim(preg_replace('/\s+/u', ' ', $chunk) ?? '');
-            if ($text === '') {
-                continue;
-            }
-
-            $text = $this->normalizeOcrFirmTypos($text);
-
-            // Form-feed or explicit page markers from some OCR dumps.
-            if (preg_match('/^---+ ?page\s*(\d+)\s*---+$/i', $text, $m)) {
-                $page = (int) $m[1];
-                continue;
-            }
-            if ($text === "\f" || strtolower($text) === 'page break') {
-                $page++;
-                continue;
-            }
-
-            if ($this->isNoiseLine($text)) {
-                continue;
-            }
-
-            $key = mb_strtolower($text);
-            // Drop immediate duplicate consecutive lines; keep non-consecutive duplicates
-            // only when they look like firm names (directories often repeat city headers).
-            if (isset($seen[$key]) && ($seen[$key] === $lineNo - 1) && ! $this->looksLikeFirmName($text)) {
-                continue;
-            }
-
-            $lineNo++;
-            $seen[$key] = $lineNo;
-            $lines[] = [
-                'text' => $text,
-                'line_no' => $lineNo,
-                'page' => $page,
-            ];
-        }
-
-        return $lines;
-    }
-
-    /**
-     * Join OCR wraps such as "GIN AGARWAL AND\nOCIATES" → "... AND ASSOCIATES".
-     */
-    private function repairBrokenFirmSuffixes(string $rawText): string
-    {
-        $patterns = [
-            '/\bAND\s*\n\s*(ASSOCIATES|OCIATES|COMPANY|CO\.?)\b/iu' => 'AND $1',
-            '/\b&\s*\n\s*(ASSOCIATES|OCIATES|COMPANY|CO\.?)\b/iu' => '& $1',
-            '/\b(AGARWAL|AGRAWAL|GOYAL|SHAH|MEHTA|SINGHAL)\s*\n\s*(AND\s+ASSOCIATES|&\s*ASSOCIATES|&\s*CO)\b/iu' => '$1 $2',
-            '/\bOCIATES\b/iu' => 'ASSOCIATES',
-        ];
-
-        foreach ($patterns as $pattern => $replacement) {
-            $rawText = preg_replace($pattern, $replacement, $rawText) ?? $rawText;
-        }
-
-        return $rawText;
-    }
-
-    private function normalizeOcrFirmTypos(string $text): string
-    {
-        $text = preg_replace('/&\s*CD\b/i', '& CO', $text) ?? $text;
-        $text = preg_replace('/&\s*C0\b/i', '& CO', $text) ?? $text;
-        $text = preg_replace('/\bAND\s+OCIATES\b/i', 'AND ASSOCIATES', $text) ?? $text;
-        $text = preg_replace('/&\s*OCIATES\b/i', '& ASSOCIATES', $text) ?? $text;
-
-        return $text;
-    }
-
-    private function isNoiseLine(string $text): bool
-    {
-        $lower = mb_strtolower($text);
-        if (in_array($lower, self::NOISE_EXACT, true)) {
-            return true;
-        }
-
-        if (preg_match('/^[\W_]+$/u', $text)) {
-            return true;
-        }
-
-        if (mb_strlen($text) <= 1) {
-            return true;
-        }
-
-        // UI chrome / repeated directory headings.
-        if (preg_match('/^(list of|directory of|index of|table of contents)\b/i', $text)) {
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * @param  list<array{text: string, line_no: int, page: int|null}>  $lines
-     * @return list<array{city: ?string, city_meta: ?array, lines: list<array{text: string, line_no: int, page: int|null}>}>
-     */
-    private function splitIntoFirmBlocks(array $lines): array
-    {
-        $blocks = [];
-        $currentCity = null;
-        $currentCityMeta = null;
-        $current = null;
-
-        foreach ($lines as $line) {
-            $text = $line['text'];
-
-            if ($this->looksLikeCityHeader($text, $line)) {
-                // Do not steal partner names (e.g. PIYUSH AGRAWAL) while a firm block is open.
-                if ($current !== null && $this->looksLikePersonName($text)) {
-                    $current['lines'][] = $line;
-                    continue;
-                }
-                $currentCity = $this->titleCase($text);
-                $currentCityMeta = $this->fieldMeta($currentCity, 0.72, $line);
-                // City headers alone do not start a firm block.
-                continue;
-            }
-
-            if ($this->looksLikeFirmName($text)) {
-                if ($current !== null && ($current['lines'] !== [] || ! empty($current['firm_hint']))) {
-                    $blocks[] = $current;
-                }
-                $current = [
-                    'city' => $currentCity,
-                    'city_meta' => $currentCityMeta,
-                    'firm_hint' => $text,
-                    'firm_hint_line' => $line,
-                    'lines' => [],
-                ];
-                continue;
-            }
-
-            if ($current === null) {
-                // Orphan content before first firm — start a soft block if it looks useful.
-                if ($this->looksLikePersonName($text) || $this->extractPincode($text) || $this->extractGst($text)) {
-                    $current = [
-                        'city' => $currentCity,
-                        'city_meta' => $currentCityMeta,
-                        'firm_hint' => null,
-                        'firm_hint_line' => null,
-                        'lines' => [$line],
-                    ];
-                }
-                continue;
-            }
-
-            $current['lines'][] = $line;
-        }
-
-        if ($current !== null && ($current['lines'] !== [] || ! empty($current['firm_hint']))) {
-            $blocks[] = $current;
-        }
-
-        return $blocks;
-    }
-
-    /**
-     * @param  array{city: ?string, city_meta: ?array, firm_hint?: ?string, firm_hint_line?: ?array, lines: list<array{text: string, line_no: int, page: int|null}>}  $block
-     * @return array<string, mixed>|null
-     */
-    private function parseFirmBlock(array $block, int $sequence): ?array
-    {
-        $allLines = $block['lines'];
-        $firmName = null;
-        $firmNameMeta = null;
-
-        if (! empty($block['firm_hint'])) {
-            $firmName = $this->normalizeFirmName((string) $block['firm_hint']);
-            $firmNameMeta = $this->fieldMeta(
-                $firmName,
-                0.92,
-                $block['firm_hint_line'] ?? ['line_no' => null, 'page' => null, 'text' => $block['firm_hint']],
-            );
-        }
-
-        $addressParts = [];
-        $addressMetas = [];
-        $partners = [];
-        $gst = null;
-        $gstMeta = null;
-        $pan = null;
-        $panMeta = null;
-        $frn = null;
-        $frnMeta = null;
-        $pincode = null;
-        $pincodeMeta = null;
-        $phone = null;
-        $phoneMeta = null;
-        $email = null;
-        $emailMeta = null;
-        $website = null;
-        $websiteMeta = null;
-        $state = null;
-        $stateMeta = null;
-        $city = $block['city'] ?? null;
-        $cityMeta = $block['city_meta'] ?? null;
-        $pageNumber = $block['firm_hint_line']['page'] ?? ($allLines[0]['page'] ?? null);
-
-        foreach ($allLines as $line) {
-            $text = $line['text'];
-
-            if ($gst === null && ($found = $this->extractGst($text))) {
-                $gst = $found;
-                $gstMeta = $this->fieldMeta($gst, 0.95, $line);
-                continue;
-            }
-
-            if ($pan === null && ($found = $this->extractPan($text))) {
-                $pan = $found;
-                $panMeta = $this->fieldMeta($pan, 0.93, $line);
-                continue;
-            }
-
-            if ($frn === null && ($found = $this->extractFrn($text))) {
-                $frn = $found;
-                $frnMeta = $this->fieldMeta($frn, 0.88, $line);
-                continue;
-            }
-
-            if ($email === null && ($found = $this->extractEmail($text))) {
-                $email = $found;
-                $emailMeta = $this->fieldMeta($email, 0.96, $line);
-            }
-
-            if ($website === null && ($found = $this->extractWebsite($text))) {
-                $website = $found;
-                $websiteMeta = $this->fieldMeta($website, 0.9, $line);
-            }
-
-            if ($phone === null && ($found = $this->extractPhone($text))) {
-                $phone = $found;
-                $phoneMeta = $this->fieldMeta($phone, 0.9, $line);
-            }
-
-            $membershipOnLine = $this->extractMembership($text);
-
-            if ($pincode === null && $membershipOnLine === null && ($found = $this->extractPincode($text))) {
-                // Prefer standalone / address PIN codes over membership-like 6-digit tokens.
-                $pincode = $found;
-                $pincodeMeta = $this->fieldMeta($pincode, 0.94, $line);
-                // Remainder of the line may still be address.
-                $remainder = trim(preg_replace('/\b[1-9][0-9]{5}\b/', '', $text) ?? '');
-                if ($remainder !== '' && ! $this->looksLikePersonName($remainder) && ! $this->looksLikeFirmName($remainder)) {
-                    $addressParts[] = $remainder;
-                    $addressMetas[] = $this->fieldMeta($remainder, 0.7, $line);
-                }
-                continue;
-            }
-
-            if ($state === null && ($found = $this->extractState($text))) {
-                $state = $found;
-                $stateMeta = $this->fieldMeta($state, 0.85, $line);
-                continue;
-            }
-
-            if ($city === null && $this->looksLikeCityHeader($text, $line)) {
-                $city = $this->titleCase($text);
-                $cityMeta = $this->fieldMeta($city, 0.7, $line);
-                continue;
-            }
-
-            // Labeled fields.
-            if (preg_match('/^(firm\s*name|name of firm)\s*[:\-]\s*(.+)$/i', $text, $m)) {
-                $firmName = $this->normalizeFirmName($m[2]);
-                $firmNameMeta = $this->fieldMeta($firmName, 0.97, $line);
-                continue;
-            }
-
-            if (preg_match('/^(city)\s*[:\-]\s*(.+)$/i', $text, $m)) {
-                $city = $this->titleCase($m[2]);
-                $cityMeta = $this->fieldMeta($city, 0.95, $line);
-                continue;
-            }
-
-            if (preg_match('/^(state)\s*[:\-]\s*(.+)$/i', $text, $m)) {
-                $state = $this->titleCase($m[2]);
-                $stateMeta = $this->fieldMeta($state, 0.95, $line);
-                continue;
-            }
-
-            if ($firmName === null && $this->looksLikeFirmName($text)) {
-                $firmName = $this->normalizeFirmName($text);
-                $firmNameMeta = $this->fieldMeta($firmName, 0.9, $line);
-                continue;
-            }
-
-            $membership = $membershipOnLine;
-            if ($this->looksLikePersonName($text) || $membership !== null) {
-                $caName = $this->normalizePersonName($text);
-                if ($caName !== '') {
-                    $partners[] = [
-                        'ca_name' => $caName,
-                        'membership_no' => $membership,
-                        'mobile' => $this->extractPhone($text),
-                        'email' => $this->extractEmail($text),
-                        'role' => $this->inferMemberRole($text, count($partners)),
-                        'field_meta' => [
-                            'ca_name' => $this->fieldMeta($caName, 0.86, $line),
-                            'membership_no' => $membership
-                                ? $this->fieldMeta($membership, 0.9, $line)
-                                : null,
-                        ],
-                        'overall_confidence' => $membership ? 0.88 : 0.78,
-                    ];
-                }
-                continue;
-            }
-
-            if ($this->looksLikeAddressLine($text)) {
-                $addressParts[] = $this->titleCase($text);
-                $addressMetas[] = $this->fieldMeta($this->titleCase($text), 0.75, $line);
-                continue;
-            }
-
-            // Soft address fallback: short leftover lines that are not firm/person.
-            if (! $this->looksLikeFirmName($text) && ! $this->looksLikePersonName($text) && mb_strlen($text) <= 80) {
-                $addressParts[] = $this->titleCase($text);
-                $addressMetas[] = $this->fieldMeta($this->titleCase($text), 0.55, $line);
-            }
-        }
-
-        if ($firmName === null || $firmName === '') {
-            // Cannot produce a firm without a name.
-            if ($partners === [] && $gst === null && $addressParts === []) {
-                return null;
-            }
-            $firmName = $partners[0]['ca_name'] ?? 'Unknown Firm';
-            $firmNameMeta = $this->fieldMeta($firmName, 0.4, ['line_no' => null, 'page' => $pageNumber, 'text' => $firmName]);
-        }
-
-        $address = $addressParts !== []
-            ? $this->normalizeAddress(implode(', ', array_unique($addressParts)))
-            : null;
-
-        $firmType = $this->inferFirmType($firmName, $partners);
-
-        $fieldMeta = array_filter([
-            'firm_name' => $firmNameMeta,
-            'firm_type' => $firmType ? $this->fieldMeta($firmType, 0.7, $block['firm_hint_line'] ?? ['line_no' => null, 'page' => $pageNumber, 'text' => '']) : null,
-            'frn' => $frnMeta,
-            'gst_no' => $gstMeta,
-            'pan_no' => $panMeta,
-            'address' => $address ? ($addressMetas[0] ?? $this->fieldMeta($address, 0.6, ['line_no' => null, 'page' => $pageNumber, 'text' => $address])) : null,
-            'city' => $cityMeta,
-            'state' => $stateMeta,
-            'pincode' => $pincodeMeta,
-            'phone' => $phoneMeta,
-            'email' => $emailMeta,
-            'website' => $websiteMeta,
-        ]);
-
-        $scores = array_values(array_filter(array_map(
-            static fn ($meta) => is_array($meta) ? (float) ($meta['confidence'] ?? 0) : null,
-            $fieldMeta,
-        )));
-        $overall = $scores !== [] ? round(array_sum($scores) / count($scores), 4) : 0.5;
-
-        $normalizedPartners = [];
-        foreach ($partners as $i => $partner) {
-            $normalizedPartners[] = [
-                'sequence_no' => $i + 1,
-                'ca_name' => $partner['ca_name'],
-                'membership_no' => $partner['membership_no'],
-                'mobile' => $partner['mobile'],
-                'email' => $partner['email'],
-                'role' => $partner['role'],
-                'overall_confidence' => $partner['overall_confidence'],
-                'field_meta' => $partner['field_meta'],
-            ];
-        }
-
-        return [
-            'sequence_no' => $sequence,
-            'firm_name' => $firmName,
-            'firm_type' => $firmType,
-            'frn' => $frn,
-            'gst_no' => $gst,
-            'pan_no' => $pan,
-            'address' => $address,
-            'city' => $city,
-            'state' => $state,
-            'pincode' => $pincode,
-            'phone' => $phone,
-            'email' => $email,
-            'website' => $website,
-            'review_status' => 'pending',
-            'overall_confidence' => $overall,
-            'page_number' => $pageNumber,
-            'field_meta' => $fieldMeta,
-            'members' => $normalizedPartners,
-        ];
-    }
 
     private function looksLikeFirmName(string $text): bool
     {
@@ -914,10 +706,6 @@ class OcrStructureParserService
 
         foreach (self::FIRM_MARKERS as $marker) {
             if (str_contains($lower, $marker)) {
-                // Avoid treating pure address "industrial area" as firm.
-                if ($marker === 'area' || $marker === 'associates') {
-                    // "associates" alone as whole word at end is ok; mid-address "area" alone is not a firm marker used alone.
-                }
                 if ($marker === 'area') {
                     continue;
                 }
@@ -927,6 +715,14 @@ class OcrStructureParserService
 
         // "&" between name tokens: "Agrawal & Shah"
         if (preg_match('/\b[A-Z][A-Za-z.]+\s+&\s+[A-Z][A-Za-z.]+\b/', $text)) {
+            return true;
+        }
+
+        // Directory headings without classic markers: "MEHTA BROS", "TAX BUREAU"
+        if (preg_match('/\b(bros|bureau|group|enterprise|enterprises|services|consultancy)\b/i', $text)
+            && ! $this->looksLikeAddressLine($text)
+            && ! $this->extractPhone($text)
+            && mb_strlen($text) <= 60) {
             return true;
         }
 
@@ -942,6 +738,14 @@ class OcrStructureParserService
             return true;
         }
 
+        // Identifiers are never city headers.
+        if (preg_match('/^\d{5,6}\s*[A-Z]$/i', trim($text)) || preg_match('/^\d{5,8}$/', trim($text))) {
+            return false;
+        }
+        if ((new OcrIdentifierExtractorService)->isIcaiFrnPattern($text)) {
+            return false;
+        }
+
         // PIN / GST / email / phone lines are not cities.
         if ($this->extractPincode($text) || $this->extractGst($text) || $this->extractEmail($text) || $this->extractPhone($text)) {
             return false;
@@ -949,13 +753,6 @@ class OcrStructureParserService
 
         if ($this->looksLikeFirmName($text)) {
             return false;
-        }
-
-        $lower = mb_strtolower(trim($text));
-        foreach (self::PERSON_PREFIXES as $prefix) {
-            if (str_starts_with($lower, $prefix)) {
-                return false;
-            }
         }
 
         $words = preg_split('/\s+/', $text) ?: [];
@@ -1009,6 +806,20 @@ class OcrStructureParserService
 
         // City headers in directories are usually 1–2 words (ABHANPUR, ABU ROAD).
         return count($words) <= 2 || ($isAllCaps && count($words) <= 3);
+    }
+
+    /** True city section headers only — not street/locality lines like LAJPAT NAGAR. */
+    private function isStrongCityDirectoryHeader(string $text): bool
+    {
+        $words = preg_split('/\s+/', trim($text)) ?: [];
+        if (count($words) === 1 && preg_match('/^[A-Z]{3,}$/', trim($text))) {
+            return true;
+        }
+        if (count($words) === 2 && preg_match('/^[A-Z][A-Z\s]+\s+(?:ROAD|CITY|CANTT)$/i', trim($text))) {
+            return ! preg_match('/\b(?:circular|main|bank|jail|railway|gt|ring|link|patel|nicholson|idgah|jagadhri|rajauli|new|old|suraj)\b/iu', $text);
+        }
+
+        return false;
     }
 
     private function looksLikePersonName(string $text): bool
@@ -1115,16 +926,6 @@ class OcrStructureParserService
             return strtoupper($m[1]);
         }
 
-        // Bare ICAI-style FRN tokens often appear near firm names in directories.
-        if (preg_match('/\b([0-9]{5,7}[A-Z]?)\b/', strtoupper($text), $m)) {
-            if (! $this->extractPincode($text) && ! preg_match('/\b(m\.?\s*no\.?|membership)\b/i', $text)) {
-                // Prefer labeled matches; bare numbers only when line is short.
-                if (mb_strlen(trim($text)) <= 16) {
-                    return $m[1];
-                }
-            }
-        }
-
         return null;
     }
 
@@ -1148,8 +949,11 @@ class OcrStructureParserService
 
     private function extractPhone(string $text): ?string
     {
-        if (preg_match('/\b(?:\+91[\-\s]?)?([6-9]\d{9})\b/', $text, $m)) {
-            return $m[1];
+        // Accept spaced mobiles from OCR: "73386 33003", "093594 72100"
+        if (preg_match('/(?<!\d)(?:\+91[\-\s]?|0)?([6-9](?:[\s\-]?\d){9})(?!\d)/u', $text, $m)) {
+            $digits = preg_replace('/\D+/', '', $m[1]) ?? '';
+
+            return strlen($digits) === 10 ? $digits : null;
         }
 
         if (preg_match('/\b(\d{3,5}[\-\s]\d{6,8})\b/', $text, $m)) {
@@ -1194,7 +998,7 @@ class OcrStructureParserService
 
         foreach (self::INDIAN_STATES as $state) {
             if ($lower === $state || str_starts_with($lower, $state.' ')) {
-                return $this->titleCase($state);
+                return trim($text);
             }
         }
 
@@ -1210,11 +1014,11 @@ class OcrStructureParserService
         if (str_contains($lower, 'pvt') || str_contains($lower, 'private limited')) {
             return 'Private Limited';
         }
-        if (str_contains($lower, 'associates') || str_contains($lower, '& co') || str_contains($lower, 'and co') || str_contains($lower, '& company')) {
-            return 'Partnership';
+        if (str_contains($lower, 'associates') || str_contains($lower, '& co') || str_contains($lower, 'and co')) {
+            return count($partners) <= 1 ? 'Partnership' : 'Partnership';
         }
-        if (count($partners) <= 1) {
-            return 'Proprietor';
+        if (count($partners) === 1) {
+            return 'Proprietorship';
         }
         if (count($partners) > 1) {
             return 'Partnership';
@@ -1239,25 +1043,28 @@ class OcrStructureParserService
         return $index === 0 ? 'Proprietor' : 'Partner';
     }
 
-    private function normalizeFirmName(string $text): string
+    private function stripFirmLabel(string $text): string
     {
         $text = preg_replace('/^(firm\s*name|name of firm)\s*[:\-]\s*/i', '', $text) ?? $text;
 
-        return $this->titleCase(trim($text));
+        return trim($text);
     }
 
-    private function normalizePersonName(string $text): string
+    private function stripPersonDecorations(string $text): string
     {
         $text = preg_replace('/^(s\/o|sio|s\.o|w\/o|d\/o|c\/o|ca\.?|shri|smt|mr\.?|mrs\.?|ms\.?)\s+/i', '', $text) ?? $text;
         $text = preg_replace('/\b(?:m\.?\s*no\.?|mem(?:bership)?\.?\s*no\.?|membership)\s*[:\-]?\s*[A-Z0-9\/\-]+/i', '', $text) ?? $text;
-        $text = preg_replace('/\b(?:\+91[\-\s]?)?[6-9]\d{9}\b/', '', $text) ?? $text;
-        $text = trim($text, " \t-,.");
+        $text = preg_replace('/(?<!\d)(?:\+91[\-\s]?|0)?[6-9](?:[\s\-]?\d){9}(?!\d)/u', '', $text) ?? $text;
 
-        return $this->titleCase($text);
+        return trim($text, " \t-,.");
     }
 
-    private function normalizeAddress(string $text): string
+    /**
+     * @param  list<string>  $parts
+     */
+    private function joinAddressParts(array $parts): string
     {
+        $text = implode(', ', array_values(array_unique($parts)));
         $text = preg_replace('/\s+,/', ',', $text) ?? $text;
         $text = preg_replace('/,\s*,+/', ',', $text) ?? $text;
 

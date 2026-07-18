@@ -119,6 +119,17 @@ class OcrDocumentService
             throw new OcrFileException('Select Master CA Data or Sales Team Data before uploading.', 'invalid_import_type');
         }
 
+        $route = app(OcrImportRouterService::class)->classify($file);
+        if ($route['bypass_ocr'] && $route['route'] === OcrImportRouterService::ROUTE_STRUCTURED_BULK) {
+            throw new OcrFileException(
+                $route['reason'].' Use Bulk Import (Excel/CSV) instead.',
+                'spreadsheet_bypass_ocr',
+            );
+        }
+        if ($route['route'] === OcrImportRouterService::ROUTE_REJECTED) {
+            throw new OcrFileException($route['reason'], 'unsupported_file_type');
+        }
+
         if ($caId !== null && $caId > 0) {
             $this->employeeDataScope->ensureCanAccessCaMaster($caId);
             CaMaster::query()->findOrFail($caId);
@@ -814,10 +825,13 @@ class OcrDocumentService
                 'structured_data' => [
                     'pages' => $result['pages'] ?? [],
                     'entities' => $result['entities'] ?? [],
+                    'tables' => $result['tables'] ?? ($result['structured_data']['tables'] ?? []),
+                    'extraction_mode' => $result['structured_data']['extraction_mode'] ?? null,
                     'languages' => $result['languages'] ?? $result['detected_languages'] ?? [],
                     'metadata' => array_merge($result['metadata'] ?? [], [
                         'mode' => 'online',
                         'google_duration_ms' => $googleMs,
+                        'table_count' => count($result['tables'] ?? ($result['structured_data']['tables'] ?? [])),
                     ]),
                 ],
                 'page_count' => $result['page_count'] ?? null,
@@ -1066,8 +1080,18 @@ class OcrDocumentService
             'parsed_firm_count' => null,
             'parsed_at' => null,
             'structured_data' => $structured,
+            'error_code' => null,
+            'error_message' => null,
             'processing_progress' => 'Structuring OCR results',
         ]);
+
+        // Drop stale match/import counters so UI cannot mix old and new runs.
+        $structured = is_array($document->structured_data) ? $document->structured_data : [];
+        unset($structured['master_import'], $structured['mapping'], $structured['reconciliation']);
+        if (isset($structured['parsed']) && is_array($structured['parsed'])) {
+            unset($structured['parsed']['quality_report'], $structured['parsed']['reconciliation'], $structured['parsed']['completeness']);
+        }
+        $document->update(['structured_data' => $structured]);
 
         return $this->structurePersistService->parseAndPersist($document->fresh());
     }

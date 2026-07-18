@@ -27,6 +27,12 @@ class VerifyCaReferenceDatabaseCommand extends Command
     ];
 
     /** @var list<string> */
+    private const OPTIONAL_IMPORT_TABLES = [
+        'ca_reference_import_batches',
+        'ca_reference_import_rows',
+    ];
+
+    /** @var list<string> */
     private const REQUIRED_ENV_KEYS = [
         'CA_REFERENCE_DB_HOST',
         'CA_REFERENCE_DB_PORT',
@@ -94,6 +100,14 @@ class VerifyCaReferenceDatabaseCommand extends Command
 
         if ($absent === []) {
             $this->info('Required tables: present ('.count($present).'/'.count(self::REQUIRED_TABLES).')');
+            foreach (self::OPTIONAL_IMPORT_TABLES as $table) {
+                $this->line($schema->hasTable($table)
+                    ? "  - import audit: {$table} present"
+                    : "  - import audit: {$table} missing (run migrate --database=ca_reference --path=database/migrations/ca_reference)");
+            }
+            if ($schema->hasTable('ca_firms') && ! $schema->hasColumn('ca_firms', 'normalized_firm_name')) {
+                $this->warn('  - ca_firms.normalized_firm_name missing — run: php artisan migrate --database=ca_reference --path=database/migrations/ca_reference --force');
+            }
 
             return self::SUCCESS;
         }
@@ -108,7 +122,7 @@ class VerifyCaReferenceDatabaseCommand extends Command
 
         $this->newLine();
         $this->line('Run migrations after credentials are confirmed:');
-        $this->line('  php artisan migrate --database=ca_reference --force');
+        $this->line('  php artisan migrate --database=ca_reference --path=database/migrations/ca_reference --force');
 
         return self::FAILURE;
     }

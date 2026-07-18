@@ -80,7 +80,23 @@ class OcrDocumentResource extends JsonResource
                         'mapping' => $data['mapping'] ?? null,
                         'import_batch' => $this->latestImportBatchSummary(),
                         'quality_report' => is_array($parsed) ? ($parsed['quality_report'] ?? null) : null,
+                        'reconciliation' => is_array($data['reconciliation'] ?? null)
+                            ? $data['reconciliation']
+                            : (is_array($parsed['reconciliation'] ?? null) ? $parsed['reconciliation'] : null),
+                        'master_import' => $data['master_import'] ?? null,
                     ];
+                },
+            ),
+            'reconciliation' => $this->when(
+                $this->shouldIncludeParsedFirms($request),
+                function () {
+                    $data = is_array($this->structured_data) ? $this->structured_data : [];
+                    if (is_array($data['reconciliation'] ?? null)) {
+                        return $data['reconciliation'];
+                    }
+                    $parsed = $data['parsed'] ?? null;
+
+                    return is_array($parsed['reconciliation'] ?? null) ? $parsed['reconciliation'] : null;
                 },
             ),
             'import_batch' => $this->when(

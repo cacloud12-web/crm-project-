@@ -1,0 +1,44 @@
+{
+  "pages": [
+    {
+      "page_number": 1,
+      "paragraphs": [
+        {"text": "ABOHAR", "bounding_box": [{"x": 0.12, "y": 0.05}, {"x": 0.35, "y": 0.05}, {"x": 0.35, "y": 0.07}, {"x": 0.12, "y": 0.07}], "confidence": 0.97},
+        {"text": "ANMOL SETIA & ASSOCIATES", "bounding_box": [{"x": 0.10, "y": 0.10}, {"x": 0.42, "y": 0.10}, {"x": 0.42, "y": 0.12}, {"x": 0.10, "y": 0.12}], "confidence": 0.96},
+        {"text": "ANMOL SETIA", "bounding_box": [{"x": 0.10, "y": 0.13}, {"x": 0.30, "y": 0.13}, {"x": 0.30, "y": 0.15}, {"x": 0.10, "y": 0.15}], "confidence": 0.95},
+        {"text": "NEW SURAJ NAGAR, STREET NO 2 CROSSING", "bounding_box": [{"x": 0.10, "y": 0.16}, {"x": 0.44, "y": 0.16}, {"x": 0.44, "y": 0.18}, {"x": 0.10, "y": 0.18}], "confidence": 0.94},
+        {"text": "URBAN ESTATE HUDA", "bounding_box": [{"x": 0.10, "y": 0.19}, {"x": 0.36, "y": 0.19}, {"x": 0.36, "y": 0.21}, {"x": 0.10, "y": 0.21}], "confidence": 0.93},
+        {"text": "562848", "bounding_box": [{"x": 0.38, "y": 0.13}, {"x": 0.44, "y": 0.13}, {"x": 0.44, "y": 0.15}, {"x": 0.38, "y": 0.15}], "confidence": 0.91},
+        {"text": "AMBALA", "bounding_box": [{"x": 0.58, "y": 0.05}, {"x": 0.78, "y": 0.05}, {"x": 0.78, "y": 0.07}, {"x": 0.58, "y": 0.07}], "confidence": 0.97},
+        {"text": "GUPTA AYUSHI & ASSOCIATES", "bounding_box": [{"x": 0.56, "y": 0.10}, {"x": 0.88, "y": 0.10}, {"x": 0.88, "y": 0.12}, {"x": 0.56, "y": 0.12}], "confidence": 0.96},
+        {"text": "AYUSHI GUPTA", "bounding_box": [{"x": 0.56, "y": 0.13}, {"x": 0.76, "y": 0.13}, {"x": 0.76, "y": 0.15}, {"x": 0.56, "y": 0.15}], "confidence": 0.95},
+        {"text": "1ST FLOOR SCO-4, NEW SURAJ NAGAR", "bounding_box": [{"x": 0.56, "y": 0.16}, {"x": 0.90, "y": 0.16}, {"x": 0.90, "y": 0.18}, {"x": 0.56, "y": 0.18}], "confidence": 0.94},
+        {"text": "ANAJ MANDI, AMBALA CANTT-133001", "bounding_box": [{"x": 0.56, "y": 0.19}, {"x": 0.90, "y": 0.19}, {"x": 0.90, "y": 0.21}, {"x": 0.56, "y": 0.21}], "confidence": 0.93}
+      ]
+    }
+  ],
+  "expected": {
+    "firm_count": 2,
+    "firms": [
+      {
+        "firm_name": "ANMOL SETIA & ASSOCIATES",
+        "ca_name": "ANMOL SETIA",
+        "city": "ABOHAR",
+        "membership_no": "562848",
+        "address_contains": ["NEW SURAJ NAGAR", "URBAN ESTATE HUDA"],
+        "partners_empty": true,
+        "partners_must_not_contain": ["ANAJ MANDI", "URBAN ESTATE HUDA"]
+      },
+      {
+        "firm_name": "GUPTA AYUSHI & ASSOCIATES",
+        "ca_name": "AYUSHI GUPTA",
+        "city": "AMBALA",
+        "address_contains": ["ANAJ MANDI"],
+        "pincode": "133001",
+        "partners_empty": true,
+        "partners_must_not_contain": ["ANAJ MANDI"]
+      }
+    ],
+    "section_headings_not_firms": ["ABOHAR", "AMBALA"]
+  }
+}

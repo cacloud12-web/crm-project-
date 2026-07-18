@@ -33,6 +33,12 @@ class OcrAutoMappingFlowTest extends TestCase
             'crm_mapping.review_min_confidence' => 0.55,
             'crm_mapping.fuzzy_auto_update_min' => 0.97,
             'crm_mapping.sync_max_firms' => 50,
+            'ocr_safety.require_verification' => false,
+            'ocr_safety.auto_create' => true,
+            'ocr_safety.auto_update' => true,
+            'ocr_safety.allow_bulk_approve_safe' => true,
+            'ocr_safety.reject_on_field_collision' => true,
+            'ocr_safety.min_required_field_confidence' => 0.90,
         ]);
         app(\App\Services\Rbac\RbacDatabaseService::class)->ensureConfigDefaultGrants();
         app(\App\Services\Rbac\RbacMatrixService::class)->flushCache();

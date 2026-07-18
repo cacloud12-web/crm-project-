@@ -32,5 +32,7 @@ Route::middleware(['auth', 'rbac'])->group(function () {
         ->name('ocr-documents.retry-mapping');
     Route::patch('ocr-documents/{ocrDocument}/firms/{parsedFirm}/review', [OcrDocumentController::class, 'reviewFirm'])
         ->name('ocr-documents.firms.review');
+    Route::patch('ocr-documents/{ocrDocument}/firms/{parsedFirm}/fields', [OcrDocumentController::class, 'correctFirmFields'])
+        ->name('ocr-documents.firms.correct-fields');
     Route::delete('ocr-documents/{ocrDocument}', [OcrDocumentController::class, 'destroy'])->name('ocr-documents.destroy');
 });

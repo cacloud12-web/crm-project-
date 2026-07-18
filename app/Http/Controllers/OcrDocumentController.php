@@ -151,6 +151,21 @@ class OcrDocumentController extends Controller
     public function show(OcrDocument $ocrDocument): JsonResponse
     {
         $this->authorize('view', $ocrDocument);
+
+        // Auto-resume Master CA imports stuck on "Importing…" (queued job never ran).
+        if ($ocrDocument->isMasterCaImport()) {
+            try {
+                app(\App\Services\Ocr\OcrStructurePersistService::class)
+                    ->resumeStuckMasterCaImport($ocrDocument, auth()->id() ? (int) auth()->id() : null);
+                $ocrDocument->refresh();
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('ocr.pipeline.master_ca_resume_on_show_failed', [
+                    'ocr_document_id' => $ocrDocument->id,
+                    'error_message' => $e->getMessage(),
+                ]);
+            }
+        }
+
         $ocrDocument->loadMissing([
             'uploader:id,name,email',
             'caMaster:ca_id,firm_name,ca_name',
@@ -274,19 +289,81 @@ class OcrDocumentController extends Controller
             'matched_ca_id' => ['nullable', 'integer', 'exists:ca_masters,ca_id'],
         ]);
 
-        $result = $approvalService->review(
-            $ocrDocument,
-            $parsedFirm,
-            $validated['review_status'],
-            isset($validated['matched_ca_id']) ? (int) $validated['matched_ca_id'] : null,
-        );
+        \Illuminate\Support\Facades\Log::info('ocr.approve.pipeline', [
+            'step' => 'http_review_received',
+            'ocr_document_id' => $ocrDocument->id,
+            'staging_id' => $parsedFirm->id,
+            'import_type' => $ocrDocument->import_type,
+            'review_status' => $validated['review_status'],
+            'user_id' => $request->user()?->id,
+        ]);
+
+        try {
+            $result = $approvalService->review(
+                $ocrDocument,
+                $parsedFirm,
+                $validated['review_status'],
+                isset($validated['matched_ca_id']) ? (int) $validated['matched_ca_id'] : null,
+            );
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            \Illuminate\Support\Facades\Log::error('ocr.approve.pipeline', [
+                'step' => 'http_review_failed',
+                'ocr_document_id' => $ocrDocument->id,
+                'staging_id' => $parsedFirm->id,
+                'error_message' => $exception->getMessage(),
+                'exception' => $exception::class,
+            ]);
+
+            return ApiResponse::error(
+                'Approve failed: '.$exception->getMessage(),
+                500,
+            );
+        }
+
         $firmPayload = (new OcrParsedFirmResource($result['firm']))->resolve();
         $firmPayload['ca_id'] = $result['ca_id'];
         $firmPayload['approval_action'] = $result['action'];
         $firmPayload['master_created'] = $result['created'];
         $firmPayload['master_updated'] = $result['updated'];
+        $firmPayload['document_progress'] = $ocrDocument->fresh()?->processing_progress;
+        $firmPayload['pipeline_stage'] = $ocrDocument->fresh()?->pipelineStage();
 
         return ApiResponse::success($firmPayload, $result['message']);
+    }
+
+    public function correctFirmFields(
+        \Illuminate\Http\Request $request,
+        OcrDocument $ocrDocument,
+        \App\Models\OcrParsedFirm $parsedFirm,
+        \App\Services\Ocr\OcrFirmApprovalService $approvalService,
+    ): JsonResponse {
+        $this->authorize('update', $ocrDocument);
+
+        $validated = $request->validate([
+            'firm_name' => ['nullable', 'string', 'max:255'],
+            'ca_name' => ['nullable', 'string', 'max:255'],
+            'membership_no' => ['nullable', 'string', 'max:50'],
+            'frn' => ['nullable', 'string', 'max:50'],
+            'gst_no' => ['nullable', 'string', 'max:20'],
+            'pan_no' => ['nullable', 'string', 'max:20'],
+            'address' => ['nullable', 'string', 'max:1000'],
+            'city' => ['nullable', 'string', 'max:120'],
+            'state' => ['nullable', 'string', 'max:120'],
+            'pincode' => ['nullable', 'string', 'max:12'],
+            'phone' => ['nullable', 'string', 'max:20'],
+            'email' => ['nullable', 'string', 'max:255'],
+            'website' => ['nullable', 'string', 'max:255'],
+            'firm_type' => ['nullable', 'string', 'max:80'],
+        ]);
+
+        $firm = $approvalService->correctFields($ocrDocument, $parsedFirm, $validated);
+
+        return ApiResponse::success(
+            (new OcrParsedFirmResource($firm))->resolve(),
+            'Fields corrected. Review the side-by-side panel, then Approve.',
+        );
     }
 
     public function approveAllSafe(
@@ -295,7 +372,14 @@ class OcrDocumentController extends Controller
     ): JsonResponse {
         $this->authorize('update', $ocrDocument);
 
-        $stats = $approvalService->approveAllSafe($ocrDocument);
+        try {
+            $stats = $approvalService->approveAllSafe($ocrDocument);
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            return ApiResponse::error(
+                collect($exception->errors())->flatten()->first() ?: 'Bulk approve is disabled.',
+                422,
+            );
+        }
 
         return ApiResponse::success($stats, sprintf(
             'Safe records processed: %d auto-created, %d auto-updated, %d still need review, %d conflicts.',
@@ -331,6 +415,20 @@ class OcrDocumentController extends Controller
 
         if (! $ocrDocument->isCompleted()) {
             return ApiResponse::error('Only completed OCR documents can retry mapping.', 422);
+        }
+
+        if ($ocrDocument->isMasterCaImport()) {
+            $stats = app(\App\Services\Ocr\OcrStructurePersistService::class)
+                ->resumeStuckMasterCaImport($ocrDocument, auth()->id() ? (int) auth()->id() : null);
+            if ($stats === null) {
+                $stats = app(\App\Services\Ocr\MasterCaDirectImportService::class)->processDocument(
+                    (int) $ocrDocument->id,
+                    auth()->id() ? (int) auth()->id() : null,
+                );
+                app(\App\Services\Ocr\MasterCaDirectImportService::class)->refreshDocumentCompletion($ocrDocument->fresh());
+            }
+
+            return ApiResponse::success($stats, 'Master CA import resumed.');
         }
 
         $stats = $approvalService->retryMapping($ocrDocument);
