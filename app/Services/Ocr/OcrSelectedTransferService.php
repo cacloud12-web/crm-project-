@@ -155,7 +155,7 @@ class OcrSelectedTransferService
                 $state['document_id_map'] = $summary['document_id_map'];
                 $this->writeImportState($statePath, $state);
             } else {
-                $summary['document_id_map'] = (array) ($state['document_id_map'] ?? []);
+                $summary['document_id_map'] = $this->normalizeIdMap((array) ($state['document_id_map'] ?? []));
                 $summary['documents_imported'] = (int) ($state['documents_imported'] ?? 0);
             }
 
@@ -172,7 +172,7 @@ class OcrSelectedTransferService
                 $state['firm_id_map'] = $summary['firm_id_map'];
                 $this->writeImportState($statePath, $state);
             } else {
-                $summary['firm_id_map'] = (array) ($state['firm_id_map'] ?? []);
+                $summary['firm_id_map'] = $this->normalizeIdMap((array) ($state['firm_id_map'] ?? []));
                 $summary['firms_imported'] = (int) ($state['firms_imported'] ?? 0);
             }
 
@@ -437,29 +437,32 @@ class OcrSelectedTransferService
         ?OutputInterface $output,
         array $summary,
     ): array {
+        unset($chunkSize);
         $columns = $this->importableColumns('documents', $manifest);
-        $map = [];
+        /** @var array<int, int> $documentIdMap */
+        $documentIdMap = [];
         $imported = 0;
-        $buffer = [];
 
         foreach ($this->readNdjson($packagePath.'/'.($manifest['documents']['file'] ?? 'documents.ndjson')) as $row) {
-            $oldId = (int) ($row['id'] ?? 0);
+            $oldDocumentId = (int) ($row['id'] ?? 0);
+            if ($oldDocumentId <= 0) {
+                throw new RuntimeException('Document row is missing a valid local id.');
+            }
+
             unset($row['id']);
             foreach (self::DOCUMENT_NULLABLE_FKS as $nullable) {
                 $row[$nullable] = null;
             }
             $row['uploaded_by'] = $uploadedBy;
-            $row = $this->filterRow($row, $columns);
-            $buffer[] = ['old_id' => $oldId, 'row' => $row];
 
-            if (count($buffer) >= $chunkSize) {
-                $imported += $this->flushDocumentBuffer($buffer, $map);
-                $buffer = [];
+            $insertRow = $this->filterRow($row, $columns);
+            $newDocumentId = (int) DB::table('ocr_documents')->insertGetId($insertRow);
+            $documentIdMap[$oldDocumentId] = $newDocumentId;
+            $imported++;
+
+            if ($output && $imported % 250 === 0) {
+                $output->writeln("  documents: {$imported}");
             }
-        }
-
-        if ($buffer !== []) {
-            $imported += $this->flushDocumentBuffer($buffer, $map);
         }
 
         if ($output) {
@@ -467,7 +470,7 @@ class OcrSelectedTransferService
         }
 
         $summary['documents_imported'] = $imported;
-        $summary['document_id_map'] = $map;
+        $summary['document_id_map'] = $documentIdMap;
 
         return $summary;
     }
@@ -480,34 +483,39 @@ class OcrSelectedTransferService
         ?OutputInterface $output,
         array $summary,
     ): array {
+        unset($chunkSize);
         $columns = $this->importableColumns('firms', $manifest);
-        $docMap = $summary['document_id_map'];
-        $map = [];
+        /** @var array<int, int> $documentIdMap */
+        $documentIdMap = $this->normalizeIdMap($summary['document_id_map'] ?? []);
+        /** @var array<int, int> $firmIdMap */
+        $firmIdMap = [];
         $imported = 0;
-        $buffer = [];
 
         foreach ($this->readNdjson($packagePath.'/'.($manifest['firms']['file'] ?? 'firms.ndjson')) as $row) {
-            $oldId = (int) ($row['id'] ?? 0);
-            $oldDocId = (int) ($row['ocr_document_id'] ?? 0);
+            $oldFirmId = (int) ($row['id'] ?? 0);
+            $oldDocumentId = (int) ($row['ocr_document_id'] ?? 0);
+            if ($oldFirmId <= 0) {
+                throw new RuntimeException('Firm row is missing a valid local id.');
+            }
+            if ($oldDocumentId <= 0) {
+                throw new RuntimeException("Firm {$oldFirmId} is missing ocr_document_id.");
+            }
+
             unset($row['id']);
             foreach (self::FIRM_NULLABLE_FKS as $nullable) {
                 $row[$nullable] = null;
             }
-            $row['ocr_document_id'] = $docMap[(string) $oldDocId] ?? $docMap[$oldDocId] ?? null;
-            if (! $row['ocr_document_id']) {
-                throw new RuntimeException("Missing document map for firm old doc id {$oldDocId}");
-            }
-            $row = $this->filterRow($row, $columns);
-            $buffer[] = ['old_id' => $oldId, 'row' => $row];
 
-            if (count($buffer) >= $chunkSize) {
-                $imported += $this->flushFirmBuffer($buffer, $map);
-                $buffer = [];
-            }
-        }
+            $insertRow = $this->filterRow($row, $columns);
+            $insertRow['ocr_document_id'] = $this->mapDocumentId($oldDocumentId, $documentIdMap);
 
-        if ($buffer !== []) {
-            $imported += $this->flushFirmBuffer($buffer, $map);
+            $newFirmId = (int) DB::table('ocr_parsed_firms')->insertGetId($insertRow);
+            $firmIdMap[$oldFirmId] = $newFirmId;
+            $imported++;
+
+            if ($output && $imported % 250 === 0) {
+                $output->writeln("  firms: {$imported}");
+            }
         }
 
         if ($output) {
@@ -515,7 +523,7 @@ class OcrSelectedTransferService
         }
 
         $summary['firms_imported'] = $imported;
-        $summary['firm_id_map'] = $map;
+        $summary['firm_id_map'] = $firmIdMap;
 
         return $summary;
     }
@@ -529,22 +537,25 @@ class OcrSelectedTransferService
         array $summary,
     ): array {
         $columns = $this->importableColumns('members', $manifest);
-        $firmMap = $summary['firm_id_map'];
+        /** @var array<int, int> $firmIdMap */
+        $firmIdMap = $this->normalizeIdMap($summary['firm_id_map'] ?? []);
         $imported = 0;
         $buffer = [];
 
         foreach ($this->readNdjson($packagePath.'/'.($manifest['members']['file'] ?? 'members.ndjson')) as $row) {
             $oldFirmId = (int) ($row['ocr_parsed_firm_id'] ?? 0);
+            if ($oldFirmId <= 0) {
+                throw new RuntimeException('Member row is missing ocr_parsed_firm_id.');
+            }
+
             unset($row['id']);
             foreach (self::MEMBER_NULLABLE_FKS as $nullable) {
                 $row[$nullable] = null;
             }
-            $row['ocr_parsed_firm_id'] = $firmMap[(string) $oldFirmId] ?? $firmMap[$oldFirmId] ?? null;
-            if (! $row['ocr_parsed_firm_id']) {
-                throw new RuntimeException("Missing firm map for member old firm id {$oldFirmId}");
-            }
-            $row = $this->filterRow($row, $columns);
-            $buffer[] = $row;
+
+            $insertRow = $this->filterRow($row, $columns);
+            $insertRow['ocr_parsed_firm_id'] = $this->mapFirmId($oldFirmId, $firmIdMap);
+            $buffer[] = $insertRow;
 
             if (count($buffer) >= $chunkSize) {
                 DB::table('ocr_parsed_members')->insert($buffer);
@@ -567,28 +578,39 @@ class OcrSelectedTransferService
         return $summary;
     }
 
-    private function flushDocumentBuffer(array $buffer, array &$map): int
+    /** @param  array<int, int>  $documentIdMap */
+    private function mapDocumentId(int $oldDocumentId, array $documentIdMap): int
     {
-        $count = 0;
-        foreach ($buffer as $item) {
-            $newId = (int) DB::table('ocr_documents')->insertGetId($item['row']);
-            $map[(string) $item['old_id']] = $newId;
-            $count++;
+        if (! isset($documentIdMap[$oldDocumentId])) {
+            throw new RuntimeException(
+                "Missing document ID mapping for local document {$oldDocumentId}",
+            );
         }
 
-        return $count;
+        return (int) $documentIdMap[$oldDocumentId];
     }
 
-    private function flushFirmBuffer(array $buffer, array &$map): int
+    /** @param  array<int, int>  $firmIdMap */
+    private function mapFirmId(int $oldFirmId, array $firmIdMap): int
     {
-        $count = 0;
-        foreach ($buffer as $item) {
-            $newId = (int) DB::table('ocr_parsed_firms')->insertGetId($item['row']);
-            $map[(string) $item['old_id']] = $newId;
-            $count++;
+        if (! isset($firmIdMap[$oldFirmId])) {
+            throw new RuntimeException(
+                "Missing firm ID mapping for local firm {$oldFirmId}",
+            );
         }
 
-        return $count;
+        return (int) $firmIdMap[$oldFirmId];
+    }
+
+    /** @param  array<int|string, int|string>  $map  @return array<int, int> */
+    private function normalizeIdMap(array $map): array
+    {
+        $normalized = [];
+        foreach ($map as $oldId => $newId) {
+            $normalized[(int) $oldId] = (int) $newId;
+        }
+
+        return $normalized;
     }
 
     /** @param  array<string, mixed>  $manifest */
@@ -597,7 +619,20 @@ class OcrSelectedTransferService
         $manifestColumns = $manifest[$section]['columns'] ?? [];
         $liveColumns = $this->tableColumns(self::TABLES[$section]);
 
-        return array_values(array_intersect($manifestColumns, $liveColumns, array_diff($liveColumns, ['id'])));
+        $columns = array_values(array_intersect($manifestColumns, $liveColumns, array_diff($liveColumns, ['id'])));
+        $required = match ($section) {
+            'firms' => ['ocr_document_id'],
+            'members' => ['ocr_parsed_firm_id'],
+            default => [],
+        };
+
+        foreach ($required as $column) {
+            if (in_array($column, $liveColumns, true) && ! in_array($column, $columns, true)) {
+                $columns[] = $column;
+            }
+        }
+
+        return $columns;
     }
 
     /** @param  array<string, mixed>  $row  @return array<string, mixed> */
@@ -648,8 +683,8 @@ class OcrSelectedTransferService
     /** @param  array<string, mixed>  $summary */
     private function verifyNoOrphansAfterImport(array $summary): void
     {
-        $docIds = array_values($summary['document_id_map'] ?? []);
-        $firmIds = array_values($summary['firm_id_map'] ?? []);
+        $docIds = array_values($this->normalizeIdMap($summary['document_id_map'] ?? []));
+        $firmIds = array_values($this->normalizeIdMap($summary['firm_id_map'] ?? []));
 
         $orphanFirms = $firmIds === []
             ? 0

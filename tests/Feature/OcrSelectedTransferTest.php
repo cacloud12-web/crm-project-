@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Services\Ocr\OcrSelectedTransferService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Tests\Support\CrmTestAccounts;
 use Tests\TestCase;
@@ -25,55 +26,16 @@ class OcrSelectedTransferTest extends TestCase
         return $admin;
     }
 
+    /** @return array<string, mixed> */
     private function seedTransferFixture(User $admin): array
     {
-        $existing = OcrDocument::query()->create([
-            'uploaded_by' => $admin->id,
-            'original_filename' => 'existing-live.pdf',
-            'stored_filename' => 'existing-live.pdf',
-            'storage_disk' => 'local',
-            'storage_path' => 'ocr/existing-live.pdf',
-            'mime_type' => 'application/pdf',
-            'file_size' => 1000,
-            'status' => OcrDocument::STATUS_COMPLETED,
-            'processed_at' => now(),
-        ]);
+        $this->seedExistingLiveDocument($admin);
 
-        $docA = OcrDocument::query()->create([
-            'uploaded_by' => $admin->id,
-            'ca_id' => null,
-            'import_batch_id' => 99,
-            'original_filename' => 'transfer-a.pdf',
-            'stored_filename' => 'transfer-a.pdf',
-            'storage_disk' => 'local',
-            'storage_path' => 'ocr/transfer-a.pdf',
-            'mime_type' => 'application/pdf',
-            'file_size' => 1200,
-            'status' => OcrDocument::STATUS_COMPLETED,
-            'extracted_text' => 'Sample extracted text',
-            'structured_data' => ['pages' => [['page' => 1]]],
-            'corrected_by' => $admin->id,
-            'processed_at' => now(),
-            'parse_status' => 'completed',
-            'parsed_firm_count' => 1,
-        ]);
-
-        $docB = OcrDocument::query()->create([
-            'uploaded_by' => $admin->id,
-            'original_filename' => 'transfer-b.pdf',
-            'stored_filename' => 'transfer-b.pdf',
-            'storage_disk' => 'local',
-            'storage_path' => 'ocr/transfer-b.pdf',
-            'mime_type' => 'application/pdf',
-            'file_size' => 1300,
-            'status' => OcrDocument::STATUS_COMPLETED,
-            'processed_at' => now(),
-            'parse_status' => 'completed',
-            'parsed_firm_count' => 1,
-        ]);
+        $docA = $this->createLocalDocument($admin, 52, 'transfer-a.pdf');
+        $docB = $this->createLocalDocument($admin, 53, 'transfer-b.pdf');
 
         $firmA = OcrParsedFirm::query()->create([
-            'ocr_document_id' => $docA->id,
+            'ocr_document_id' => 52,
             'sequence_no' => 1,
             'firm_name' => 'Alpha Firm',
             'city' => 'Mumbai',
@@ -86,7 +48,7 @@ class OcrSelectedTransferTest extends TestCase
         ]);
 
         $firmB = OcrParsedFirm::query()->create([
-            'ocr_document_id' => $docB->id,
+            'ocr_document_id' => 53,
             'sequence_no' => 1,
             'firm_name' => 'Beta Firm',
             'city' => 'Pune',
@@ -112,16 +74,64 @@ class OcrSelectedTransferTest extends TestCase
             'review_status' => 'pending',
         ]);
 
-        return compact('existing', 'docA', 'docB', 'firmA', 'firmB', 'memberA', 'memberB');
+        return compact('docA', 'docB', 'firmA', 'firmB', 'memberA', 'memberB');
+    }
+
+    private function seedExistingLiveDocument(User $admin): void
+    {
+        if (OcrDocument::query()->whereKey(1)->exists()) {
+            return;
+        }
+
+        DB::table('ocr_documents')->insert([
+            'id' => 1,
+            'uploaded_by' => $admin->id,
+            'original_filename' => 'existing-live.pdf',
+            'stored_filename' => 'existing-live.pdf',
+            'storage_disk' => 'local',
+            'storage_path' => 'ocr/existing-live.pdf',
+            'mime_type' => 'application/pdf',
+            'file_size' => 1000,
+            'status' => OcrDocument::STATUS_COMPLETED,
+            'processed_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function createLocalDocument(User $admin, int $id, string $filename): OcrDocument
+    {
+        DB::table('ocr_documents')->insert([
+            'id' => $id,
+            'uploaded_by' => $admin->id,
+            'ca_id' => null,
+            'import_batch_id' => 99,
+            'original_filename' => $filename,
+            'stored_filename' => $filename,
+            'storage_disk' => 'local',
+            'storage_path' => 'ocr/'.$filename,
+            'mime_type' => 'application/pdf',
+            'file_size' => 1200,
+            'status' => OcrDocument::STATUS_COMPLETED,
+            'extracted_text' => $filename === 'transfer-a.pdf' ? 'Sample extracted text' : null,
+            'structured_data' => $filename === 'transfer-a.pdf' ? json_encode(['pages' => [['page' => 1]]]) : null,
+            'corrected_by' => $filename === 'transfer-a.pdf' ? $admin->id : null,
+            'processed_at' => now(),
+            'parse_status' => 'completed',
+            'parsed_firm_count' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return OcrDocument::query()->findOrFail($id);
     }
 
     public function test_export_selected_creates_manifest_and_ndjson_package(): void
     {
         $admin = $this->actingAdmin();
         $fixture = $this->seedTransferFixture($admin);
-        $ids = [$fixture['docA']->id, $fixture['docB']->id];
 
-        $result = app(OcrSelectedTransferService::class)->export($ids);
+        $result = app(OcrSelectedTransferService::class)->export([52, 53]);
         $path = $result['path'];
 
         $this->assertDirectoryExists($path);
@@ -134,6 +144,7 @@ class OcrSelectedTransferTest extends TestCase
         $this->assertSame(2, $manifest['documents']['count']);
         $this->assertSame(2, $manifest['firms']['count']);
         $this->assertSame(2, $manifest['members']['count']);
+        $this->assertSame([52, 53], $manifest['source_document_ids']);
         $this->assertSame(['transfer-a.pdf', 'transfer-b.pdf'], $manifest['filenames']);
 
         File::deleteDirectory($path);
@@ -142,9 +153,9 @@ class OcrSelectedTransferTest extends TestCase
     public function test_export_dry_run_does_not_write_files(): void
     {
         $admin = $this->actingAdmin();
-        $fixture = $this->seedTransferFixture($admin);
+        $this->seedTransferFixture($admin);
 
-        $result = app(OcrSelectedTransferService::class)->export([$fixture['docA']->id], true);
+        $result = app(OcrSelectedTransferService::class)->export([52], true);
         $this->assertFalse(is_dir($result['path']));
         $this->assertSame(1, $result['manifest']['documents']['count']);
     }
@@ -162,35 +173,48 @@ class OcrSelectedTransferTest extends TestCase
         $admin = $this->actingAdmin();
         $fixture = $this->seedTransferFixture($admin);
         $service = app(OcrSelectedTransferService::class);
-        $export = $service->export([$fixture['docA']->id, $fixture['docB']->id]);
+        $export = $service->export([52, 53]);
         $path = $export['path'];
-        $this->simulateLiveWithoutSourceRows([$fixture['docA']->id, $fixture['docB']->id]);
+        $this->simulateLiveWithoutSourceRows([52, 53]);
 
+        $beforeCount = OcrDocument::query()->count();
         $summary = $service->import($path, $admin->id, 500, false, false);
+
         $this->assertSame(2, $summary['documents_imported']);
         $this->assertSame(2, $summary['firms_imported']);
         $this->assertSame(2, $summary['members_imported']);
+        $this->assertSame($beforeCount + 2, OcrDocument::query()->count());
 
-        $newDocA = (int) $summary['document_id_map'][(string) $fixture['docA']->id];
-        $newDocB = (int) $summary['document_id_map'][(string) $fixture['docB']->id];
-        $newFirmA = (int) $summary['firm_id_map'][(string) $fixture['firmA']->id];
-        $newFirmB = (int) $summary['firm_id_map'][(string) $fixture['firmB']->id];
+        $newDocA = (int) $summary['document_id_map'][52];
+        $newDocB = (int) $summary['document_id_map'][53];
+        $newFirmA = (int) $summary['firm_id_map'][(int) $fixture['firmA']->id];
+        $newFirmB = (int) $summary['firm_id_map'][(int) $fixture['firmB']->id];
 
-        $this->assertNotSame($fixture['docA']->id, $newDocA);
-        $this->assertNotSame($fixture['firmA']->id, $newFirmA);
+        $this->assertNotSame(52, $newDocA);
+        $this->assertNotSame(53, $newDocB);
+        $this->assertNotSame((int) $fixture['firmA']->id, $newFirmA);
 
         $importedFirmA = OcrParsedFirm::query()->findOrFail($newFirmA);
         $this->assertSame($newDocA, (int) $importedFirmA->ocr_document_id);
+        $this->assertNotSame(52, (int) $importedFirmA->ocr_document_id);
         $this->assertSame('Alpha Firm', $importedFirmA->firm_name);
         $this->assertNull($importedFirmA->crm_ca_id);
         $this->assertNull($importedFirmA->matched_ca_id);
         $this->assertNull($importedFirmA->matched_reference_firm_id);
+
+        $importedFirmB = OcrParsedFirm::query()->findOrFail($newFirmB);
+        $this->assertSame($newDocB, (int) $importedFirmB->ocr_document_id);
 
         $importedMemberA = OcrParsedMember::query()
             ->where('ocr_parsed_firm_id', $newFirmA)
             ->firstOrFail();
         $this->assertSame('Alpha Partner', $importedMemberA->ca_name);
         $this->assertNull($importedMemberA->matched_reference_member_id);
+
+        $importedMemberB = OcrParsedMember::query()
+            ->where('ocr_parsed_firm_id', $newFirmB)
+            ->firstOrFail();
+        $this->assertSame('Beta Partner', $importedMemberB->ca_name);
 
         $importedDocA = OcrDocument::query()->findOrFail($newDocA);
         $this->assertSame($admin->id, (int) $importedDocA->uploaded_by);
@@ -199,7 +223,9 @@ class OcrSelectedTransferTest extends TestCase
         $this->assertNull($importedDocA->corrected_by);
         $this->assertSame('Sample extracted text', $importedDocA->extracted_text);
 
-        $this->assertSame(1, OcrDocument::query()->where('original_filename', 'existing-live.pdf')->count());
+        $this->assertSame(1, (int) OcrDocument::query()->whereKey(1)->value('id'));
+        $this->assertFalse(OcrDocument::query()->whereKey(52)->exists());
+        $this->assertFalse(OcrDocument::query()->whereKey(53)->exists());
 
         File::deleteDirectory($path);
     }
@@ -207,10 +233,10 @@ class OcrSelectedTransferTest extends TestCase
     public function test_import_dry_run_does_not_insert_rows(): void
     {
         $admin = $this->actingAdmin();
-        $fixture = $this->seedTransferFixture($admin);
+        $this->seedTransferFixture($admin);
         $service = app(OcrSelectedTransferService::class);
-        $export = $service->export([$fixture['docA']->id]);
-        $this->simulateLiveWithoutSourceRows([$fixture['docA']->id]);
+        $export = $service->export([52]);
+        $this->simulateLiveWithoutSourceRows([52]);
         $before = OcrDocument::query()->count();
 
         $summary = $service->import($export['path'], $admin->id, 500, true, false);
@@ -223,10 +249,10 @@ class OcrSelectedTransferTest extends TestCase
     public function test_import_prevents_duplicate_batch_import(): void
     {
         $admin = $this->actingAdmin();
-        $fixture = $this->seedTransferFixture($admin);
+        $this->seedTransferFixture($admin);
         $service = app(OcrSelectedTransferService::class);
-        $export = $service->export([$fixture['docA']->id]);
-        $this->simulateLiveWithoutSourceRows([$fixture['docA']->id]);
+        $export = $service->export([52]);
+        $this->simulateLiveWithoutSourceRows([52]);
         $service->import($export['path'], $admin->id);
 
         $this->expectException(\RuntimeException::class);
@@ -234,6 +260,44 @@ class OcrSelectedTransferTest extends TestCase
         $service->import($export['path'], $admin->id);
 
         File::deleteDirectory($export['path']);
+    }
+
+    public function test_import_rolls_back_when_document_mapping_is_missing(): void
+    {
+        $admin = $this->actingAdmin();
+        $this->seedTransferFixture($admin);
+        $service = app(OcrSelectedTransferService::class);
+        $export = $service->export([52, 53]);
+        $path = $export['path'];
+        $this->simulateLiveWithoutSourceRows([52, 53]);
+
+        $manifest = json_decode((string) file_get_contents($path.'/manifest.json'), true);
+        $statePath = storage_path('app/ocr-transfer/.import-state/'.$manifest['batch_id'].'.json');
+        @mkdir(dirname($statePath), 0755, true);
+        file_put_contents($statePath, json_encode([
+            'documents_done' => true,
+            'documents_imported' => 2,
+            'document_id_map' => [],
+            'firms_done' => false,
+        ], JSON_PRETTY_PRINT));
+
+        $beforeDocs = OcrDocument::query()->count();
+        $beforeFirms = OcrParsedFirm::query()->count();
+        $beforeMembers = OcrParsedMember::query()->count();
+
+        try {
+            $service->import($path, $admin->id, 500, false, true);
+            $this->fail('Expected import to fail on missing document mapping.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('Missing document ID mapping for local document', $exception->getMessage());
+        }
+
+        $this->assertSame($beforeDocs, OcrDocument::query()->count());
+        $this->assertSame($beforeFirms, OcrParsedFirm::query()->count());
+        $this->assertSame($beforeMembers, OcrParsedMember::query()->count());
+
+        @unlink($statePath);
+        File::deleteDirectory($path);
     }
 
     public function test_export_command_fails_for_non_completed_document(): void
