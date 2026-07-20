@@ -27,6 +27,13 @@ class OcrSelectedTransferService
         'members' => 'ocr_parsed_members',
     ];
 
+    /** MySQL caps prepared-statement placeholders at 65,535. Stay below that. */
+    private const MYSQL_MAX_PLACEHOLDERS = 65000;
+    /**
+ * Keep relationship-validation queries small and safe on MySQL.
+ */
+private const VALIDATION_ID_CHUNK_SIZE = 500;
+
     /** @return array{batch_id: string, path: string, manifest: array<string, mixed>} */
     public function export(array $documentIds, bool $dryRun = false, ?OutputInterface $output = null): array
     {
@@ -483,13 +490,16 @@ class OcrSelectedTransferService
         ?OutputInterface $output,
         array $summary,
     ): array {
-        unset($chunkSize);
         $columns = $this->importableColumns('firms', $manifest);
+        $columnCount = max(1, count($columns));
+        $batchSize = $this->safeBatchRowCount($columnCount, $chunkSize);
         /** @var array<int, int> $documentIdMap */
         $documentIdMap = $this->normalizeIdMap($summary['document_id_map'] ?? []);
         /** @var array<int, int> $firmIdMap */
         $firmIdMap = [];
         $imported = 0;
+        /** @var list<array{old_id: int, row: array<string, mixed>}> $buffer */
+        $buffer = [];
 
         foreach ($this->readNdjson($packagePath.'/'.($manifest['firms']['file'] ?? 'firms.ndjson')) as $row) {
             $oldFirmId = (int) ($row['id'] ?? 0);
@@ -508,14 +518,20 @@ class OcrSelectedTransferService
 
             $insertRow = $this->filterRow($row, $columns);
             $insertRow['ocr_document_id'] = $this->mapDocumentId($oldDocumentId, $documentIdMap);
+            $buffer[] = ['old_id' => $oldFirmId, 'row' => $insertRow];
 
-            $newFirmId = (int) DB::table('ocr_parsed_firms')->insertGetId($insertRow);
-            $firmIdMap[$oldFirmId] = $newFirmId;
-            $imported++;
+            if (count($buffer) >= $batchSize) {
+                $imported += $this->flushMappedFirmInserts($buffer, $firmIdMap);
+                $buffer = [];
+            }
 
-            if ($output && $imported % 250 === 0) {
+            if ($output && $imported > 0 && $imported % 2500 === 0) {
                 $output->writeln("  firms: {$imported}");
             }
+        }
+
+        if ($buffer !== []) {
+            $imported += $this->flushMappedFirmInserts($buffer, $firmIdMap);
         }
 
         if ($output) {
@@ -537,9 +553,12 @@ class OcrSelectedTransferService
         array $summary,
     ): array {
         $columns = $this->importableColumns('members', $manifest);
+        $columnCount = max(1, count($columns));
+        $batchSize = $this->safeBatchRowCount($columnCount, $chunkSize);
         /** @var array<int, int> $firmIdMap */
         $firmIdMap = $this->normalizeIdMap($summary['firm_id_map'] ?? []);
         $imported = 0;
+        /** @var list<array<string, mixed>> $buffer */
         $buffer = [];
 
         foreach ($this->readNdjson($packagePath.'/'.($manifest['members']['file'] ?? 'members.ndjson')) as $row) {
@@ -557,16 +576,14 @@ class OcrSelectedTransferService
             $insertRow['ocr_parsed_firm_id'] = $this->mapFirmId($oldFirmId, $firmIdMap);
             $buffer[] = $insertRow;
 
-            if (count($buffer) >= $chunkSize) {
-                DB::table('ocr_parsed_members')->insert($buffer);
-                $imported += count($buffer);
+            if (count($buffer) >= $batchSize) {
+                $imported += $this->bulkInsertRows('ocr_parsed_members', $buffer, $columnCount, $chunkSize);
                 $buffer = [];
             }
         }
 
         if ($buffer !== []) {
-            DB::table('ocr_parsed_members')->insert($buffer);
-            $imported += count($buffer);
+            $imported += $this->bulkInsertRows('ocr_parsed_members', $buffer, $columnCount, $chunkSize);
         }
 
         if ($output) {
@@ -576,6 +593,115 @@ class OcrSelectedTransferService
         $summary['members_imported'] = $imported;
 
         return $summary;
+    }
+
+    /**
+     * @param  list<array{old_id: int, row: array<string, mixed>}>  $batch
+     * @param  array<int, int>  $firmIdMap
+     */
+    private function flushMappedFirmInserts(array $batch, array &$firmIdMap): int
+    {
+        if ($batch === []) {
+            return 0;
+        }
+
+        if (count($batch) === 1) {
+            $newFirmId = (int) DB::table('ocr_parsed_firms')->insertGetId($batch[0]['row']);
+            $firmIdMap[$batch[0]['old_id']] = $newFirmId;
+
+            return 1;
+        }
+
+        $rows = array_map(fn (array $item) => $item['row'], $batch);
+        $columnCount = max(1, count($rows[0] ?? []));
+        $beforeMaxId = (int) (DB::table('ocr_parsed_firms')->max('id') ?? 0);
+
+        $this->bulkInsertRows('ocr_parsed_firms', $rows, $columnCount, count($rows));
+
+        $insertedIds = DB::table('ocr_parsed_firms')
+            ->where('id', '>', $beforeMaxId)
+            ->orderBy('id')
+            ->limit(count($batch))
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+
+        if (count($insertedIds) !== count($batch)) {
+            throw new RuntimeException('Unable to resolve inserted firm IDs for batch remapping.');
+        }
+
+        foreach ($batch as $index => $item) {
+            $firmIdMap[$item['old_id']] = $insertedIds[$index];
+        }
+
+        return count($batch);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     */
+    private function bulkInsertRows(string $table, array $rows, int $columnCount, int $requestedChunk): int
+    {
+        if ($rows === []) {
+            return 0;
+        }
+
+        $batchSize = $this->safeBatchRowCount($columnCount, $requestedChunk);
+        $inserted = 0;
+
+        foreach (array_chunk($rows, $batchSize) as $chunk) {
+            DB::table($table)->insert($chunk);
+            $inserted += count($chunk);
+        }
+
+        return $inserted;
+    }
+
+    private function safeBatchRowCount(int $columnCount, int $requestedChunk): int
+    {
+        $columnCount = max(1, $columnCount);
+        $requestedChunk = max(1, $requestedChunk);
+        $maxRows = (int) floor(self::MYSQL_MAX_PLACEHOLDERS / $columnCount);
+
+        return max(1, min($requestedChunk, $maxRows));
+    }
+
+    /**
+     * @param  list<int>  $values
+     */
+    private function countWhereIn(
+        string $table,
+        string $column,
+        array $values,
+        ?callable $constraint = null
+    ): int {
+        $values = array_values(array_unique(array_map(
+            'intval',
+            $values
+        )));
+    
+        if ($values === []) {
+            return 0;
+        }
+    
+        $total = 0;
+    
+        foreach (
+            array_chunk($values, self::VALIDATION_ID_CHUNK_SIZE)
+            as $chunk
+        ) {
+            $query = DB::table($table)
+                ->whereIn($column, $chunk);
+    
+            if ($constraint !== null) {
+                $constraint($query);
+            }
+    
+            $total += (int) $query->count();
+        }
+    
+        return $total;
     }
 
     /** @param  array<int, int>  $documentIdMap */
@@ -686,20 +812,25 @@ class OcrSelectedTransferService
         $docIds = array_values($this->normalizeIdMap($summary['document_id_map'] ?? []));
         $firmIds = array_values($this->normalizeIdMap($summary['firm_id_map'] ?? []));
 
-        $orphanFirms = $firmIds === []
-            ? 0
-            : DB::table('ocr_parsed_firms')
-                ->whereIn('id', $firmIds)
-                ->whereNotIn('ocr_document_id', $docIds)
-                ->count();
+        $orphanFirms = $this->countWhereIn(
+            'ocr_parsed_firms',
+            'id',
+            $firmIds,
+            fn ($query) => $query->whereNotIn('ocr_document_id', $docIds),
+        );
 
-        $orphanMembers = $firmIds === []
-            ? 0
-            : (int) DB::table('ocr_parsed_members as m')
+        $orphanMembers = 0;
+
+foreach (
+    array_chunk($firmIds, self::VALIDATION_ID_CHUNK_SIZE)
+    as $firmChunk
+) {
+            $orphanMembers += (int) DB::table('ocr_parsed_members as m')
                 ->leftJoin('ocr_parsed_firms as f', 'f.id', '=', 'm.ocr_parsed_firm_id')
-                ->whereIn('m.ocr_parsed_firm_id', $firmIds)
+                ->whereIn('m.ocr_parsed_firm_id', $firmChunk)
                 ->whereNull('f.id')
                 ->count();
+        }
 
         if ($orphanFirms > 0 || $orphanMembers > 0) {
             throw new RuntimeException("Post-import orphan check failed: firms={$orphanFirms}, members={$orphanMembers}");

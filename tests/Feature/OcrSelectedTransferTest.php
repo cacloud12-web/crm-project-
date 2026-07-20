@@ -11,6 +11,7 @@ use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Schema;
 use Tests\Support\CrmTestAccounts;
 use Tests\TestCase;
 
@@ -316,5 +317,142 @@ class OcrSelectedTransferTest extends TestCase
 
         Artisan::call('ocr:export-selected', ['--documents' => (string) $doc->id]);
         $this->assertStringContainsString('completed', Artisan::output());
+    }
+
+    public function test_imports_over_one_hundred_thousand_firms_without_placeholder_limit_error(): void
+    {
+        $admin = $this->actingAdmin();
+        $this->seedExistingLiveDocument($admin);
+        $this->createLocalDocument($admin, 52, 'bulk-firms.pdf');
+
+        $firmCount = 100_001;
+        $path = $this->buildLargeFirmImportPackage($admin, $firmCount);
+        $this->simulateLiveWithoutSourceRows([52]);
+
+        $service = app(OcrSelectedTransferService::class);
+        $summary = $service->import($path, $admin->id, 5000, false, false);
+
+        $this->assertSame(1, $summary['documents_imported']);
+        $this->assertSame($firmCount, $summary['firms_imported']);
+        $this->assertSame(0, $summary['members_imported']);
+        $this->assertSame(
+            $firmCount,
+            OcrParsedFirm::query()->where('ocr_document_id', $summary['document_id_map'][52])->count(),
+        );
+        $this->assertFalse(OcrParsedFirm::query()->where('ocr_document_id', 52)->exists());
+
+        File::deleteDirectory($path);
+        @unlink(storage_path('app/ocr-transfer/.imported/'.basename($path).'.json'));
+        @unlink(storage_path('app/ocr-transfer/.import-state/'.basename($path).'.json'));
+    }
+
+    private function buildLargeFirmImportPackage(User $admin, int $firmCount): string
+    {
+        $batchId = 'test-large-'.uniqid('', true);
+        $path = storage_path('app/ocr-transfer/'.$batchId);
+        mkdir($path, 0755, true);
+
+        $docColumns = Schema::getColumnListing('ocr_documents');
+        $firmColumns = Schema::getColumnListing('ocr_parsed_firms');
+        $memberColumns = Schema::getColumnListing('ocr_parsed_members');
+
+        $documentRow = [
+            'id' => 52,
+            'uploaded_by' => $admin->id,
+            'original_filename' => 'bulk-firms.pdf',
+            'stored_filename' => 'bulk-firms.pdf',
+            'storage_disk' => 'local',
+            'storage_path' => 'ocr/bulk-firms.pdf',
+            'mime_type' => 'application/pdf',
+            'file_size' => 2048,
+            'status' => OcrDocument::STATUS_COMPLETED,
+            'provider' => 'google_document_ai',
+            'processing_attempts' => 0,
+            'processed_at' => now()->toIso8601String(),
+            'parse_status' => 'completed',
+            'parsed_firm_count' => $firmCount,
+        ];
+        file_put_contents($path.'/documents.ndjson', json_encode($documentRow, JSON_UNESCAPED_UNICODE).PHP_EOL);
+        file_put_contents($path.'/members.ndjson', '');
+
+        $firmsHandle = fopen($path.'/firms.ndjson', 'wb');
+        $template = [
+            'ocr_document_id' => 52,
+            'sequence_no' => 1,
+            'raw_firm_name' => 'Bulk Import Firm',
+            'firm_name' => 'Bulk Import Firm',
+            'normalized_firm_name' => 'BULK IMPORT FIRM',
+            'firm_type' => 'Partnership',
+            'address' => '123 Market Street, Sample City',
+            'city' => 'Mumbai',
+            'district' => 'Mumbai',
+            'state' => 'Maharashtra',
+            'pincode' => '400001',
+            'phone' => '9876543210',
+            'email' => 'bulk@example.test',
+            'website' => 'https://example.test',
+            'partner_count' => 2,
+            'review_status' => 'pending',
+            'overall_confidence' => 0.9123,
+            'page_number' => 3,
+            'row_number' => 10,
+            'column_number' => 2,
+            'match_status' => 'unmapped',
+            'match_confidence' => 0.55,
+            'match_reason' => 'pending_review',
+            'match_candidates' => json_encode([['ca_id' => 1, 'score' => 0.4]]),
+            'source_data' => json_encode(['source' => 'bulk-test']),
+            'notes' => 'bulk regression row',
+            'field_meta' => json_encode(['city' => ['confidence' => 0.91]]),
+            'bounding_box' => json_encode(['x' => 1, 'y' => 2, 'w' => 3, 'h' => 4]),
+            'validation_errors' => json_encode([]),
+            'parse_run_id' => 'parse-run-bulk',
+            'source_fingerprint' => 'fp-source',
+            'business_fingerprint' => 'fp-business',
+            'is_noise' => 0,
+        ];
+
+        for ($i = 1; $i <= $firmCount; $i++) {
+            $row = $template;
+            $row['id'] = $i;
+            $row['sequence_no'] = $i;
+            $row['firm_name'] = 'Bulk Import Firm '.$i;
+            $row['normalized_firm_name'] = 'BULK IMPORT FIRM '.$i;
+            $row['source_fingerprint'] = 'fp-source-'.$i;
+            $row['business_fingerprint'] = 'fp-business-'.$i;
+            fwrite($firmsHandle, json_encode($row, JSON_UNESCAPED_UNICODE).PHP_EOL);
+        }
+        fclose($firmsHandle);
+
+        $manifest = [
+            'batch_id' => $batchId,
+            'exported_at' => now()->toIso8601String(),
+            'source_connection' => 'sqlite',
+            'source_document_ids' => [52],
+            'filenames' => ['bulk-firms.pdf'],
+            'documents' => ['count' => 1, 'columns' => $docColumns, 'file' => 'documents.ndjson'],
+            'firms' => ['count' => $firmCount, 'columns' => $firmColumns, 'file' => 'firms.ndjson'],
+            'members' => ['count' => 0, 'columns' => $memberColumns, 'file' => 'members.ndjson'],
+            'orphan_checks' => ['orphan_firms' => 0, 'orphan_members' => 0],
+        ];
+        $manifest = $this->finalizeTransferManifest($manifest, $path);
+        file_put_contents($path.'/manifest.json', json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES).PHP_EOL);
+
+        return $path;
+    }
+
+    /** @param  array<string, mixed>  $manifest */
+    private function finalizeTransferManifest(array $manifest, string $path): array
+    {
+        foreach (['documents', 'firms', 'members'] as $section) {
+            $file = $manifest[$section]['file'] ?? "{$section}.ndjson";
+            $manifest[$section]['sha256'] = hash_file('sha256', $path.'/'.$file);
+        }
+
+        $copy = $manifest;
+        unset($copy['checksum']);
+        $manifest['checksum'] = hash('sha256', json_encode($copy, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+
+        return $manifest;
     }
 }
