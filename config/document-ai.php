@@ -57,6 +57,44 @@ return [
     'sync_max_file_mb' => max(1, (int) env('GOOGLE_DOCUMENT_AI_SYNC_MAX_FILE_MB', 5)),
     'sync_timeout_seconds' => max(15, (int) env('GOOGLE_DOCUMENT_AI_SYNC_TIMEOUT_SECONDS', 60)),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Queue routing for OCR jobs
+    |--------------------------------------------------------------------------
+    |
+    | Jobs currently dispatch to this named queue (default Laravel "default").
+    | Workers should listen to both ocr and default for compatibility:
+    |   php artisan queue:work --queue=ocr,default --sleep=1 --tries=3 --timeout=300
+    |
+    */
+    'queue' => env('GOOGLE_DOCUMENT_AI_QUEUE', 'ocr'),
+    'queue_worker_list' => env('GOOGLE_DOCUMENT_AI_QUEUE_LIST', 'ocr,ocr-import,default'),
+    /** Queue used by afterResponse drain (must NOT include Master CA import). */
+    'drain_queue' => env('GOOGLE_DOCUMENT_AI_DRAIN_QUEUE', 'ocr'),
+    /** Dedicated queue for long Master CA writes — keep out of HTTP afterResponse drain. */
+    'import_queue' => env('GOOGLE_DOCUMENT_AI_IMPORT_QUEUE', 'ocr-import'),
+    'auto_drain_after_dispatch' => filter_var(env('CRM_QUEUE_AUTO_DRAIN', false), FILTER_VALIDATE_BOOLEAN),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Memory-safe online Document AI options
+    |--------------------------------------------------------------------------
+    |
+    | imageless_mode drops rendered page images from the ProcessResponse.
+    | Without this, REST/JSON hydration base64-decodes multi-MB page images and
+    | can OOM a 128MB PHP process on a tiny multi-page PDF.
+    |
+    */
+    'imageless_mode' => filter_var(env('GOOGLE_DOCUMENT_AI_IMAGELESS_MODE', true), FILTER_VALIDATE_BOOLEAN),
+    'process_field_mask' => [
+        'text',
+        'entities',
+        'pages.paragraphs',
+        'pages.tables',
+        'pages.detectedLanguages',
+        'pages.layout',
+    ],
+
     'queued_stuck_minutes' => max(2, (int) env('GOOGLE_DOCUMENT_AI_QUEUED_STUCK_MINUTES', 5)),
     'processing_stuck_minutes' => max(5, (int) env('GOOGLE_DOCUMENT_AI_PROCESSING_STUCK_MINUTES', 15)),
 

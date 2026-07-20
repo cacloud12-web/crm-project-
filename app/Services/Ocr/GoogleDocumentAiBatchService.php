@@ -8,6 +8,7 @@ use App\Exceptions\Ocr\OcrProviderException;
 use App\Models\OcrDocument;
 use App\Services\DocumentAi\GoogleDocumentAiService;
 use Google\ApiCore\ApiException;
+use Google\Auth\Credentials\ServiceAccountCredentials;
 use Google\Cloud\DocumentAI\V1\BatchDocumentsInputConfig;
 use Google\Cloud\DocumentAI\V1\BatchProcessRequest;
 use Google\Cloud\DocumentAI\V1\Client\DocumentProcessorServiceClient;
@@ -15,6 +16,7 @@ use Google\Cloud\DocumentAI\V1\DocumentOutputConfig;
 use Google\Cloud\DocumentAI\V1\DocumentOutputConfig\GcsOutputConfig;
 use Google\Cloud\DocumentAI\V1\GcsDocument;
 use Google\Cloud\DocumentAI\V1\GcsDocuments;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -114,51 +116,91 @@ class GoogleDocumentAiBatchService
     }
 
     /**
+     * Poll batch LRO status via plain JSON (avoids protobuf Any / descriptor-pool failures).
+     *
      * @return array{done: bool, error: ?string, metadata: array<string, mixed>}
      */
     public function checkOperation(string $operationName): array
     {
         $this->documentAi->validateConfiguration();
-        $credentialsPath = $this->documentAi->resolveCredentialsPath();
-        $endpoint = (string) config('document-ai.api_endpoint');
 
-        $clientConfig = ['apiEndpoint' => $endpoint];
-        if ($credentialsPath !== null) {
-            $clientConfig['credentials'] = $credentialsPath;
+        $operationName = trim($operationName);
+        if ($operationName === '' || ! str_contains($operationName, '/operations/')) {
+            throw new DocumentAiProcessingException(
+                'Batch OCR operation name is missing or invalid.',
+                'batch_status_failed',
+                false,
+            );
         }
 
-        $client = new DocumentProcessorServiceClient($clientConfig);
-
         try {
-            $operation = $client->resumeOperation($operationName, 'batchProcessDocuments');
-            if (! $operation->isDone()) {
-                return [
-                    'done' => false,
-                    'error' => null,
-                    'metadata' => [],
-                ];
+            $endpoint = rtrim((string) config('document-ai.api_endpoint'), '/');
+            $url = 'https://'.$endpoint.'/v1/'.$operationName;
+            $token = $this->accessToken();
+
+            $response = Http::timeout(60)
+                ->withToken($token)
+                ->acceptJson()
+                ->get($url);
+
+            if (! $response->successful()) {
+                $status = $response->status();
+                $body = Str::lower((string) $response->body());
+                if ($status === 404 || str_contains($body, 'not found')) {
+                    throw new DocumentAiProcessingException(
+                        'Document AI batch operation was not found.',
+                        'not_found',
+                        false,
+                    );
+                }
+                if ($status === 403 || str_contains($body, 'permission')) {
+                    throw new DocumentAiProcessingException(
+                        'Document AI or Cloud Storage permission was denied for batch OCR.',
+                        'permission_denied',
+                        false,
+                    );
+                }
+                if (in_array($status, [429, 500, 502, 503, 504], true)) {
+                    throw new DocumentAiProcessingException(
+                        'Unable to check batch OCR status. Please retry shortly.',
+                        'batch_status_failed',
+                        true,
+                    );
+                }
+
+                throw new DocumentAiProcessingException(
+                    'Unable to check batch OCR status. Please retry shortly.',
+                    'batch_status_failed',
+                    true,
+                );
             }
 
-            if ($operation->operationSucceeded()) {
+            $payload = $response->json();
+            if (! is_array($payload)) {
+                throw new DocumentAiProcessingException(
+                    'Unable to check batch OCR status. Please retry shortly.',
+                    'batch_status_failed',
+                    true,
+                );
+            }
+
+            $done = (bool) ($payload['done'] ?? false);
+            if (! $done) {
+                return ['done' => false, 'error' => null, 'metadata' => []];
+            }
+
+            $error = $payload['error'] ?? null;
+            if (is_array($error) && ($error['message'] ?? null)) {
                 return [
                     'done' => true,
-                    'error' => null,
+                    'error' => $this->safeBatchErrorMessage((string) $error['message']),
                     'metadata' => [],
                 ];
             }
 
-            $error = $operation->getError();
-            $message = $error
-                ? (string) ($error->getMessage() ?: 'Batch OCR operation failed.')
-                : 'Batch OCR operation failed.';
-
-            return [
-                'done' => true,
-                'error' => $this->safeBatchErrorMessage($message),
-                'metadata' => [],
-            ];
-        } catch (ApiException $exception) {
-            throw $this->mapApiException($exception);
+            return ['done' => true, 'error' => null, 'metadata' => []];
+        } catch (DocumentAiConfigurationException|OcrProviderException $exception) {
+            throw $exception;
         } catch (Throwable $exception) {
             throw new DocumentAiProcessingException(
                 'Unable to check batch OCR status. Please retry shortly.',
@@ -166,14 +208,37 @@ class GoogleDocumentAiBatchService
                 true,
                 $exception,
             );
-        } finally {
-            $client->close();
         }
     }
 
+    private function accessToken(): string
+    {
+        $credentialsPath = $this->documentAi->resolveCredentialsPath();
+        if ($credentialsPath === null || ! is_readable($credentialsPath)) {
+            throw new DocumentAiConfigurationException(
+                'Document AI credentials are not configured.',
+            );
+        }
+
+        $credentials = new ServiceAccountCredentials(
+            ['https://www.googleapis.com/auth/cloud-platform'],
+            $credentialsPath,
+        );
+        $token = $credentials->fetchAuthToken();
+        $accessToken = is_array($token) ? (string) ($token['access_token'] ?? '') : '';
+        if ($accessToken === '') {
+            throw new DocumentAiConfigurationException(
+                'Unable to obtain a Google Cloud access token for Document AI.',
+            );
+        }
+
+        return $accessToken;
+    }
+
     /**
-     * Parse batch Document JSON outputs incrementally and combine text in page order.
+     * Combine every Document AI batch JSON shard and reconcile page coverage.
      *
+     * @param  int|null  $expectedPages  PDF page count known at upload (blocks Completed when short)
      * @return array{
      *     text: string,
      *     page_count: int,
@@ -181,14 +246,19 @@ class GoogleDocumentAiBatchService
      *     pages: list<array<string, mixed>>,
      *     average_confidence: float|null,
      *     result_checksum: string,
-     *     shard_count: int
+     *     shard_count: int,
+     *     expected_pages: int|null,
+     *     received_pages: int,
+     *     unique_pages: int,
+     *     missing_pages: list<int>,
+     *     duplicate_pages: list<int>,
+     *     page_reconciliation_ok: bool
      * }
      */
-    public function finalizeFromGcs(string $gcsOutputUri): array
+    public function finalizeFromGcs(string $gcsOutputUri, ?int $expectedPages = null): array
     {
         $parsedUri = $this->storage->parseGsUri(rtrim($gcsOutputUri, '/').'/');
         if ($parsedUri === null) {
-            // Accept gs://bucket/prefix without trailing slash.
             $parsedUri = $this->storage->parseGsUri($gcsOutputUri);
         }
 
@@ -201,10 +271,10 @@ class GoogleDocumentAiBatchService
         }
 
         $prefix = rtrim($parsedUri['object'], '/');
-        $objectNames = array_values(array_filter(
+        $objectNames = array_values(array_unique(array_filter(
             $this->storage->listObjectNames($parsedUri['bucket'], $prefix),
             fn (string $name) => Str::endsWith(strtolower($name), '.json'),
-        ));
+        )));
 
         if ($objectNames === []) {
             throw new DocumentAiProcessingException(
@@ -214,24 +284,43 @@ class GoogleDocumentAiBatchService
             );
         }
 
-        natcasesort($objectNames);
-        $objectNames = array_values($objectNames);
+        usort($objectNames, function (string $a, string $b): int {
+            $ra = $this->shardSortKey($a);
+            $rb = $this->shardSortKey($b);
+            if ($ra !== $rb) {
+                return $ra <=> $rb;
+            }
+
+            return strnatcasecmp($a, $b);
+        });
 
         $combinedTextParts = [];
         $languages = [];
         $pageMetas = [];
         $confidences = [];
-        $pageCount = 0;
         $shardCount = 0;
+        $seenPageNumbers = [];
+        $duplicatePages = [];
+        $duplicateShards = [];
+        $seenShardFingerprints = [];
+        $sequentialFallback = 0;
 
         foreach ($objectNames as $objectName) {
             $raw = $this->storage->downloadObject($parsedUri['bucket'], $objectName);
             $decoded = json_decode($raw, true);
+            $shardFingerprint = hash('sha256', $raw);
             unset($raw);
 
             if (! is_array($decoded)) {
                 continue;
             }
+
+            if (isset($seenShardFingerprints[$shardFingerprint])) {
+                $duplicateShards[] = basename($objectName);
+
+                continue;
+            }
+            $seenShardFingerprints[$shardFingerprint] = basename($objectName);
 
             $shardCount++;
             $text = trim((string) ($decoded['text'] ?? ''));
@@ -242,7 +331,6 @@ class GoogleDocumentAiBatchService
             $pages = $decoded['pages'] ?? [];
             if (is_array($pages)) {
                 foreach ($pages as $index => $page) {
-                    $pageCount++;
                     $pageLanguages = [];
                     if (is_array($page) && isset($page['detectedLanguages']) && is_array($page['detectedLanguages'])) {
                         foreach ($page['detectedLanguages'] as $lang) {
@@ -260,19 +348,79 @@ class GoogleDocumentAiBatchService
                         $confidences[] = $confidence;
                     }
 
+                    // Document AI shards reset pageNumber per shard — assign global sequential pages.
+                    $sequentialFallback++;
+                    $pageNumber = $sequentialFallback;
+
+                    if (isset($seenPageNumbers[$pageNumber])) {
+                        $duplicatePages[] = $pageNumber;
+                    }
+                    $seenPageNumbers[$pageNumber] = true;
+
+                    $paragraphs = $this->extractParagraphsFromJsonPage(
+                        is_array($page) ? $page : [],
+                        $text,
+                    );
+
                     $pageMetas[] = [
-                        'page_number' => $pageCount,
+                        'page_number' => $pageNumber,
                         'languages' => array_values(array_unique($pageLanguages)),
-                        'paragraph_count' => is_array($page['paragraphs'] ?? null) ? count($page['paragraphs']) : 0,
+                        'paragraph_count' => count($paragraphs),
+                        'paragraphs' => $paragraphs,
                         'confidence' => $confidence,
                         'source_object' => basename($objectName),
                         'source_page_index' => is_int($index) ? $index + 1 : null,
+                        'has_text' => $paragraphs !== [],
+                        'line_count' => count($paragraphs),
                     ];
                 }
             }
 
             unset($decoded);
         }
+
+        if ($duplicateShards !== []) {
+            throw new DocumentAiProcessingException(
+                'Batch OCR produced duplicate output shards (identical content). Refusing to complete. Duplicates: '
+                    .implode(', ', array_slice($duplicateShards, 0, 20)),
+                'BATCH_DUPLICATE_SHARDS',
+                true,
+            );
+        }
+
+        if ($duplicatePages !== []) {
+            throw new DocumentAiProcessingException(
+                'Batch OCR produced duplicate page numbers. Refusing to complete. Pages: '
+                    .implode(', ', array_slice(array_values(array_unique($duplicatePages)), 0, 40)),
+                'BATCH_DUPLICATE_PAGES',
+                true,
+            );
+        }
+
+        usort($pageMetas, static fn (array $a, array $b) => ($a['page_number'] ?? 0) <=> ($b['page_number'] ?? 0));
+
+        $receivedPages = count($pageMetas);
+        $uniquePages = count($seenPageNumbers);
+        $pageCount = $uniquePages > 0 ? max(array_keys($seenPageNumbers)) : max(1, count($combinedTextParts));
+
+        $missingPages = [];
+        if ($expectedPages !== null && $expectedPages > 0) {
+            for ($p = 1; $p <= $expectedPages; $p++) {
+                if (! isset($seenPageNumbers[$p])) {
+                    $missingPages[] = $p;
+                }
+            }
+        } elseif ($uniquePages > 0) {
+            $maxSeen = max(array_keys($seenPageNumbers));
+            for ($p = 1; $p <= $maxSeen; $p++) {
+                if (! isset($seenPageNumbers[$p])) {
+                    $missingPages[] = $p;
+                }
+            }
+        }
+
+        $pageReconciliationOk = $missingPages === []
+            && ($expectedPages === null || $expectedPages <= 0 || $uniquePages >= $expectedPages);
 
         $text = trim(implode("\n\n", $combinedTextParts));
         if ($text === '') {
@@ -283,7 +431,16 @@ class GoogleDocumentAiBatchService
             );
         }
 
-        $checksum = hash('sha256', $text.'|'.$pageCount.'|'.$shardCount);
+        if (! $pageReconciliationOk) {
+            throw new DocumentAiProcessingException(
+                'Batch OCR page reconciliation failed. Missing pages: '.implode(', ', array_slice($missingPages, 0, 40))
+                    .(count($missingPages) > 40 ? '…' : ''),
+                'BATCH_PAGE_RECONCILIATION_FAILED',
+                true,
+            );
+        }
+
+        $checksum = hash('sha256', $text.'|'.$pageCount.'|'.$shardCount.'|'.$uniquePages);
 
         return [
             'text' => $text,
@@ -295,7 +452,133 @@ class GoogleDocumentAiBatchService
                 : round(array_sum($confidences) / count($confidences), 4),
             'result_checksum' => $checksum,
             'shard_count' => $shardCount,
+            'expected_pages' => $expectedPages,
+            'received_pages' => $receivedPages,
+            'unique_pages' => $uniquePages,
+            'missing_pages' => $missingPages,
+            'duplicate_pages' => array_values(array_unique($duplicatePages)),
+            'page_reconciliation_ok' => $pageReconciliationOk,
         ];
+    }
+
+    private function shardSortKey(string $objectName): int
+    {
+        $base = basename($objectName);
+        if (preg_match('/(\d+)[-_](\d+)/', $base, $m)) {
+            return (int) $m[1];
+        }
+        if (preg_match('/(\d+)/', $base, $m)) {
+            return (int) $m[1];
+        }
+
+        return PHP_INT_MAX;
+    }
+
+    /**
+     * Persist lean paragraphs + normalized bounding boxes so layout directory parsing
+     * can run on batch OCR results (not text-only fallback).
+     *
+     * @param  array<string, mixed>  $page
+     * @return list<array{text: string, bounding_box: list<array{x: float, y: float}>, confidence: float|null, x?: float, y?: float}>
+     */
+    private function extractParagraphsFromJsonPage(array $page, string $fullText): array
+    {
+        $rawParagraphs = $page['paragraphs'] ?? [];
+        if (! is_array($rawParagraphs) || $rawParagraphs === []) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($rawParagraphs as $paragraph) {
+            if (! is_array($paragraph)) {
+                continue;
+            }
+
+            $layout = is_array($paragraph['layout'] ?? null) ? $paragraph['layout'] : [];
+            $paragraphText = $this->textFromJsonAnchor($fullText, $layout['textAnchor'] ?? $layout['text_anchor'] ?? null);
+            if ($paragraphText === '' && isset($paragraph['text']) && is_string($paragraph['text'])) {
+                $paragraphText = trim($paragraph['text']);
+            }
+            if ($paragraphText === '') {
+                continue;
+            }
+
+            $vertices = $this->normalizedVerticesFromJsonLayout($layout);
+            $xs = array_map(static fn (array $v) => (float) ($v['x'] ?? 0), $vertices);
+            $ys = array_map(static fn (array $v) => (float) ($v['y'] ?? 0), $vertices);
+            $confidence = isset($layout['confidence']) ? (float) $layout['confidence'] : null;
+
+            $entry = [
+                'text' => $paragraphText,
+                'bounding_box' => $vertices,
+                'confidence' => $confidence,
+            ];
+            if ($xs !== [] && $ys !== []) {
+                $entry['x'] = round(array_sum($xs) / count($xs), 4);
+                $entry['y'] = round(array_sum($ys) / count($ys), 4);
+            }
+            $out[] = $entry;
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param  mixed  $anchor
+     */
+    private function textFromJsonAnchor(string $fullText, mixed $anchor): string
+    {
+        if ($fullText === '' || ! is_array($anchor)) {
+            return '';
+        }
+        $segments = $anchor['textSegments'] ?? $anchor['text_segments'] ?? [];
+        if (! is_array($segments) || $segments === []) {
+            return '';
+        }
+
+        $parts = [];
+        foreach ($segments as $segment) {
+            if (! is_array($segment)) {
+                continue;
+            }
+            $start = (int) ($segment['startIndex'] ?? $segment['start_index'] ?? 0);
+            $end = (int) ($segment['endIndex'] ?? $segment['end_index'] ?? 0);
+            if ($end <= $start) {
+                continue;
+            }
+            $parts[] = mb_substr($fullText, $start, $end - $start);
+        }
+
+        return trim(implode('', $parts));
+    }
+
+    /**
+     * @param  array<string, mixed>  $layout
+     * @return list<array{x: float, y: float}>
+     */
+    private function normalizedVerticesFromJsonLayout(array $layout): array
+    {
+        $poly = $layout['boundingPoly'] ?? $layout['bounding_poly'] ?? null;
+        if (! is_array($poly)) {
+            return [];
+        }
+        $raw = $poly['normalizedVertices'] ?? $poly['normalized_vertices'] ?? $poly['vertices'] ?? [];
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        $vertices = [];
+        foreach ($raw as $vertex) {
+            if (! is_array($vertex)) {
+                continue;
+            }
+            $vertices[] = [
+                'x' => round((float) ($vertex['x'] ?? 0), 4),
+                'y' => round((float) ($vertex['y'] ?? 0), 4),
+            ];
+        }
+
+        return $vertices;
     }
 
     public function cleanupAfterSuccess(OcrDocument $document): void

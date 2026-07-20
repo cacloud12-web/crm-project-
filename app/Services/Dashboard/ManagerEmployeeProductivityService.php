@@ -364,6 +364,10 @@ class ManagerEmployeeProductivityService
         $followups = $metrics['followups'];
 
         return ($leads['total_assigned']
+            + (int) ($leads['hot_leads'] ?? 0)
+            + (int) ($leads['warm_leads'] ?? 0)
+            + (int) ($leads['cold_leads'] ?? 0)
+            + (int) ($leads['in_pipeline'] ?? 0)
             + $daily['todays_calls']
             + $daily['todays_followups']
             + $demos['demos_scheduled']

@@ -27,7 +27,14 @@ class OcrFieldCollisionService
      */
     public function detect(array $firm): array
     {
-        if (config('ocr_workflow.mode', 'firm_ca_city') === 'firm_ca_city') {
+        $mode = 'firm_ca_city';
+        try {
+            if (function_exists('config')) {
+                $mode = (string) config('ocr_workflow.mode', 'firm_ca_city');
+            }
+        } catch (\Throwable) {
+        }
+        if ($mode === 'firm_ca_city') {
             return $this->detectThreeField($firm);
         }
 
@@ -322,9 +329,24 @@ class OcrFieldCollisionService
         if ($city === null || in_array('city', $missing, true)) {
             $codes[] = 'MISSING_CITY';
             $messages[] = 'City is required.';
-        } elseif (preg_match('/\b(?:street|sadak|hospital|floor|shop|ward|backside)\b/iu', $city)) {
+        } elseif (preg_match('/\b(?:street|sadak|hospital|floor|shop|ward|backside|colony|market|mandi|plot|building)\b/iu', $city)
+            && ! (new OcrCityResolverService)->isResolvableCity($city)) {
             $codes[] = 'ADDRESS_IN_CITY_FIELD';
             $messages[] = 'City appears to contain address text.';
+        }
+
+        // City ↔ CA collision: confirmed city heading must never sit in CA Name.
+        if ($city !== null && $caName !== null && mb_strtolower($city) === mb_strtolower($caName)) {
+            $codes[] = 'CITY_CA_NAME_COLLISION';
+            $messages[] = 'City and CA Name cannot be the same value.';
+        } elseif ($caName !== null && (new OcrCityHeadingDetector($this->entities()))->isHeading($caName)
+            && ! $this->entities()->isPerson($caName)) {
+            $codes[] = 'CITY_IN_CA_NAME_FIELD';
+            $messages[] = 'CA name appears to be a city heading.';
+        } elseif ($city !== null && $this->entities()->isPerson($city)
+            && ! (new OcrCityResolverService)->isResolvableCity($city)) {
+            $codes[] = 'PERSON_IN_CITY_FIELD';
+            $messages[] = 'City appears to be a person name.';
         }
 
         // Scoped layout only — require evidence that firm/CA/city crossed a record boundary.
@@ -344,14 +366,8 @@ class OcrFieldCollisionService
             $codes[] = 'FIRM_NAME_BOUNDARY_UNCERTAIN';
             $messages[] = 'Firm name record boundary is uncertain.';
         }
-        if (! empty($firm['ca_name_boundary_uncertain']) && $caName !== null) {
-            $codes[] = 'CA_NAME_BOUNDARY_UNCERTAIN';
-            $messages[] = 'CA name record boundary is uncertain.';
-        }
-        if (! empty($firm['city_boundary_uncertain']) && $city !== null) {
-            $codes[] = 'CITY_BOUNDARY_UNCERTAIN';
-            $messages[] = 'City record boundary is uncertain.';
-        }
+        // Soft layout flags — never block three-field Verified status or user-facing errors.
+        // City/CA "boundary uncertain" was incorrectly raised for empty fields before forward-fill.
 
         $codes = array_values(array_unique($codes));
 

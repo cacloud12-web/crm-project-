@@ -138,6 +138,21 @@ class CaMaster extends Model
         return $this->hasMany(LeadAssignmentEngine::class, 'ca_id', 'ca_id');
     }
 
+    public function partners(): HasMany
+    {
+        return $this->hasMany(CaMasterPartner::class, 'ca_id', 'ca_id')
+            ->orderByDesc('is_primary')
+            ->orderBy('sequence_no')
+            ->orderBy('id');
+    }
+
+    public function primaryPartner(): HasOne
+    {
+        return $this->hasOne(CaMasterPartner::class, 'ca_id', 'ca_id')
+            ->where('is_primary', true)
+            ->orderBy('id');
+    }
+
     public function activeAssignment(): HasOne
     {
         return $this->hasOne(LeadAssignmentEngine::class, 'ca_id', 'ca_id')

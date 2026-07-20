@@ -185,11 +185,9 @@
               <div><label class="form-label">City</label><select name="city_id" class="input-field" disabled><option value="">Select city</option></select></div>
             </div>
             <div><label class="form-label">Email</label><input name="email_id" type="email" class="input-field" placeholder="ca@firm.com" autocomplete="email" /></div>
-            <div><label class="form-label">GST No.</label><input name="gst_no" class="input-field" placeholder="27AABCS1234L1Z5" /></div>
             <div><label class="form-label">Team Size</label><input name="team_size" type="number" class="input-field" value="0" min="0" step="1" /></div>
             <div><label class="form-label">Software</label><select name="existing_software" class="input-field"><option value="None" selected>None</option><option value="Tally">Tally</option><option value="Zoho">Zoho</option><option value="Busy">Busy</option><option value="Marg">Marg</option></select></div>
             <div><label class="form-label">Website</label><input name="website" class="input-field" placeholder="firm.in" /></div>
-            <div><label class="form-label">Rating (1–5)</label><select name="rating" class="input-field"><option value="5">5</option><option value="4">4</option><option value="3">3</option><option value="2">2</option><option value="1" selected>1</option></select></div>
             <div><label class="form-label">New Firm?</label><select name="is_newly_established" class="input-field"><option value="" selected>—</option><option value="no">No</option><option value="yes">Yes</option></select></div>
             <div><label class="form-label">Source</label><select name="source_id" class="input-field" id="form-lead-source-id"><option value="">Select source</option></select></div>
             <div><label class="form-label">Status</label><select name="status" class="input-field"><option>New</option><option>Hot</option><option>Warm</option><option>Pipeline</option><option>Demo Scheduled</option><option>Active</option><option>Inactive</option><option>Lost</option></select></div>
@@ -940,14 +938,14 @@
       <form id="form-lead-call-log" class="ca-modal-body space-y-4" novalidate>
         <input type="hidden" name="ca_id" id="lead-call-log-ca-id" />
         <div id="lead-call-log-context" class="followup-lead-context card hidden" aria-live="polite">
-          <p class="followup-lead-context__title">Lead</p>
+          <p id="lead-call-log-context-title" class="followup-lead-context__title">Lead</p>
           <dl class="followup-lead-context__grid">
             <div class="followup-lead-context__item">
               <dt>Firm Name</dt>
               <dd id="lead-call-log-ctx-firm">—</dd>
             </div>
             <div class="followup-lead-context__item">
-              <dt>CA Name</dt>
+              <dt id="lead-call-log-ctx-ca-label">CA Name</dt>
               <dd id="lead-call-log-ctx-ca">—</dd>
             </div>
             <div class="followup-lead-context__item">

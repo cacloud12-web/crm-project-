@@ -111,6 +111,76 @@ TXT;
         $this->assertNull($mapped['membership_no']);
     }
 
+    public function test_ca_surnames_are_not_cities_via_place_substring(): void
+    {
+        $c = $this->classifier();
+        foreach (['ANIRUDDHA DHANANJAY NAGARKAR', 'AMBADAS KISAN KOHAK', 'AMIT RATANLAL POKHARNA'] as $name) {
+            $this->assertFalse($c->isCity($name), $name.' must not be city');
+            $this->assertTrue($c->isPerson($name), $name.' must be person');
+        }
+        $this->assertTrue($c->isCity('ADIPUR'));
+        $this->assertTrue($c->isCity('AHILYANAGAR'));
+        $this->assertFalse($c->isCity('LAJPAT NAGAR'), 'locality must not be city');
+        $this->assertTrue($c->isCity('ABU ROAD'));
+    }
+
+    public function test_directory_block_keeps_ca_out_of_city_field(): void
+    {
+        $raw = <<<'TXT'
+AHILYANAGAR
+A D NAGARKAR & CO
+ANIRUDDHA DHANANJAY NAGARKAR
+123 MAIN ROAD
+AHILYANAGAR-414001
+AMIT R POKHARNA AND ASSOCIATES
+AMIT RATANLAL POKHARNA
+TULJAI NIWAS
+AHILYANAGAR-414001
+TXT;
+        $parser = new OcrStructureParserService;
+        $result = $parser->parse($raw);
+        $this->assertGreaterThanOrEqual(2, $result['firm_count']);
+        $byFirm = [];
+        foreach ($result['firms'] as $firm) {
+            $byFirm[(string) $firm['firm_name']] = $firm;
+        }
+        $this->assertArrayHasKey('A D NAGARKAR & CO', $byFirm);
+        $this->assertSame('ANIRUDDHA DHANANJAY NAGARKAR', $byFirm['A D NAGARKAR & CO']['ca_name'] ?? null);
+        $this->assertNotSame('ANIRUDDHA DHANANJAY NAGARKAR', $byFirm['A D NAGARKAR & CO']['city'] ?? null);
+        $this->assertSame('AHILYANAGAR', $byFirm['A D NAGARKAR & CO']['city'] ?? null);
+
+        $this->assertArrayHasKey('AMIT R POKHARNA AND ASSOCIATES', $byFirm);
+        $this->assertSame('AMIT RATANLAL POKHARNA', $byFirm['AMIT R POKHARNA AND ASSOCIATES']['ca_name'] ?? null);
+        $this->assertNotSame('ANIRUDDHA DHANANJAY NAGARKAR', $byFirm['AMIT R POKHARNA AND ASSOCIATES']['city'] ?? null);
+        $this->assertNotSame('TULJAI NIWAS', $byFirm['AMIT R POKHARNA AND ASSOCIATES']['city'] ?? null);
+        $this->assertSame('AHILYANAGAR', $byFirm['AMIT R POKHARNA AND ASSOCIATES']['city'] ?? null);
+    }
+
+    public function test_city_after_firm_block_is_assigned_to_that_firm(): void
+    {
+        $raw = <<<'TXT'
+AMBADAS K KOHAK & ASSOCIATES
+AMBADAS KISAN KOHAK
+TULJAI NIWAS
+NEAR SAMRUDDHI CLASSES
+ADIPUR
+VIJAY G BELLANI & ASSOCIATES
+VIJAY GOPE BELLANI
+82 WARD 6A
+ADIPUR
+TXT;
+        $parser = new OcrStructureParserService;
+        $result = $parser->parse($raw);
+        $byFirm = [];
+        foreach ($result['firms'] as $firm) {
+            $byFirm[(string) $firm['firm_name']] = $firm;
+        }
+        $this->assertSame('ADIPUR', $byFirm['AMBADAS K KOHAK & ASSOCIATES']['city'] ?? null);
+        $this->assertSame('AMBADAS KISAN KOHAK', $byFirm['AMBADAS K KOHAK & ASSOCIATES']['ca_name'] ?? null);
+        $this->assertSame('ADIPUR', $byFirm['VIJAY G BELLANI & ASSOCIATES']['city'] ?? null);
+        $this->assertSame('VIJAY GOPE BELLANI', $byFirm['VIJAY G BELLANI & ASSOCIATES']['ca_name'] ?? null);
+    }
+
     public function test_golden_northprop_fixture_exact_output(): void
     {
         $path = __DIR__.'/../../Fixtures/ocr/golden_northprop_samples.json';

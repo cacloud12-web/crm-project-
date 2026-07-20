@@ -15,9 +15,17 @@ abstract class TestCase extends BaseTestCase
 
     protected function setUp(): void
     {
-        parent::setUp();
+        // Boot the app and seed before DatabaseTransactions begins, so fixture
+        // rows are not rolled back every test (which previously re-ran seeders
+        // and hammered crm_template_variables with UPDATE locks on SQLite).
+        if (! $this->app) {
+            $this->refreshApplication();
+        }
 
         $this->prepareCrmDatabaseForTesting();
+
+        parent::setUp();
+
         $this->flushCrmCachesForTesting();
         Auth::logout();
     }

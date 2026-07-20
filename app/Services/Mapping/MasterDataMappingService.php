@@ -10,6 +10,7 @@ use App\Models\OcrParsedFirm;
 use App\Models\SourceLead;
 use App\Repositories\Leads\LeadPhoneNumberRepository;
 use App\Services\Cache\CrmCacheService;
+use App\Services\Leads\CaMasterPartnerService;
 use App\Services\Leads\DuplicateLeadDetectionService;
 use App\Services\Leads\LeadFieldNormalizationService;
 use App\Services\Leads\PhoneClassificationService;
@@ -883,6 +884,17 @@ class MasterDataMappingService
         if ($members === []) {
             return;
         }
+
+        // CRM-editable Merchant Centre partners (All Firms expand rows).
+        try {
+            app(CaMasterPartnerService::class)->syncFromMembers($lead, $members);
+        } catch (\Throwable $e) {
+            Log::warning('mapping.crm_partner_sync_failed', [
+                'ca_id' => $lead->ca_id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
         try {
             if (! Schema::connection('ca_reference')->hasTable('ca_partners')
                 || ! Schema::connection('ca_reference')->hasTable('ca_firms')) {
@@ -1041,7 +1053,7 @@ class MasterDataMappingService
             'city_id' => $cityId,
             'state_id' => $stateId,
             'source_id' => $sourceId,
-            'team_size' => $payload['partner_count'] ?? ($payload['team_size'] ?? null),
+            // Team size is manual-only on ca_masters — never derive from partners/OCR payload.
             'status' => 'New',
             'priority' => 'Medium',
             'rating' => 1,

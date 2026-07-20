@@ -16,6 +16,9 @@ class OcrParsedFirm extends Model
 
     protected $fillable = [
         'ocr_document_id',
+        'parse_run_id',
+        'source_fingerprint',
+        'business_fingerprint',
         'sequence_no',
         'raw_firm_name',
         'firm_name',
@@ -36,6 +39,7 @@ class OcrParsedFirm extends Model
         'review_status',
         'overall_confidence',
         'page_number',
+        'column_number',
         'matched_reference_firm_id',
         'crm_ca_id',
         'matched_ca_id',
@@ -50,6 +54,7 @@ class OcrParsedFirm extends Model
         'row_number',
         'bounding_box',
         'validation_errors',
+        'is_noise',
     ];
 
     protected function casts(): array

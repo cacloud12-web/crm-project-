@@ -15,6 +15,8 @@ Route::middleware(['auth', 'rbac'])->group(function () {
         ->middleware('throttle:ocr-upload')
         ->name('ocr-documents.store');
     Route::get('ocr-documents/{ocrDocument}', [OcrDocumentController::class, 'show'])->name('ocr-documents.show');
+    Route::get('ocr-documents/{ocrDocument}/firms', [OcrDocumentController::class, 'firms'])->name('ocr-documents.firms');
+    Route::get('ocr-documents/{ocrDocument}/firms/export', [OcrDocumentController::class, 'exportFirmsCsv'])->name('ocr-documents.firms.export');
     Route::put('ocr-documents/{ocrDocument}', [OcrDocumentController::class, 'updateText'])->name('ocr-documents.update');
     Route::patch('ocr-documents/{ocrDocument}/text', [OcrDocumentController::class, 'updateText'])->name('ocr-documents.update-text');
     Route::post('ocr-documents/{ocrDocument}/retry', [OcrDocumentController::class, 'retry'])

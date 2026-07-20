@@ -43,6 +43,9 @@ window.CA_CRM = (function () {
   }
 
   function openModal(el) {
+    if (typeof closeCaMasterColumnsPopover === 'function') {
+      try { closeCaMasterColumnsPopover(); } catch (e) { /* ignore */ }
+    }
     if (typeof window.openModal === 'function' && window.openModal !== openModal) {
       window.openModal(el);
       return;
@@ -838,14 +841,49 @@ window.CA_CRM = (function () {
       || crmCanAction('followups', 'create');
   }
 
-  function renderLeadCallLogQuickCell(lead) {
+  function renderLeadCallLogQuickCell(lead, partner) {
     if (!canUseLeadCallLog(lead)) {
       return '<td class="lead-quick-cell lead-quick-cell--call-log"><span class="cam-cell-empty">—</span></td>';
     }
+    var partnerAttrs = '';
+    if (partner && partner.id != null) {
+      partnerAttrs = ' data-partner-id="' + escapeHtml(String(partner.id)) + '"' +
+        ' data-partner-ca-name="' + escapeHtml(partner.ca_name || '') + '"' +
+        (partner.mobile ? ' data-partner-mobile="' + escapeHtml(String(partner.mobile)) + '"' : '');
+    }
     return '<td class="lead-quick-cell lead-quick-cell--call-log">' +
       '<button type="button" class="lead-quick-btn lead-quick-btn--call-log" data-lead-quick="call-log" data-lead-id="' +
-      escapeHtml(lead.ca_id) + '" title="Call Log" aria-label="Call Log" data-crm-tip="Call Log">' +
+      escapeHtml(lead.ca_id) + '"' + partnerAttrs + ' title="Call Log" aria-label="Call Log" data-crm-tip="Call Log">' +
       '<i data-lucide="phone-call" class="lead-quick-icon h-4 w-4" aria-hidden="true"></i></button></td>';
+  }
+
+  function resolvePartnerFromLead(lead, opts) {
+    opts = opts || {};
+    if (!opts.partnerId && !opts.partnerCaName) return null;
+    var partners = (lead && lead.partners) || [];
+    for (var i = 0; i < partners.length; i++) {
+      if (opts.partnerId && String(partners[i].id) === String(opts.partnerId)) return partners[i];
+    }
+    if (opts.partnerCaName) {
+      var target = String(opts.partnerCaName).toLowerCase().trim();
+      for (var j = 0; j < partners.length; j++) {
+        if (String(partners[j].ca_name || '').toLowerCase().trim() === target) return partners[j];
+      }
+    }
+    return null;
+  }
+
+  function applyCallLogPartnerContext(lead, opts) {
+    opts = opts || {};
+    if (!opts.partnerId && !opts.partnerCaName) return lead;
+    var partner = resolvePartnerFromLead(lead, opts);
+    var caName = (partner && partner.ca_name) || opts.partnerCaName || lead.ca_name;
+    var mobile = (partner && partner.mobile) || opts.partnerMobile || lead.mobile_no;
+    return Object.assign({}, lead, {
+      ca_name: caName,
+      mobile_no: mobile && mobile !== '—' ? mobile : (lead.mobile_no || '—'),
+      _callLogContextType: 'partner',
+    });
   }
 
   /* ─── Inbox-style row selection (checkbox column) ─── */
@@ -1561,6 +1599,11 @@ window.CA_CRM = (function () {
       return;
     }
     hidden.value = String(lead.ca_id);
+    var titleEl = document.getElementById('lead-call-log-context-title');
+    var caLabelEl = document.getElementById('lead-call-log-ctx-ca-label');
+    var isPartner = lead._callLogContextType === 'partner';
+    if (titleEl) titleEl.textContent = isPartner ? 'Partner' : 'Lead';
+    if (caLabelEl) caLabelEl.textContent = isPartner ? 'Partner Name' : 'CA Name';
     var firmEl = document.getElementById('lead-call-log-ctx-firm');
     var caEl = document.getElementById('lead-call-log-ctx-ca');
     var mobileEl = document.getElementById('lead-call-log-ctx-mobile');
@@ -1710,7 +1753,8 @@ if (otherInput) {
     });
   }
 
-  function openLeadCallLogModal(leadId) {
+  function openLeadCallLogModal(leadId, opts) {
+    opts = opts || {};
     if (!leadId) {
       toast('Lead not found', 'warning');
       return;
@@ -1753,7 +1797,7 @@ if (otherInput) {
         throw new Error('You can only log calls for leads assigned to you.');
       }
       populateLeadCallLogStatusSelect(document.getElementById('lead-call-log-status'), results[0]);
-      renderLeadCallLogContext(results[1]);
+      renderLeadCallLogContext(applyCallLogPartnerContext(results[1], opts));
       setLeadCallLogFormBusy(false);
       if (window.CrmDateTimePicker) {
         window.CrmDateTimePicker.syncAll(form);
@@ -1826,7 +1870,8 @@ if (otherInput) {
     });
   }
 
-  function handleCrmRowAction(action, leadId) {
+  function handleCrmRowAction(action, leadId, dataset) {
+    dataset = dataset || {};
     if (!leadId) {
       console.error('[CRM] Row action missing lead id:', action);
       toast('Lead not found', 'warning');
@@ -1837,6 +1882,13 @@ if (otherInput) {
       return;
     }
     if (action === 'edit') {
+      if (dataset.partnerId) {
+        openCaMasterPartnerEditFromIds(leadId, dataset.partnerId).catch(function (err) {
+          console.error('[CRM] Edit partner failed:', leadId, dataset.partnerId, err);
+          toast(err.message || 'Unable to open partner edit form', 'error');
+        });
+        return;
+      }
       openLeadFormForEdit(leadId).then(function (ok) {
         if (ok) openExclusiveCrmModal(document.getElementById('modal-add-lead'));
       }).catch(function (err) {
@@ -1854,11 +1906,18 @@ if (otherInput) {
       return;
     }
     if (action === 'call-log') {
-      openLeadCallLogModal(leadId);
+      openLeadCallLogModal(leadId, {
+        partnerId: dataset.partnerId || '',
+        partnerCaName: dataset.partnerCaName || '',
+        partnerMobile: dataset.partnerMobile || '',
+      });
       return;
     }
     if (action === 'google-lookup' || action === 'google_lookup') {
-      openLeadResearch(leadId);
+      openLeadResearch(leadId, {
+        partnerCaName: dataset.partnerCaName || '',
+        partnerId: dataset.partnerId || '',
+      });
       return;
     }
     if (action === 'sms' || action === 'email' || action === 'whatsapp') {
@@ -1866,6 +1925,18 @@ if (otherInput) {
       return;
     }
     if (action === 'delete') {
+      if (dataset.partnerId) {
+        if (!window.confirm('Remove this partner from the firm?')) return;
+        apiFetch('/ca-masters/' + encodeURIComponent(leadId) + '/partners/' + encodeURIComponent(dataset.partnerId), { method: 'DELETE' })
+          .then(function () {
+            toast('Partner removed', 'success');
+            renderCaMasterTable();
+          })
+          .catch(function (err) {
+            toast(err.message || 'Unable to remove partner', 'error');
+          });
+        return;
+      }
       if (!window.confirm('Delete this firm record? This cannot be undone.')) return;
       apiFetch('/ca-masters/' + encodeURIComponent(leadId), { method: 'DELETE' })
         .then(function () {
@@ -1898,7 +1969,15 @@ if (otherInput) {
         e.preventDefault();
         e.stopPropagation();
         closeAllCrmActionMenus();
-        handleLeadQuickAction(quickBtn.getAttribute('data-lead-quick'), quickBtn.getAttribute('data-lead-id'));
+        handleLeadQuickAction(
+          quickBtn.getAttribute('data-lead-quick'),
+          quickBtn.getAttribute('data-lead-id'),
+          {
+            partnerCaName: quickBtn.getAttribute('data-partner-ca-name') || '',
+            partnerId: quickBtn.getAttribute('data-partner-id') || '',
+            partnerMobile: quickBtn.getAttribute('data-partner-mobile') || '',
+          },
+        );
         return;
       }
       var drawerGoogleBtn = e.target.closest('[data-lead-drawer-google]');
@@ -1926,7 +2005,7 @@ if (otherInput) {
     window._actionDropdownHandlersRegistered = true;
 
     CAActionDropdown.register('crm-lead', function (action, dataset) {
-      handleCrmRowAction(action, dataset.menuId);
+      handleCrmRowAction(action, dataset.menuId, dataset);
     });
 
     CAActionDropdown.register('assignment', function (action, dataset) {
@@ -2275,12 +2354,14 @@ if (otherInput) {
       });
   }
 
-  function openLeadResearch(leadId) {
+  function openLeadResearch(leadId, opts) {
+    opts = opts || {};
     if (!window.CA_RESEARCH_WORKSPACE) {
       toast('Research workspace is unavailable', 'error');
       return;
     }
-    if (_leadResearchOpening[leadId]) return;
+    var openingKey = leadId + (opts.partnerId ? (':' + opts.partnerId) : (opts.partnerCaName ? (':' + opts.partnerCaName) : ''));
+    if (_leadResearchOpening[openingKey]) return;
     var lead = getLeadRecord(leadId);
     if (!lead) {
       toast('Lead not found', 'warning');
@@ -2290,30 +2371,45 @@ if (otherInput) {
       toast('You do not have access to this lead', 'warning');
       return;
     }
-    if (!hasSearchableLeadForGoogleLookup(lead)) {
+    var researchLead = lead;
+    if (opts.partnerCaName) {
+      researchLead = Object.assign({}, lead, {
+        ca_name: opts.partnerCaName,
+        primary_ca_name: opts.partnerCaName,
+      });
+    }
+    if (!hasSearchableLeadForGoogleLookup(researchLead)) {
       toast(GOOGLE_LOOKUP_INSUFFICIENT_MSG, 'warning');
       return;
     }
-    var googleQuery = buildLeadGoogleSearchQuery(lead);
-    var mapsQuery = buildLeadGoogleMapsQuery(lead);
-    _leadResearchOpening[leadId] = true;
+    var googleQuery = buildLeadGoogleSearchQuery(researchLead);
+    var mapsQuery = buildLeadGoogleMapsQuery(researchLead);
+    _leadResearchOpening[openingKey] = true;
 
     ensureLeadWithGoogleFields(leadId, lead).then(function (resolvedLead) {
       lead = resolvedLead || lead;
-      var savedPlace = leadToResearchPlace(lead);
-      var savedMapsUrl = lead.google_maps_url
+      if (opts.partnerCaName) {
+        researchLead = Object.assign({}, lead, {
+          ca_name: opts.partnerCaName,
+          primary_ca_name: opts.partnerCaName,
+        });
+        googleQuery = buildLeadGoogleSearchQuery(researchLead);
+        mapsQuery = buildLeadGoogleMapsQuery(researchLead);
+      }
+      var savedPlace = opts.partnerCaName ? null : leadToResearchPlace(lead);
+      var savedMapsUrl = opts.partnerCaName ? null : (lead.google_maps_url
         || (lead.latitude != null && lead.longitude != null
           ? 'https://www.google.com/maps?q=' + lead.latitude + ',' + lead.longitude
-          : null);
+          : null));
 
       CA_RESEARCH_WORKSPACE.open({
         leadId: leadId,
-        lead: lead,
+        lead: researchLead,
         googleQuery: googleQuery,
         mapsQuery: mapsQuery,
         place: savedPlace,
         results: savedPlace ? [savedPlace] : [],
-        current: lead,
+        current: researchLead,
         cached: !!savedPlace,
         mapsExternal: savedMapsUrl,
         mapsEmbed: savedMapsUrl
@@ -2323,11 +2419,13 @@ if (otherInput) {
           : null,
         sourceNote: savedPlace
           ? 'Loading saved Google data…'
-          : 'Loading Google Places results…',
+          : (opts.partnerCaName
+            ? ('Searching Google Places for partner ' + opts.partnerCaName + '…')
+            : 'Loading Google Places results…'),
         deps: researchWorkspaceDeps(),
       });
 
-      runLeadResearchLookup(leadId, lead, googleQuery)
+      runLeadResearchLookup(leadId, researchLead, googleQuery)
         .then(function (payload) {
           CA_RESEARCH_WORKSPACE.setResearchData(payload);
         })
@@ -2337,10 +2435,10 @@ if (otherInput) {
           );
         })
         .finally(function () {
-          delete _leadResearchOpening[leadId];
+          delete _leadResearchOpening[openingKey];
         });
     }).catch(function () {
-      delete _leadResearchOpening[leadId];
+      delete _leadResearchOpening[openingKey];
     });
   }
 
@@ -2348,13 +2446,18 @@ if (otherInput) {
     // Research workspace handles its own events; kept for bindCrmActionsDismiss compatibility.
   }
 
-  function handleLeadQuickAction(action, leadId) {
+  function handleLeadQuickAction(action, leadId, opts) {
+    opts = opts || {};
     if (action === 'call-log' || action === 'call_log') {
-      openLeadCallLogModal(leadId);
+      openLeadCallLogModal(leadId, {
+        partnerId: opts.partnerId || '',
+        partnerCaName: opts.partnerCaName || '',
+        partnerMobile: opts.partnerMobile || '',
+      });
       return;
     }
     if (action === 'research' || action === 'google' || action === 'maps') {
-      openLeadResearch(leadId);
+      openLeadResearch(leadId, opts || {});
     }
   }
 
@@ -2626,7 +2729,10 @@ if (otherInput) {
       state_id: l.state_id ? String(l.state_id) : null,
       city: l.city || l.city_name || '—',
       city_id: l.city_id ? String(l.city_id) : null,
-      team_size: l.team_size != null && l.team_size !== '' ? l.team_size : null,
+      team_size: l.team_size != null && l.team_size !== '' ? Number(l.team_size) : 0,
+      primary_ca_name: l.primary_ca_name || l.ca_name || '',
+      partner_count: l.partner_count != null ? Number(l.partner_count) : (Array.isArray(l.partners) ? l.partners.length : null),
+      partners: Array.isArray(l.partners) ? l.partners : [],
       existing_software: l.existing_software || '—',
       website: l.website || '—',
       rating: l.rating || 1,
@@ -3861,6 +3967,13 @@ if (otherInput) {
     icons();
   }
 
+  function refreshDashboardAfterAssignment() {
+    invalidateDataCaches(['metrics', 'segment_counts', 'assignments', 'employee_dashboard']);
+    if (window._currentPageId !== 'dashboard') return;
+    if (isEmployeeUser()) renderEmployeeDashboard();
+    else renderManagerDashboard();
+  }
+
   function reloadLeadDataAfterMutation(options) {
     options = options || {};
     invalidateDataCaches(options.cacheKeys || ['metrics', 'leads', 'assignments']);
@@ -3873,7 +3986,10 @@ if (otherInput) {
       if (document.getElementById('assignment-page-root')) {
         refreshAssignmentDashboardWidgets();
       }
-      if (isEmployeeUser() && (window._currentPageId === 'dashboard' || document.getElementById('emp-assigned-leads'))) {
+      if (window._currentPageId === 'dashboard') {
+        if (isEmployeeUser()) renderEmployeeDashboard();
+        else renderManagerDashboard();
+      } else if (isEmployeeUser() && document.getElementById('emp-assigned-leads')) {
         renderEmployeeDashboard();
       }
     });
@@ -4920,6 +5036,38 @@ if (otherInput) {
     return u.role === 'admin' || u.role === 'super_admin' || u.role === 'manager';
   }
 
+  function canBypassLeadFormFieldLocks() {
+    var role = (window.__CRM_USER__ || {}).role || '';
+    return role === 'super_admin' || role === 'manager';
+  }
+
+  function unlockLeadFormField(el) {
+    if (!el) return;
+    setLeadFieldLockState(el, false);
+    if (el.tagName === 'SELECT' && el.dataset.scEnhanced === '1') {
+      var wrap = el.closest('.sc-combobox');
+      if (wrap) {
+        var input = wrap.querySelector('.sc-combobox-input');
+        if (input) input.disabled = false;
+      }
+    }
+  }
+
+  function unlockAllLeadFormFields(form) {
+    if (!form) return;
+    clearLeadFormLockDecorations(form);
+    window._leadLockedFields = [];
+    LEAD_FORM_LOCKABLE_FIELDS.forEach(function (name) {
+      unlockLeadFormField(form.elements[name]);
+    });
+    var locationPair = form.querySelector('.sc-location-pair');
+    if (locationPair) {
+      ['state_id', 'city_id'].forEach(function (name) {
+        unlockLeadFormField(form.elements[name]);
+      });
+    }
+  }
+
   function releaseLeadLock() {
     var id = window._editingLeadId;
     if (!id || isAdminUser()) return Promise.resolve();
@@ -5090,13 +5238,14 @@ if (otherInput) {
   }
 
   var LEAD_FORM_LOCKABLE_FIELDS = [
-    'firm_name', 'ca_name', 'mobile_no', 'alternate_mobile_no', 'email_id', 'gst_no',
-    'state_id', 'city_id', 'team_size', 'existing_software', 'website', 'rating',
+    'firm_name', 'ca_name', 'mobile_no', 'alternate_mobile_no', 'email_id',
+    'state_id', 'city_id', 'team_size', 'existing_software', 'website',
     'is_newly_established', 'source_id', 'status', 'executive_id',
   ];
 
   var EMPLOYEE_ALWAYS_EDITABLE_FIELDS = [
-    'alternate_mobile_no', 'rating', 'is_newly_established', 'status', 'source_id',
+    'alternate_mobile_no', 'is_newly_established', 'status', 'source_id', 'team_size',
+    'state_id', 'city_id',
   ];
 
   var EMPLOYEE_LEAD_ADD_VISIBLE_FIELDS = [
@@ -5235,6 +5384,20 @@ if (otherInput) {
     var lock = (lead && lead.lock) || {};
     var lockedByOther = !!lock.is_locked_by_other;
     var submitBtn = document.getElementById('add-lead-submit-btn');
+
+    if (canBypassLeadFormFieldLocks()) {
+      unlockAllLeadFormFields(form);
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.classList.remove('opacity-50', 'pointer-events-none');
+      }
+      setLeadLockBadge(lead);
+      applyEmployeeLeadAddFormRules(form, !isEdit);
+      scheduleLeadMobileDuplicateCheck();
+      icons();
+      return;
+    }
+
     var lockedFields = [];
 
     clearLeadFormLockDecorations(form);
@@ -5531,7 +5694,14 @@ if (otherInput) {
     }
 
     loadDashboardMetricsFromDatabase(function (data, error, meta) {
-      if (meta && meta.fromCache && painted && !meta.background) return;
+      if (meta && meta.background) {
+        if (!error && employeeDashboardData) {
+          paintEmployeeDashboard(employeeDashboardData);
+          if (window.CA_RBAC && typeof CA_RBAC.enforce === 'function') CA_RBAC.enforce();
+          icons();
+        }
+        return;
+      }
       if (error && !employeeDashboardData) {
         paintEmployeeDashboardLoadError(error);
         toast(error.message || 'Unable to load your dashboard', 'error');
@@ -5546,7 +5716,7 @@ if (otherInput) {
       paintEmployeeDashboard(employeeDashboardData);
       if (window.CA_RBAC && typeof CA_RBAC.enforce === 'function') CA_RBAC.enforce();
       icons();
-    }, { force: !painted });
+    }, { force: true, background: !!painted });
   }
 
   function paintEmployeeDashboard(data) {
@@ -6965,7 +7135,9 @@ if (otherInput) {
     }
 
     panel.classList.remove('hidden');
-    if (payload.scope === 'employee' && payload.has_activity === false) {
+    var metrics = payload.metrics || {};
+    var assignedCount = metrics.leads ? Number(metrics.leads.total_assigned || 0) : 0;
+    if (payload.scope === 'employee' && payload.has_activity === false && assignedCount <= 0) {
       panel.innerHTML =
         '<div class="flex items-center justify-between gap-3 mb-2">' +
           '<h2 class="text-card-heading">Employee Productivity</h2>' +
@@ -6975,7 +7147,7 @@ if (otherInput) {
       return;
     }
 
-    var metrics = payload.metrics;
+    metrics = payload.metrics;
     var dateLabel = (payload.date_range && payload.date_range.label) || '';
     var title = payload.scope === 'employee' && payload.employee
       ? (payload.employee.name + ' · Productivity')
@@ -8377,9 +8549,15 @@ if (otherInput) {
     } else if (document.getElementById('leads-filter-pipeline-stage')) {
       applyLeadStatusDropdownToFilters(filters, readLeadStatusDropdownValue('leads-filter-pipeline-stage'));
     }
-    var seg = getLeadFilter();
-    if (seg && seg !== 'all' && isMasterDataHub()) {
-      filters.segment = seg;
+    // Exact Status column filter must not mix with New Firms KPI segment.
+    if (filters.status) {
+      delete filters.segment;
+      window._leadSegmentFilter = 'all';
+    } else {
+      var seg = getLeadFilter();
+      if (seg && seg !== 'all' && isMasterDataHub()) {
+        filters.segment = seg;
+      }
     }
     return filters;
   }
@@ -8443,9 +8621,10 @@ if (otherInput) {
   }
 
   function applyLeadStatusDropdownToFilters(filters, dropdownValue) {
+    // Toolbar stage filter takes precedence only when set. Do not wipe column Status.
+    if (!dropdownValue) return filters;
     delete filters.master_pipeline_stage;
     delete filters.status;
-    if (!dropdownValue) return filters;
     if (MASTER_PIPELINE_FILTER_STAGES.indexOf(dropdownValue) >= 0) {
       filters.master_pipeline_stage = dropdownValue;
     } else {
@@ -8462,9 +8641,9 @@ if (otherInput) {
   function mergeLeadStatusFiltersIntoExtra(extra, selectId) {
     extra = extra || {};
     var dropdownValue = readLeadStatusDropdownValue(selectId);
+    if (!dropdownValue) return extra;
     delete extra.master_pipeline_stage;
     delete extra.status;
-    if (!dropdownValue) return extra;
     if (MASTER_PIPELINE_FILTER_STAGES.indexOf(dropdownValue) >= 0) {
       extra.master_pipeline_stage = dropdownValue;
     } else {
@@ -8585,6 +8764,8 @@ if (otherInput) {
       firmActions += iconBtn('download', 'Export', 'data-inbox-action="export" data-inbox-table="ca-master-data-table" data-inbox-module="ca-master" id="cam-export-btn"');
     }
     firmActions += addFirmBtn;
+    var columnsBtn = iconBtn('columns-3', 'Manage columns', 'id="cam-columns-btn" data-cam-columns-toggle aria-haspopup="dialog" aria-expanded="false"');
+    firmActions = columnsBtn + firmActions;
     el.innerHTML =
       '<div class="cam-control-primary">' +
         '<div class="leads-kpi-chips cam-control-chips">' + chipsHtml + '</div>' +
@@ -8593,6 +8774,8 @@ if (otherInput) {
       (firmActions
         ? '<div class="leads-kpi-actions" role="toolbar" aria-label="Firm actions">' + firmActions + '</div>'
         : '');
+    ensureCaMasterColumnsPopoverMounted();
+    applyCaMasterColumnVisibility(document.getElementById('cam-hub') || document);
     if (!el._camKpiBound) {
       el._camKpiBound = true;
       el.addEventListener('click', function (e) {
@@ -12515,35 +12698,45 @@ if (otherInput) {
       });
   }
 
-  function teamSizeValue(lead) {
-    var raw = lead.team_size;
-    if (raw === null || raw === undefined || raw === '' || raw === 0 || raw === '0') {
-      return null;
-    }
+  function storedTeamSize(record) {
+    var raw = record && record.team_size != null ? record.team_size : 0;
     var parsed = parseInt(raw, 10);
-    return isNaN(parsed) || parsed <= 0 ? null : parsed;
+    return isNaN(parsed) || parsed < 0 ? 0 : parsed;
   }
 
-  function renderTeamSizeCell(lead) {
-    var size = teamSizeValue(lead);
-    var tooltip;
-    var labelFull;
-    var labelCompact;
+  function formatTeamSizeLabel(size) {
+    if (size === 0) return '0';
+    if (size === 1) return '1 Employee';
+    return size + ' Employees';
+  }
 
-    if (size == null) {
-      tooltip = 'Team Size\nNot Specified';
-      labelFull = '⚪ Not Specified';
-      labelCompact = '⚪ Not Specified';
-    } else {
-      tooltip = 'Team Size\n' + size + ' Employees';
-      labelFull = '👥 ' + size + ' Employees';
-      labelCompact = '👥 ' + size;
+  function teamSizeValue(lead) {
+    return storedTeamSize(lead);
+  }
+
+  function renderTeamSizeCell(lead, opts) {
+    opts = opts || {};
+    var size = storedTeamSize(lead);
+    var tooltip = 'Team Size\n' + formatTeamSizeLabel(size);
+    var labelFull = size === 0 ? '0' : (size === 1 ? '👥 1 Employee' : '👥 ' + size + ' Employees');
+    var labelCompact = size === 0 ? '0' : '👥 ' + size;
+    var canEdit = opts.canEdit !== false && !lead.is_read_only
+      && (crmCanAction('leads', 'edit') || crmCanAction('ca_master', 'edit'));
+    var inner = '<span class="cam-team-size-cell__full">' + escapeHtml(labelFull) + '</span>' +
+      '<span class="cam-team-size-cell__compact">' + escapeHtml(labelCompact) + '</span>';
+
+    if (canEdit) {
+      var caId = escapeHtml(String(opts.caId || lead.ca_id || ''));
+      var partnerAttr = opts.partnerId ? ' data-partner-id="' + escapeHtml(String(opts.partnerId)) + '"' : '';
+      return '<button type="button" class="cam-team-size-cell cam-inline-team-size-btn" data-cam-inline-team-size="' + caId + '"' + partnerAttr +
+        ' data-team-size="' + size + '" data-crm-tip="' + escapeHtml(tooltip) + '" title="Edit team size">' + inner + '</button>';
     }
 
-    return '<span class="cam-team-size-cell" data-crm-tip="' + escapeHtml(tooltip) + '" aria-label="' + escapeHtml(tooltip.replace('\n', ' ')) + '">' +
-      '<span class="cam-team-size-cell__full">' + escapeHtml(labelFull) + '</span>' +
-      '<span class="cam-team-size-cell__compact">' + escapeHtml(labelCompact) + '</span>' +
-    '</span>';
+    return '<span class="cam-team-size-cell" data-crm-tip="' + escapeHtml(tooltip) + '" aria-label="' + escapeHtml(tooltip.replace('\n', ' ')) + '">' + inner + '</span>';
+  }
+
+  function renderCaMasterInlineTeamSizeCell(record, canEdit, opts) {
+    return renderTeamSizeCell(record, Object.assign({ canEdit: canEdit }, opts || {}));
   }
 
   function teamMembersSummary(lead) {
@@ -12817,32 +13010,540 @@ if (otherInput) {
     });
   }
 
+  var CAM_VISIBLE_COLUMNS_STORAGE_KEY = 'crm.ca_masters.visible_columns.v1';
+  var _camVisibleColumnKeys = null;
+
+  function camColTd(key, cls, html) {
+    return '<td class="' + cls + '" data-column="' + escapeHtml(String(key)) + '">' + (html || '') + '</td>';
+  }
+
+  function withCamDataColumn(key, tdHtml) {
+    return String(tdHtml || '').replace(/^<td\b/i, '<td data-column="' + escapeHtml(String(key)) + '"');
+  }
+
+  function getCaMasterColumnDefs() {
+    if (window.CAPages && typeof window.CAPages.caMasterColumnDefinitions === 'function') {
+      return window.CAPages.caMasterColumnDefinitions() || [];
+    }
+    return [];
+  }
+
+  function caMasterColumnAllowedInPicker(def) {
+    if (!def || def.picker === false || def.key === 'selection') return false;
+    if (def.permission === 'assignment') {
+      if (typeof crmCanAction === 'function' && !crmCanAction('assignment', 'view') && !crmCanAction('assignment', 'create')) {
+        return false;
+      }
+    }
+    if (def.permission === 'mobile') {
+      if (typeof crmCanAction === 'function' && !crmCanAction('ca_master', 'view') && !crmCanAction('leads', 'view')) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function getCaMasterDefaultVisibleKeys() {
+    return getCaMasterColumnDefs().filter(function (d) {
+      return d.defaultVisible !== false;
+    }).map(function (d) { return d.key; });
+  }
+
+  function normalizeCaMasterVisibleKeys(keys, knownKeys) {
+    var defs = getCaMasterColumnDefs();
+    var byKey = {};
+    defs.forEach(function (d) { byKey[d.key] = d; });
+    var visible = [];
+    var seen = {};
+    (keys || []).forEach(function (k) {
+      if (!byKey[k] || seen[k]) return;
+      seen[k] = true;
+      visible.push(k);
+    });
+    var known = Array.isArray(knownKeys) ? knownKeys : null;
+    defs.forEach(function (d) {
+      if (known && known.indexOf(d.key) < 0 && d.defaultVisible !== false && !seen[d.key]) {
+        seen[d.key] = true;
+        visible.push(d.key);
+      }
+      if (d.required && !seen[d.key]) {
+        seen[d.key] = true;
+        visible.push(d.key);
+      }
+    });
+    var hasInfo = visible.some(function (k) {
+      return k !== 'selection' && k !== 'actions';
+    });
+    if (!hasInfo && byKey.firm_name && !seen.firm_name) {
+      visible.push('firm_name');
+    }
+    return visible;
+  }
+
+  function loadCaMasterVisibleKeysFromStorage() {
+    try {
+      var raw = localStorage.getItem(CAM_VISIBLE_COLUMNS_STORAGE_KEY);
+      if (!raw) return getCaMasterDefaultVisibleKeys();
+      var parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return normalizeCaMasterVisibleKeys(parsed, null);
+      }
+      if (parsed && typeof parsed === 'object') {
+        return normalizeCaMasterVisibleKeys(parsed.visible || parsed.keys || [], parsed.known || null);
+      }
+    } catch (e) { /* ignore */ }
+    return getCaMasterDefaultVisibleKeys();
+  }
+
+  function getCaMasterVisibleKeys() {
+    if (!_camVisibleColumnKeys) {
+      _camVisibleColumnKeys = loadCaMasterVisibleKeysFromStorage();
+    }
+    return _camVisibleColumnKeys.slice();
+  }
+
+  function saveCaMasterVisibleKeys(keys) {
+    var normalized = normalizeCaMasterVisibleKeys(keys, getCaMasterColumnDefs().map(function (d) { return d.key; }));
+    _camVisibleColumnKeys = normalized;
+    try {
+      localStorage.setItem(CAM_VISIBLE_COLUMNS_STORAGE_KEY, JSON.stringify({
+        visible: normalized,
+        known: getCaMasterColumnDefs().map(function (d) { return d.key; }),
+      }));
+    } catch (e) { /* quota */ }
+    return normalized;
+  }
+
+  function restoreCaMasterDefaultColumns() {
+    try { localStorage.removeItem(CAM_VISIBLE_COLUMNS_STORAGE_KEY); } catch (e) { /* ignore */ }
+    _camVisibleColumnKeys = getCaMasterDefaultVisibleKeys();
+    return _camVisibleColumnKeys.slice();
+  }
+
+  function getCaMasterVisibleColumnCount() {
+    return getCaMasterVisibleKeys().length;
+  }
+
+  function isCaMasterColumnVisible(key) {
+    return getCaMasterVisibleKeys().indexOf(key) >= 0;
+  }
+
+  function applyCaMasterColumnVisibility(scope) {
+    scope = scope || document.getElementById('cam-hub') || document;
+    var visible = {};
+    getCaMasterVisibleKeys().forEach(function (k) { visible[k] = true; });
+    getCaMasterColumnDefs().forEach(function (d) {
+      var show = !!visible[d.key];
+      var nodes = scope.querySelectorAll('[data-column="' + d.key + '"]');
+      for (var i = 0; i < nodes.length; i++) {
+        nodes[i].hidden = !show;
+        nodes[i].classList.toggle('cam-col-is-hidden', !show);
+      }
+    });
+    syncCaMasterColumnsSelectAllState();
+  }
+
+  function camColumnsPopoverHtml() {
+    return '<div class="cam-columns-popover hidden" id="cam-columns-popover" role="dialog" aria-label="Manage columns" aria-modal="false" hidden>' +
+      '<div class="cam-columns-popover__head">' +
+        '<span class="cam-columns-popover__title">Manage Columns</span>' +
+        '<button type="button" class="cam-columns-popover__close" data-cam-columns-close aria-label="Close">' +
+          '<i data-lucide="x" class="h-4 w-4" aria-hidden="true"></i>' +
+        '</button>' +
+      '</div>' +
+      '<div class="cam-columns-popover__toolbar">' +
+        '<label class="cam-columns-select-all">' +
+          '<input type="checkbox" id="cam-columns-select-all" />' +
+          '<span>Select All</span>' +
+        '</label>' +
+        '<button type="button" class="btn-secondary btn-xs" id="cam-columns-restore-default">Restore Default</button>' +
+      '</div>' +
+      '<ul class="cam-columns-popover__list" id="cam-columns-list" role="list"></ul>' +
+    '</div>';
+  }
+
+  function buildCaMasterColumnsListHtml() {
+    var visible = {};
+    getCaMasterVisibleKeys().forEach(function (k) { visible[k] = true; });
+    return getCaMasterColumnDefs().filter(caMasterColumnAllowedInPicker).map(function (d) {
+      var checked = !!visible[d.key];
+      var disabled = !!d.required;
+      return '<li class="cam-columns-popover__item' + (disabled ? ' is-required' : '') + '">' +
+        '<label class="cam-columns-popover__label">' +
+          '<input type="checkbox" class="cam-columns-check" data-cam-column-key="' + escapeHtml(d.key) + '"' +
+            (checked ? ' checked' : '') + (disabled ? ' disabled' : '') + ' />' +
+          '<span class="cam-columns-popover__name">' + escapeHtml(d.label) + '</span>' +
+          (disabled ? '<span class="cam-columns-popover__required">Required</span>' : '') +
+        '</label></li>';
+    }).join('');
+  }
+
+  function syncCaMasterColumnsSelectAllState() {
+    var selectAll = document.getElementById('cam-columns-select-all');
+    if (!selectAll) return;
+    var checks = document.querySelectorAll('#cam-columns-list .cam-columns-check:not(:disabled)');
+    if (!checks.length) {
+      selectAll.checked = false;
+      selectAll.indeterminate = false;
+      return;
+    }
+    var checkedCount = 0;
+    for (var i = 0; i < checks.length; i++) {
+      if (checks[i].checked) checkedCount++;
+    }
+    selectAll.checked = checkedCount === checks.length;
+    selectAll.indeterminate = checkedCount > 0 && checkedCount < checks.length;
+  }
+
+  function refreshCaMasterColumnsPopoverList() {
+    var list = document.getElementById('cam-columns-list');
+    if (!list) return;
+    list.innerHTML = buildCaMasterColumnsListHtml();
+    syncCaMasterColumnsSelectAllState();
+  }
+
+  function closeCaMasterColumnsPopover() {
+    var pop = document.getElementById('cam-columns-popover');
+    var btn = document.getElementById('cam-columns-btn');
+    if (pop) {
+      pop.classList.add('hidden');
+      pop.hidden = true;
+    }
+    if (btn) {
+      btn.setAttribute('aria-expanded', 'false');
+      btn.classList.remove('is-active');
+    }
+  }
+
+  function openCaMasterColumnsPopover() {
+    var pop = document.getElementById('cam-columns-popover');
+    var btn = document.getElementById('cam-columns-btn');
+    if (!pop || !btn) return;
+    refreshCaMasterColumnsPopoverList();
+    positionCaMasterColumnsPopover();
+    pop.classList.remove('hidden');
+    pop.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+    btn.classList.add('is-active');
+    icons();
+    var first = pop.querySelector('.cam-columns-check:not(:disabled), #cam-columns-restore-default');
+    if (first) try { first.focus(); } catch (e) { /* ignore */ }
+  }
+
+  function toggleCaMasterColumnsPopover() {
+    var pop = document.getElementById('cam-columns-popover');
+    if (!pop || pop.hidden || pop.classList.contains('hidden')) openCaMasterColumnsPopover();
+    else closeCaMasterColumnsPopover();
+  }
+
+  function setCaMasterColumnVisible(key, show) {
+    var defs = getCaMasterColumnDefs();
+    var def = null;
+    for (var i = 0; i < defs.length; i++) {
+      if (defs[i].key === key) { def = defs[i]; break; }
+    }
+    if (!def || def.required) return getCaMasterVisibleKeys();
+    var keys = getCaMasterVisibleKeys();
+    var idx = keys.indexOf(key);
+    if (show && idx < 0) keys.push(key);
+    if (!show && idx >= 0) keys.splice(idx, 1);
+    saveCaMasterVisibleKeys(keys);
+    applyCaMasterColumnVisibility();
+    return getCaMasterVisibleKeys();
+  }
+
+  function selectAllCaMasterColumns() {
+    var keys = getCaMasterColumnDefs().filter(function (d) {
+      return d.key === 'selection' || caMasterColumnAllowedInPicker(d) || d.required;
+    }).map(function (d) { return d.key; });
+    // Always include selection + any required not in picker
+    getCaMasterColumnDefs().forEach(function (d) {
+      if (d.required && keys.indexOf(d.key) < 0) keys.push(d.key);
+    });
+    saveCaMasterVisibleKeys(keys);
+    refreshCaMasterColumnsPopoverList();
+    applyCaMasterColumnVisibility();
+  }
+
+  function ensureCaMasterColumnsPopoverMounted() {
+    var hub = document.getElementById('cam-hub');
+    if (!hub || document.getElementById('cam-columns-popover')) return;
+    hub.insertAdjacentHTML('beforeend', camColumnsPopoverHtml());
+  }
+
+  function positionCaMasterColumnsPopover() {
+    var pop = document.getElementById('cam-columns-popover');
+    var btn = document.getElementById('cam-columns-btn');
+    if (!pop || !btn) return;
+    var rect = btn.getBoundingClientRect();
+    var width = Math.min(280, window.innerWidth - 16);
+    var left = Math.min(Math.max(8, rect.right - width), window.innerWidth - width - 8);
+    var top = Math.min(rect.bottom + 8, window.innerHeight - 24);
+    pop.style.position = 'fixed';
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+    pop.style.width = width + 'px';
+    pop.style.zIndex = '80';
+  }
+
+  function bindCaMasterColumnsUi(page) {
+    if (!page || page._camColumnsBound) return;
+    page._camColumnsBound = true;
+    ensureCaMasterColumnsPopoverMounted();
+
+    page.addEventListener('click', function (e) {
+      var toggle = e.target.closest('[data-cam-columns-toggle], #cam-columns-btn');
+      if (toggle) {
+        e.preventDefault();
+        e.stopPropagation();
+        ensureCaMasterColumnsPopoverMounted();
+        toggleCaMasterColumnsPopover();
+        return;
+      }
+      if (e.target.closest('[data-cam-columns-close]')) {
+        e.preventDefault();
+        closeCaMasterColumnsPopover();
+        return;
+      }
+      if (e.target.closest('#cam-columns-restore-default')) {
+        e.preventDefault();
+        restoreCaMasterDefaultColumns();
+        refreshCaMasterColumnsPopoverList();
+        applyCaMasterColumnVisibility();
+        return;
+      }
+    });
+
+    if (!window._camColumnsDocBound) {
+      window._camColumnsDocBound = true;
+      document.addEventListener('click', function (e) {
+        var pop = document.getElementById('cam-columns-popover');
+        if (!pop || pop.hidden || pop.classList.contains('hidden')) return;
+        if (e.target.closest('#cam-columns-popover') || e.target.closest('#cam-columns-btn') || e.target.closest('[data-cam-columns-toggle]')) return;
+        closeCaMasterColumnsPopover();
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Escape') return;
+        var pop = document.getElementById('cam-columns-popover');
+        if (!pop || pop.hidden || pop.classList.contains('hidden')) return;
+        closeCaMasterColumnsPopover();
+        var btn = document.getElementById('cam-columns-btn');
+        if (btn) try { btn.focus(); } catch (err) { /* ignore */ }
+      });
+    }
+
+    page.addEventListener('change', function (e) {
+      if (e.target && e.target.id === 'cam-columns-select-all') {
+        if (e.target.checked) selectAllCaMasterColumns();
+        else {
+          var keys = getCaMasterVisibleKeys().filter(function (k) {
+            var defs = getCaMasterColumnDefs();
+            for (var i = 0; i < defs.length; i++) {
+              if (defs[i].key === k) return !!defs[i].required;
+            }
+            return false;
+          });
+          if (keys.indexOf('firm_name') < 0) keys.push('firm_name');
+          saveCaMasterVisibleKeys(keys);
+          refreshCaMasterColumnsPopoverList();
+          applyCaMasterColumnVisibility();
+        }
+        return;
+      }
+      var check = e.target && e.target.closest ? e.target.closest('.cam-columns-check[data-cam-column-key]') : null;
+      if (!check || check.disabled) return;
+      setCaMasterColumnVisible(check.getAttribute('data-cam-column-key'), check.checked);
+      syncCaMasterColumnsSelectAllState();
+    });
+  }
+
   function renderCaMasterTableRow(l, tableKey) {
     var data = JSON.stringify(CAData.leadToRowData(l)).replace(/'/g, '&#39;');
-    var executive = l.executive && l.executive !== 'Unassigned'
-      ? compactTextCell(l.executive)
-      : '<span class="cam-cell-text cam-cell-empty">Unassigned</span>';
     tableKey = tableKey || getCaMasterTableContext().tbodyId || 'ca-master-data-table';
-    return '<tr class="ca-table-row cam-table-row crm-table-row cam-master-data-row" data-lead-id="' + l.ca_id + '" data-row=\'' + data + '\'>' +
-      renderInboxCheckCell(tableKey, l.ca_id) +
-      '<td class="sticky-left-2 crm-td-firm cam-master-data-cell">' + firmNameCell(l.firm_name) + '</td>' +
-      '<td class="crm-td-ca cam-master-data-cell">' + caNameCell(l.ca_name) + '</td>' +
-      '<td class="cam-td-team-size cam-master-data-cell">' + renderTeamSizeCell(l) + '</td>' +
-      '<td class="cam-td-last-activity cam-master-data-cell">' + renderLastActivityDisplayCell(l) + '</td>' +
-      '<td class="cam-td-mobile cam-master-data-cell">' + camPhoneDisplayCell(l.mobile_no) + '</td>' +
-      renderLeadCallLogQuickCell(l) +
-      '<td class="cam-td-mobile cam-master-data-cell">' + camPhoneDisplayCell(l.alternate_mobile_no) + '</td>' +
-      '<td class="cam-td-geo cam-master-data-cell">' + compactTextCell(l.city) + '</td>' +
-      '<td class="cam-td-geo cam-master-data-cell">' + compactTextCell(l.state) + '</td>' +
-      '<td class="cam-td-source cam-master-data-cell">' + compactTextCell(l.source) + '</td>' +
-      '<td class="cam-td-rating cam-master-data-cell"><span class="cam-cell-rating cam-master-display-text" title="' + (l.rating || 0) + ' stars">' + stars(l.rating) + '</span></td>' +
-      '<td class="cam-td-status cam-master-data-cell"><span class="cam-cell-badge">' + statusBadge(l.status) + '</span></td>' +
-      '<td class="cam-td-person cam-master-data-cell">' + executive + '</td>' +
-      '<td class="cam-td-person cam-master-data-cell">' + compactTextCell(l.created_by) + '</td>' +
-      '<td class="crm-td-date cam-master-data-cell"><span class="cam-cell-text cam-cell-mono text-slate-500 cam-master-display-text" title="' + escapeHtml(l.updated || formatRelativeDate(l.updated_at)) + '">' + escapeHtml(l.updated || formatRelativeDate(l.updated_at)) + '</span></td>' +
-      renderLeadResearchQuickCell(l, { master: true, tip: 'Google Places Lookup' }) +
-      renderCaMasterActionCell(l) +
+    var partners = Array.isArray(l.partners) ? l.partners : [];
+    var displayPartners = partners.filter(function (p) { return !p.is_primary; });
+    if (displayPartners.length === 0 && partners.length > 1) {
+      var primaryName = String(l.primary_ca_name || l.ca_name || '').toLowerCase().trim();
+      displayPartners = partners.filter(function (p) {
+        return String(p.ca_name || '').toLowerCase().trim() !== primaryName;
+      });
+    }
+    var partnerCount = displayPartners.length;
+    var canEdit = !l.is_read_only;
+    var canAssign = canEdit && !isEmployeeUser();
+    var executiveCell = renderCaMasterExecutiveCell(l, canAssign);
+    var mobileCell = renderCaMasterInlineMobileCell(l, canEdit && !l.employee_cannot_edit_mobile);
+    var firmCell = renderCaMasterFirmNameCell(l, partnerCount);
+    var caCell = caNameCell(l.primary_ca_name || l.ca_name);
+    var teamCell = renderCaMasterInlineTeamSizeCell(l, canEdit);
+    var parentRow = '<tr class="ca-table-row cam-table-row crm-table-row cam-master-data-row" data-lead-id="' + l.ca_id + '" data-row=\'' + data + '\'>' +
+      withCamDataColumn('selection', renderInboxCheckCell(tableKey, l.ca_id)) +
+      camColTd('firm_name', 'sticky-left-2 crm-td-firm cam-master-data-cell', firmCell) +
+      camColTd('ca_name', 'crm-td-ca cam-master-data-cell', caCell) +
+      camColTd('team_size', 'cam-td-team-size cam-master-data-cell', teamCell) +
+      camColTd('last_activity', 'cam-td-last-activity cam-master-data-cell', renderLastActivityDisplayCell(l)) +
+      camColTd('mobile', 'cam-td-mobile cam-master-data-cell', mobileCell) +
+      withCamDataColumn('call_log', renderLeadCallLogQuickCell(l)) +
+      camColTd('alternate_mobile', 'cam-td-mobile cam-master-data-cell', camPhoneDisplayCell(l.alternate_mobile_no)) +
+      camColTd('city', 'cam-td-geo cam-master-data-cell', compactTextCell(l.city)) +
+      camColTd('state', 'cam-td-geo cam-master-data-cell', compactTextCell(l.state)) +
+      camColTd('source', 'cam-td-source cam-master-data-cell', compactTextCell(l.source)) +
+      camColTd('rating', 'cam-td-rating cam-master-data-cell', '<span class="cam-cell-rating cam-master-display-text" title="' + (l.rating || 0) + ' stars">' + stars(l.rating) + '</span>') +
+      camColTd('status', 'cam-td-status cam-master-data-cell', '<span class="cam-cell-badge">' + statusBadge(l.status) + '</span>') +
+      camColTd('employee', 'cam-td-person cam-master-data-cell', executiveCell) +
+      camColTd('created_by', 'cam-td-person cam-master-data-cell', compactTextCell(l.created_by)) +
+      camColTd('updated_at', 'crm-td-date cam-master-data-cell', '<span class="cam-cell-text cam-cell-mono text-slate-500 cam-master-display-text" title="' + escapeHtml(l.updated || formatRelativeDate(l.updated_at)) + '">' + escapeHtml(l.updated || formatRelativeDate(l.updated_at)) + '</span>') +
+      withCamDataColumn('google', renderLeadResearchQuickCell(l, { master: true, tip: 'Google Places Lookup' })) +
+      withCamDataColumn('actions', renderCaMasterActionCell(l)) +
     '</tr>';
+
+    if (displayPartners.length === 0) return parentRow;
+    var childRows = displayPartners.map(function (p) {
+      return renderCaMasterPartnerChildRow(l, p, tableKey, canEdit);
+    }).join('');
+    return parentRow + childRows;
+  }
+
+  function renderCaMasterFirmNameCell(l, partnerCount) {
+    var name = firmNameCell(l.firm_name);
+    if (partnerCount < 1) return name;
+    return '<div class="cam-firm-with-partners">' +
+      '<button type="button" class="cam-partner-toggle" data-cam-partner-toggle="' + escapeHtml(String(l.ca_id)) + '" aria-expanded="false" title="Show partners">' +
+        '<i data-lucide="chevron-right" class="h-3.5 w-3.5"></i>' +
+      '</button>' +
+      '<div class="cam-firm-with-partners__body">' + name +
+        '<span class="cam-partner-meta">' + partnerCount + (partnerCount === 1 ? ' Partner' : ' Partners') + '</span>' +
+      '</div></div>';
+  }
+
+  function renderCaMasterPartnerChildRow(firm, partner, tableKey, canEdit) {
+    var pid = partner.id;
+    var mobile = canEdit
+      ? renderCaMasterInlineMobileCell({
+          ca_id: firm.ca_id,
+          mobile_no: partner.mobile,
+          partner_id: pid,
+          employee_cannot_edit_mobile: false,
+        }, true)
+      : camPhoneDisplayCell(partner.mobile);
+    var googleCell = renderCaMasterPartnerGoogleCell(firm, partner);
+    return '<tr class="cam-partner-child-row hidden" data-partner-parent="' + escapeHtml(String(firm.ca_id)) + '" data-partner-id="' + escapeHtml(String(pid || '')) + '">' +
+      camColTd('selection', 'cam-partner-child-check', '') +
+      camColTd('firm_name', 'sticky-left-2 crm-td-firm cam-master-data-cell cam-partner-indent', '<span class="cam-partner-child-label">Partner</span>') +
+      camColTd('ca_name', 'crm-td-ca cam-master-data-cell', compactTextCell(partner.ca_name)) +
+      camColTd('team_size', 'cam-td-team-size cam-master-data-cell', renderCaMasterInlineTeamSizeCell(
+        { team_size: partner.team_size, ca_id: firm.ca_id },
+        canEdit,
+        { caId: firm.ca_id, partnerId: pid },
+      )) +
+      camColTd('last_activity', 'cam-td-last-activity cam-master-data-cell', '<span class="cam-cell-text cam-cell-mono text-slate-400" title="Membership">' + escapeHtml(partner.membership_no || '—') + '</span>') +
+      camColTd('mobile', 'cam-td-mobile cam-master-data-cell', mobile) +
+      withCamDataColumn('call_log', renderLeadCallLogQuickCell(firm, partner)) +
+      camColTd('alternate_mobile', 'cam-td-mobile cam-master-data-cell', camPhoneDisplayCell(partner.alternate_mobile)) +
+      camColTd('city', 'cam-td-geo cam-master-data-cell', compactTextCell(firm.city)) +
+      camColTd('state', 'cam-td-geo cam-master-data-cell', compactTextCell(firm.state)) +
+      camColTd('source', 'cam-td-source cam-master-data-cell', '<span class="cam-cell-text text-slate-400">' + escapeHtml(partner.email || '') + '</span>') +
+      camColTd('rating', 'cam-td-rating cam-master-data-cell', '') +
+      camColTd('status', 'cam-td-status cam-master-data-cell', '') +
+      camColTd('employee', 'cam-td-person cam-master-data-cell', '') +
+      camColTd('created_by', 'cam-td-person cam-master-data-cell', '') +
+      camColTd('updated_at', 'crm-td-date cam-master-data-cell', '') +
+      withCamDataColumn('google', googleCell) +
+      withCamDataColumn('actions', renderCaMasterPartnerActionCell(firm, partner, canEdit)) +
+    '</tr>';
+  }
+
+  function getCaMasterPartnerActionItems(firm, partner, canEdit) {
+    var pid = partner && partner.id != null ? String(partner.id) : '';
+    var caName = leadFieldText(partner && partner.ca_name) || 'Partner';
+    var partnerAttrs = {
+      'partner-id': pid,
+      'partner-ca-name': caName,
+    };
+    if (partner && partner.mobile) partnerAttrs['partner-mobile'] = String(partner.mobile);
+    var items = [];
+    if (canEdit && pid && (crmCanAction('leads', 'edit') || crmCanAction('ca_master', 'edit'))) {
+      items.push({ action: 'edit', label: 'Edit Partner', icon: 'pencil', dataAttrs: partnerAttrs });
+    }
+    if (crmCanAction('followups', 'schedule_followup') || crmCanAction('followups', 'create')) {
+      items.push({ action: 'followup', label: 'Add Follow-up', icon: 'calendar', dataAttrs: partnerAttrs });
+    }
+    if (canUseLeadQuickActions(firm)) {
+      items.push({ action: 'google-lookup', label: 'Google Lookup', icon: 'map-pin', dataAttrs: partnerAttrs });
+    }
+    if (canUseLeadCallLog(firm)) {
+      items.push({ action: 'call-log', label: 'Call Log', icon: 'phone-call', dataAttrs: partnerAttrs });
+    }
+    var commItems = [];
+    if (crmCanAction('campaigns', 'send_sms') || crmCanAction('campaigns', 'campaigns')) {
+      commItems.push({ action: 'sms', label: 'Send SMS', icon: 'smartphone', dataAttrs: partnerAttrs });
+    }
+    if (crmCanAction('campaigns', 'send_email') || crmCanAction('campaigns', 'campaigns')) {
+      commItems.push({ action: 'email', label: 'Send Email', icon: 'mail', dataAttrs: partnerAttrs });
+      commItems.push({ action: 'whatsapp', label: 'Send WhatsApp', icon: 'message-circle', dataAttrs: partnerAttrs });
+    }
+    if (commItems.length) {
+      if (items.length) items.push({ type: 'divider' });
+      items.push({ type: 'communication', items: commItems });
+    }
+    if (canEdit && pid && (crmCanAction('leads', 'edit') || crmCanAction('ca_master', 'edit'))) {
+      if (items.length) items.push({ type: 'divider' });
+      items.push({ action: 'delete', label: 'Remove Partner', icon: 'trash-2', danger: true, dataAttrs: partnerAttrs });
+    }
+    return items;
+  }
+
+  function renderCaMasterPartnerActionCell(firm, partner, canEdit) {
+    if (!window.CAActionDropdown) {
+      return '<td class="crm-actions-cell sticky-right col-actions"><span class="cam-cell-empty">—</span></td>';
+    }
+    var items = getCaMasterPartnerActionItems(firm, partner, canEdit);
+    return CAActionDropdown.renderCell(items, {
+      scope: 'crm-lead',
+      rowId: firm.ca_id,
+      icon: 'more-vertical',
+      ariaLabel: 'Partner actions',
+      cellClass: 'crm-actions-cell sticky-right col-actions crm-td-actions',
+    });
+  }
+
+  function renderCaMasterPartnerGoogleCell(firm, partner) {
+    if (!canUseLeadQuickActions(firm)) {
+      return '<td class="lead-quick-cell lead-quick-cell--research cam-col-google"><span class="cam-cell-empty">—</span></td>';
+    }
+    var caName = leadFieldText(partner.ca_name) || 'Partner';
+    var tip = 'Google Places Lookup — ' + caName;
+    return '<td class="lead-quick-cell lead-quick-cell--research cam-col-google">' +
+      '<button type="button" class="lead-quick-btn lead-quick-btn--research" data-lead-quick="research" data-lead-id="' +
+      escapeHtml(String(firm.ca_id)) + '" data-partner-ca-name="' + escapeHtml(caName) + '"' +
+      (partner.id ? ' data-partner-id="' + escapeHtml(String(partner.id)) + '"' : '') +
+      ' title="' + escapeHtml(tip) + '" data-crm-tip="' + escapeHtml(tip) + '" aria-label="' + escapeHtml(tip) + '">' +
+      researchLeadIconSvg() + '</button></td>';
+  }
+
+  function renderCaMasterExecutiveCell(l, canAssign) {
+    var name = l.executive && l.executive !== 'Unassigned' ? l.executive : '';
+    var label = name ? compactTextCell(name) : '<span class="cam-cell-text cam-cell-empty">Unassigned</span>';
+    if (!canAssign) return label;
+    return '<button type="button" class="cam-inline-assign-btn" data-cam-inline-assign="' + escapeHtml(String(l.ca_id)) + '" data-executive-id="' + escapeHtml(String(l.executive_id || '')) + '" title="Assign employee">' +
+      label +
+      '<i data-lucide="chevron-down" class="h-3 w-3 cam-inline-assign-caret"></i>' +
+    '</button>';
+  }
+
+  function renderCaMasterInlineMobileCell(l, canEdit) {
+    var display = formatPhoneDisplay(l.mobile_no);
+    var shown = display ? escapeHtml(display) : '—';
+    var emptyCls = display ? '' : ' cam-cell-empty';
+    if (!canEdit) {
+      return display
+        ? '<span class="cam-cell-text cam-cell-mono cam-master-display-text" title="' + shown + '">' + shown + '</span>'
+        : '<span class="cam-cell-text cam-cell-empty">—</span>';
+    }
+    var partnerAttr = l.partner_id ? ' data-partner-id="' + escapeHtml(String(l.partner_id)) + '"' : '';
+    return '<button type="button" class="cam-inline-mobile-btn' + emptyCls + '" data-cam-inline-mobile="' + escapeHtml(String(l.ca_id)) + '"' + partnerAttr + ' data-mobile="' + escapeHtml(display || '') + '" title="Edit mobile">' +
+      '<span class="cam-cell-text cam-cell-mono">' + shown + '</span>' +
+    '</button>';
   }
 
   function renderCaMasterActionCell(lead) {
@@ -13061,6 +13762,9 @@ if (otherInput) {
     if (!page) return;
     if (page._camInit) return;
     page._camInit = true;
+    bindCaMasterColumnsUi(page);
+    ensureCaMasterColumnsPopoverMounted();
+    applyCaMasterColumnVisibility(page);
 
     page.addEventListener('change', function (e) {
       if (e.target && e.target.id === 'cam-filter-pipeline-stage') {
@@ -13108,6 +13812,48 @@ if (otherInput) {
         resetCaMasterTableFilters();
         return;
       }
+      var toggle = e.target.closest('[data-cam-partner-toggle]');
+      if (toggle) {
+        e.preventDefault();
+        e.stopPropagation();
+        var caId = toggle.getAttribute('data-cam-partner-toggle');
+        var expanded = toggle.getAttribute('aria-expanded') === 'true';
+        toggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+        toggle.classList.toggle('is-open', !expanded);
+        document.querySelectorAll('.cam-partner-child-row[data-partner-parent="' + caId + '"]').forEach(function (row) {
+          row.classList.toggle('hidden', expanded);
+        });
+        if (window.lucide) lucide.createIcons({ nodes: [toggle] });
+        return;
+      }
+      var assignBtn = e.target.closest('[data-cam-inline-assign]');
+      if (assignBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        openCaMasterInlineAssign(assignBtn);
+        return;
+      }
+      var mobileBtn = e.target.closest('[data-cam-inline-mobile]');
+      if (mobileBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        openCaMasterInlineMobile(mobileBtn);
+        return;
+      }
+      var teamSizeBtn = e.target.closest('[data-cam-inline-team-size]');
+      if (teamSizeBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        openCaMasterInlineTeamSize(teamSizeBtn);
+        return;
+      }
+      var editPartner = e.target.closest('[data-cam-edit-partner]');
+      if (editPartner) {
+        e.preventDefault();
+        e.stopPropagation();
+        openCaMasterPartnerEdit(editPartner);
+        return;
+      }
       var backBtn = e.target.closest('[data-cam-action="back-to-firms"]');
       if (backBtn) {
         setCamView('all');
@@ -13125,13 +13871,512 @@ if (otherInput) {
     syncCamStageFilterFromState();
   }
 
+  var _camAssignEmployeesCache = null;
+
+  function loadCamAssignableEmployees() {
+    if (_camAssignEmployeesCache) return Promise.resolve(_camAssignEmployeesCache);
+    return apiFetch('/employees' + listingAllQuery('employees', { status: 'Active', sort_by: 'name', sort_dir: 'asc' }))
+      .then(function (body) {
+        var parsed = window.CA_LISTING_SEARCH ? CA_LISTING_SEARCH.unwrapListingBody(body) : { items: body.data || [] };
+        _camAssignEmployeesCache = (parsed.items || []).map(function (e) {
+          return { id: e.employee_id || e.id, name: e.name };
+        }).filter(function (e) { return e.id && e.name; });
+        return _camAssignEmployeesCache;
+      });
+  }
+
+  function openCaMasterInlineAssign(btn) {
+    if (btn.querySelector('select')) return;
+    var caId = btn.getAttribute('data-cam-inline-assign');
+    var currentId = btn.getAttribute('data-executive-id') || '';
+    var original = btn.innerHTML;
+    btn.disabled = true;
+    btn.classList.add('is-loading');
+    loadCamAssignableEmployees()
+      .then(function (employees) {
+        var options = '<option value="">Unassigned</option>';
+        employees.forEach(function (emp) {
+          options += '<option value="' + escapeAttr(String(emp.id)) + '"' +
+            (String(emp.id) === String(currentId) ? ' selected' : '') + '>' +
+            escapeHtml(emp.name) + '</option>';
+        });
+        btn.innerHTML = '<select class="cam-inline-assign-select input-field input-field-sm" aria-label="Assign employee">' + options + '</select>';
+        btn.disabled = false;
+        btn.classList.remove('is-loading');
+        var select = btn.querySelector('select');
+        select.focus();
+        var finished = false;
+        function finish(restore) {
+          if (finished) return;
+          finished = true;
+          if (restore) btn.innerHTML = original;
+          btn.disabled = false;
+          btn.classList.remove('is-loading');
+          if (window.lucide) lucide.createIcons({ nodes: [btn] });
+        }
+        select.addEventListener('change', function () {
+          var nextId = select.value;
+          if (String(nextId) === String(currentId)) {
+            finish(true);
+            return;
+          }
+          btn.disabled = true;
+          btn.classList.add('is-loading');
+          var payload = nextId
+            ? { ca_id: Number(caId), employee_id: Number(nextId), assignment_type: 'Manual', rotation_logic_used: 'Inline assign from All Firms' }
+            : null;
+          var req = nextId
+            ? apiFetch('/lead-assignments', { method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'application/json', Accept: 'application/json' } })
+            : (currentId
+              ? apiFetch('/ca-masters/' + encodeURIComponent(caId), {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                  body: JSON.stringify({ executive_id: null }),
+                }).catch(function () {
+                  return apiFetch('/lead-assignments' + listingAllQuery('lead_assignments', { ca_id: caId, status: 'Active', per_page: 1 }))
+                    .then(function (body) {
+                      var items = (window.CA_LISTING_SEARCH ? CA_LISTING_SEARCH.unwrapListingBody(body).items : body.data) || [];
+                      var asgn = items[0];
+                      if (!asgn) return null;
+                      var id = asgn.assignment_id || asgn.id;
+                      return apiFetch('/lead-assignments/' + encodeURIComponent(id) + '/status', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                        body: JSON.stringify({ status: 'Inactive' }),
+                      });
+                    });
+                })
+              : Promise.resolve());
+          Promise.resolve(req)
+            .then(function () {
+              toast(nextId ? 'Employee assigned.' : 'Lead unassigned.', 'success');
+              finished = true;
+              refreshDashboardAfterAssignment();
+              renderCaMasterTable();
+            })
+            .catch(function (err) {
+              toast((err && err.message) || 'Assignment failed.', 'error');
+              finish(true);
+            });
+        });
+        select.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Escape') {
+            ev.preventDefault();
+            finish(true);
+          }
+        });
+        select.addEventListener('blur', function () {
+          setTimeout(function () {
+            if (!finished && btn.contains(document.activeElement)) return;
+            if (!finished) finish(true);
+          }, 150);
+        });
+      })
+      .catch(function (err) {
+        toast((err && err.message) || 'Unable to load employees.', 'error');
+        btn.innerHTML = original;
+        btn.disabled = false;
+        btn.classList.remove('is-loading');
+      });
+  }
+
+  function openCaMasterInlineMobile(btn) {
+    if (btn.querySelector('input')) return;
+    var caId = btn.getAttribute('data-cam-inline-mobile');
+    var partnerId = btn.getAttribute('data-partner-id');
+    var current = btn.getAttribute('data-mobile') || '';
+    var original = btn.innerHTML;
+    var wrap = document.createElement('span');
+    wrap.className = 'cam-inline-mobile-edit';
+    wrap.innerHTML = '<input type="tel" class="input-field input-field-sm cam-inline-mobile-input" value="' + escapeAttr(current) + '" maxlength="15" aria-label="Mobile number" />' +
+      '<button type="button" class="btn-secondary btn-xs" data-cam-mobile-save>Save</button>';
+    btn.innerHTML = '';
+    btn.appendChild(wrap);
+    var input = wrap.querySelector('input');
+    input.focus();
+    input.select();
+    var finished = false;
+    function restore() {
+      if (finished) return;
+      finished = true;
+      btn.innerHTML = original;
+    }
+    function save() {
+      if (finished) return;
+      var next = String(input.value || '').trim();
+      var nextDigits = next.replace(/\D/g, '');
+      if (nextDigits === String(current || '').replace(/\D/g, '')) {
+        restore();
+        return;
+      }
+      finished = true;
+      btn.classList.add('is-loading');
+      var url = partnerId
+        ? '/ca-masters/' + encodeURIComponent(caId) + '/partners/' + encodeURIComponent(partnerId) + '/mobile'
+        : '/ca-masters/' + encodeURIComponent(caId) + '/contact';
+      var body = partnerId ? { mobile: next || null } : { mobile_no: next || null };
+      apiFetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(body),
+      })
+        .then(function () {
+          toast('Mobile updated.', 'success');
+          renderCaMasterTable();
+        })
+        .catch(function (err) {
+          toast((err && err.message) || 'Mobile update failed.', 'error');
+          finished = false;
+          restore();
+        });
+    }
+    wrap.querySelector('[data-cam-mobile-save]').addEventListener('click', function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      save();
+    });
+    input.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        save();
+      }
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        restore();
+      }
+    });
+  }
+
+  function openCaMasterInlineTeamSize(btn) {
+    if (btn.querySelector('input')) return;
+    var caId = btn.getAttribute('data-cam-inline-team-size');
+    var partnerId = btn.getAttribute('data-partner-id');
+    var current = storedTeamSize({ team_size: btn.getAttribute('data-team-size') });
+    var original = btn.innerHTML;
+    var wrap = document.createElement('span');
+    wrap.className = 'cam-inline-team-size-edit';
+    wrap.innerHTML = '<input type="number" min="0" step="1" class="input-field input-field-sm cam-inline-team-size-input" value="' + escapeAttr(String(current)) + '" aria-label="Team size" />' +
+      '<button type="button" class="btn-secondary btn-xs" data-cam-team-size-save title="Save"><i data-lucide="check" class="h-3 w-3"></i></button>';
+    btn.innerHTML = '';
+    btn.appendChild(wrap);
+    iconsIn(wrap);
+    var input = wrap.querySelector('input');
+    input.focus();
+    input.select();
+    var finished = false;
+    function restore() {
+      if (finished) return;
+      finished = true;
+      btn.innerHTML = original;
+      btn.classList.remove('is-loading');
+      iconsIn(btn);
+    }
+    function save() {
+      if (finished) return;
+      var next = parseInt(String(input.value || '0'), 10);
+      if (isNaN(next) || next < 0) next = 0;
+      if (next === current) {
+        restore();
+        return;
+      }
+      finished = true;
+      btn.classList.add('is-loading');
+      var url = partnerId
+        ? '/ca-masters/' + encodeURIComponent(caId) + '/partners/' + encodeURIComponent(partnerId) + '/team-size'
+        : '/ca-masters/' + encodeURIComponent(caId) + '/team-size';
+      apiFetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ team_size: next }),
+      })
+        .then(function () {
+          toast('Team size updated.', 'success');
+          renderCaMasterTable();
+        })
+        .catch(function (err) {
+          toast((err && err.message) || 'Team size update failed.', 'error');
+          finished = false;
+          btn.classList.remove('is-loading');
+          restore();
+        });
+    }
+    wrap.querySelector('[data-cam-team-size-save]').addEventListener('click', function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      save();
+    });
+    input.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        save();
+      }
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        restore();
+      }
+    });
+  }
+
+  function openCaMasterPartnerEdit(btn) {
+    openCaMasterPartnerEditFromIds(
+      btn.getAttribute('data-cam-edit-partner'),
+      btn.getAttribute('data-partner-id'),
+      btn.closest('tr'),
+    );
+  }
+
+  function buildPartnerEditFormLead(firm, partner) {
+    return {
+      ca_id: firm.ca_id,
+      firm_name: firm.firm_name || '',
+      ca_name: partner.ca_name || '',
+      mobile_no: partner.mobile || '',
+      alternate_mobile_no: partner.alternate_mobile || '',
+      email_id: partner.email || '',
+      state_id: firm.state_id,
+      state: firm.state || firm.state_name,
+      city_id: firm.city_id,
+      city: firm.city || firm.city_name,
+      team_size: partner.team_size != null ? partner.team_size : 0,
+      existing_software: firm.existing_software,
+      website: firm.website,
+      is_newly_established: firm.is_newly_established,
+      source_id: firm.source_id,
+      source: firm.source || firm.source_name,
+      source_name: firm.source_name || firm.source,
+      status: firm.status || 'New',
+      executive_id: firm.executive_id,
+      lock: firm.lock || {},
+      employee_locked_fields: firm.employee_locked_fields,
+      employee_cannot_edit_mobile: false,
+      google_place_id: firm.google_place_id,
+      google_maps_url: firm.google_maps_url,
+      verified_address: firm.verified_address,
+      google_rating: firm.google_rating,
+      google_review_count: firm.google_review_count,
+      google_business_status: firm.google_business_status,
+      latitude: firm.latitude,
+      longitude: firm.longitude,
+      researched_at: firm.researched_at,
+      verified_from_google: firm.verified_from_google,
+    };
+  }
+
+  var PARTNER_EDIT_CONTEXT_FIELDS = [
+    'firm_name', 'existing_software',
+    'website', 'is_newly_established', 'source_id', 'status', 'executive_id',
+  ];
+
+  function applyPartnerEditFormFieldLocks(lead) {
+    var form = document.getElementById('form-add-lead');
+    if (!form || !window._editingPartnerContext) return;
+    if (canBypassLeadFormFieldLocks()) {
+      unlockAllLeadFormFields(form);
+      icons();
+      return;
+    }
+    PARTNER_EDIT_CONTEXT_FIELDS.forEach(function (name) {
+      var el = form.elements[name];
+      if (!el) return;
+      setLeadFieldLockState(el, true, 'Firm field — shown for context. Saving updates only this partner.');
+    });
+    var lockedByOther = !!(lead && lead.lock && lead.lock.is_locked_by_other);
+    ['ca_name', 'mobile_no', 'alternate_mobile_no', 'email_id'].forEach(function (name) {
+      var el = form.elements[name];
+      if (!el) return;
+      setLeadFieldLockState(
+        el,
+        lockedByOther,
+        lockedByOther ? leadFieldLockTooltip(name) : '',
+      );
+    });
+    icons();
+  }
+
+  function clearPartnerEditContext() {
+    window._editingPartnerContext = null;
+  }
+
+  function resolvePartnerFromFirm(firm, partnerId) {
+    var partners = (firm && firm.partners) || [];
+    for (var i = 0; i < partners.length; i++) {
+      if (String(partners[i].id) === String(partnerId)) return partners[i];
+    }
+    return null;
+  }
+
+  function openCaMasterPartnerEditFromIds(caId, partnerId) {
+    if (!caId || !partnerId) {
+      toast('Partner not found.', 'warning');
+      return Promise.resolve(false);
+    }
+
+    return new Promise(function (resolve) {
+      ensureFormSelectData(function () {
+        apiFetch('/ca-masters/' + encodeURIComponent(caId))
+          .then(function (body) {
+            var firm = body.data || getLeadRecord(caId);
+            if (!firm) throw new Error('Firm not found');
+            var partner = resolvePartnerFromFirm(firm, partnerId);
+            if (partner) return { firm: firm, partner: partner };
+            return apiFetch('/ca-masters/' + encodeURIComponent(caId) + '/partners').then(function (pBody) {
+              var list = pBody.data || [];
+              var found = null;
+              for (var i = 0; i < list.length; i++) {
+                if (String(list[i].id) === String(partnerId)) {
+                  found = list[i];
+                  break;
+                }
+              }
+              return { firm: firm, partner: found };
+            });
+          })
+          .then(function (ctx) {
+            if (!ctx.partner) {
+              toast('Partner not found.', 'warning');
+              resolve(false);
+              return null;
+            }
+            return apiFetch('/ca-masters/' + encodeURIComponent(caId) + '/lock', { method: 'POST' })
+              .then(function (lockBody) {
+                var firm = Object.assign({}, ctx.firm, lockBody.data || {});
+                window._editingPartnerContext = {
+                  caId: String(caId),
+                  partnerId: String(partnerId),
+                  wasExpanded: !!(document.querySelector(
+                    '[data-cam-partner-toggle="' + String(caId) + '"][aria-expanded="true"]',
+                  )),
+                };
+                populateSelects();
+                populateMasterDropdowns();
+                fillLeadForm(buildPartnerEditFormLead(firm, ctx.partner)).then(function () {
+                  applyPartnerEditFormFieldLocks(firm);
+                  var titleText = document.getElementById('add-lead-title-text');
+                  if (titleText) titleText.textContent = 'Edit Firm';
+                  var submitBtn = document.getElementById('add-lead-submit-btn');
+                  if (submitBtn) {
+                    submitBtn.innerHTML = '<i data-lucide="save" class="h-4 w-4"></i> Update Lead';
+                  }
+                  openExclusiveCrmModal(document.getElementById('modal-add-lead'));
+                  icons();
+                  resolve(true);
+                });
+                return null;
+              })
+              .catch(function (error) {
+                if (error.status === 423) {
+                  var lockedFirm = Object.assign({}, ctx.firm, {
+                    lock: error.lock || { is_locked_by_other: true, locked_by_name: 'another employee' },
+                  });
+                  window._editingPartnerContext = {
+                    caId: String(caId),
+                    partnerId: String(partnerId),
+                    wasExpanded: !!(document.querySelector(
+                      '[data-cam-partner-toggle="' + String(caId) + '"][aria-expanded="true"]',
+                    )),
+                  };
+                  populateSelects();
+                  populateMasterDropdowns();
+                  fillLeadForm(buildPartnerEditFormLead(lockedFirm, ctx.partner)).then(function () {
+                    applyPartnerEditFormFieldLocks(lockedFirm);
+                    openExclusiveCrmModal(document.getElementById('modal-add-lead'));
+                    toast(error.message || 'This firm is currently being edited by another employee.', 'warning');
+                    icons();
+                    resolve(true);
+                  });
+                  return;
+                }
+                throw error;
+              });
+          })
+          .catch(function (error) {
+            clearPartnerEditContext();
+            toast(error.message || 'Unable to open partner for editing', error.status === 423 ? 'warning' : 'error');
+            resolve(false);
+          });
+      });
+    });
+  }
+
+  function refreshCaMasterAfterPartnerEdit(parentCaId, wasExpanded) {
+    var done = function () {
+      if (!wasExpanded || !parentCaId) return;
+      var toggle = document.querySelector('[data-cam-partner-toggle="' + String(parentCaId) + '"]');
+      if (toggle && toggle.getAttribute('aria-expanded') !== 'true') {
+        toggle.click();
+      }
+    };
+    if (window.CA_LISTING_SEARCH) {
+      return reloadListing('ca_masters').then(done).catch(done);
+    }
+    renderCaMasterTable();
+    done();
+    return Promise.resolve();
+  }
+
+  function submitPartnerEditForm(form, submitBtn) {
+    var ctx = window._editingPartnerContext;
+    if (!ctx || !ctx.caId || !ctx.partnerId) return;
+
+    var caName = String((form.elements.ca_name && form.elements.ca_name.value) || '').trim();
+    if (!caName) {
+      toast('CA Name is required.', 'warning');
+      if (form.elements.ca_name) form.elements.ca_name.focus();
+      return;
+    }
+
+    var payload = {
+      ca_name: caName,
+      mobile: String((form.elements.mobile_no && form.elements.mobile_no.value) || '').trim() || null,
+      alternate_mobile: form.elements.alternate_mobile_no
+        ? (String(form.elements.alternate_mobile_no.value || '').trim() || null)
+        : null,
+      email: String((form.elements.email_id && form.elements.email_id.value) || '').trim() || null,
+      team_size: Math.max(0, parseInt(String((form.elements.team_size && form.elements.team_size.value) || '0'), 10) || 0),
+    };
+
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.dataset.prevText = submitBtn.textContent;
+      submitBtn.textContent = 'Saving…';
+    }
+
+    apiFetch('/ca-masters/' + encodeURIComponent(ctx.caId) + '/partners/' + encodeURIComponent(ctx.partnerId), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(payload),
+    })
+      .then(function () {
+        var parentId = ctx.caId;
+        var wasExpanded = !!ctx.wasExpanded;
+        clearPartnerEditContext();
+        window._editingLeadId = '';
+        closeModal(document.getElementById('modal-add-lead'));
+        resetLeadForm();
+        toast('Partner updated successfully', 'success');
+        return refreshCaMasterAfterPartnerEdit(parentId, wasExpanded);
+      })
+      .catch(function (error) {
+        if (error.duplicate) {
+          renderLeadDuplicateWarning(error.duplicate);
+        }
+        toast(error.message || 'Partner update failed.', error.duplicate ? 'warning' : 'error');
+      })
+      .finally(function () {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = submitBtn.dataset.prevText || 'Update Lead';
+        }
+      });
+  }
+
   function renderCaMasterTable(pageLeads, targetTbodyId) {
     var ctx = getCaMasterTableContext();
     var tbodyId = targetTbodyId || ctx.tbodyId;
     if (typeof tbodyId === 'object' && tbodyId.id) tbodyId = tbodyId.id;
     var el = document.getElementById(tbodyId);
     if (!el) return;
-    var colCount = 18;
+    var colCount = getCaMasterVisibleColumnCount() || getCaMasterColumnDefs().length || 18;
 
     if (pageLeads === undefined && window.CA_LISTING_SEARCH) {
       el._camRowHtml = null;
@@ -13185,6 +14430,7 @@ if (otherInput) {
       bindCaMasterTableRows(el);
       syncInboxChecks(tbodyId);
       icons();
+      applyCaMasterColumnVisibility(document.getElementById('cam-hub') || document);
       return;
     }
     el._camRowHtml = rowHtml;
@@ -13194,6 +14440,7 @@ if (otherInput) {
     bindCaMasterTableRows(el);
     syncInboxChecks(tbodyId);
     icons();
+    applyCaMasterColumnVisibility(document.getElementById('cam-hub') || document);
   }
 
   function bindCaMasterTableRows(container) {
@@ -13646,7 +14893,6 @@ if (otherInput) {
     if (!form) return;
     if (form.elements.team_size) form.elements.team_size.value = '0';
     if (form.elements.existing_software) setSelectValueIfValid(form.elements.existing_software, 'None');
-    if (form.elements.rating) form.elements.rating.value = '1';
     if (form.elements.is_newly_established) form.elements.is_newly_established.value = '';
     if (form.elements.status) setSelectValueIfValid(form.elements.status, 'New');
     if (form.elements.source_id) form.elements.source_id.value = '';
@@ -13657,6 +14903,7 @@ if (otherInput) {
     var form = document.getElementById('form-add-lead');
     if (!form) return;
     releaseLeadLock();
+    clearPartnerEditContext();
     form.reset();
     var caIdField = document.getElementById('form-lead-ca-id');
     if (caIdField) caIdField.value = '';
@@ -13673,9 +14920,19 @@ if (otherInput) {
     icons();
   }
 
+  function leadLocationHints(lead) {
+    function clean(value) {
+      return value == null || value === '' || value === '—' ? '' : String(value).trim();
+    }
+    return {
+      stateName: clean(lead.state_name || lead.state),
+      cityName: clean(lead.city_name || lead.city),
+    };
+  }
+
   function fillLeadForm(lead) {
     var form = document.getElementById('form-add-lead');
-    if (!form || !lead) return;
+    if (!form || !lead) return Promise.resolve();
 
     function isEmptyLeadValue(value) {
       return value == null || value === '' || value === '—';
@@ -13688,13 +14945,21 @@ if (otherInput) {
       form.elements.alternate_mobile_no.value = lead.alternate_mobile_no && lead.alternate_mobile_no !== '—' ? lead.alternate_mobile_no : '';
     }
     form.elements.email_id.value = lead.email_id || '';
-    form.elements.gst_no.value = lead.gst_no && lead.gst_no !== '—' ? lead.gst_no : '';
+
+    var locationPromise;
     if (window.CA_STATE_CITY) {
-      window.CA_STATE_CITY.setLeadLocationValues(lead.state_id || lead.state, lead.city_id || lead.city);
+      locationPromise = window.CA_STATE_CITY.setLeadLocationValues(
+        lead.state_id || null,
+        lead.city_id || null,
+        leadLocationHints(lead),
+      );
     } else {
-      if (form.elements.state_id) setSelectValueIfValid(form.elements.state_id, lead.state_id || lead.state);
-      if (form.elements.city_id) setSelectValueIfValid(form.elements.city_id, lead.city_id || lead.city);
+      locationPromise = Promise.resolve().then(function () {
+        if (form.elements.state_id) setSelectValueIfValid(form.elements.state_id, lead.state_id || lead.state);
+        if (form.elements.city_id) setSelectValueIfValid(form.elements.city_id, lead.city_id || lead.city);
+      });
     }
+
     form.elements.team_size.value = isEmptyLeadValue(lead.team_size) ? 0 : lead.team_size;
     if (form.elements.existing_software) {
       var software = isEmptyLeadValue(lead.existing_software) ? 'None' : String(lead.existing_software);
@@ -13711,7 +14976,6 @@ if (otherInput) {
       setSelectValueIfValid(softwareSelect, software);
     }
     form.elements.website.value = lead.website && lead.website !== '—' ? lead.website : '';
-    form.elements.rating.value = isEmptyLeadValue(lead.rating) ? '1' : String(lead.rating);
     var newFirm = lead.is_newly_established;
     if (newFirm === true || newFirm === 1 || newFirm === 'yes' || newFirm === 'Yes') {
       form.elements.is_newly_established.value = 'yes';
@@ -13736,8 +15000,16 @@ if (otherInput) {
     var lock = lead.lock || {};
     window._editingLeadId = lock.is_locked_by_other ? '' : lead.ca_id;
     setLeadFormMode('edit');
-    applyLeadFormAccessRules(lead);
-    renderLeadGoogleFieldsSection(lead);
+
+    return locationPromise.then(function () {
+      applyLeadFormAccessRules(lead);
+      renderLeadGoogleFieldsSection(lead);
+      icons();
+    }).catch(function () {
+      applyLeadFormAccessRules(lead);
+      renderLeadGoogleFieldsSection(lead);
+      icons();
+    });
   }
 
   function openLeadFormForAdd() {
@@ -13774,7 +15046,9 @@ if (otherInput) {
               .then(function (lockBody) {
                 populateSelects();
                 populateMasterDropdowns();
-                fillLeadForm(lockBody.data || lead);
+                return fillLeadForm(lockBody.data || lead);
+              })
+              .then(function () {
                 resolve(true);
               })
               .catch(function (error) {
@@ -13784,10 +15058,10 @@ if (otherInput) {
                   var lockedLead = Object.assign({}, lead, {
                     lock: error.lock || { is_locked_by_other: true, locked_by_name: 'another employee' },
                   });
-                  fillLeadForm(lockedLead);
-                  toast(error.message || 'This lead is currently being edited by another employee.', 'warning');
-                  resolve(true);
-                  return;
+                  return fillLeadForm(lockedLead).then(function () {
+                    toast(error.message || 'This lead is currently being edited by another employee.', 'warning');
+                    resolve(true);
+                  });
                 }
                 throw error;
               });
@@ -13804,9 +15078,22 @@ if (otherInput) {
     var form = document.getElementById('form-lead-contact');
     if (!form || !lead) return;
     var submitBtn = document.getElementById('lead-contact-submit-btn');
+    var contactFields = ['mobile_no', 'alternate_mobile_no', 'email_id', 'website'];
+
+    if (canBypassLeadFormFieldLocks()) {
+      contactFields.forEach(function (name) {
+        unlockLeadFormField(form.elements[name]);
+      });
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.classList.remove('opacity-50', 'pointer-events-none');
+      }
+      icons();
+      return;
+    }
+
     var lockedByOther = !!(lead.lock && lead.lock.is_locked_by_other);
     var lockedFields = (isEmployeeUser() && lead.employee_locked_fields) ? lead.employee_locked_fields.slice() : [];
-    var contactFields = ['mobile_no', 'alternate_mobile_no', 'email_id', 'website'];
 
     contactFields.forEach(function (name) {
       var el = form.elements[name];
@@ -16261,10 +17548,15 @@ if (otherInput) {
       return;
     }
 
+    var submitBtn = document.getElementById('add-lead-submit-btn');
+    if (window._editingPartnerContext) {
+      submitPartnerEditForm(form, submitBtn);
+      return;
+    }
+
     var fd = new FormData(form);
     var editingId = fd.get('ca_id') || window._editingLeadId;
     var url = editingId ? '/ca-masters/' + editingId : '/ca-masters';
-    var submitBtn = document.getElementById('add-lead-submit-btn');
 
     if (editingId) {
       fd.append('_method', 'PUT');
@@ -16280,10 +17572,12 @@ if (otherInput) {
       fd.set('status', 'New');
     }
 
-    var teamSizeValue = String(fd.get('team_size') || '').trim();
-    if (!teamSizeValue || Number(teamSizeValue) <= 0) {
-      fd.delete('team_size');
-    }
+    var teamSizeRaw = String(fd.get('team_size') || '').trim();
+    var teamSizeNum = teamSizeRaw === '' ? 0 : Math.max(0, parseInt(teamSizeRaw, 10) || 0);
+    fd.set('team_size', String(teamSizeNum));
+
+    fd.delete('gst_no');
+    fd.delete('rating');
 
     if (!isEmployeeUser() && form.elements.executive_id && !form.elements.executive_id.disabled) {
       var executiveValue = form.elements.executive_id.value;

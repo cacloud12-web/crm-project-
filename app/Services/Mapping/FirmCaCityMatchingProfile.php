@@ -18,6 +18,13 @@ class FirmCaCityMatchingProfile
 {
     public const PROFILE = 'firm_ca_city';
 
+    private static ?bool $caReferenceReady = null;
+
+    private static ?bool $hasNormalizedCaName = null;
+
+    /** @var array{firm?: bool, partner?: bool, city?: bool}|null */
+    private static ?array $caReferenceNormColumns = null;
+
     public function __construct(
         private readonly DataNormalizationService $normalizer,
         private readonly LookupResolverService $lookups,
@@ -45,21 +52,39 @@ class FirmCaCityMatchingProfile
         return $this->matchCaMaster($firm, $ca, $cityRaw, $cityNorm);
     }
 
+    private function caReferenceReady(): bool
+    {
+        if (self::$caReferenceReady !== null) {
+            return self::$caReferenceReady;
+        }
+
+        try {
+            self::$caReferenceReady = Schema::connection('ca_reference')->hasTable('ca_firms')
+                && Schema::connection('ca_reference')->hasTable('ca_partners')
+                && Schema::connection('ca_reference')->hasTable('ca_addresses');
+        } catch (\Throwable) {
+            self::$caReferenceReady = false;
+        }
+
+        return self::$caReferenceReady;
+    }
+
     private function matchCaReference(string $firm, string $ca, string $cityNorm): ?MatchResult
     {
-        try {
-            if (! Schema::connection('ca_reference')->hasTable('ca_firms')
-                || ! Schema::connection('ca_reference')->hasTable('ca_partners')
-                || ! Schema::connection('ca_reference')->hasTable('ca_addresses')) {
-                return null;
-            }
-        } catch (\Throwable) {
+        if (! $this->caReferenceReady()) {
             return null;
         }
 
-        $hasNormFirm = Schema::connection('ca_reference')->hasColumn('ca_firms', 'normalized_firm_name');
-        $hasNormPartner = Schema::connection('ca_reference')->hasColumn('ca_partners', 'normalized_partner_name');
-        $hasNormCity = Schema::connection('ca_reference')->hasColumn('ca_addresses', 'normalized_city');
+        if (self::$caReferenceNormColumns === null) {
+            self::$caReferenceNormColumns = [
+                'firm' => Schema::connection('ca_reference')->hasColumn('ca_firms', 'normalized_firm_name'),
+                'partner' => Schema::connection('ca_reference')->hasColumn('ca_partners', 'normalized_partner_name'),
+                'city' => Schema::connection('ca_reference')->hasColumn('ca_addresses', 'normalized_city'),
+            ];
+        }
+        $hasNormFirm = self::$caReferenceNormColumns['firm'];
+        $hasNormPartner = self::$caReferenceNormColumns['partner'];
+        $hasNormCity = self::$caReferenceNormColumns['city'];
 
         $firmQuery = CaFirm::query()->select(['id', 'firm_name']);
         if ($hasNormFirm) {
@@ -125,7 +150,7 @@ class FirmCaCityMatchingProfile
             ->where('normalized_firm_name', $firm)
             ->where('city_id', $cityId);
 
-        if (Schema::hasColumn('ca_masters', 'normalized_ca_name')) {
+        if ($this->hasNormalizedCaName()) {
             $query->where('normalized_ca_name', $ca);
         } else {
             $query->whereRaw('UPPER(TRIM(ca_name)) = ?', [mb_strtoupper($ca)]);
@@ -152,6 +177,17 @@ class FirmCaCityMatchingProfile
         return MatchResult::conflict($candidates, 'multiple_firm_ca_city');
     }
 
+    private function hasNormalizedCaName(): bool
+    {
+        if (self::$hasNormalizedCaName !== null) {
+            return self::$hasNormalizedCaName;
+        }
+
+        self::$hasNormalizedCaName = Schema::hasColumn('ca_masters', 'normalized_ca_name');
+
+        return self::$hasNormalizedCaName;
+    }
+
     private function findLinkedMasterId(string $firm, string $ca, string $cityNorm): ?int
     {
         if (! Schema::hasTable('ca_masters') || ! Schema::hasColumn('ca_masters', 'normalized_firm_name')) {
@@ -163,7 +199,7 @@ class FirmCaCityMatchingProfile
         if ($cityId !== null) {
             $query->where('city_id', $cityId);
         }
-        if (Schema::hasColumn('ca_masters', 'normalized_ca_name')) {
+        if ($this->hasNormalizedCaName()) {
             $query->where('normalized_ca_name', $ca);
         } else {
             $query->whereRaw('UPPER(TRIM(ca_name)) = ?', [mb_strtoupper($ca)]);

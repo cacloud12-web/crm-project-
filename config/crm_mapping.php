@@ -116,7 +116,7 @@ return [
     | Max firms to import inline for Master CA OCR (larger files use ImportMasterCaOcrJob).
     | Keep this high enough for multi-page directory PDFs so imports finish without a queue worker.
     */
-    'master_ca_sync_max_firms' => max(50, (int) env('CRM_MAPPING_MASTER_CA_SYNC_MAX', 500)),
+    'master_ca_sync_max_firms' => max(1, (int) env('CRM_MAPPING_MASTER_CA_SYNC_MAX', 25)),
     'master_ca_import_chunk' => max(25, (int) env('CRM_MAPPING_MASTER_CA_CHUNK', 200)),
 
     'source_types' => [

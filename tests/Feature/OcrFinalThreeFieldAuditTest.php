@@ -7,7 +7,6 @@ use App\Models\CaMaster;
 use App\Models\City;
 use App\Models\OcrDocument;
 use App\Models\OcrParsedFirm;
-use App\Models\User;
 use App\Services\Mapping\DataNormalizationService;
 use App\Services\Mapping\FirmCaCityMatchingProfile;
 use App\Services\Ocr\MasterCaDirectImportService;
@@ -19,6 +18,7 @@ use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Tests\Support\CrmTestAccounts;
 use Tests\TestCase;
 
 /**
@@ -204,7 +204,7 @@ class OcrFinalThreeFieldAuditTest extends TestCase
             $this->markTestSkipped('tables missing');
         }
         app(\App\Services\Rbac\RbacDatabaseService::class)->ensureConfigDefaultGrants();
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $before = CaMaster::query()->count();
         $document = OcrDocument::query()->create([
             'uploaded_by' => $admin->id,
@@ -257,10 +257,7 @@ class OcrFinalThreeFieldAuditTest extends TestCase
         if (! Schema::hasTable('ocr_parsed_firms')) {
             $this->markTestSkipped('ocr_parsed_firms missing');
         }
-        $admin = User::query()->where('email', 'admin@ca.local')->first();
-        if (! $admin) {
-            $this->markTestSkipped('admin user missing');
-        }
+        $admin = CrmTestAccounts::admin();
         $document = OcrDocument::query()->create([
             'uploaded_by' => $admin->id,
             'original_filename' => 'recon.pdf',

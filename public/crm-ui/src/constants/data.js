@@ -164,7 +164,10 @@ window.CAData = (function () {
       gst_no: data.gst_no || '—',
       state: data.state,
       city: data.city,
-      team_size: parseInt(data.team_size, 10) || 1,
+      team_size: (function () {
+        var n = parseInt(data.team_size, 10);
+        return !isNaN(n) && n > 0 ? n : null;
+      })(),
       existing_software: data.existing_software || 'None',
       website: data.website || '—',
       rating: parseInt(data.rating, 10) || 3,
@@ -197,7 +200,8 @@ window.CAData = (function () {
     lead.gst_no = data.gst_no || '—';
     lead.state = data.state;
     lead.city = data.city;
-    lead.team_size = parseInt(data.team_size, 10) || 1;
+    var parsedTeamSize = parseInt(data.team_size, 10);
+    lead.team_size = !isNaN(parsedTeamSize) && parsedTeamSize > 0 ? parsedTeamSize : null;
     lead.existing_software = data.existing_software || 'None';
     lead.website = data.website || '—';
     lead.rating = parseInt(data.rating, 10) || 3;
@@ -315,7 +319,9 @@ window.CAData = (function () {
       gst: lead.gst_no,
       state: lead.state,
       city: lead.city,
-      team: String(lead.team_size),
+      team: (lead.team_size != null && lead.team_size !== '' && Number(lead.team_size) > 0)
+        ? (Number(lead.team_size) + ' Employees')
+        : '—',
       software: lead.existing_software,
       website: lead.website,
       rating: lead.rating,

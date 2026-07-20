@@ -131,12 +131,16 @@ class OcrUnicodeNormalizationService
         if ($letters < 2) {
             return false;
         }
-        // Predominantly Latin (or Latin majority with a few look-alike glyphs).
-        if ($latin === 0) {
-            return false;
-        }
         if ($greek === 0 && $cyrillic === 0) {
             return false;
+        }
+        // Pure non-Latin personal names stay as-is. Homoglyph firm titles include Latin markers ("& CO").
+        if ($latin === 0) {
+            return (bool) preg_match('/(?:&|\band\b|\bco\b|associates|llp|company|sons)/iu', $text);
+        }
+        // Mixed lines: Latin markers with Greek/Cyrillic name glyphs (ΜΚΑΡ & CO).
+        if (($greek + $cyrillic) >= 2) {
+            return true;
         }
 
         return ($latin / $letters) >= 0.45;

@@ -4,6 +4,7 @@ namespace App\Services\Employee;
 
 use App\Models\Employee;
 use App\Services\Activity\ActivityLogService;
+use App\Services\Cache\CrmCacheService;
 use App\Services\Concerns\SearchesListings;
 use App\Services\Master\LookupResolverService;
 use App\Services\Notifications\NotificationService;
@@ -20,6 +21,7 @@ class EmployeeService
         private readonly NotificationService $notificationService,
         private readonly EmployeeCredentialService $credentialService,
         private readonly UserLifecycleService $userLifecycleService,
+        private readonly CrmCacheService $cacheService,
     ) {}
 
     public function search(array $params = []): array
@@ -120,7 +122,11 @@ class EmployeeService
             beforeValue: $before,
         );
 
+        $employeeId = (int) $employee->employee_id;
         $employee->delete();
+        $this->cacheService->forgetDashboardMetrics();
+        $this->cacheService->forgetEmployeeDashboard($employeeId);
+        $this->cacheService->forgetEmployeeRankings();
     }
 
     private function normalize(array $data): array

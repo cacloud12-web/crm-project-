@@ -8,6 +8,7 @@ use App\Models\MasterMappingDecision;
 use App\Models\OcrDocument;
 use App\Models\OcrParsedFirm;
 use App\Services\Cache\CrmCacheService;
+use App\Services\Leads\CaMasterPartnerService;
 use App\Services\Mapping\DataNormalizationService;
 use App\Services\Mapping\FirmCaCityMatchingProfile;
 use App\Services\Mapping\MasterDataMatchingService;
@@ -56,6 +57,7 @@ class MasterCaDirectImportService
         private readonly OcrFieldCollisionService $collisionDetector,
         private readonly FirmCaCityMatchingProfile $firmCaCityMatcher,
         private readonly OcrSourceVerificationService $sourceVerifier,
+        private readonly CaMasterPartnerService $partnerService,
     ) {}
 
     /**
@@ -94,11 +96,13 @@ class MasterCaDirectImportService
             'import_batch_id' => null,
         ];
 
+        // Only unclassified / retryable rows. Do not re-walk needs_review/verified on every job attempt
+        // (that made 26k-firm imports look stuck at "0 imported" for hours).
         $pending = OcrParsedFirm::query()
             ->where('ocr_document_id', $ocrDocumentId)
             ->where(function ($q) {
                 $q->whereNull('match_status')
-                    ->orWhereIn('match_status', ['pending', 'unmatched', self::MATCH_NEEDS_REVIEW, self::MATCH_MATCHED, self::MATCH_VERIFIED, self::MATCH_CONFLICT, self::MATCH_FAILED, self::MATCH_INVALID]);
+                    ->orWhereIn('match_status', ['', 'pending', 'unmatched', self::MATCH_FAILED]);
             })
             ->where(function ($q) {
                 $q->whereNull('review_status')
@@ -107,6 +111,14 @@ class MasterCaDirectImportService
             });
 
         $expected = (clone $pending)->count();
+        $alreadyClassified = OcrParsedFirm::query()
+            ->where('ocr_document_id', $ocrDocumentId)
+            ->whereIn('match_status', [
+                self::MATCH_NEEDS_REVIEW, self::MATCH_VERIFIED, self::MATCH_MATCHED, self::MATCH_CONFLICT,
+                self::MATCH_IMPORTED, self::MATCH_UPDATED, self::MATCH_DUPLICATE, self::MATCH_INVALID,
+            ])
+            ->count();
+
         $batch = null;
         if ($expected > 0 && Schema::hasTable('master_import_batches')) {
             $batch = MasterImportBatch::query()->create([
@@ -115,7 +127,7 @@ class MasterCaDirectImportService
                 'file_name' => $document->original_filename,
                 'file_hash' => $document->checksum,
                 'status' => MasterImportBatch::STATUS_PROCESSING,
-                'total_records' => $expected,
+                'total_records' => $expected + $alreadyClassified,
                 'progress_stage' => 'validating',
                 'progress_pct' => 20,
                 'actor_id' => $actorId,
@@ -125,19 +137,31 @@ class MasterCaDirectImportService
             $stats['import_batch_id'] = $batch->id;
         }
 
-        $document->update(['processing_progress' => 'Importing official Master CA records']);
+        $totalForProgress = max(1, $expected + $alreadyClassified);
+        $document->update([
+            'processing_progress' => sprintf(
+                'Importing Master CA — %d / %d classified (auto-write off; review required)',
+                $alreadyClassified,
+                $totalForProgress,
+            ),
+        ]);
         if ($batch) {
-            $batch->update(['progress_stage' => 'importing', 'progress_pct' => 40]);
+            $batch->update([
+                'progress_stage' => 'importing',
+                'progress_pct' => $expected === 0 ? 95 : min(95, 40 + (int) round(($alreadyClassified / $totalForProgress) * 55)),
+                'review_count' => OcrParsedFirm::query()->where('ocr_document_id', $ocrDocumentId)->where('match_status', self::MATCH_NEEDS_REVIEW)->count(),
+            ]);
         }
 
         $chunkSize = max(50, (int) config('crm_mapping.master_ca_import_chunk', 200));
         $createdIds = [];
+        $stats['processed'] = $alreadyClassified;
 
         try {
             (clone $pending)
                 ->with('members')
-                ->orderBy('sequence_no')
-                ->chunkById($chunkSize, function ($firms) use ($document, $actorId, $batch, &$stats, &$createdIds) {
+                ->orderBy('id')
+                ->chunkById($chunkSize, function ($firms) use ($document, $actorId, $batch, &$stats, &$createdIds, $totalForProgress) {
                     foreach ($firms as $firm) {
                         $result = $this->importFirm($firm, $document, $actorId);
                         $stats['processed']++;
@@ -145,12 +169,27 @@ class MasterCaDirectImportService
                         if (! empty($result['created_ca_id'])) {
                             $createdIds[] = (int) $result['created_ca_id'];
                         }
+                        if ($stats['processed'] % 25 === 0) {
+                            $document->update([
+                                'processing_progress' => sprintf(
+                                    'Importing Master CA — %d / %d (auto-write off; rows need review)',
+                                    $stats['processed'],
+                                    $totalForProgress,
+                                ),
+                            ]);
+                        }
                     }
+                    $done = $stats['processed'];
+                    $document->update([
+                        'processing_progress' => sprintf(
+                            'Importing Master CA — %d / %d (auto-write off; classified rows need review)',
+                            $done,
+                            $totalForProgress,
+                        ),
+                    ]);
                     if ($batch) {
-                        $done = $stats['processed'];
-                        $total = max(1, (int) $batch->total_records);
                         $batch->update([
-                            'progress_pct' => min(95, 40 + (int) round(($done / $total) * 55)),
+                            'progress_pct' => min(95, 40 + (int) round(($done / $totalForProgress) * 55)),
                             'created_count' => $stats['imported'],
                             'updated_count' => $stats['updated'],
                             'duplicate_count' => $stats['duplicates'],
@@ -227,6 +266,7 @@ class MasterCaDirectImportService
         }
 
         $this->bustMasterCaches();
+        $this->refreshDocumentCompletion($document->fresh());
 
         Log::info('ocr.pipeline.step', [
             'step' => 'master_ca_import_completed',
@@ -370,22 +410,37 @@ class MasterCaDirectImportService
             return;
         }
 
-        // Open = still awaiting Approve/Reject and not linked to Master.
-        $open = OcrParsedFirm::query()
+        // Still classifying / writing — keep Importing only while match_status is unset/pending.
+        $unclassified = OcrParsedFirm::query()
             ->where('ocr_document_id', $document->id)
-            ->whereNull('crm_ca_id')
-            ->where(function ($q) {
-                $q->whereNull('review_status')
-                    ->orWhere('review_status', OcrParsedFirm::REVIEW_PENDING);
-            })
             ->where(function ($q) {
                 $q->whereNull('match_status')
-                    ->orWhereNotIn('match_status', ['rejected']);
+                    ->orWhereIn('match_status', ['pending', 'unmatched']);
             })
             ->count();
 
-        if ($open > 0) {
+        if ($unclassified > 0) {
             $document->update(['processing_progress' => 'Importing official Master CA records']);
+
+            return;
+        }
+
+        // Fail-closed rows awaiting Accept must not keep the document on Importing forever.
+        $awaitingReview = OcrParsedFirm::query()
+            ->where('ocr_document_id', $document->id)
+            ->whereNull('crm_ca_id')
+            ->where(function ($q) {
+                $q->whereNull('review_status')->orWhere('review_status', OcrParsedFirm::REVIEW_PENDING);
+            })
+            ->whereIn('match_status', [self::MATCH_NEEDS_REVIEW, self::MATCH_VERIFIED, self::MATCH_CONFLICT, self::MATCH_MATCHED])
+            ->count();
+
+        if ($awaitingReview > 0) {
+            $document->update([
+                'processing_progress' => 'Completed — '.$awaitingReview.' firm(s) need review',
+                'error_code' => null,
+                'error_message' => null,
+            ]);
 
             return;
         }
@@ -653,7 +708,8 @@ class MasterCaDirectImportService
             }
             $payload['match_type'] = 'NO_EXACT_MATCH';
 
-            return $this->finishFirm($firm, null, self::MATCH_NEEDS_REVIEW, $match->reason ?? 'no_exact_firm_ca_city', $document, $actorId, $payload, (float) ($firm->overall_confidence ?? 0));
+            // Firm+CA+City present but no Master hit — still Verified extraction (Accept adds to Master).
+            return $this->finishFirm($firm, null, self::MATCH_VERIFIED, $match->reason ?? 'complete_firm_ca_city', $document, $actorId, $payload, (float) ($firm->overall_confidence ?? 0));
         }
 
         if ($match->isConflict()) {
@@ -719,7 +775,7 @@ class MasterCaDirectImportService
             'row_split_suspected' => $row['row_split_suspected'] ?? false,
             'raw' => $row['raw'] ?? null,
             'parsed' => $row['parsed'] ?? null,
-            'members' => [],
+            'members' => $row['members'] ?? [],
             'page_number' => $row['page_number'] ?? null,
             'row_number' => $row['row_number'] ?? null,
         ];
@@ -949,7 +1005,11 @@ class MasterCaDirectImportService
             'source_data' => $sourceData,
         ]);
 
-        if (Schema::hasTable('master_mapping_decisions')) {
+        if ($linkedToMaster && $caId) {
+            $this->syncCrmPartnersForFirm((int) $caId, $payload, $firm);
+        }
+
+        if (Schema::hasTable('master_mapping_decisions') && ! in_array($matchStatus, [self::MATCH_NEEDS_REVIEW, self::MATCH_INVALID], true)) {
             $meta = [
                 'import_type' => OcrDocument::IMPORT_MASTER_CA,
                 'matching_profile' => 'master_ca_direct',
@@ -1043,7 +1103,46 @@ class MasterCaDirectImportService
                 'membership_no' => $m->membership_no,
                 'mobile' => $m->mobile,
                 'email' => $m->email,
+                'designation' => $m->role,
+                'is_primary' => (bool) $m->is_primary,
             ])->all(),
         ];
+    }
+
+    /**
+     * Persist OCR partners into ca_master_partners so All Firms can expand them.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    private function syncCrmPartnersForFirm(int $caId, array $payload, OcrParsedFirm $firm): void
+    {
+        if (! $this->partnerService->tableReady()) {
+            return;
+        }
+
+        $lead = CaMaster::query()->find($caId);
+        if (! $lead) {
+            return;
+        }
+
+        $members = is_array($payload['members'] ?? null) ? $payload['members'] : [];
+        if ($members === []) {
+            $members = $this->partnerService->membersFromOcrFirm($firm);
+        }
+        if ($members === []) {
+            $this->partnerService->ensurePrimaryFromMaster($lead);
+
+            return;
+        }
+
+        try {
+            $this->partnerService->syncFromMembers($lead, $members);
+        } catch (Throwable $e) {
+            Log::warning('ocr.master_ca.partner_sync_failed', [
+                'ca_id' => $caId,
+                'staging_id' => $firm->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

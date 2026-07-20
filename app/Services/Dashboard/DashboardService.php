@@ -294,8 +294,10 @@ class DashboardService
             $ttl = (int) config('crm_cache.dashboard_ttl', 120);
             $role = app(RbacService::class)->roleKey($user);
 
+            $version = $this->cacheService->dashboardCacheVersion();
+
             return Cache::remember(
-                'crm:dashboard:productivity_employees:'.$role.':'.$user->id,
+                'crm:dashboard:productivity_employees:v'.$version.':'.$role.':'.$user->id,
                 $ttl,
                 fn () => $this->managerEmployeeProductivity->listEmployees($user),
             );

@@ -1,0 +1,71 @@
+{
+  "pages": [
+    {
+      "page_number": 1,
+      "paragraphs": [
+        {"text": "AHILYANAGAR", "bounding_box": [{"x": 0.10, "y": 0.04}, {"x": 0.38, "y": 0.04}, {"x": 0.38, "y": 0.06}, {"x": 0.10, "y": 0.06}], "confidence": 0.98},
+        {"text": "SHAH & SHAH ASSOCIATES", "bounding_box": [{"x": 0.10, "y": 0.09}, {"x": 0.42, "y": 0.09}, {"x": 0.42, "y": 0.11}, {"x": 0.10, "y": 0.11}], "confidence": 0.97},
+        {"text": "RAJESH SHAH", "bounding_box": [{"x": 0.10, "y": 0.12}, {"x": 0.30, "y": 0.12}, {"x": 0.30, "y": 0.14}, {"x": 0.10, "y": 0.14}], "confidence": 0.96},
+        {"text": "MEERA SHAH", "bounding_box": [{"x": 0.10, "y": 0.145}, {"x": 0.28, "y": 0.145}, {"x": 0.28, "y": 0.16}, {"x": 0.10, "y": 0.16}], "confidence": 0.95},
+        {"text": "12, MG ROAD, NEAR CITY HOSPITAL", "bounding_box": [{"x": 0.10, "y": 0.17}, {"x": 0.44, "y": 0.17}, {"x": 0.44, "y": 0.19}, {"x": 0.10, "y": 0.19}], "confidence": 0.94},
+        {"text": "AHILYANAGAR-414001", "bounding_box": [{"x": 0.10, "y": 0.20}, {"x": 0.36, "y": 0.20}, {"x": 0.36, "y": 0.22}, {"x": 0.10, "y": 0.22}], "confidence": 0.93},
+        {"text": "PATEL AND CO", "bounding_box": [{"x": 0.10, "y": 0.26}, {"x": 0.32, "y": 0.26}, {"x": 0.32, "y": 0.28}, {"x": 0.10, "y": 0.28}], "confidence": 0.97},
+        {"text": "AMIT PATEL", "bounding_box": [{"x": 0.10, "y": 0.29}, {"x": 0.28, "y": 0.29}, {"x": 0.28, "y": 0.31}, {"x": 0.10, "y": 0.31}], "confidence": 0.96},
+        {"text": "PLOT NO 5, WARD 3, MARKET YARD", "bounding_box": [{"x": 0.10, "y": 0.32}, {"x": 0.44, "y": 0.32}, {"x": 0.44, "y": 0.34}, {"x": 0.10, "y": 0.34}], "confidence": 0.94},
+        {"text": "ADIPUR", "bounding_box": [{"x": 0.56, "y": 0.04}, {"x": 0.72, "y": 0.04}, {"x": 0.72, "y": 0.06}, {"x": 0.56, "y": 0.06}], "confidence": 0.98},
+        {"text": "MEHTA DESAI & ASSOCIATES", "bounding_box": [{"x": 0.56, "y": 0.09}, {"x": 0.90, "y": 0.09}, {"x": 0.90, "y": 0.11}, {"x": 0.56, "y": 0.11}], "confidence": 0.97},
+        {"text": "KIRAN MEHTA", "bounding_box": [{"x": 0.56, "y": 0.12}, {"x": 0.76, "y": 0.12}, {"x": 0.76, "y": 0.14}, {"x": 0.56, "y": 0.14}], "confidence": 0.96},
+        {"text": "NILESH DESAI", "bounding_box": [{"x": 0.56, "y": 0.145}, {"x": 0.78, "y": 0.145}, {"x": 0.78, "y": 0.16}, {"x": 0.56, "y": 0.16}], "confidence": 0.95},
+        {"text": "POOJA MEHTA", "bounding_box": [{"x": 0.56, "y": 0.165}, {"x": 0.76, "y": 0.165}, {"x": 0.76, "y": 0.18}, {"x": 0.56, "y": 0.18}], "confidence": 0.95},
+        {"text": "RUTVIK SHAH", "bounding_box": [{"x": 0.56, "y": 0.185}, {"x": 0.76, "y": 0.185}, {"x": 0.76, "y": 0.20}, {"x": 0.56, "y": 0.20}], "confidence": 0.94},
+        {"text": "1ST FLOOR, BUILDING A, GIDC", "bounding_box": [{"x": 0.56, "y": 0.21}, {"x": 0.90, "y": 0.21}, {"x": 0.90, "y": 0.23}, {"x": 0.56, "y": 0.23}], "confidence": 0.93},
+        {"text": "ADIPUR-370205", "bounding_box": [{"x": 0.56, "y": 0.24}, {"x": 0.76, "y": 0.24}, {"x": 0.76, "y": 0.26}, {"x": 0.56, "y": 0.26}], "confidence": 0.93},
+        {"text": "JOSHI LLP", "bounding_box": [{"x": 0.56, "y": 0.30}, {"x": 0.72, "y": 0.30}, {"x": 0.72, "y": 0.32}, {"x": 0.56, "y": 0.32}], "confidence": 0.96},
+        {"text": "ANIL KUMAR", "bounding_box": [{"x": 0.56, "y": 0.33}, {"x": 0.74, "y": 0.33}, {"x": 0.74, "y": 0.345}, {"x": 0.56, "y": 0.345}], "confidence": 0.95},
+        {"text": "JOSHI", "bounding_box": [{"x": 0.56, "y": 0.35}, {"x": 0.68, "y": 0.35}, {"x": 0.68, "y": 0.365}, {"x": 0.56, "y": 0.365}], "confidence": 0.90},
+        {"text": "HOUSE NO 18, SECTOR 2", "bounding_box": [{"x": 0.56, "y": 0.38}, {"x": 0.84, "y": 0.38}, {"x": 0.84, "y": 0.40}, {"x": 0.56, "y": 0.40}], "confidence": 0.94}
+      ]
+    }
+  ],
+  "expected": {
+    "firm_count": 4,
+    "directory_profile": "partnership_directory",
+    "firms": [
+      {
+        "firm_name": "SHAH & SHAH ASSOCIATES",
+        "city": "AHILYANAGAR",
+        "ca_name": "RAJESH SHAH",
+        "partners": ["MEERA SHAH"],
+        "partner_count": 1,
+        "must_not_contain_as_person": ["AHILYANAGAR", "MG ROAD", "CITY HOSPITAL", "414001"]
+      },
+      {
+        "firm_name": "PATEL AND CO",
+        "city": "AHILYANAGAR",
+        "ca_name": "AMIT PATEL",
+        "partners": [],
+        "partner_count": 0,
+        "must_not_contain_as_person": ["PLOT NO 5", "WARD 3", "MARKET YARD"]
+      },
+      {
+        "firm_name": "MEHTA DESAI & ASSOCIATES",
+        "city": "ADIPUR",
+        "ca_name": "KIRAN MEHTA",
+        "partners": ["NILESH DESAI", "POOJA MEHTA", "RUTVIK SHAH"],
+        "partner_count": 3,
+        "must_not_contain_as_person": ["ADIPUR", "1ST FLOOR", "GIDC", "370205"]
+      },
+      {
+        "firm_name": "JOSHI LLP",
+        "city": "ADIPUR",
+        "ca_name": "ANIL KUMAR JOSHI",
+        "partners": [],
+        "partner_count": 0,
+        "wrapped_partner_or_ca": true,
+        "must_not_contain_as_person": ["HOUSE NO 18", "SECTOR 2"]
+      }
+    ],
+    "section_headings_not_firms": ["AHILYANAGAR", "ADIPUR"],
+    "section_headings_not_persons": ["AHILYANAGAR", "ADIPUR"]
+  }
+}

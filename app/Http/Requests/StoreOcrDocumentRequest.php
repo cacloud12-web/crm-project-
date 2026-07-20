@@ -137,7 +137,8 @@ class StoreOcrDocumentRequest extends FormRequest
             UPLOAD_ERR_OK => null,
             UPLOAD_ERR_INI_SIZE => 'The file exceeds the server upload limit (upload_max_filesize='
                 .ini_get('upload_max_filesize')
-                ."). Raise PHP upload_max_filesize/post_max_size above {$appMaxMb} MB, then retry.",
+                ."). Raise PHP upload_max_filesize/post_max_size above {$appMaxMb} MB, then restart "
+                .'`php -c php-local.ini artisan serve` (or your PHP-FPM pool), then retry.',
             UPLOAD_ERR_FORM_SIZE => "The document may not be larger than {$appMaxMb} MB.",
             UPLOAD_ERR_PARTIAL => 'The document was only partially uploaded. Please try again.',
             UPLOAD_ERR_NO_FILE => 'Please choose a PDF or image document to upload.',

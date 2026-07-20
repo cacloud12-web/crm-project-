@@ -16,7 +16,13 @@ class OcrRecordSegmentationService
 
     public function __construct(
         private readonly ?OcrEntityClassificationService $classifier = null,
+        private readonly ?OcrCityHeadingDetector $cityHeadingDetector = null,
     ) {}
+
+    private function cityHeadings(): OcrCityHeadingDetector
+    {
+        return $this->cityHeadingDetector ?? new OcrCityHeadingDetector($this->classifier);
+    }
 
     /**
      * @param  list<array<string, mixed>>  $tokens
@@ -24,37 +30,73 @@ class OcrRecordSegmentationService
      */
     public function segmentPage(array $tokens, ?string $inheritedSectionCity = null): array
     {
-        $headings = $this->collectPageHeadings($tokens);
         $columns = $this->detectColumns($tokens);
         $blocks = [];
+        // City headings are usually printed once (left column). Later columns continue
+        // that section until they print their own heading (ABOHAR | AMBALA side-by-side).
+        $carryCity = $inheritedSectionCity;
         foreach ($columns as $columnIndex => $columnTokens) {
-            // Do not inherit left-column bottom city into the whole right column —
-            // section city is resolved by Y against page-wide headings below.
-            foreach ($this->segmentColumn($columnTokens, $columnIndex, null) as $block) {
-                if (empty($block['is_section_heading'])) {
-                    $firmToken = $block['firm_token'] ?? ($block['all_tokens'][0] ?? []);
-                    $firmY = (float) ($firmToken['y_center'] ?? 0);
-                    $firmX = (float) ($firmToken['x_center'] ?? $firmToken['x_min'] ?? 0);
-                    $block['section_city'] = $this->sectionCityAtY($headings, $firmY, $firmX, $inheritedSectionCity);
-                }
+            $columnBlocks = $this->segmentColumn($columnTokens, $columnIndex, $carryCity);
+            foreach ($columnBlocks as $block) {
                 $blocks[] = $block;
+            }
+            $lastInColumn = $this->lastSectionCityFromBlocks($columnBlocks);
+            if ($lastInColumn !== null) {
+                $carryCity = $lastInColumn;
             }
         }
 
         return $blocks;
     }
 
-    /** Last section city on this page by reading order (for carry into the next page). */
+    /** Last section city on this page by reading order (for optional next-page carry). */
     public function lastSectionCityFromBlocks(array $blocks): ?string
     {
         $last = null;
         foreach ($blocks as $block) {
-            if (! empty($block['section_city'])) {
+            if (! empty($block['is_section_heading']) && ! empty($block['section_city'])) {
                 $last = (string) $block['section_city'];
             }
         }
 
         return $last;
+    }
+
+    /**
+     * Proven page-continuation city only when the next page starts mid-section
+     * (no heading in the top band of the first column).
+     *
+     * @param  list<array<string, mixed>>  $nextPageTokens
+     */
+    public function continuationCityForNextPage(array $nextPageTokens, ?string $previousPageCity): ?string
+    {
+        $previousPageCity = trim((string) $previousPageCity);
+        if ($previousPageCity === '' || $nextPageTokens === []) {
+            return null;
+        }
+        $columns = $this->detectColumns($nextPageTokens);
+        $firstCol = $columns[0] ?? [];
+        if ($firstCol === []) {
+            return null;
+        }
+        usort($firstCol, static fn (array $a, array $b) => $a['y_center'] <=> $b['y_center']);
+        $top = array_slice($firstCol, 0, 8);
+        $entities = $this->classifier ?? new OcrEntityClassificationService;
+        foreach ($top as $token) {
+            $text = trim((string) ($token['text'] ?? ''));
+            if ($text === '') {
+                continue;
+            }
+            if ($this->isCityDirectoryHeading($text, $token, $entities)) {
+                return null; // new page opens with its own heading
+            }
+            if ($entities->isFirmName($this->stripInlineIdentifier($text))) {
+                // First content is a firm → allow continuation of prior section city.
+                return $previousPageCity;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -70,10 +112,12 @@ class OcrRecordSegmentationService
             if ($text === '' || ! $this->isCityDirectoryHeading($text, $token, $entities)) {
                 continue;
             }
+            $detected = $this->cityHeadings()->detect($text, $token);
             $headings[] = [
                 'y' => (float) ($token['y_center'] ?? $token['y_min'] ?? 0),
                 'x' => (float) ($token['x_center'] ?? $token['x_min'] ?? 0),
-                'city' => $text,
+                'city' => $detected['city'] ?? $text,
+                'raw_city' => $detected['raw_city'] ?? $text,
             ];
         }
         usort($headings, static fn (array $a, array $b) => $a['y'] <=> $b['y']);
@@ -259,6 +303,7 @@ class OcrRecordSegmentationService
         $current = null;
         $prevYMax = null;
         $sectionCity = $inheritedSectionCity;
+        $prevText = '';
 
         foreach ($columnTokens as $token) {
             $text = $token['text'];
@@ -266,14 +311,20 @@ class OcrRecordSegmentationService
             $largeGap = $gap >= self::RECORD_GAP_MIN;
 
             // City headers only between firms (or at column start) — never mid-record street lines.
-            if ($this->isCityDirectoryHeading($text, $token, $entities) && ($current === null || $largeGap)) {
+            // Skip branch-office labels ("Head Office at" / "Also at" → PUNE/MUMBAI).
+            $isBranchOfficeCity = $prevText !== '' && preg_match('/^(?:head\s*office\s*at|also\s*at)\b/iu', $prevText);
+            if (! $isBranchOfficeCity
+                && $this->isCityDirectoryHeading($text, $token, $entities)
+                && ($current === null || $largeGap)) {
                 if ($current !== null) {
                     $blocks[] = $this->finalizeBlock($current);
                     $current = null;
                 }
-                $sectionCity = trim($text);
+                $detected = $this->cityHeadings()->detect($text, $token);
+                $sectionCity = $detected['city'] ?? trim($text);
                 $blocks[] = ['is_section_heading' => true, 'section_city' => $sectionCity, 'column' => $columnIndex, 'tokens' => [$token]];
                 $prevYMax = $token['y_max'];
+                $prevText = $text;
                 continue;
             }
 
@@ -282,6 +333,20 @@ class OcrRecordSegmentationService
 
             if ($isFirmStart) {
                 if ($current !== null) {
+                    $prevFirm = trim((string) ($current['firm_token']['text'] ?? ''));
+                    // Wrapped firm title: "FOO BAR AND" + "ASSOCIATES" already rejected as bare;
+                    // also merge when prior title ends with AND/& and gap is small.
+                    if ($gap < self::RECORD_GAP_MIN && $prevFirm !== ''
+                        && preg_match('/\b(?:and|&)\s*$/iu', $prevFirm)) {
+                        $current['firm_token']['text'] = trim($prevFirm.' '.$text);
+                        $current['firm_token']['y_max'] = max(
+                            (float) ($current['firm_token']['y_max'] ?? 0),
+                            (float) ($token['y_max'] ?? 0)
+                        );
+                        $prevYMax = max($prevYMax ?? 0, (float) $token['y_max']);
+                        $prevText = $text;
+                        continue;
+                    }
                     $current['row_split_suspected'] = $current['row_split_suspected'] ?? false;
                     $blocks[] = $this->finalizeBlock($current);
                 }
@@ -296,11 +361,13 @@ class OcrRecordSegmentationService
                     'page' => $token['page'] ?? null,
                 ];
                 $prevYMax = $token['y_max'];
+                $prevText = $text;
                 continue;
             }
 
             if ($current === null) {
                 $prevYMax = $token['y_max'];
+                $prevText = $text;
                 continue;
             }
 
@@ -310,6 +377,7 @@ class OcrRecordSegmentationService
 
             $current['tokens'][] = $token;
             $prevYMax = max($prevYMax ?? 0, (float) $token['y_max']);
+            $prevText = $text;
         }
 
         if ($current !== null) {
@@ -367,29 +435,10 @@ class OcrRecordSegmentationService
 
     private function isCityDirectoryHeading(string $text, array $token, OcrEntityClassificationService $entities): bool
     {
-        if ($entities->isFirmName($text) || $entities->isPerson($text) || $entities->isAddress($text)) {
+        if ($entities->isAddress($text) && ! $entities->isCity($text)) {
             return false;
         }
-        if (preg_match('/\d/', $text)) {
-            return false;
-        }
-        // Mid-record street lines stay with the firm (CIRCULAR ROAD, NEAR BANK, H NO …).
-        if (preg_match('/\b(?:street\s*no|house|h\.?\s*no|shop|floor|near|opp|behind|backside|hospital|sector\s*\d|ward\s*no)\b/iu', $text)) {
-            return false;
-        }
-        $words = preg_split('/\s+/', trim($text)) ?: [];
-        if (count($words) > 2) {
-            return false;
-        }
-        // Known cities (ABOHAR) are often short labels — do not require wide bbox.
-        if ($entities->isCity($text)) {
-            return true;
-        }
-        if (($token['width'] ?? 0) < 0.10) {
-            return false;
-        }
-        // ABU ROAD / X CITY / Y CANTT style headers when not yet in city master.
-        return (bool) preg_match('/^[A-Z][A-Z\s\-]{1,30}$/', trim($text))
-            && (bool) preg_match('/\b(?:ROAD|CITY|CANTT)$/i', $text);
+
+        return $this->cityHeadings()->isHeading($text, $token);
     }
 }

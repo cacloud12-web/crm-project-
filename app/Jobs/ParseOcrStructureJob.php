@@ -36,10 +36,18 @@ class ParseOcrStructureJob implements ShouldBeUnique, ShouldQueue
     {
         $document = OcrDocument::query()->find($this->ocrDocumentId);
         if (! $document || ! $document->isCompleted()) {
+            // Soft-deleted / missing docs must not leave parse_status=queued forever.
+            $trashed = OcrDocument::withTrashed()->find($this->ocrDocumentId);
+            if ($trashed && $trashed->trashed() && $trashed->parse_status !== 'completed') {
+                $trashed->update([
+                    'parse_status' => 'failed',
+                    'processing_progress' => 'Parsing cancelled — document deleted',
+                ]);
+            }
             Log::warning('ocr.pipeline.step', [
                 'step' => 'parse_job_skip',
                 'ocr_document_id' => $this->ocrDocumentId,
-                'reason' => ! $document ? 'missing' : 'not_completed',
+                'reason' => ! $document ? 'missing_or_trashed' : 'not_completed',
             ]);
 
             return;

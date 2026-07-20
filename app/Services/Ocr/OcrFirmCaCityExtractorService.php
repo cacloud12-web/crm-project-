@@ -224,29 +224,26 @@ class OcrFirmCaCityExtractorService
             }
         }
 
-        if ($firmName === null && $caName === null && $city === null) {
+        // City headings, person-only lines, and address-only noise must never become firm rows.
+        if ($firmName === null || trim($firmName) === '') {
+            return null;
+        }
+        if ($entities->isCity($firmName) && ! $entities->isFirmName($firmName)) {
+            return null;
+        }
+        if ($entities->isPerson($firmName) && ! $entities->isFirmName($firmName)) {
             return null;
         }
 
         $missing = [];
-        if ($firmName === null || trim($firmName) === '') {
-            $missing[] = 'firm_name';
-        }
         if ($caName === null || trim($caName) === '') {
             $missing[] = 'ca_name';
         }
         if ($city === null || trim($city) === '') {
             $missing[] = 'city';
         }
-        if (in_array('firm_name', $missing, true)) {
-            $flags['firm_name_boundary_uncertain'] = true;
-        }
-        if (in_array('ca_name', $missing, true)) {
-            $flags['ca_name_boundary_uncertain'] = true;
-        }
-        if (in_array('city', $missing, true)) {
-            $flags['city_boundary_uncertain'] = true;
-        }
+        // Do NOT set city/ca boundary_uncertain merely because a field is empty —
+        // section-city forward-fill often supplies city after extract; empty ≠ uncertain.
 
         if ($rowMergeEvidence !== [] || $firmCandidateCount > 1) {
             $flags['row_merge_suspected'] = true;
@@ -528,7 +525,7 @@ class OcrFirmCaCityExtractorService
         if (preg_match('/^chartered\s+accountants?\.?$/iu', trim($name))) {
             return false;
         }
-        if ($entities->isAddress($name) && ! $entities->isFirmName($name)) {
+        if ($entities->isAddressShape($name) || ($entities->isAddress($name) && ! $entities->isFirmName($name))) {
             return false;
         }
         if (preg_match('/\b[6-9]\d{9}\b/', $name) || preg_match('/\b[1-9]\d{5}\b/', $name)) {
@@ -602,7 +599,7 @@ class OcrFirmCaCityExtractorService
     }
 
     /**
-     * Layout section headings (ABOHAR) — trust isCity; never person/firm fragments.
+     * Layout section headings (ABOHAR) — resolver/canonical only; never person/firm/street.
      */
     private function normalizeSectionCity(mixed $text, OcrEntityClassificationService $entities): ?string
     {
@@ -610,37 +607,34 @@ class OcrFirmCaCityExtractorService
         if ($raw === '') {
             return null;
         }
-        if ($entities->isFirmName($raw) || $entities->isAddress($raw) || $entities->isPerson($raw)) {
+        if ($entities->isFirmName($raw) || $entities->isPerson($raw)) {
             return null;
         }
-        if ($entities->isCity($raw)) {
-            return $raw;
+        $resolved = (new OcrCityResolverService)->resolve($raw);
+        if ($resolved !== null) {
+            return $resolved['canonical_city'];
         }
-        // Segmenter already gated directory headings; keep ROAD/CITY/CANTT style headers.
-        $words = preg_split('/\s+/', $raw) ?: [];
-        if (count($words) <= 2 && preg_match('/^[A-Z][A-Z\s\-]{1,30}$/', $raw)
-            && (count($words) === 2 || preg_match('/\b(?:ROAD|CITY|CANTT)$/i', $raw))) {
-            return $raw;
-        }
+        $heading = (new OcrCityHeadingDetector($entities))->detect($raw);
 
-        return null;
+        return $heading['city'] ?? null;
     }
 
-    /** Body tokens only — never ALL-CAPS / section-heading guesswork (fixes ANMOL → city). */
+    /** Body tokens only — never street localities when a section heading exists. */
     private function normalizeCityCandidate(mixed $text, OcrEntityClassificationService $entities): ?string
     {
         $raw = trim((string) $text);
         if ($raw === '') {
             return null;
         }
-        if ($entities->isFirmName($raw) || $entities->isAddress($raw) || $entities->isPerson($raw)) {
+        if ($entities->isFirmName($raw) || $entities->isPerson($raw) || $entities->isAddress($raw)) {
             return null;
         }
-        if ($entities->isCity($raw)) {
-            return $raw;
+        $resolved = (new OcrCityResolverService)->resolve($raw);
+        if ($resolved === null) {
+            return null;
         }
-
-        return null;
+        // Body fallback must still be resolvable; street ROAD rejected by resolver.
+        return $resolved['canonical_city'];
     }
 
     private function stripInlineCode(string $text): string

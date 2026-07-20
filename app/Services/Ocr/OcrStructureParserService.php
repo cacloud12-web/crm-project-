@@ -15,6 +15,7 @@ class OcrStructureParserService
         private readonly ?OcrSpreadsheetTableParser $spreadsheetParser = null,
         private readonly ?OcrEntityClassificationService $entityClassifier = null,
         private readonly ?OcrDirectoryRecordParser $recordParser = null,
+        private readonly ?OcrCityHeadingDetector $cityHeadingDetector = null,
     ) {}
 
     private function spreadsheet(): OcrSpreadsheetTableParser
@@ -27,6 +28,11 @@ class OcrStructureParserService
         return $this->entityClassifier ?? new OcrEntityClassificationService;
     }
 
+    private function cityHeadings(): OcrCityHeadingDetector
+    {
+        return $this->cityHeadingDetector ?? new OcrCityHeadingDetector($this->entities());
+    }
+
     private const NOISE_EXACT = [
         'preview', 'file', 'edit', 'view', 'go', 'tools', 'window', 'help',
         'home', 'back', 'next', 'search', 'print', 'share', 'download',
@@ -35,10 +41,10 @@ class OcrStructureParserService
     ];
 
     private const FIRM_MARKERS = [
-        '& associates', 'and associates', '& co', '& co.', 'and co', 'and co.',
-        'llp', 'pvt ltd', 'pvt. ltd', 'private limited', 'chartered accountant',
-        'chartered accountants', '& company', 'and company', 'associates',
-        'consultants', 'advisors', 'advisory', '& sons', 'and sons',
+        '& associates', 'and associates', '& co.', '& co',
+        'llp', 'pvt ltd', 'pvt. ltd', 'private limited',
+        'chartered accountants', 'chartered accountant',
+        '& company', 'and company', '& sons', 'and sons',
     ];
 
     private const PERSON_PREFIXES = [
@@ -213,8 +219,40 @@ class OcrStructureParserService
             'unique_firm_estimate' => count($firms),
             'candidate_firm_count' => $headingCount,
             'page_stats' => $pageStats,
-            'firms' => $firms,
+            'firms' => $this->forwardFillSectionCities($firms),
         ];
+    }
+
+    /**
+     * Forward-fill missing city only within the same page bucket (text parser has no columns).
+     *
+     * @param  list<array<string, mixed>>  $firms
+     * @return list<array<string, mixed>>
+     */
+    private function forwardFillSectionCities(array $firms): array
+    {
+        $lastByPage = [];
+        foreach ($firms as $i => $firm) {
+            $page = (int) ($firm['page_number'] ?? 0);
+            $city = trim((string) ($firm['city'] ?? ''));
+            if ($city !== '') {
+                $lastByPage[$page] = $city;
+                continue;
+            }
+            if (! isset($lastByPage[$page])) {
+                continue;
+            }
+            $fill = $lastByPage[$page];
+            $firms[$i]['city'] = $fill;
+            $firms[$i]['raw_city'] = $firm['raw_city'] ?? $fill;
+            $missing = is_array($firm['missing_required_fields'] ?? null) ? $firm['missing_required_fields'] : [];
+            $firms[$i]['missing_required_fields'] = array_values(array_filter(
+                $missing,
+                static fn ($f) => $f !== 'city',
+            ));
+        }
+
+        return $firms;
     }
 
     /**
@@ -372,9 +410,31 @@ class OcrStructureParserService
         $currentCity = null;
         $currentCityMeta = null;
         $current = null;
+        $skipBranchCities = false;
 
         foreach ($lines as $line) {
             $text = $line['text'];
+
+            // "Also at JAIPUR / BARAN" are branch offices — never replace the section city.
+            if (preg_match('/^also\s+at\b/iu', $text)) {
+                $skipBranchCities = true;
+                if ($current !== null) {
+                    $current['lines'][] = $line;
+                }
+                continue;
+            }
+            if ($skipBranchCities) {
+                if ($this->looksLikeFirmName($text)) {
+                    $skipBranchCities = false;
+                } elseif ($this->looksLikeCityHeader($text, $line) || $this->entities()->isCity($text)) {
+                    if ($current !== null) {
+                        $current['lines'][] = $line;
+                    }
+                    continue;
+                } else {
+                    $skipBranchCities = false;
+                }
+            }
 
             // City headers before address absorb — "ABU ROAD" must start a new city, not join prior firm.
             if ($this->looksLikeCityHeader($text, $line)) {
@@ -382,13 +442,37 @@ class OcrStructureParserService
                     $current['lines'][] = $line;
                     continue;
                 }
-                // Locality / street lines inside an open firm stay with that firm.
-                if ($current !== null && $this->entities()->isAddress($text) && ! $this->isStrongCityDirectoryHeader($text)) {
+                $cityHeader = $this->normalizeDirectoryCityHeader($text);
+                // Mid-record localities (LAJPAT NAGAR) stay with the open firm until it looks complete
+                // (PIN / address already captured). Confirmed section cities after a complete firm
+                // (AHILY NAGAR after 370205) start the next section.
+                if ($current !== null && $cityHeader !== null
+                    && $this->entities()->isAddress($text) && ! $this->isStrongCityDirectoryHeader($text)
+                    && ! $this->firmBlockLooksComplete($current)) {
                     $current['lines'][] = $line;
                     continue;
                 }
-                $currentCity = trim($text);
-                $currentCityMeta = $this->fieldMeta($currentCity, 0.72, $line);
+                if ($current !== null && $cityHeader === null
+                    && $this->entities()->isAddress($text) && ! $this->isStrongCityDirectoryHeader($text)) {
+                    $current['lines'][] = $line;
+                    continue;
+                }
+                // Westprop-style: city AFTER firm address closes the open firm WITH that city
+                // only when the firm still lacks a section city. ICAI headers between firms
+                // (ADIPUR … AHILY NAGAR) must not overwrite the prior firm’s city.
+                if ($current !== null && ($current['lines'] !== [] || ! empty($current['firm_hint']))) {
+                    if ($cityHeader !== null && empty($current['city'])) {
+                        $current['city'] = $cityHeader;
+                        $current['city_meta'] = $this->fieldMeta($cityHeader, 0.8, $line);
+                        $current['lines'][] = $line;
+                    }
+                    $blocks[] = $current;
+                    $current = null;
+                }
+                if ($cityHeader !== null) {
+                    $currentCity = $cityHeader;
+                    $currentCityMeta = $this->fieldMeta($currentCity, 0.72, $line);
+                }
                 continue;
             }
 
@@ -412,16 +496,7 @@ class OcrStructureParserService
             }
 
             if ($current === null) {
-                // Orphan content before first firm — start a soft block if it looks useful.
-                if ($this->looksLikePersonName($text) || $this->extractPincode($text) || $this->extractGst($text)) {
-                    $current = [
-                        'city' => $currentCity,
-                        'city_meta' => $currentCityMeta,
-                        'firm_hint' => null,
-                        'firm_hint_line' => null,
-                        'lines' => [$line],
-                    ];
-                }
+                // Never start a firm block from person/PIN alone — that creates phantom firm rows.
                 continue;
             }
 
@@ -433,6 +508,32 @@ class OcrStructureParserService
         }
 
         return $blocks;
+    }
+
+    /**
+     * @param  array{city: ?string, firm_hint?: ?string, lines: list<array{text: string}>}  $block
+     */
+    private function firmBlockLooksComplete(array $block): bool
+    {
+        foreach ($block['lines'] ?? [] as $line) {
+            $text = (string) ($line['text'] ?? '');
+            if ($this->extractPincode($text)) {
+                return true;
+            }
+        }
+        $hasPerson = false;
+        $hasAddress = false;
+        foreach ($block['lines'] ?? [] as $line) {
+            $text = (string) ($line['text'] ?? '');
+            if ($this->looksLikePersonName($text)) {
+                $hasPerson = true;
+            }
+            if ($this->entities()->isAddress($text)) {
+                $hasAddress = true;
+            }
+        }
+
+        return $hasPerson && $hasAddress;
     }
 
     private function recordParser(): OcrDirectoryRecordParser
@@ -675,7 +776,10 @@ class OcrStructureParserService
     private function looksLikeLooseFirmCandidate(string $text): bool
     {
         $lower = mb_strtolower($text);
-        if ($this->looksLikePersonName($text) || $this->looksLikeAddressLine($text)) {
+        if ($this->entities()->isAddressShape($text) || $this->looksLikeAddressLine($text)) {
+            return false;
+        }
+        if ($this->looksLikePersonName($text)) {
             return false;
         }
         if ($this->extractPincode($text) || $this->extractPhone($text) || $this->extractGst($text)) {
@@ -687,8 +791,10 @@ class OcrStructureParserService
         // ALL CAPS multi-token business-like headings without classic markers.
         if ($text === mb_strtoupper($text) && preg_match('/^[A-Z0-9 .&\'\-]+$/', $text)) {
             $words = preg_split('/\s+/', $text) ?: [];
-            if (count($words) >= 2 && count($words) <= 6) {
-                return str_contains($lower, '&') || str_contains($lower, ' co') || str_contains($lower, 'associat');
+            if (count($words) >= 2 && count($words) <= 6
+                && ! preg_match('/\d/', $text)
+                && (preg_match('/\b(?:and|&)\s+co(?:mpany)?\.?\b/u', $lower) || str_contains($lower, 'associat'))) {
+                return true;
             }
         }
 
@@ -698,31 +804,23 @@ class OcrStructureParserService
 
     private function looksLikeFirmName(string $text): bool
     {
+        // Delegate to shared classifier (address veto, bare-marker veto, title stem).
+        if ($this->entities()->isFirmName($text)) {
+            return true;
+        }
+
         $lower = mb_strtolower($text);
 
         if (preg_match('/^(firm\s*name|name of firm)\s*[:\-]/i', $text)) {
             return true;
         }
 
-        foreach (self::FIRM_MARKERS as $marker) {
-            if (str_contains($lower, $marker)) {
-                if ($marker === 'area') {
-                    continue;
-                }
-                return true;
-            }
-        }
-
-        // "&" between name tokens: "Agrawal & Shah"
-        if (preg_match('/\b[A-Z][A-Za-z.]+\s+&\s+[A-Z][A-Za-z.]+\b/', $text)) {
-            return true;
-        }
-
         // Directory headings without classic markers: "MEHTA BROS", "TAX BUREAU"
         if (preg_match('/\b(bros|bureau|group|enterprise|enterprises|services|consultancy)\b/i', $text)
-            && ! $this->looksLikeAddressLine($text)
+            && ! $this->entities()->isAddressShape($text)
             && ! $this->extractPhone($text)
-            && mb_strlen($text) <= 60) {
+            && mb_strlen($text) <= 60
+            && ! preg_match('/^\d/', $text)) {
             return true;
         }
 
@@ -737,75 +835,27 @@ class OcrStructureParserService
         if (preg_match('/^(city)\s*[:\-]/i', $text)) {
             return true;
         }
-
-        // Identifiers are never city headers.
         if (preg_match('/^\d{5,6}\s*[A-Z]$/i', trim($text)) || preg_match('/^\d{5,8}$/', trim($text))) {
             return false;
         }
         if ((new OcrIdentifierExtractorService)->isIcaiFrnPattern($text)) {
             return false;
         }
-
-        // PIN / GST / email / phone lines are not cities.
         if ($this->extractPincode($text) || $this->extractGst($text) || $this->extractEmail($text) || $this->extractPhone($text)) {
             return false;
         }
-
         if ($this->looksLikeFirmName($text)) {
             return false;
         }
-
-        $words = preg_split('/\s+/', $text) ?: [];
-        if (count($words) > 3 || mb_strlen($text) > 40) {
-            return false;
-        }
-
-        $isAllCaps = $text === mb_strtoupper($text) && (bool) preg_match('/^[A-Z0-9 .\'\-]+$/', $text);
-
-        // Directory city headers are often ALL CAPS (ABHANPUR, ABU ROAD). Allow mild
-        // place words like ROAD / NAGAR here; reject detailed address markers.
-        $lower = mb_strtolower($text);
-        $strongAddress = false;
-        foreach (['shop', 'floor', 'plot', 'sector', 'industrial', 'complex', 'building', 'colony', 'phase', 'wing', 'block'] as $marker) {
-            if (str_contains($lower, $marker)) {
-                $strongAddress = true;
-                break;
-            }
-        }
-        if ($strongAddress) {
-            return false;
-        }
-
-        // Place-like tokens strongly indicate a city/locality header.
-        $placeTokens = ['road', 'nagar', 'pur', 'bad', 'garh', 'ganj', 'city', 'vihar', 'bagh', 'pete', 'halli'];
-        $hasPlaceToken = false;
-        foreach ($placeTokens as $token) {
-            if (str_contains($lower, $token)) {
-                $hasPlaceToken = true;
-                break;
-            }
-        }
-
-        // Two-word ALL CAPS without place tokens is often a person name (PIYUSH AGRAWAL).
-        if ($isAllCaps && count($words) === 2 && ! $hasPlaceToken) {
-            return false;
-        }
-
-        if (! $isAllCaps && ! preg_match('/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}$/', $text)) {
-            if (! preg_match('/^[A-Za-z .\'\-]+$/', $text)) {
-                return false;
-            }
-            if (count($words) > 2) {
-                return false;
-            }
-        }
-
         if ($this->extractState($text)) {
             return false;
         }
 
-        // City headers in directories are usually 1–2 words (ABHANPUR, ABU ROAD).
-        return count($words) <= 2 || ($isAllCaps && count($words) <= 3);
+        return $this->cityHeadings()->isHeading($text, [
+            'width' => (float) ($line['width'] ?? 0.12),
+            'y_center' => (float) ($line['y_center'] ?? 0),
+            'x_center' => (float) ($line['x_center'] ?? 0),
+        ]);
     }
 
     /** True city section headers only — not street/locality lines like LAJPAT NAGAR. */
@@ -820,6 +870,14 @@ class OcrStructureParserService
         }
 
         return false;
+    }
+
+    /** Strip PIN / membership crumbs from city headers (ADIPUR KACHCHH-370205 → ADIPUR). */
+    private function normalizeDirectoryCityHeader(string $text): ?string
+    {
+        $detected = $this->cityHeadings()->detect($text);
+
+        return $detected['city'] ?? null;
     }
 
     private function looksLikePersonName(string $text): bool

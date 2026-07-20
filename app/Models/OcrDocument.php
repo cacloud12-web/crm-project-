@@ -97,6 +97,9 @@ class OcrDocument extends Model
         'failed_at',
         'parse_status',
         'parsed_firm_count',
+        'active_parse_run_id',
+        'valid_firm_count',
+        'candidate_firm_count',
         'parsed_at',
     ];
 
@@ -197,6 +200,7 @@ class OcrDocument extends Model
     {
         return match ($this->pipelineStage()) {
             'pending' => 'Pending',
+            'queued' => 'Queued',
             'uploading' => 'Uploading',
             'ocr' => 'OCR',
             'parsing' => 'Parsing',
@@ -230,7 +234,11 @@ class OcrDocument extends Model
         if (in_array($this->status, [self::STATUS_PENDING], true)) {
             return 'pending';
         }
-        if (in_array($this->status, [self::STATUS_QUEUED, self::STATUS_UPLOADING_TO_CLOUD], true)) {
+        // File is already on disk — "queued" means waiting for OCR worker, not uploading.
+        if ($this->status === self::STATUS_QUEUED) {
+            return 'queued';
+        }
+        if ($this->status === self::STATUS_UPLOADING_TO_CLOUD) {
             return 'uploading';
         }
         if (in_array($this->status, [self::STATUS_PROCESSING, self::STATUS_FINALIZING], true)) {
@@ -249,14 +257,20 @@ class OcrDocument extends Model
         }
 
         if ($this->isMasterCaImport()) {
+            if (str_contains($progress, 'need review') || str_contains($progress, 'awaiting review')
+                || str_contains($progress, 'ready for review') || str_contains($progress, 'review required')
+                || str_contains($progress, 'auto-write off')) {
+                return 'completed';
+            }
             if (str_contains($progress, 'validat')) {
                 return 'validating';
             }
-            if (str_contains($progress, 'import') && ! str_contains($progress, 'completed')) {
-                return 'importing';
+            // Parse finished; Master write is fail-closed / queued — do not leave UI on Importing forever.
+            if (str_contains($progress, 'queued for master') && $this->parse_status === 'completed') {
+                return 'completed';
             }
-            if (str_contains($progress, 'queued for master')) {
-                // Should never happen for Master CA — treat as importing recovery.
+            if (str_contains($progress, 'import') && ! str_contains($progress, 'completed')
+                && ! str_contains($progress, 'queued for master')) {
                 return 'importing';
             }
 

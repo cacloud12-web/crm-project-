@@ -59,10 +59,10 @@ class OcrEntityClassificationService
 
   /** @var list<string> */
     private const FIRM_MARKERS = [
-        '& associates', 'and associates', '& co', '& co.', 'and co', 'and co.',
-        'llp', 'pvt ltd', 'pvt. ltd', 'private limited', 'chartered accountant',
-        'chartered accountants', '& company', 'and company', 'associates',
-        'consultants', 'advisors', 'advisory', '& sons', 'and sons', ' & ',
+        '& associates', 'and associates', '&associates', '& co.', '& co', '&co.', '&co',
+        'llp', 'pvt ltd', 'pvt. ltd', 'private limited',
+        'chartered accountants', 'chartered accountant',
+        '& company', 'and company', '&company', '& sons', 'and sons', '&sons',
     ];
 
   /** @var list<string> */
@@ -368,18 +368,17 @@ class OcrEntityClassificationService
         return $this->extractPincodeValue($text);
     }
 
-    public function isAddress(?string $text): bool
+    /**
+     * Address-shaped lines (shop/plot/near/…) — does NOT call isFirmName (breaks circular veto).
+     */
+    public function isAddressShape(?string $text): bool
     {
         if ($text === null || trim($text) === '') {
             return false;
         }
         $text = $this->unicode()->classificationValue($text);
         $lower = mb_strtolower(trim($text));
-        if ($this->isFirmName($text)) {
-            return false;
-        }
 
-        // House / door / SCO patterns (including OCR greek lookalikes Η ΝΟ).
         if (preg_match('/\b(?:h\.?\s*no\.?|house\s*no\.?|door\s*no\.?|d\.?\s*no\.?|plot\s*no\.?|shop\s*no\.?)\b/iu', $text)) {
             return true;
         }
@@ -389,23 +388,47 @@ class OcrEntityClassificationService
         if (preg_match('/\bsco[\-\s]?\d+/i', $text) || preg_match('/\b\d+(?:st|nd|rd|th)\s+floor\b/i', $text)) {
             return true;
         }
-        if (preg_match('/\b(?:shop|plot|flat|house|sco|door)\s*(?:no\.?|number)?\s*[#:]?\s*\d+/i', $text)) {
+        if (preg_match('/\b(?:shop|plot|flat|house|sco|door|block|phase|sector|ward)\s*(?:no\.?|number)?\s*[#:]?\s*\d+/i', $text)) {
             return true;
         }
-        // Street / locality suffixes — always address inside a firm block (not person names).
-        if (preg_match('/\b(?:road|street|sadak|lane|nagar|nagri|colony|sector|mohalla|mandi|estate|cantt|vihar|enclave|chowk|crossing|bypass|marg|gali|hospital|clinic|bank|stand|jail|land|gaon|majri|village|tehsil|ward|backside|post\s*office|temple|school|market)\b/iu', $text)) {
+        if (preg_match('/\b(?:near|opp\.?|opposite|behind|backside|above|below)\b/iu', $text)) {
             return true;
         }
-        if (preg_match('/\b(?:near|opp\.?|opposite|behind|backside)\b/iu', $text)) {
+        // Locality lines without a firm-title suffix are addresses.
+        if (preg_match('/\b(?:road|street|sadak|lane|nagar|nagri|colony|sector|mohalla|mandi|estate|cantt|vihar|enclave|chowk|crossing|bypass|marg|gali|hospital|clinic|bank|stand|jail|land|gaon|majri|village|tehsil|ward|backside|post\s*office|temple|school|market|building|tower|plaza|complex|palace|chambers)\b/iu', $text)
+            && ! preg_match('/\b(?:associates|llp|pvt|private\s+limited|&\s*co\b|and\s+co\b|&\s*company|and\s+company|&\s*sons)\b/iu', $text)) {
             return true;
         }
-
         foreach (self::ADDRESS_KEYWORDS as $keyword) {
-            if (preg_match('/\b'.preg_quote($keyword, '/').'\b/u', $lower)) {
+            if (preg_match('/\b'.preg_quote($keyword, '/').'\b/u', $lower)
+                && ! preg_match('/\b(?:associates|llp|pvt|private\s+limited|&\s*co\b|and\s+co\b)\b/iu', $text)) {
                 return true;
             }
         }
+        if (preg_match('/\b(?:no\.?|number)\s*\d+\s*&\s*\d+\b/iu', $text)) {
+            return true;
+        }
+        if (preg_match('/^\d+\s*&\s*\d+\s*$/u', trim($text))) {
+            return true;
+        }
 
+        return false;
+    }
+
+    public function isAddress(?string $text): bool
+    {
+        if ($text === null || trim($text) === '') {
+            return false;
+        }
+        $text = $this->unicode()->classificationValue($text);
+        if ($this->isAddressShape($text)) {
+            return true;
+        }
+        if ($this->isFirmName($text)) {
+            return false;
+        }
+
+        $lower = mb_strtolower(trim($text));
         $words = preg_split('/\s+/', $lower) ?: [];
         $localityHits = 0;
         foreach ($words as $word) {
@@ -465,22 +488,121 @@ class OcrEntityClassificationService
             return false;
         }
         $text = $this->unicode()->classificationValue($text);
-        // Care-of / address continuations are not new firm records.
         if ($this->isCareOfLine($text)) {
             return false;
         }
         $lower = mb_strtolower(trim($text));
-        // Bare professional designation — never a firm title alone.
         if (preg_match('/^chartered\s+accountants?\.?$/iu', $lower)) {
             return false;
         }
+        if (preg_match('/^(list of|directory of|index of|table of contents|member firms)\b/iu', $lower)) {
+            return false;
+        }
+        // Wrap continuations / bare markers are never a new firm ("& CO", "AND ASSOCIATES", "LLP").
+        if ($this->isBareFirmMarker($lower)) {
+            return false;
+        }
+
+        // True firm title: name stem + marker (may include trailing address OCR glue).
+        if ($this->hasFirmTitleWithMarker($text, $lower)
+            && ! preg_match('/\b(?:consultants|associates|advisors|advisory)\b.+\b(?:building|tower|plaza|complex|road|street|colony|nagar|market)\b/u', $lower)) {
+            return true;
+        }
+
+        // Address-shaped lines without a firm title never start a firm.
+        if ($this->isAddressShape($text)) {
+            return false;
+        }
+
+        // Partner ampersand: "Agrawal & Shah" — not "5 & 6", not "L & T".
+        if (preg_match('/\b[A-Za-z][A-Za-z.]{2,}\s+&\s+[A-Za-z][A-Za-z.]{2,}\b/u', $text)
+            && ! preg_match('/\d/', $text)
+            && ! preg_match('/\b(?:no|number|shop|plot|house|sector|block|phase|floor|road|street|city)\b/iu', $text)
+            && ! preg_match('/^[A-Za-z]\s+&\s+[A-Za-z]\b/u', trim($text))) {
+            return true;
+        }
+        // Directory-style titles without classic markers: "MEHTA BROS", "TAX BUREAU".
+        if (preg_match('/\b(bros|bureau|group|enterprises?|services|consultancy)\b/iu', $lower)
+            && ! $this->isAddressShape($text)
+            && ! preg_match('/\d/', $text)
+            && mb_strlen($text) <= 60
+            && count(preg_split('/\s+/u', trim($text))) >= 2) {
+            return true;
+        }
+        if (preg_match('/\bfirms?\b/u', $lower) && count(preg_split('/\s+/u', trim($text))) >= 2
+            && ! preg_match('/\b(?:list|directory|index|member)\b/u', $lower)
+            && ! $this->isBareFirmMarker($lower)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /** Bare marker / designation-only lines from wrapped OCR — not firm starts. */
+    private function isBareFirmMarker(string $lower): bool
+    {
+        $lower = trim($lower, " \t.&");
+
+        return (bool) preg_match(
+            '/^(?:m\/?s\.?\s*)?(?:and\s+|&\s*)?(?:co(?:mpany)?|associates|consultants|advisors|advisory|sons|llp|pvt\.?\s*ltd\.?|private\s+limited)\.?$/u',
+            $lower
+        );
+    }
+
+    /** Name stem + classic ICAI firm marker (associates / & co / llp / …). */
+    private function hasFirmTitleWithMarker(string $text, string $lower): bool
+    {
+        // "NAME ASSOCIATES", "NAME & ASSOCIATES", "NAME&ASSOCIATES"
+        if (preg_match('/^(.+?)(?:\s+and\s+|&\s*|\s+&\s*)?(?:associates|consultants|advisors|advisory)\b/u', $lower, $m)
+            && $this->firmTitleStemIsValid($m[1])) {
+            return true;
+        }
+        // "NAME & CO", "NAME&CO", "NAME AND CO", "NAMEAND CO" (OCR glue)
+        if (preg_match('/^(.+?)(?:\s+and\s+|and\s+|&\s*|\s+&\s*)co(?:mpany)?\.?\b/u', $lower, $m)
+            && ! preg_match('/\bco[\-\s]?operative|cooperative\b/u', $lower)
+            && $this->firmTitleStemIsValid($m[1])) {
+            return true;
+        }
+        if (preg_match('/^(.+?)(?:\s+and\s+|and\s+|&\s*|\s+&\s*)sons\.?\b/u', $lower, $m) && $this->firmTitleStemIsValid($m[1])) {
+            return true;
+        }
+        if (preg_match('/^(.+?)\s+(?:llp|pvt\.?\s*ltd\.?|private\s+limited)\b/u', $lower, $m) && $this->firmTitleStemIsValid($m[1])) {
+            return true;
+        }
+        if (preg_match('/^(.+?)\s+chartered\s+accountants?\b/u', $lower, $m) && $this->firmTitleStemIsValid($m[1])) {
+            return true;
+        }
         foreach (self::FIRM_MARKERS as $marker) {
-            if (str_contains($lower, $marker)) {
+            if (! str_contains($lower, $marker)) {
+                continue;
+            }
+            $pos = mb_strpos($lower, $marker);
+            if ($pos !== false && $this->firmTitleStemIsValid(trim(mb_substr($lower, 0, $pos)))) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private function firmTitleStemIsValid(string $stem): bool
+    {
+        $stem = trim(preg_replace('/^m\/?s\.?\s+/u', '', $stem) ?? $stem);
+        if ($stem === '') {
+            return false;
+        }
+        // Reject stems that are only address openers (not "NO MEHTA & CO").
+        if (preg_match('/^(?:door|plot|shop|flat|house|survey|unit|near|opp|opposite|above|below|behind|floor)\b/u', $stem)) {
+            return false;
+        }
+        if (preg_match('/^(?:no\.?|number)\s*\d/u', $stem)) {
+            return false;
+        }
+        if (preg_match('/\d/', $stem) && preg_match('/\b(?:floor|cross|road|street|plot|shop|door|no\.?)\b/u', $stem)) {
+            return false;
+        }
+        // ICAI allows single-initial titles: "H & CO", "R K & ASSOCIATES".
+        return (bool) preg_match('/[A-Za-z]/u', $stem);
     }
 
     /** C/O M/S … lines are address/branch pointers, not firm starts. */
@@ -500,39 +622,76 @@ class OcrEntityClassificationService
             return false;
         }
         $text = $this->unicode()->classificationValue($text);
-        if ($this->isFirmName($text) || $this->isAddress($text)) {
+        if ($this->isFirmName($text)) {
             return false;
         }
+        $resolver = new OcrCityResolverService;
+        // Streets / 24 PARAGANAS / localities must never pass as city.
+        if ($resolver->isForbiddenLocalityShape($text)) {
+            return false;
+        }
+        // Prefer shared resolver — blocks street "X ROAD" false cities.
+        if ($resolver->isResolvableCity($text)) {
+            return true;
+        }
+        if ($this->isKnownCityName($text)) {
+            return true;
+        }
+
         $words = preg_split('/\s+/', trim($text)) ?: [];
         if (count($words) > 3) {
             return false;
         }
-        // Two-word ALL CAPS names are people, not cities.
-        if (count($words) === 2 && $this->looksLikePersonShape($text)) {
+        // Multi-word person names (CA names) must never be cities.
+        if (count($words) >= 2 && $this->looksLikePersonShape($text)) {
             return false;
         }
-        // Single-token given names (HARSHIL, NEETU) are not cities unless known city master / suffix.
+        // Never treat free multi-word * ROAD / STREET lines as cities.
+        if (count($words) >= 2 && preg_match('/\b(?:road|street|floor|colony|market|mandi|hospital|school|plot|ward)\b/iu', $text)) {
+            return false;
+        }
+
+        if ($this->isAddress($text)) {
+            return false;
+        }
+
+        // Single-token place suffixes only (ADIPUR, AHILYANAGAR) — not given names.
+        if (count($words) === 1 && $this->hasCityPlaceSignal($text) && ! $this->looksLikePersonShape($text)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Place signal for cities: whole-word tokens for multi-word text; suffix only for single tokens.
+     * Avoids false positives like NAGARKAR (nagar) / AMBADAS (bad) / PATEL ROAD (road).
+     */
+    private function hasCityPlaceSignal(string $text): bool
+    {
+        $words = preg_split('/\s+/', mb_strtolower(trim($text))) ?: [];
+        // "road" is not a free city signal — only approved ROAD cities via resolver.
+        $suffixes = ['nagar', 'pur', 'bad', 'garh', 'ganj', 'city', 'vihar', 'bagh', 'cantt', 'pete', 'halli'];
+        if ($words === []) {
+            return false;
+        }
         if (count($words) === 1) {
-            if ($this->isKnownCityName($text)) {
-                return true;
-            }
-            $lower = mb_strtolower($text);
-            foreach (['road', 'nagar', 'pur', 'bad', 'garh', 'ganj', 'city', 'vihar', 'bagh', 'cantt'] as $token) {
-                if (str_ends_with($lower, $token) && mb_strlen($lower) > mb_strlen($token) + 2) {
+            $w = $words[0];
+            foreach ($suffixes as $suffix) {
+                if (str_ends_with($w, $suffix) && mb_strlen($w) > mb_strlen($suffix) + 2) {
                     return true;
                 }
             }
 
             return false;
         }
-        $lower = mb_strtolower($text);
-        foreach (['road', 'nagar', 'pur', 'bad', 'garh', 'ganj', 'city', 'vihar', 'bagh', 'cantt'] as $token) {
-            if (str_contains($lower, $token)) {
+        foreach ($words as $w) {
+            if (in_array($w, $suffixes, true)) {
                 return true;
             }
         }
 
-        return (bool) preg_match('/^[A-Z][A-Z\s\-]{2,30}$/', trim($text)) && count($words) <= 2;
+        return false;
     }
 
     /**

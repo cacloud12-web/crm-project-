@@ -194,4 +194,66 @@ class OcrStructureParseTest extends TestCase
 
         $this->assertDatabaseMissing('ocr_parsed_firms', ['ocr_document_id' => $document->id]);
     }
+
+    public function test_city_headings_and_person_orphans_are_not_persisted_as_firms(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $document = OcrDocument::query()->create([
+            'ca_id' => null,
+            'uploaded_by' => $admin->id,
+            'original_filename' => 'overcount.pdf',
+            'stored_filename' => 'overcount.pdf',
+            'storage_disk' => 'local',
+            'storage_path' => 'ocr-documents/test/overcount.pdf',
+            'mime_type' => 'application/pdf',
+            'file_size' => 900,
+            'status' => OcrDocument::STATUS_COMPLETED,
+            'processing_mode' => 'online',
+            'extracted_text' => "AHILYANAGAR\nADIPUR\nABOHAR\nAMBADAS KISAN KOHK\nNEETU BHATIA & ASSOCIATES\nNEETU BHATIA\nSHOP NO 1\n",
+            'processed_at' => now(),
+        ]);
+
+        app(OcrStructurePersistService::class)->parseAndPersist($document);
+        $document->refresh();
+
+        $names = OcrParsedFirm::query()->where('ocr_document_id', $document->id)->pluck('firm_name')->all();
+        $this->assertNotContains('AHILYANAGAR', $names);
+        $this->assertNotContains('ADIPUR', $names);
+        $this->assertNotContains('ABOHAR', $names);
+        $this->assertNotContains('AMBADAS KISAN KOHK', $names);
+        $this->assertSame(1, (int) $document->parsed_firm_count);
+        $this->assertContains('NEETU BHATIA & ASSOCIATES', $names);
+
+        $this->getJson('/ocr-documents/'.$document->id)
+            ->assertOk()
+            ->assertJsonPath('data.parsed_firm_count', 1);
+    }
+
+    public function test_restructure_replaces_prior_active_parse_rows(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $document = OcrDocument::query()->create([
+            'ca_id' => null,
+            'uploaded_by' => $admin->id,
+            'original_filename' => 'retry.pdf',
+            'stored_filename' => 'retry.pdf',
+            'storage_disk' => 'local',
+            'storage_path' => 'ocr-documents/test/retry.pdf',
+            'mime_type' => 'application/pdf',
+            'file_size' => 900,
+            'status' => OcrDocument::STATUS_COMPLETED,
+            'processing_mode' => 'online',
+            'extracted_text' => "JAIPUR\nALPHA & CO\nRAJ SHAH\n",
+            'processed_at' => now(),
+        ]);
+
+        $service = app(OcrStructurePersistService::class);
+        $service->parseAndPersist($document);
+        $first = OcrParsedFirm::query()->where('ocr_document_id', $document->id)->count();
+        $service->parseAndPersist($document->fresh());
+        $second = OcrParsedFirm::query()->where('ocr_document_id', $document->id)->count();
+
+        $this->assertSame($first, $second);
+        $this->assertSame(1, $second);
+    }
 }

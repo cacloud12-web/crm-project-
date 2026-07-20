@@ -16,6 +16,13 @@ class PdfPageCounter
             return null;
         }
 
+        // Prefer the light regex path first — Smalot builds a full object model and can
+        // spike memory even on small PDFs when called repeatedly during upload/retry.
+        $heuristic = $this->heuristicPageCount($binary);
+        if ($heuristic !== null) {
+            return $heuristic;
+        }
+
         try {
             $pdf = (new Parser)->parseContent($binary);
             $pages = $pdf->getPages();
@@ -24,10 +31,10 @@ class PdfPageCounter
                 return $count;
             }
         } catch (Throwable) {
-            // Fall through to a lightweight heuristic.
+            // Fall through.
         }
 
-        return $this->heuristicPageCount($binary);
+        return null;
     }
 
     private function heuristicPageCount(string $binary): ?int

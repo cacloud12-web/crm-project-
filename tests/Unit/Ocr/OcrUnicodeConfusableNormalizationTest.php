@@ -153,8 +153,8 @@ class OcrUnicodeConfusableNormalizationTest extends TestCase
         ]));
 
         $arr = $resource->toArray(request());
-        $this->assertSame('Invalid', $arr['status']);
-        $this->assertSame('CA Name is required.', $arr['user_message']);
+        $this->assertSame('Verified', $arr['status']);
+        $this->assertNull($arr['user_message']);
         $this->assertArrayNotHasKey('blocking_errors', $arr);
         $this->assertArrayNotHasKey('collision_codes', $arr);
         $this->assertArrayNotHasKey('review_summary', $arr);
@@ -187,17 +187,22 @@ class OcrUnicodeConfusableNormalizationTest extends TestCase
         $arr = $resource->toArray(request());
         $allowed = [
             'id', 'firm_name', 'ca_name', 'city',
+            'partners', 'partner_count', 'directory_profile',
             'raw_firm_name', 'raw_ca_name', 'raw_city',
             'normalized_firm_name', 'normalized_ca_name', 'normalized_city',
-            'page_number', 'row_number',
+            'page_number', 'column_number', 'row_number',
             'validation_status', 'validation_errors',
             'match_type', 'match_status', 'matched_master_id',
             'status', 'user_message',
             'can_approve', 'can_correct', 'can_reject', 'review_status', 'crm_ca_id', 'ca_id',
+            'source_fingerprint',
         ];
         foreach (array_keys($arr) as $key) {
             $this->assertContains($key, $allowed, "Unexpected review key: {$key}");
         }
+        $this->assertArrayNotHasKey('address', $arr);
+        $this->assertArrayNotHasKey('frn', $arr);
+        $this->assertArrayNotHasKey('pincode', $arr);
         $this->assertSame('ANMOL SETIA', $arr['ca_name']);
         $this->assertSame('Exact verified', $arr['match_type']);
         $this->assertSame('Verified', $arr['status']);

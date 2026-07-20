@@ -19,7 +19,7 @@ class ImportMasterCaOcrJob implements ShouldBeUnique, ShouldQueue
 
     public int $tries = 3;
 
-    public int $timeout = 900;
+    public int $timeout = 3600;
 
     public int $uniqueFor = 900;
 
@@ -39,6 +39,17 @@ class ImportMasterCaOcrJob implements ShouldBeUnique, ShouldQueue
             'step' => 'master_ca_import_job',
             'ocr_document_id' => $this->ocrDocumentId,
         ]);
+
+        $document = OcrDocument::withTrashed()->find($this->ocrDocumentId);
+        if (! $document || $document->trashed()) {
+            Log::info('ocr.pipeline.step', [
+                'step' => 'master_ca_import_skipped_missing',
+                'ocr_document_id' => $this->ocrDocumentId,
+                'trashed' => (bool) ($document?->trashed()),
+            ]);
+
+            return;
+        }
 
         try {
             $importer->processDocument($this->ocrDocumentId, $this->actorId);

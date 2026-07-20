@@ -13,10 +13,18 @@ class OcrDocumentResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
-        $textPreview = $this->displayText();
-        if (is_string($textPreview) && mb_strlen($textPreview) > 500) {
-            $textPreview = mb_substr($textPreview, 0, 500).'…';
-        }
+        $textPreview = $this->when(
+            $this->shouldIncludeFullText($request),
+            function () {
+                $text = $this->resource->displayText();
+                if (is_string($text) && mb_strlen($text) > 500) {
+                    return mb_substr($text, 0, 500).'…';
+                }
+
+                return $text;
+            },
+            null,
+        );
 
         $durationSeconds = null;
         if ($this->processing_started_at && $this->processed_at) {
@@ -43,8 +51,11 @@ class OcrDocumentResource extends JsonResource
             'processing_progress' => $this->processing_progress,
             'parse_status' => $this->parse_status,
             'parsed_firm_count' => $this->parsed_firm_count,
+            'candidate_firm_count' => $this->candidate_firm_count ?? $this->parsed_firm_count,
+            'valid_firm_count' => $this->valid_firm_count ?? $this->parsed_firm_count,
+            'active_parse_run_id' => $this->active_parse_run_id ?? null,
             'parsed_at' => $this->parsed_at?->toIso8601String(),
-            'parse_error' => $this->parseErrorPayload(),
+            'parse_error' => $this->when($this->shouldIncludeParsedFirms($request), fn () => $this->parseErrorPayload()),
             'original_filename' => $this->original_filename,
             'mime_type' => $this->mime_type,
             'file_size' => $this->file_size,
@@ -172,8 +183,8 @@ class OcrDocumentResource extends JsonResource
 
     private function shouldIncludeFullText(Request $request): bool
     {
-        return $request->routeIs('ocr-documents.show')
-            || $request->boolean('include_text');
+        // Never auto-include full OCR text on show — it blocks preview under SQLite load.
+        return $request->boolean('include_text');
     }
 
     private function shouldIncludeParsedFirms(Request $request): bool

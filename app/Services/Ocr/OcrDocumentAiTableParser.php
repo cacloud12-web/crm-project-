@@ -223,7 +223,7 @@ class OcrDocumentAiTableParser
                 'ambiguous_layout' => false,
                 'firm_name_boundary_uncertain' => in_array('firm_name', $missing, true),
                 'ca_name_boundary_uncertain' => in_array('ca_name', $missing, true),
-                'city_boundary_uncertain' => in_array('city', $missing, true),
+                'city_boundary_uncertain' => false,
                 'source_lines' => array_values(array_filter(array_map(
                     static fn ($c) => trim((string) ($c['text'] ?? '')),
                     $row,

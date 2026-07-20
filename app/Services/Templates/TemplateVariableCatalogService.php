@@ -2,9 +2,7 @@
 
 namespace App\Services\Templates;
 
-use App\Models\CaMaster;
 use App\Models\CrmTemplateVariable;
-use App\Models\User;
 use Illuminate\Support\Collection;
 
 class TemplateVariableCatalogService
@@ -14,15 +12,30 @@ class TemplateVariableCatalogService
         $sort = 0;
         foreach (config('template_variables.groups', []) as $group => $items) {
             foreach ($items as $item) {
-                CrmTemplateVariable::query()->updateOrCreate(
-                    ['variable_key' => $item['key']],
-                    [
-                        'group_name' => $group,
-                        'label' => $item['label'],
-                        'sort_order' => $sort++,
-                        'is_active' => true,
-                    ],
-                );
+                $payload = [
+                    'group_name' => $group,
+                    'label' => $item['label'],
+                    'sort_order' => $sort++,
+                    'is_active' => true,
+                ];
+
+                $existing = CrmTemplateVariable::query()->where('variable_key', $item['key'])->first();
+                if ($existing === null) {
+                    CrmTemplateVariable::query()->create([
+                        'variable_key' => $item['key'],
+                        ...$payload,
+                    ]);
+                    continue;
+                }
+
+                if ($existing->group_name === $payload['group_name']
+                    && $existing->label === $payload['label']
+                    && (int) $existing->sort_order === $payload['sort_order']
+                    && (bool) $existing->is_active === true) {
+                    continue;
+                }
+
+                $existing->fill($payload)->save();
             }
         }
     }

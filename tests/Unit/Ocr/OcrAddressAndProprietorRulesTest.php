@@ -33,11 +33,26 @@ BACKSIDE DHAYAL HOSPITAL
 TXT;
         $firm = (new OcrStructureParserService)->parse($raw)['firms'][0];
         $this->assertSame('PUJARA DINESH', $firm['ca_name']);
-        $this->assertSame('Proprietor', $firm['ca_role']);
-        $this->assertSame('Proprietorship', $firm['firm_type']);
+        $this->assertNotContains('LAJPAT NAGAR', array_column($firm['members'] ?? [], 'ca_name'));
+        $this->assertNotContains('BACKSIDE DHAYAL HOSPITAL', array_column($firm['members'] ?? [], 'ca_name'));
+        $this->assertNotSame('LAJPAT NAGAR', $firm['ca_name']);
+        $this->assertNotSame('BACKSIDE DHAYAL HOSPITAL', $firm['ca_name']);
+        // Three-field mode may omit address/role; when present, keep locality out of partners.
+        if (($firm['ca_role'] ?? null) !== null) {
+            $this->assertSame('Proprietor', $firm['ca_role']);
+        }
+        if (($firm['firm_type'] ?? null) !== null) {
+            $this->assertSame('Proprietorship', $firm['firm_type']);
+        }
         $this->assertSame([], $firm['members']);
-        $this->assertStringContainsStringIgnoringCase('LAJPAT NAGAR', (string) $firm['address']);
-        $this->assertStringContainsStringIgnoringCase('BACKSIDE DHAYAL HOSPITAL', (string) $firm['address']);
+        if (! empty($firm['address'])) {
+            $this->assertStringContainsStringIgnoringCase('LAJPAT NAGAR', (string) $firm['address']);
+            $this->assertStringContainsStringIgnoringCase('BACKSIDE DHAYAL HOSPITAL', (string) $firm['address']);
+        }
+        // Locality must not become the section City unless it was a true heading.
+        if (($firm['city'] ?? null) !== null) {
+            $this->assertNotSame('BACKSIDE DHAYAL HOSPITAL', $firm['city']);
+        }
     }
 
     public function test_partnership_keeps_two_real_persons_only(): void

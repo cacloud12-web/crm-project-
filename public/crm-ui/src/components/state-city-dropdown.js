@@ -131,6 +131,45 @@
       });
   }
 
+  function isNumericId(value) {
+    return value != null && value !== '' && /^\d+$/.test(String(value));
+  }
+
+  function normalizeLocationLabel(value) {
+    if (value == null || value === '' || value === '—') return '';
+    return String(value).trim();
+  }
+
+  function findStateByRef(states, stateRef, stateName) {
+    if (isNumericId(stateRef)) {
+      for (var i = 0; i < (states || []).length; i++) {
+        if (String(states[i].state_id) === String(stateRef)) return states[i];
+      }
+    }
+    var name = normalizeLocationLabel(stateName) || (!isNumericId(stateRef) ? normalizeLocationLabel(stateRef) : '');
+    if (!name) return null;
+    var lower = name.toLowerCase();
+    for (var j = 0; j < (states || []).length; j++) {
+      if (String(states[j].state_name || '').toLowerCase() === lower) return states[j];
+    }
+    return null;
+  }
+
+  function findCityByRef(cities, cityRef, cityName) {
+    if (isNumericId(cityRef)) {
+      for (var i = 0; i < (cities || []).length; i++) {
+        if (String(cities[i].city_id) === String(cityRef)) return cities[i];
+      }
+    }
+    var name = normalizeLocationLabel(cityName) || (!isNumericId(cityRef) ? normalizeLocationLabel(cityRef) : '');
+    if (!name) return null;
+    var lower = name.toLowerCase();
+    for (var k = 0; k < (cities || []).length; k++) {
+      if (String(cities[k].city_name || '').toLowerCase() === lower) return cities[k];
+    }
+    return null;
+  }
+
   function escapeHtml(text) {
     return String(text || '')
       .replace(/&/g, '&amp;')
@@ -241,6 +280,7 @@
         return {
           value: String(item.value != null ? item.value : (item.state_id != null ? item.state_id : item.city_id)),
           label: String(item.label != null ? item.label : (item.state_name != null ? item.state_name : item.city_name)),
+          state_id: item.state_id != null ? item.state_id : null,
         };
       }).filter(function (item) {
         return item.label && item.label !== 'undefined';
@@ -373,11 +413,47 @@
         selectEl.value = value ? String(value) : '';
         syncInputFromSelect();
       },
+      setDisplay: function (value, label) {
+        var val = value != null && value !== '' ? String(value) : '';
+        var text = normalizeLocationLabel(label);
+        if (val) {
+          var exists = false;
+          for (var i = 0; i < selectEl.options.length; i++) {
+            if (selectEl.options[i].value === val) {
+              exists = true;
+              break;
+            }
+          }
+          if (!exists && text) {
+            var opt = document.createElement('option');
+            opt.value = val;
+            opt.textContent = text;
+            selectEl.appendChild(opt);
+          }
+          selectEl.value = val;
+          input.value = text || (selectEl.selectedIndex >= 0 ? selectEl.options[selectEl.selectedIndex].textContent : '') || '';
+        } else if (text) {
+          selectEl.value = '';
+          input.value = text;
+        } else {
+          selectEl.value = '';
+          input.value = '';
+        }
+        closeList();
+      },
       clear: function () {
         choose('', '');
       },
       hasItems: function () {
         return items.length > 0;
+      },
+      getItemByValue: function (value) {
+        var key = value == null ? '' : String(value);
+        if (!key) return null;
+        for (var i = 0; i < items.length; i++) {
+          if (String(items[i].value) === key) return items[i];
+        }
+        return null;
       },
     };
 
@@ -399,11 +475,45 @@
     }), selectedValue || '');
   }
 
+  function findCityStateIdInCache(cityId) {
+    var key = cityId == null ? '' : String(cityId);
+    if (!key) return null;
+    var cacheKeys = Object.keys(cityCache);
+    for (var i = 0; i < cacheKeys.length; i++) {
+      var cities = cityCache[cacheKeys[i]] || [];
+      for (var j = 0; j < cities.length; j++) {
+        if (String(cities[j].city_id) === key && cities[j].state_id != null) {
+          return cities[j].state_id;
+        }
+      }
+    }
+    return null;
+  }
+
+  function resolveStateIdForCity(cityId) {
+    var key = cityId == null ? '' : String(cityId);
+    if (!key) return Promise.resolve(null);
+    var cached = findCityStateIdInCache(key);
+    if (cached != null) return Promise.resolve(cached);
+    return loadCitiesForState(null).then(function (cities) {
+      for (var i = 0; i < (cities || []).length; i++) {
+        if (String(cities[i].city_id) === key && cities[i].state_id != null) {
+          return cities[i].state_id;
+        }
+      }
+      return null;
+    }).catch(function () {
+      return null;
+    });
+  }
+
   function bindDependentPair(stateSelect, citySelect, pairOptions) {
     pairOptions = pairOptions || {};
     if (!stateSelect || !citySelect) return null;
 
     var allowAllCities = !!pairOptions.allowAllCities;
+    var syncStateFromCity = pairOptions.syncStateFromCity !== false;
+    var syncingFromCity = false;
 
     var reloadStates = function () {
       return loadStates(true).then(function (states) {
@@ -446,7 +556,7 @@
       return loadCitiesForState(stateId || null, true).then(function (cities) {
         cityBox.setLoading(false);
         cityBox.setItems((cities || []).map(function (c) {
-          return { value: c.city_id, label: c.city_name };
+          return { value: c.city_id, label: c.city_name, state_id: c.state_id };
         }), selectedCityId || '');
         cityBox.setDisabled(false);
         return cities;
@@ -458,7 +568,31 @@
       });
     }
 
+    function applyStateFromCity(cityId) {
+      if (!syncStateFromCity || !cityId) return Promise.resolve(null);
+      var fromItem = cityBox.getItemByValue ? cityBox.getItemByValue(cityId) : null;
+      var knownStateId = fromItem && fromItem.state_id != null ? fromItem.state_id : findCityStateIdInCache(cityId);
+      var resolve = knownStateId != null
+        ? Promise.resolve(knownStateId)
+        : resolveStateIdForCity(cityId);
+
+      return resolve.then(function (stateId) {
+        if (stateId == null || stateId === '') return null;
+        if (String(stateSelect.value) === String(stateId)) return stateId;
+        syncingFromCity = true;
+        return loadStates().then(function (states) {
+          populateStateBox(stateBox, states, stateId);
+          return loadCitiesForCurrentState(cityId).then(function () {
+            return stateId;
+          });
+        }).finally(function () {
+          syncingFromCity = false;
+        });
+      });
+    }
+
     function onStateChange() {
+      if (syncingFromCity) return;
       cityBox.clear();
       if (!stateSelect.value && !allowAllCities) {
         cityBox.setItems([], '');
@@ -468,29 +602,87 @@
       loadCitiesForCurrentState('');
     }
 
+    function onCityChange() {
+      if (syncingFromCity) return;
+      var cityId = citySelect.value || '';
+      if (!cityId) return;
+      applyStateFromCity(cityId);
+    }
+
     stateSelect.addEventListener('change', onStateChange);
+    citySelect.addEventListener('change', onCityChange);
 
     reloadStates().then(function () {
       if (allowAllCities || stateSelect.value) {
-        return loadCitiesForCurrentState(citySelect.value || '');
+        return loadCitiesForCurrentState(citySelect.value || '').then(function () {
+          if (citySelect.value) return applyStateFromCity(citySelect.value);
+        });
       }
     }).catch(function () { /* shown on open */ });
 
     return {
-      setValues: function (stateId, cityId) {
-        return loadStates().then(function (states) {
-          populateStateBox(stateBox, states, stateId || '');
+      setValues: function (stateRef, cityRef, hints) {
+        hints = hints || {};
+        var hintStateName = hints.stateName || '';
+        var hintCityName = hints.cityName || '';
 
-          if (!stateId && !allowAllCities) {
+        return loadStates().then(function (states) {
+          var stateMatch = findStateByRef(states, stateRef, hintStateName);
+          var resolvedStateId = stateMatch ? String(stateMatch.state_id) : (isNumericId(stateRef) ? String(stateRef) : '');
+          var displayStateName = stateMatch
+            ? stateMatch.state_name
+            : (normalizeLocationLabel(hintStateName) || (!isNumericId(stateRef) ? normalizeLocationLabel(stateRef) : ''));
+
+          populateStateBox(stateBox, states, resolvedStateId || '');
+          if (!resolvedStateId && displayStateName) stateBox.setDisplay('', displayStateName);
+
+          var loadScope = resolvedStateId || (allowAllCities ? null : '');
+          if (!loadScope && !allowAllCities) {
             cityBox.setItems([], '');
             cityBox.setDisabled(true);
-            return;
+            return null;
           }
 
-          return loadCitiesForCurrentState(cityId || '');
+          cityBox.setLoading(true);
+          return loadCitiesForState(loadScope, true).then(function (cities) {
+            cityBox.setLoading(false);
+            var cityMatch = findCityByRef(cities, cityRef, hintCityName);
+            var resolvedCityId = cityMatch ? String(cityMatch.city_id) : (isNumericId(cityRef) ? String(cityRef) : '');
+            var displayCityName = cityMatch
+              ? cityMatch.city_name
+              : (normalizeLocationLabel(hintCityName) || (!isNumericId(cityRef) ? normalizeLocationLabel(cityRef) : ''));
+
+            if (cityMatch && cityMatch.state_id != null && !resolvedStateId) {
+              resolvedStateId = String(cityMatch.state_id);
+              populateStateBox(stateBox, states, resolvedStateId);
+            }
+
+            cityBox.setItems((cities || []).map(function (c) {
+              return { value: c.city_id, label: c.city_name, state_id: c.state_id };
+            }), resolvedCityId || '');
+
+            if (resolvedCityId && displayCityName && !cityMatch) {
+              cityBox.setDisplay(resolvedCityId, displayCityName);
+            } else if (!resolvedCityId && displayCityName) {
+              cityBox.setDisplay('', displayCityName);
+            }
+
+            cityBox.setDisabled(false);
+
+            if (resolvedCityId) return applyStateFromCity(resolvedCityId);
+            return null;
+          }).catch(function () {
+            cityBox.setLoading(false);
+            if (!allowAllCities) cityBox.setDisabled(true);
+            if (normalizeLocationLabel(hintCityName) || (!isNumericId(cityRef) && normalizeLocationLabel(cityRef))) {
+              cityBox.setDisplay('', normalizeLocationLabel(hintCityName) || normalizeLocationLabel(cityRef));
+            }
+            return null;
+          });
         });
       },
       refreshStates: reloadStates,
+      syncStateFromCity: applyStateFromCity,
       reset: function () {
         stateSelect.value = '';
         citySelect.value = '';
@@ -571,7 +763,8 @@
       jobs.push(initPairContainer(container, {
         stateRequired: isLead || isEmployeeLeadAdd,
         cityRequired: isEmployeeLeadAdd,
-        allowAllCities: isFilter && !!container.closest('#bulk-assignment-panel'),
+        allowAllCities: isLead || (isFilter && !!container.closest('#bulk-assignment-panel')),
+        syncStateFromCity: true,
         stateEmptyOption: isLead || isEmployeeLeadAdd ? 'Select state *' : (isFilter ? 'Any State' : 'Select state'),
         cityEmptyOption: isEmployeeLeadAdd ? 'Select city *' : (isLead ? 'Select city' : (isFilter ? 'Any City' : 'Select city')),
       }));
@@ -606,17 +799,18 @@
     });
   }
 
-  function setLeadLocationValues(stateId, cityId) {
+  function setLeadLocationValues(stateRef, cityRef, hints) {
     return prepareForm('form-add-lead').then(function () {
       var container = document.querySelector('#form-add-lead .sc-location-pair');
-      if (!container || !container._scPair) return;
-      return container._scPair.setValues(stateId, cityId);
+      if (!container || !container._scPair) return null;
+      return container._scPair.setValues(stateRef, cityRef, hints || {});
     });
   }
 
   global.CA_STATE_CITY = {
     loadStates: loadStates,
     loadCitiesForState: loadCitiesForState,
+    resolveStateIdForCity: resolveStateIdForCity,
     enhanceCombobox: enhanceCombobox,
     bindDependentPair: bindDependentPair,
     initAllPairs: initAllPairs,

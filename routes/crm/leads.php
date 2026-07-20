@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Approval\ApprovalRequestController;
 use App\Http\Controllers\Leads\CaMasterController;
+use App\Http\Controllers\Leads\CaMasterPartnerController;
 use App\Http\Controllers\Leads\DemoConfirmationController;
 use App\Http\Controllers\Leads\LeadActionController;
 use App\Http\Controllers\Leads\DuplicateAttemptController;
@@ -35,10 +36,26 @@ Route::middleware(['auth', 'rbac'])->group(function () {
         ->middleware('spa.browser:leads');
     Route::post('lead-actions', [LeadActionController::class, 'store'])
         ->middleware('throttle:lead-action');
+    Route::patch('ca-masters/{ca_master}/team-size', [CaMasterController::class, 'updateTeamSize'])
+        ->middleware(['spa.browser:ca-master', 'throttle:lead-action']);
+    Route::patch('ca-masters/{ca_master}/partners/{partner}/team-size', [CaMasterPartnerController::class, 'updateTeamSize'])
+        ->middleware(['spa.browser:ca-master', 'throttle:lead-action']);
     Route::patch('ca-masters/{ca_master}/status', [CaMasterController::class, 'updateStatus'])
         ->middleware(['spa.browser:ca-master', 'throttle:lead-action']);
     Route::patch('ca-masters/{ca_master}/contact', [CaMasterController::class, 'updateContact'])
         ->middleware(['spa.browser:leads', 'throttle:lead-action']);
+    Route::get('ca-masters/{ca_master}/partners', [CaMasterPartnerController::class, 'index'])
+        ->middleware('spa.browser:ca-master');
+    Route::post('ca-masters/{ca_master}/partners', [CaMasterPartnerController::class, 'store'])
+        ->middleware(['spa.browser:ca-master', 'throttle:lead-action']);
+    Route::patch('ca-masters/{ca_master}/partners/{partner}', [CaMasterPartnerController::class, 'update'])
+        ->middleware(['spa.browser:ca-master', 'throttle:lead-action']);
+    Route::delete('ca-masters/{ca_master}/partners/{partner}', [CaMasterPartnerController::class, 'destroy'])
+        ->middleware(['spa.browser:ca-master', 'throttle:lead-action']);
+    Route::patch('ca-masters/{ca_master}/partners/{partner}/primary', [CaMasterPartnerController::class, 'setPrimary'])
+        ->middleware(['spa.browser:ca-master', 'throttle:lead-action']);
+    Route::patch('ca-masters/{ca_master}/partners/{partner}/mobile', [CaMasterPartnerController::class, 'updateMobile'])
+        ->middleware(['spa.browser:ca-master', 'throttle:lead-action']);
     Route::post('ca-masters/{ca_master}/lock', [CaMasterController::class, 'acquireLock'])
         ->middleware(['spa.browser:leads', 'throttle:lead-action']);
     Route::delete('ca-masters/{ca_master}/lock', [CaMasterController::class, 'releaseLock'])

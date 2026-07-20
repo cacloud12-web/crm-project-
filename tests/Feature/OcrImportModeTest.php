@@ -17,6 +17,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Tests\Support\CrmTestAccounts;
 use Tests\TestCase;
 
 class OcrImportModeTest extends TestCase
@@ -65,8 +66,7 @@ class OcrImportModeTest extends TestCase
 
     private function actingAsAdmin(): void
     {
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
-        $this->actingAs($admin);
+        $this->actingAs(CrmTestAccounts::admin());
     }
 
     private function createParsedDocument(string $importType, array $firmAttrs = []): OcrDocument

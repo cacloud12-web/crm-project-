@@ -516,16 +516,21 @@ class OcrDocumentTest extends TestCase
             'processed_at' => now(),
         ]);
 
+        // Fast preview path — no full OCR text payload.
         $this->getJson('/ocr-documents/'.$document->id)
             ->assertOk()
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.id', $document->id)
-            ->assertJsonPath('data.extracted_text', 'Extracted OCR sample text')
+            ->assertJsonPath('data.extracted_text', null)
             ->assertJsonPath('data.status', 'completed')
             ->assertJsonPath('data.can.view', true)
             ->assertJsonPath('data.can.delete', true)
             ->assertJsonMissingPath('data.storage_path')
             ->assertJsonMissingPath('data.gcs_input_uri');
+
+        $this->getJson('/ocr-documents/'.$document->id.'?include_text=1')
+            ->assertOk()
+            ->assertJsonPath('data.extracted_text', 'Extracted OCR sample text');
     }
 
     public function test_failed_document_can_be_opened(): void

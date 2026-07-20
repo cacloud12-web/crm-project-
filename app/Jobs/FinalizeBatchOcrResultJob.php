@@ -26,6 +26,8 @@ class FinalizeBatchOcrResultJob implements ShouldBeUnique, ShouldQueue
         public readonly int $ocrDocumentId,
     ) {}
 
+    public int $uniqueFor = 600;
+
     public function uniqueId(): string
     {
         return 'ocr-batch-finalize-'.$this->ocrDocumentId;

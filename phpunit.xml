@@ -24,11 +24,13 @@
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
-        <env name="DB_CONNECTION" value="sqlite"/>
-        <env name="DB_DATABASE" value="database/database.sqlite"/>
-        <env name="DB_URL" value=""/>
-        <env name="CA_REFERENCE_DB_DRIVER" value="sqlite"/>
-        <env name="CA_REFERENCE_DB_DATABASE" value="database/ca_reference_testing.sqlite"/>
+        <env name="DB_CONNECTION" value="sqlite" force="true"/>
+        <env name="DB_DATABASE" value="database/testing.sqlite" force="true"/>
+        <env name="DB_URL" value="" force="true"/>
+        <env name="DB_BUSY_TIMEOUT" value="10000" force="true"/>
+        <env name="DB_JOURNAL_MODE" value="WAL" force="true"/>
+        <env name="CA_REFERENCE_DB_DRIVER" value="sqlite" force="true"/>
+        <env name="CA_REFERENCE_DB_DATABASE" value="database/ca_reference_testing.sqlite" force="true"/>
         <env name="CA_REFERENCE_DB_HOST" value=""/>
         <env name="CA_REFERENCE_DB_USERNAME" value=""/>
         <env name="CA_REFERENCE_DB_PASSWORD" value=""/>

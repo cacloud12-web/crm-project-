@@ -15,6 +15,7 @@ use Google\ApiCore\ApiException;
 use Google\Cloud\DocumentAI\V1\Client\DocumentProcessorServiceClient;
 use Google\Cloud\DocumentAI\V1\ProcessRequest;
 use Google\Cloud\DocumentAI\V1\RawDocument;
+use Google\Protobuf\FieldMask;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Throwable;
@@ -106,6 +107,9 @@ class GoogleDocumentAiService
         }
 
         $client = new DocumentProcessorServiceClient($clientConfig);
+        $response = null;
+        $document = null;
+        $rawDocument = null;
 
         try {
             $processorName = $client->processorName($projectId, $location, $processorId);
@@ -113,10 +117,13 @@ class GoogleDocumentAiService
             $rawDocument = (new RawDocument)
                 ->setContent($binary)
                 ->setMimeType($mimeType);
+            // Drop the local PDF copy once RawDocument owns the bytes.
+            unset($binary);
 
             $request = (new ProcessRequest)
                 ->setName($processorName)
                 ->setRawDocument($rawDocument);
+            $this->applyMemorySafeProcessOptions($request);
 
             $response = $client->processDocument($request);
             $document = $response->getDocument();
@@ -126,7 +133,10 @@ class GoogleDocumentAiService
                 throw new DocumentAiProcessingException('No text could be extracted from the document.', 'empty_ocr_response', false);
             }
 
-            return $this->normalizeDocument($document, $text, $processorName);
+            $normalized = $this->normalizeDocument($document, $text, $processorName);
+            unset($response, $document, $rawDocument, $text);
+
+            return $normalized;
         } catch (DocumentAiConfigurationException|OcrProviderException $exception) {
             throw $exception;
         } catch (ApiException $exception) {
@@ -139,10 +149,39 @@ class GoogleDocumentAiService
                 $exception,
             );
         } finally {
+            unset($response, $document, $rawDocument);
             if (isset($client)) {
                 $client->close();
             }
         }
+    }
+
+    /**
+     * Avoid Document AI page-image payloads that explode REST/JSON→protobuf memory
+     * (base64 image bytes decode at Google\Protobuf\Internal\Message ~line 895).
+     */
+    public function applyMemorySafeProcessOptions(ProcessRequest $request): ProcessRequest
+    {
+        $imageless = filter_var(config('document-ai.imageless_mode', true), FILTER_VALIDATE_BOOLEAN);
+        if ($imageless && method_exists($request, 'setImagelessMode')) {
+            $request->setImagelessMode(true);
+        }
+
+        $paths = config('document-ai.process_field_mask', [
+            'text',
+            'entities',
+            'pages.paragraphs',
+            'pages.tables',
+            'pages.detectedLanguages',
+            'pages.layout',
+        ]);
+        if (is_array($paths) && $paths !== [] && method_exists($request, 'setFieldMask')) {
+            $mask = new FieldMask;
+            $mask->setPaths(array_values(array_filter(array_map('strval', $paths))));
+            $request->setFieldMask($mask);
+        }
+
+        return $request;
     }
 
     private function normalizeDocument(object $document, string $text, string $processorName): array
@@ -165,7 +204,6 @@ class GoogleDocumentAiService
             }
 
             $paragraphs = [];
-            $paragraphLayouts = [];
             foreach ($page->getParagraphs() as $paragraph) {
                 $layout = $paragraph->getLayout();
                 $paragraphText = TextAnchorHelper::extract($text, $layout?->getTextAnchor());
@@ -206,7 +244,6 @@ class GoogleDocumentAiService
                     $entry['y'] = $y;
                 }
                 $paragraphs[] = $entry;
-                $paragraphLayouts[] = $entry;
             }
 
             $pageNumber = $index + 1;
@@ -228,18 +265,17 @@ class GoogleDocumentAiService
                 $tables[] = $table;
             }
 
+            // Keep one lean page record (no nested tables / duplicate paragraph_layouts).
             $pages[] = [
                 'page_number' => $pageNumber,
                 'languages' => array_values(array_unique($pageLanguages)),
                 'paragraph_count' => count($paragraphs),
                 'paragraphs' => $paragraphs,
-                'paragraph_layouts' => $paragraphLayouts,
                 'confidence' => $pageConfidence !== null ? (float) $pageConfidence : null,
                 'line_count' => count($paragraphs),
                 'table_count' => count($pageTables),
                 'has_text' => $pageBody !== '',
                 'text_length' => mb_strlen($pageBody),
-                'tables' => $pageTables,
             ];
         }
 
@@ -284,6 +320,7 @@ class GoogleDocumentAiService
             'pages' => $pages,
             'entities' => $entities,
             'tables' => $tables,
+            // Structured slice references the same arrays once — callers must not deep-copy again.
             'structured_data' => [
                 'pages' => $pages,
                 'tables' => $tables,
@@ -297,6 +334,7 @@ class GoogleDocumentAiService
                 'table_count' => count($tables),
                 'entity_count' => count($entities),
                 'language_count' => count(array_unique($detectedLanguages)),
+                'imageless_mode' => filter_var(config('document-ai.imageless_mode', true), FILTER_VALIDATE_BOOLEAN),
             ],
             'average_confidence' => $averageConfidence,
             'processor_name' => $processorName,

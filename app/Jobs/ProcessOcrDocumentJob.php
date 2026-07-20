@@ -82,7 +82,7 @@ class ProcessOcrDocumentJob implements ShouldBeUnique, ShouldQueue
                 'status' => OcrDocument::STATUS_FAILED,
                 'error_code' => 'queue_failed',
                 'error_message' => mb_substr($exception->getMessage() ?: 'The document could not be processed. Please retry.', 0, 2000),
-                'processing_progress' => 'Failed',
+                'processing_progress' => null,
                 'failed_at' => now(),
                 'processed_at' => now(),
             ]);
@@ -91,7 +91,7 @@ class ProcessOcrDocumentJob implements ShouldBeUnique, ShouldQueue
         Log::error('ocr.pipeline.job_permanently_failed', [
             'step' => 'job_process_failed',
             'ocr_document_id' => $this->ocrDocumentId,
-            'error_code' => $document->error_code,
+            'error_code' => $document->fresh()?->error_code ?? $document->error_code,
             'error_message' => $exception->getMessage(),
         ]);
     }

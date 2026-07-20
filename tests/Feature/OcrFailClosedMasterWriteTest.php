@@ -6,11 +6,11 @@ use App\Models\CaMaster;
 use App\Models\OcrDocument;
 use App\Models\OcrParsedFirm;
 use App\Models\OcrParsedMember;
-use App\Models\User;
 use App\Services\Ocr\MasterCaDirectImportService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Tests\Support\CrmTestAccounts;
 use Tests\TestCase;
 
 class OcrFailClosedMasterWriteTest extends TestCase
@@ -38,7 +38,7 @@ class OcrFailClosedMasterWriteTest extends TestCase
             $this->markTestSkipped('Required tables missing.');
         }
 
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $before = CaMaster::query()->count();
 
         $document = OcrDocument::query()->create([
@@ -104,7 +104,7 @@ class OcrFailClosedMasterWriteTest extends TestCase
             $this->markTestSkipped('ocr_parsed_firms missing.');
         }
 
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $this->actingAs($admin);
         $before = CaMaster::query()->count();
 

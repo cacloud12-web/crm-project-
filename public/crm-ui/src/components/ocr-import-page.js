@@ -12,7 +12,11 @@
     pollInFlight: false,
     pollStartedAt: null,
     loading: false,
+    listLoaded: false,
+    listError: null,
+    itemsById: {},
     uploading: false,
+    uploadFingerprint: null,
     retryingId: null,
     deletingId: null,
     listAbort: null,
@@ -20,6 +24,13 @@
     detailDirty: false,
     openInFlight: null,
     importType: '',
+    firmPage: 1,
+    firmPerPage: 50,
+    firmSearch: '',
+    firmCity: '',
+    firmStatus: 'all',
+    firmPagination: null,
+    firmsLoading: false,
   };
 
   function esc(value) {
@@ -50,12 +61,14 @@
 
   function statusClass(status, item) {
     var stage = (item && item.pipeline_stage) || status;
-    if (stage === 'completed' || status === 'completed') return 'ocr-status--completed';
+    if (stage === 'completed') return 'ocr-status--completed';
     if (stage === 'failed' || status === 'failed' || status === 'cancelled') return 'ocr-status--failed';
-    if (stage === 'uploading' || stage === 'ocr' || stage === 'parsing' || stage === 'mapping'
+    if (stage === 'queued' || stage === 'uploading' || stage === 'ocr' || stage === 'parsing' || stage === 'mapping'
+      || stage === 'validating' || stage === 'importing' || stage === 'updating'
       || status === 'processing' || status === 'queued' || status === 'uploading_to_cloud' || status === 'finalizing') {
       return 'ocr-status--processing';
     }
+    if (status === 'completed') return 'ocr-status--completed';
     return 'ocr-status--pending';
   }
 
@@ -70,7 +83,7 @@
 
   function isActiveStatus(status, item) {
     var stage = item && item.pipeline_stage;
-    if (stage === 'uploading' || stage === 'ocr' || stage === 'parsing' || stage === 'mapping'
+    if (stage === 'queued' || stage === 'uploading' || stage === 'ocr' || stage === 'parsing' || stage === 'mapping'
       || stage === 'validating' || stage === 'importing' || stage === 'updating') {
       return true;
     }
@@ -260,6 +273,18 @@
   function renderRows(items) {
     var tbody = document.getElementById('ocr-import-tbody');
     if (!tbody) return;
+    if (!state.listLoaded && (!items || !items.length)) {
+      tbody.innerHTML = '<tr><td colspan="5" class="text-center text-slate-500 py-4">Loading…</td></tr>';
+      return;
+    }
+    if (state.listError && (!items || !items.length)) {
+      tbody.innerHTML = '<tr><td colspan="5" class="text-center text-rose-600 py-4">' +
+        esc(state.listError) +
+        ' <button type="button" class="btn-secondary btn-xs ml-2" id="ocr-import-retry-load">Refresh</button></td></tr>';
+      var retryBtn = document.getElementById('ocr-import-retry-load');
+      if (retryBtn) retryBtn.addEventListener('click', function () { loadList(); });
+      return;
+    }
     if (!items || !items.length) {
       tbody.innerHTML = '<tr><td colspan="5" class="text-center text-slate-500 py-6">No OCR documents uploaded yet.</td></tr>';
       return;
@@ -273,8 +298,8 @@
           '<span class="text-caption text-slate-500">' +
             esc(item.import_type_label || (item.import_type === 'master_ca' ? 'Master CA Data' : 'Sales Team Data')) +
             ' · ' + firm + ' · ' + esc(item.file_size_label || '') + mode +
-            (item.parsed_firm_count != null && item.status === 'completed'
-              ? ' · ' + esc(String(item.parsed_firm_count)) + ' firms'
+            ((item.valid_firm_count != null || item.parsed_firm_count != null) && item.status === 'completed'
+              ? ' · ' + esc(String(item.valid_firm_count != null ? item.valid_firm_count : item.parsed_firm_count)) + ' unique firms'
               : '') +
           '</span>' +
         '</td>' +
@@ -293,6 +318,27 @@
       '</tr>';
     }).join('');
     if (typeof window.icons === 'function') window.icons();
+  }
+
+  function currentItems() {
+    return Object.keys(state.itemsById).map(function (id) { return state.itemsById[id]; })
+      .sort(function (a, b) {
+        return String(b.created_at || '').localeCompare(String(a.created_at || '')) || (Number(b.id) - Number(a.id));
+      });
+  }
+
+  function upsertServerItem(item) {
+    if (!item || item.id == null) return;
+    var id = String(item.id);
+    state.itemsById[id] = Object.assign({}, state.itemsById[id] || {}, item);
+    state.listLoaded = true;
+    state.listError = null;
+    renderRows(currentItems());
+    renderPagination({
+      current_page: state.page,
+      last_page: 1,
+      total: currentItems().length,
+    });
   }
 
   function renderPagination(pagination) {
@@ -335,12 +381,16 @@
       if (blocked) {
         blocked.innerHTML = '<tr><td colspan="5" class="text-center text-slate-500 py-4">You do not have permission to view OCR history.</td></tr>';
       }
-      return Promise.resolve();
+      return Promise.resolve([]);
+    }
+
+    if (state.pollInFlight && state.loading) {
+      return Promise.resolve(currentItems());
     }
 
     state.loading = true;
     var tbody = document.getElementById('ocr-import-tbody');
-    if (tbody && !tbody.querySelector('[data-ocr-row]')) {
+    if (tbody && !state.listLoaded && !tbody.querySelector('[data-ocr-row]')) {
       tbody.innerHTML = '<tr><td colspan="5" class="text-center text-slate-500 py-4">Loading…</td></tr>';
     }
 
@@ -352,18 +402,25 @@
         last_page: data.last_page || 1,
         total: data.total != null ? data.total : items.length,
       };
+      // Replace page snapshot from server; keep map keyed by id for merges.
+      state.itemsById = {};
+      items.forEach(function (item) {
+        if (item && item.id != null) state.itemsById[String(item.id)] = item;
+      });
+      state.listLoaded = true;
+      state.listError = null;
       renderRows(items);
       renderPagination(pagination);
       schedulePoll(items);
       if (typeof window.icons === 'function') window.icons();
       return items;
     }).catch(function (err) {
-      if (tbody) {
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-rose-600 py-4">' +
-          esc(err.message || 'Unable to load OCR history') +
-          ' <button type="button" class="btn-secondary btn-xs ml-2" id="ocr-import-retry-load">Refresh</button></td></tr>';
-        var retry = document.getElementById('ocr-import-retry-load');
-        if (retry) retry.addEventListener('click', function () { loadList(); });
+      state.listError = (err && err.message) || 'Unable to load OCR history';
+      // Never paint a false empty success state when the API fails.
+      if (!Object.keys(state.itemsById).length) {
+        renderRows([]);
+      } else {
+        setUploadHint(state.listError, true);
       }
       throw err;
     }).finally(function () {
@@ -386,7 +443,7 @@
     });
     var elapsed = Date.now() - state.pollStartedAt;
     var delay = hasOnline
-      ? (elapsed < 60000 ? 2000 : 8000)
+      ? (elapsed < 60000 ? 2500 : 8000)
       : 7000;
 
     state.pollTimer = window.setTimeout(function () {
@@ -425,7 +482,10 @@
       formData.append('import_type', selectedImportType());
       if (forceReimport) formData.append('force_reimport', '1');
       var xhr = new XMLHttpRequest();
+      var settled = false;
+      var timeoutMs = 120000;
       xhr.open('POST', '/ocr-documents');
+      xhr.timeout = timeoutMs;
       xhr.withCredentials = true;
       xhr.setRequestHeader('Accept', 'application/json');
       xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
@@ -436,21 +496,26 @@
           onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)), event.loaded, event.total);
         };
       }
+      function finish(fn, arg) {
+        if (settled) return;
+        settled = true;
+        fn(arg);
+      }
       xhr.onload = function () {
         var body = {};
         try {
           body = xhr.responseText ? JSON.parse(xhr.responseText) : {};
         } catch (parseError) {
-          reject(Object.assign(new Error('Something went wrong. Please try again.'), { status: xhr.status }));
+          finish(reject, Object.assign(new Error('Something went wrong. Please try again.'), { status: xhr.status }));
           return;
         }
         if (xhr.status === 401) {
           window.location.href = '/login';
-          reject(new Error('Session expired. Please sign in again.'));
+          finish(reject, new Error('Session expired. Please sign in again.'));
           return;
         }
         if (xhr.status >= 200 && xhr.status < 300) {
-          resolve(body);
+          finish(resolve, body);
           return;
         }
         var message = body.message || 'Unable to complete the request. Please try again.';
@@ -466,14 +531,20 @@
         } else if (xhr.status === 403) {
           message = body.message || 'You do not have permission to upload OCR documents.';
         }
-        reject(Object.assign(new Error(message), {
+        finish(reject, Object.assign(new Error(message), {
           status: xhr.status,
           errors: body.errors || null,
           duplicateFile: !!(body.errors && body.errors.duplicate_file),
         }));
       };
       xhr.onerror = function () {
-        reject(new Error('Unable to reach the server. Please refresh the page and try again.'));
+        finish(reject, new Error('Unable to reach the server. Please refresh the page and try again.'));
+      };
+      xhr.ontimeout = function () {
+        finish(reject, Object.assign(new Error('Upload timed out waiting for the server. If the file already appears in the list as Completed, click Refresh — do not wait on Finishing upload.'), {
+          status: 0,
+          timedOut: true,
+        }));
       };
       xhr.send(formData);
     });
@@ -513,11 +584,13 @@
     return '<div class="ocr-import-detail__meta-row"><span class="text-caption text-slate-500">' + esc(label) + '</span><span>' + value + '</span></div>';
   }
 
-  function firmField(label, value) {
-    if (value == null || value === '') return '';
+  function firmField(label, value, opts) {
+    opts = opts || {};
+    if ((value == null || value === '') && !opts.showEmpty) return '';
+    var display = (value == null || value === '') ? (opts.emptyText || '—') : value;
     return '<div class="ocr-firm-card__field">' +
       '<span class="ocr-firm-card__label">' + esc(label) + '</span>' +
-      '<span class="ocr-firm-card__value">' + esc(value) + '</span></div>';
+      '<span class="ocr-firm-card__value' + ((value == null || value === '') ? ' is-missing' : '') + '">' + esc(display) + '</span></div>';
   }
 
   function matchStatusLabel(status) {
@@ -552,13 +625,13 @@
       if (pipeline === 'importing' || stage === 'importing' || progress.indexOf('importing') >= 0) return 4;
       if (pipeline === 'validating' || stage === 'validating' || progress.indexOf('validat') >= 0) return 3;
       if (parseStatus === 'processing' || parseStatus === 'queued' || pipeline === 'parsing') return 2;
-      if (status === 'processing' || status === 'queued' || status === 'uploading_to_cloud' || status === 'finalizing' || pipeline === 'ocr' || pipeline === 'uploading') return 1;
+      if (status === 'processing' || status === 'queued' || status === 'uploading_to_cloud' || status === 'finalizing' || pipeline === 'ocr' || pipeline === 'queued' || pipeline === 'uploading') return 1;
       return 0;
     }
     if (pipeline === 'updating' || stage === 'creating' || stage === 'updating') return 4;
     if (pipeline === 'mapping' || stage === 'mapping' || progress.indexOf('mapping') >= 0 || progress.indexOf('queued for sales') >= 0) return 3;
     if (parseStatus === 'processing' || parseStatus === 'queued' || pipeline === 'parsing') return 2;
-    if (status === 'processing' || status === 'queued' || status === 'uploading_to_cloud' || status === 'finalizing' || pipeline === 'ocr' || pipeline === 'uploading') return 1;
+    if (status === 'processing' || status === 'queued' || status === 'uploading_to_cloud' || status === 'finalizing' || pipeline === 'ocr' || pipeline === 'queued' || pipeline === 'uploading') return 1;
     if (status === 'completed') return 5;
     return 0;
   }
@@ -687,14 +760,31 @@
         '<span class="ocr-firm-card__badge ocr-firm-card__badge--' + esc(statusClassName) + '">' + esc(status) + '</span>' +
       '</div>' +
       '<div class="ocr-firm-card__grid">' +
-        firmField('Firm Name', firm.firm_name) +
-        firmField('CA Name', caName) +
-        firmField('City', firm.city) +
-        firmField('Match Type', matchType) +
+        firmField('Firm Name', firm.firm_name, { showEmpty: true }) +
+        firmField('City', firm.city, { showEmpty: true, emptyText: 'Missing — required' }) +
+        firmField('Primary CA Name', caName, { showEmpty: true }) +
+        firmField('Partners', partnerCountLabel(firm), { showEmpty: true, emptyText: '0' }) +
+        (partnersListHtml(firm) || '') +
         firmField('Status', status) +
       '</div>' +
       actionsHtml +
     '</article>';
+  }
+
+  function partnerCountLabel(firm) {
+    var n = firm.partner_count;
+    if (n == null && Array.isArray(firm.partners)) n = firm.partners.length;
+    if (n == null) n = 0;
+    return String(n);
+  }
+
+  function partnersListHtml(firm) {
+    var list = Array.isArray(firm.partners) ? firm.partners : [];
+    if (!list.length) return '';
+    var items = list.map(function (p) {
+      return '<li>' + esc(p) + '</li>';
+    }).join('');
+    return '<div class="ocr-firm-card__partners"><span class="text-caption text-slate-500">Partners list</span><ul class="ocr-firm-card__partners-list">' + items + '</ul></div>';
   }
 
   function renderDetailBody(item) {
@@ -735,11 +825,23 @@
     if (item.processing_progress && isBusyItem(item)) {
       html += '<p class="text-caption text-slate-500 mt-2">Progress: ' + esc(item.processing_progress) + '</p>';
     }
-    if (isActiveStatus(item.status, item) && item.pipeline_stage !== 'failed') {
+
+    // Once OCR parse finished, always show structured firms — even while Master CA import runs.
+    var parseReady = item.status === 'completed'
+      && (item.parse_status === 'completed' || Number(item.parsed_firm_count || 0) > 0
+        || (Array.isArray(item.parsed_firms) && item.parsed_firms.length > 0));
+
+    if (isActiveStatus(item.status, item) && item.pipeline_stage !== 'failed' && !parseReady) {
       html += '<p class="ocr-panel__processing mt-3"><i data-lucide="loader-2" class="h-3.5 w-3.5 animate-spin"></i> ' +
         esc(statusLabel(item.status, item)) + '…</p>';
       html += '<div class="ocr-panel__actions mt-4">' + fileActions + '</div>';
       return html;
+    }
+
+    if (parseReady && isBusyItem(item) && item.pipeline_stage !== 'failed') {
+      html += '<p class="ocr-panel__processing mt-3"><i data-lucide="loader-2" class="h-3.5 w-3.5 animate-spin"></i> ' +
+        esc(item.processing_progress || statusLabel(item.status, item)) +
+        ' — structured firms are ready below.</p>';
     }
 
     if (item.status === 'failed' || item.pipeline_stage === 'failed') {
@@ -757,7 +859,9 @@
     if (item.status === 'completed') {
       var firms = Array.isArray(item.parsed_firms) ? item.parsed_firms : [];
       var parseStatus = item.parse_status || '';
-      var firmCount = item.parsed_firm_count != null ? item.parsed_firm_count : firms.length;
+      var firmCount = item.valid_firm_count != null ? item.valid_firm_count
+        : (item.parsed_firm_count != null ? item.parsed_firm_count : firms.length);
+      var candidateCount = item.candidate_firm_count != null ? item.candidate_firm_count : firmCount;
 
       html += '<div class="mt-4 ocr-structured-results">';
       html += '<div class="ocr-structured-results__head">' +
@@ -765,13 +869,16 @@
         '<span class="text-caption text-slate-500">' +
           (parseStatus === 'queued' || parseStatus === 'processing'
             ? 'Structuring in progress…'
-            : esc(String(firmCount)) + ' firm' + (firmCount === 1 ? '' : 's') + ' detected') +
+            : esc(String(firmCount)) + ' valid unique firm' + (firmCount === 1 ? '' : 's')
+              + (Number(candidateCount) !== Number(firmCount)
+                ? ' · ' + esc(String(candidateCount)) + ' candidates'
+                : '')) +
         '</span>' +
       '</div>';
 
       if (parseStatus === 'queued' || parseStatus === 'processing') {
         html += '<p class="ocr-panel__processing mt-3"><i data-lucide="loader-2" class="h-3.5 w-3.5 animate-spin"></i> Converting OCR text into structured CA records…</p>';
-      } else if (firms.length) {
+      } else if (firms.length || Number(firmCount) > 0) {
         var mapping = (item.structured_data && item.structured_data.mapping) || {};
         var report = item.reconciliation
           || (item.structured_data && item.structured_data.reconciliation)
@@ -786,7 +893,7 @@
           Invalid: report.invalid != null ? report.invalid : 0,
           Rejected: report.rejected != null ? report.rejected : 0
         };
-        if (report.exact_verified == null) {
+        if (report.exact_verified == null && firms.length) {
           statusCounts = { Verified: 0, 'Needs Review': 0, Conflict: 0, Invalid: 0, Rejected: 0 };
           firms.forEach(function (f) {
             var s = f.status || 'Needs Review';
@@ -797,41 +904,68 @@
         var rowCoverage = report.row_coverage_percent != null ? report.row_coverage_percent
           : (quality.row_coverage != null ? quality.row_coverage
             : (quality.parsing_accuracy != null ? quality.parsing_accuracy : null));
-        if (report.detected_rows != null || quality.total_rows_detected != null || quality.total_firms_parsed != null || firms.length) {
+        if (report.detected_rows != null || quality.total_rows_detected != null || quality.total_firms_parsed != null || firmCount) {
           html += '<div class="ocr-quality-report mt-2">' +
             '<p class="text-caption text-slate-600">' +
-            'Detected rows ' + esc(String(report.detected_rows != null ? report.detected_rows : (quality.total_rows_detected != null ? quality.total_rows_detected : firms.length))) +
-            ' · Parsed ' + esc(String(report.parsed_rows != null ? report.parsed_rows : (quality.total_firms_parsed != null ? quality.total_firms_parsed : firms.length))) +
-            ' · Valid three-field ' + esc(String(report.valid_three_field_rows != null ? report.valid_three_field_rows : statusCounts.Verified + statusCounts['Needs Review'] + statusCounts.Conflict)) +
-            ' · Exact verified ' + esc(String(statusCounts.Verified || 0)) +
-            ' · Needs review ' + esc(String(statusCounts['Needs Review'] || 0)) +
-            ' · Conflicts ' + esc(String(statusCounts.Conflict || 0)) +
-            ' · Invalid ' + esc(String(statusCounts.Invalid || 0)) +
-            ' · Rejected ' + esc(String(statusCounts.Rejected || 0)) +
+            'Candidate blocks ' + esc(String(report.candidate_blocks != null ? report.candidate_blocks : (report.detected_rows != null ? report.detected_rows : candidateCount))) +
+            ' · Valid firms ' + esc(String(report.valid_unique_firms != null ? report.valid_unique_firms : firmCount)) +
+            ' · Duplicate candidates ' + esc(String(report.duplicate_candidates != null ? report.duplicate_candidates : 0)) +
+            ' · Needs review ' + esc(String(statusCounts['Needs Review'] || report.needs_review || 0)) +
+            ' · Rejected noise ' + esc(String(report.rejected_noise != null ? report.rejected_noise : (statusCounts.Rejected || 0))) +
+            ' · Final unique firms ' + esc(String(report.final_unique_records != null ? report.final_unique_records : firmCount)) +
             (rowCoverage != null ? ' · Row Coverage: ' + esc(String(rowCoverage) + '%') : '') +
             '</p></div>';
+        }
+        if (item.firms_preview_limited && Number(firmCount) > firms.length) {
+          html += '<p class="text-caption text-amber-700 mt-2">Preview shows first ' + esc(String(firms.length)) +
+            ' of ' + esc(String(firmCount)) + ' firms. Use pagination below to browse all records.</p>';
         }
         var importBatch = item.import_batch || (item.structured_data && item.structured_data.import_batch) || null;
         if (importBatch || mapping.processed != null) {
           html += renderMappingProgressDashboard(item, mapping, importBatch);
         }
         html += '<div class="ocr-firm-bulk-toolbar mt-3">' +
+          '<input type="search" class="input-field input-field--sm" placeholder="Search firm / CA / partner / city" ' +
+            'data-ocr-firm-search value="' + esc(state.firmSearch || '') + '" />' +
+          '<input type="search" class="input-field input-field--sm" placeholder="Filter city" ' +
+            'data-ocr-firm-city value="' + esc(state.firmCity || '') + '" />' +
           '<select id="ocr-firm-filter" class="input-field input-field--sm" data-ocr-firm-filter>' +
-            '<option value="all">All firms</option>' +
-            '<option value="verified">Verified</option>' +
-            '<option value="needs_review">Needs review</option>' +
-            '<option value="conflict">Conflict</option>' +
-            '<option value="invalid">Invalid</option>' +
-            '<option value="failed">Rejected</option>' +
+            '<option value="all"' + (state.firmStatus === 'all' ? ' selected' : '') + '>All firms</option>' +
+            '<option value="verified"' + (state.firmStatus === 'verified' ? ' selected' : '') + '>Verified</option>' +
+            '<option value="needs_review"' + (state.firmStatus === 'needs_review' ? ' selected' : '') + '>Needs review</option>' +
+            '<option value="conflict"' + (state.firmStatus === 'conflict' ? ' selected' : '') + '>Conflict</option>' +
+            '<option value="invalid"' + (state.firmStatus === 'invalid' ? ' selected' : '') + '>Invalid</option>' +
+            '<option value="failed"' + (state.firmStatus === 'failed' ? ' selected' : '') + '>Rejected</option>' +
           '</select>' +
+          '<select class="input-field input-field--sm" data-ocr-firm-per-page>' +
+            '<option value="50"' + (Number(state.firmPerPage) === 50 ? ' selected' : '') + '>50 / page</option>' +
+            '<option value="100"' + (Number(state.firmPerPage) === 100 ? ' selected' : '') + '>100 / page</option>' +
+            '<option value="250"' + (Number(state.firmPerPage) === 250 ? ' selected' : '') + '>250 / page</option>' +
+          '</select>' +
+          '<button type="button" class="btn-secondary btn-sm" data-ocr-firm-export="' + id + '" data-export-mode="firms">Export firms CSV</button>' +
+          '<button type="button" class="btn-secondary btn-sm" data-ocr-firm-export="' + id + '" data-export-mode="partners">Export partners CSV</button>' +
           (can.update
-            ? '<button type="button" class="btn-secondary btn-sm" data-ocr-reject-selected="' + id + '">Reject selected</button>' +
+            ? '<button type="button" class="btn-secondary btn-sm" data-ocr-reject-selected="' + id + '" title="Affects selected rows on this page only">Reject selected</button>' +
+              '<button type="button" class="btn-secondary btn-sm" data-ocr-approve-safe="' + id + '" title="Eligible rows across the filtered document (when enabled)">Accept All Eligible</button>' +
               '<button type="button" class="btn-secondary btn-sm" data-ocr-retry-mapping="' + id + '">Re-run extraction</button>'
             : '') +
         '</div>';
-        html += '<div class="ocr-firm-cards" data-ocr-firm-cards>' + firms.map(function (firm) {
-          return renderFirmCard(firm, can);
-        }).join('') + '</div>';
+        html += '<div class="ocr-firm-cards" data-ocr-firm-cards>' +
+          (state.firmsLoading
+            ? '<p class="text-caption text-slate-500 mt-3"><i data-lucide="loader-2" class="h-3.5 w-3.5 animate-spin"></i> Loading firms…</p>'
+            : firms.map(function (firm) { return renderFirmCard(firm, can); }).join('')) +
+        '</div>';
+        var pg = state.firmPagination || {};
+        var cur = Number(pg.current_page || state.firmPage || 1);
+        var last = Number(pg.last_page || 1);
+        var total = Number(pg.total != null ? pg.total : firmCount);
+        html += '<div class="ocr-firm-pagination mt-3" data-ocr-firm-pagination>' +
+          '<span class="text-caption text-slate-500">Page ' + esc(String(cur)) + ' of ' + esc(String(last)) +
+            ' · ' + esc(String(total)) + ' total</span>' +
+          '<div class="ocr-firm-pagination__controls">' +
+            '<button type="button" class="btn-secondary btn-xs" data-ocr-firm-page="prev"' + (cur <= 1 ? ' disabled' : '') + '>Previous</button>' +
+            '<button type="button" class="btn-secondary btn-xs" data-ocr-firm-page="next"' + (cur >= last ? ' disabled' : '') + '>Next</button>' +
+          '</div></div>';
       } else if (parseStatus === 'failed') {
         var parseErr = item.parse_error
           || (item.structured_data && item.structured_data.parsed && item.structured_data.parsed.error)
@@ -890,10 +1024,18 @@
     var requestId = String(id);
     state.openInFlight = requestId;
 
-    apiFetch('/ocr-documents/' + encodeURIComponent(id) + '?include_text=1').then(function (res) {
+    // Fast preview: document meta + firms preview; full firm pages load via /firms.
+    apiFetch('/ocr-documents/' + encodeURIComponent(id), { timeoutMs: 25000 }).then(function (res) {
       if (state.openInFlight !== requestId) return;
       var item = unwrapItem(res) || {};
       if (title) title.textContent = item.original_filename || 'OCR Preview';
+      state.itemsById[String(id)] = item;
+      if (!soft) {
+        state.firmPage = 1;
+        state.firmSearch = '';
+        state.firmCity = '';
+        state.firmStatus = 'all';
+      }
       body.innerHTML = renderDetailBody(item);
       showDetailPanel();
       var textarea = document.getElementById('ocr-import-text');
@@ -906,17 +1048,72 @@
       document.querySelectorAll('.ocr-import-row').forEach(function (row) {
         row.classList.toggle('is-selected', String(row.getAttribute('data-ocr-row')) === String(id));
       });
+      if (item.status === 'completed' && Number(item.parsed_firm_count || item.firms_total || 0) > 0) {
+        return loadFirmsPage(id);
+      }
     }).catch(function (err) {
       if (state.openInFlight !== requestId) return;
-      toast(err.message || 'Unable to load document', 'error');
+      var message = (err && err.message) || 'Unable to load document';
+      if (/abort|timeout/i.test(message)) {
+        message = 'Preview timed out. The server may be busy running OCR — click Refresh, then open the document again.';
+      }
+      toast(message, 'error');
       if (!soft) {
-        body.innerHTML = '<p class="ocr-panel__error">' + esc(err.message || 'Unable to load document') + '</p>';
+        body.innerHTML = '<p class="ocr-panel__error">' + esc(message) + '</p>' +
+          '<div class="ocr-panel__actions mt-3">' +
+          '<button type="button" class="btn-secondary btn-sm" data-ocr-import-retry-open="' + esc(id) + '">Retry preview</button>' +
+          '</div>';
         showDetailPanel();
+        var retryBtn = body.querySelector('[data-ocr-import-retry-open]');
+        if (retryBtn) {
+          retryBtn.addEventListener('click', function () { openDetail(id, false); });
+        }
       }
     }).finally(function () {
       if (openBtn) openBtn.disabled = false;
       if (state.openInFlight === requestId) state.openInFlight = null;
     });
+  }
+
+  function loadFirmsPage(docId) {
+    var id = String(docId || state.selectedId || '');
+    if (!id) return Promise.resolve();
+    state.firmsLoading = true;
+    var params = new URLSearchParams({
+      page: String(state.firmPage || 1),
+      per_page: String(state.firmPerPage || 50),
+      status: String(state.firmStatus || 'all'),
+    });
+    if (state.firmSearch) params.set('search', state.firmSearch);
+    if (state.firmCity) params.set('city', state.firmCity);
+    var body = document.getElementById('ocr-import-detail-body');
+    var cards = body && body.querySelector('[data-ocr-firm-cards]');
+    if (cards) {
+      cards.innerHTML = '<p class="text-caption text-slate-500 mt-3"><i data-lucide="loader-2" class="h-3.5 w-3.5 animate-spin"></i> Loading firms…</p>';
+      if (typeof window.icons === 'function') window.icons();
+    }
+    return apiFetch('/ocr-documents/' + encodeURIComponent(id) + '/firms?' + params.toString(), { timeoutMs: 60000 })
+      .then(function (res) {
+        var data = (res && res.data) ? res.data : res;
+        var items = (data && data.items) || [];
+        state.firmPagination = (data && data.pagination) || null;
+        var item = state.itemsById[String(id)] || {};
+        item.parsed_firms = items;
+        if (state.firmPagination && state.firmPagination.total != null) {
+          item.firms_total = state.firmPagination.total;
+        }
+        item.firms_preview_limited = false;
+        state.itemsById[String(id)] = item;
+        state.firmsLoading = false;
+        if (body && String(state.selectedId) === String(id)) {
+          body.innerHTML = renderDetailBody(item);
+          if (typeof window.icons === 'function') window.icons();
+        }
+      })
+      .catch(function (err) {
+        state.firmsLoading = false;
+        toast((err && err.message) || 'Unable to load firms page.', 'error');
+      });
   }
 
   function showDeleteConfirm(id) {
@@ -1063,16 +1260,42 @@
 
     var firmFilter = e.target.closest('[data-ocr-firm-filter]');
     if (firmFilter && pageRoot && pageRoot.contains(firmFilter) && e.type === 'change') {
-      var filterVal = firmFilter.value || 'all';
-      pageRoot.querySelectorAll('.ocr-firm-card').forEach(function (card) {
-        var firmId = card.getAttribute('data-ocr-firm-id');
-        var fakeFirm = {
-          match_status: card.getAttribute('data-ocr-match-status'),
-          review_status: card.getAttribute('data-ocr-match-status'),
-        };
-        card.classList.toggle('hidden', !firmMatchesFilter(fakeFirm, filterVal));
-        if (filterVal === 'needs_review' && fakeFirm.match_status === 'pending') card.classList.remove('hidden');
+      state.firmStatus = firmFilter.value || 'all';
+      state.firmPage = 1;
+      loadFirmsPage(state.selectedId);
+      return;
+    }
+
+    var firmPerPage = e.target.closest('[data-ocr-firm-per-page]');
+    if (firmPerPage && pageRoot && pageRoot.contains(firmPerPage) && e.type === 'change') {
+      state.firmPerPage = parseInt(firmPerPage.value, 10) || 50;
+      state.firmPage = 1;
+      loadFirmsPage(state.selectedId);
+      return;
+    }
+
+    var firmPageBtn = e.target.closest('[data-ocr-firm-page]');
+    if (firmPageBtn && pageRoot && pageRoot.contains(firmPageBtn)) {
+      e.preventDefault();
+      var dir = firmPageBtn.getAttribute('data-ocr-firm-page');
+      var last = (state.firmPagination && state.firmPagination.last_page) || 1;
+      if (dir === 'prev' && state.firmPage > 1) state.firmPage -= 1;
+      if (dir === 'next' && state.firmPage < last) state.firmPage += 1;
+      loadFirmsPage(state.selectedId);
+      return;
+    }
+
+    var firmExport = e.target.closest('[data-ocr-firm-export]');
+    if (firmExport && pageRoot && pageRoot.contains(firmExport)) {
+      e.preventDefault();
+      var exportId = firmExport.getAttribute('data-ocr-firm-export');
+      var exportParams = new URLSearchParams({
+        status: String(state.firmStatus || 'all'),
+        mode: String(firmExport.getAttribute('data-export-mode') || 'firms'),
       });
+      if (state.firmSearch) exportParams.set('search', state.firmSearch);
+      if (state.firmCity) exportParams.set('city', state.firmCity);
+      window.open('/ocr-documents/' + encodeURIComponent(exportId) + '/firms/export?' + exportParams.toString(), '_blank');
       return;
     }
 
@@ -1322,6 +1545,19 @@
     document.addEventListener('click', handleDelegatedClick);
     document.addEventListener('change', handleDelegatedClick);
     document.addEventListener('keydown', handleDelegatedKeydown);
+    var firmSearchTimer = null;
+    document.addEventListener('input', function (e) {
+      var searchEl = e.target && e.target.closest ? e.target.closest('[data-ocr-firm-search]') : null;
+      var cityEl = e.target && e.target.closest ? e.target.closest('[data-ocr-firm-city]') : null;
+      if (!searchEl && !cityEl) return;
+      clearTimeout(firmSearchTimer);
+      firmSearchTimer = setTimeout(function () {
+        if (searchEl) state.firmSearch = searchEl.value || '';
+        if (cityEl) state.firmCity = cityEl.value || '';
+        state.firmPage = 1;
+        if (state.selectedId) loadFirmsPage(state.selectedId);
+      }, 350);
+    });
   }
 
   function bindPage(root) {
@@ -1354,8 +1590,9 @@
 
     function resetUploadUi(caption) {
       state.uploading = false;
+      state.uploadFingerprint = null;
       if (dropTitle) dropTitle.textContent = 'Drop a document here or click to browse';
-      if (dropCaption) dropCaption.textContent = caption || 'Queued for OCR · browser stays responsive';
+      if (dropCaption) dropCaption.textContent = caption || 'PDF / JPG / PNG · OCR runs in the background';
       if (uploadInput) {
         uploadInput.disabled = false;
         uploadInput.value = '';
@@ -1378,8 +1615,8 @@
 
       function onUploadProgress(file, percent) {
         if (percent >= 100) {
-          if (dropTitle) dropTitle.textContent = 'Saving document…';
-          setUploadHint('Upload finished. Saving “' + file.name + '” on the server…', false);
+          if (dropTitle) dropTitle.textContent = 'Finishing upload…';
+          setUploadHint('Upload bytes received for “' + file.name + '”. Waiting for the server to save the document…', false);
           return;
         }
         if (dropTitle) dropTitle.textContent = 'Uploading… ' + percent + '%';
@@ -1387,15 +1624,34 @@
       }
 
       function uploadOne(file, forceReimport) {
+        var fingerprint = [file.name, file.size, file.lastModified, selectedImportType(), forceReimport ? '1' : '0'].join('|');
+        if (state.uploadFingerprint === fingerprint) {
+          return Promise.reject(new Error('Upload already in progress for this file.'));
+        }
+        state.uploadFingerprint = fingerprint;
         if (dropTitle) dropTitle.textContent = 'Uploading… 0%';
         if (dropCaption) dropCaption.textContent = file.name + ' · ' + formatBytes(file.size);
         setUploadHint('Uploading “' + file.name + '” (' + formatBytes(file.size) + ')…', false);
         return uploadFile(file, function (percent) { onUploadProgress(file, percent); }, forceReimport)
+          .then(function (body) {
+            var item = unwrapItem(body) || {};
+            if (!item.id) {
+              throw new Error('Upload succeeded but the server did not return an OCR document id.');
+            }
+            upsertServerItem(item);
+            if (dropTitle) dropTitle.textContent = 'Queued for OCR';
+            setUploadHint('Saved as document #' + item.id + ' · ' + (item.processing_progress || item.status || 'queued'), false);
+            return body;
+          })
           .catch(function (err) {
             if (!forceReimport && err.duplicateFile && window.confirm(err.message + '\n\nRe-import this file anyway?')) {
+              state.uploadFingerprint = null;
               return uploadOne(file, true);
             }
             throw err;
+          })
+          .finally(function () {
+            if (state.uploadFingerprint === fingerprint) state.uploadFingerprint = null;
           });
       }
 
@@ -1403,7 +1659,10 @@
         if (index >= queue.length) {
           resetUploadUi(queue.length > 1
             ? queue.length + ' documents uploaded · OCR running in background'
-            : 'Queued for OCR · browser stays responsive');
+            : 'Document saved · OCR running in background');
+          setUploadHint(queue.length > 1
+            ? queue.length + ' documents saved. Keep queue:work running to process OCR.'
+            : 'Document saved. Keep queue:work running to process OCR.', false);
           toast(queue.length > 1
             ? queue.length + ' documents uploaded. OCR processing has started.'
             : 'Document uploaded successfully. OCR processing has started.', 'success');
@@ -1412,11 +1671,12 @@
             state.selectedId = createdIds[createdIds.length - 1];
             state.pollStartedAt = Date.now();
           }
-          // Always refresh from GET /ocr-documents — never keep client-only rows.
           return loadList().then(function (items) {
-            schedulePoll(items || []);
-            if (state.selectedId) openDetail(state.selectedId);
+            schedulePoll(items || currentItems());
+            // Do not auto-open preview after upload — that races the busy PHP built-in server.
+            // User can click View once the row shows Completed / firm count.
           }).catch(function (err) {
+            schedulePoll(currentItems());
             setUploadHint((err && err.message) || 'Upload saved, but the document list could not be refreshed.', true);
           });
         }
@@ -1444,12 +1704,18 @@
           message = err.errors.document[0];
         } else if (err.status === 401) {
           message = 'Your session expired. Please sign in again.';
+        } else if (err.timedOut) {
+          message = err.message;
         }
         resetUploadUi();
         setUploadHint(message, true);
-        toast(message, 'error');
-        loadList().catch(function () { /* list may still be valid */ });
+        toast(message, err.timedOut ? 'info' : 'error');
+        // Timed-out uploads often still saved — refresh list so the user sees Completed rows.
+        loadList().then(function (items) {
+          schedulePoll(items || currentItems());
+        }).catch(function () { /* list may still be valid */ });
       }).finally(function () {
+        // Always clear the stuck "Finishing upload…" card, even if a later step failed.
         if (state.uploading) resetUploadUi();
       });
     }

@@ -3,6 +3,8 @@
 namespace App\Support;
 
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Http\Resources\Json\ResourceCollection;
 
 class ApiResponse
 {
@@ -11,7 +13,7 @@ class ApiResponse
         return response()->json([
             'success' => true,
             'message' => $message,
-            'data' => $data,
+            'data' => self::normalizeData($data),
         ], $status);
     }
 
@@ -36,5 +38,17 @@ class ApiResponse
         }
 
         return response()->json($payload, $status);
+    }
+
+    private static function normalizeData(mixed $data): mixed
+    {
+        if ($data instanceof ResourceCollection) {
+            return $data->resolve();
+        }
+        if ($data instanceof JsonResource) {
+            return $data->resolve();
+        }
+
+        return $data;
     }
 }

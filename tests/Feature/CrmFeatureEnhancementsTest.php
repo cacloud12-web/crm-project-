@@ -426,13 +426,12 @@ class CrmFeatureEnhancementsTest extends TestCase
         $locked = $response->json('data.employee_locked_fields') ?? [];
         $this->assertContains('ca_name', $locked);
         $this->assertNotContains('status', $locked);
-        $this->assertNotContains('rating', $locked);
         $this->assertNotContains('source_id', $locked);
         $this->assertContains('executive_id', $locked);
         $this->assertNotContains('alternate_mobile_no', $locked);
     }
 
-    public function test_employee_can_update_rating_status_and_source_on_assigned_lead(): void
+    public function test_employee_can_update_status_and_source_on_assigned_lead(): void
     {
         $employee = CrmTestAccounts::employeeUser();
         $employeeModel = CrmTestAccounts::employee();
@@ -455,14 +454,13 @@ class CrmFeatureEnhancementsTest extends TestCase
         ]);
 
         $this->putJson('/ca-masters/'.$lead->ca_id, [
-            'rating' => 5,
             'status' => 'Hot',
             'is_newly_established' => true,
             'source_id' => $sourceId,
         ])->assertOk();
 
         $lead->refresh();
-        $this->assertSame(5, (int) $lead->rating);
+        $this->assertSame(2, (int) $lead->rating);
         $this->assertSame('Hot', $lead->status);
         $this->assertTrue((bool) $lead->is_newly_established);
         $this->assertSame((int) $sourceId, (int) $lead->source_id);

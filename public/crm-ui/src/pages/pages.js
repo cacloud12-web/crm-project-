@@ -529,6 +529,10 @@ window.CAPages = (function () {
     '</div>';
   }
 
+  function columnDataAttr(c) {
+    return c && c.key ? ' data-column="' + escapeAttr(String(c.key)) + '"' : '';
+  }
+
   function columnFilterCellHtml(c, opts) {
     var cls = ['crm-col-filter-th'];
     if (c.thCls) cls.push(c.thCls);
@@ -536,6 +540,7 @@ window.CAPages = (function () {
     if (c.sticky === 'left-2') cls.push('sticky-left-2');
     if (c.sticky === 'left-3') cls.push('sticky-left-3');
     if (c.sticky === 'right') cls.push('sticky-right');
+    var colAttr = columnDataAttr(c);
 
     var filterType = c.filterType;
     if (!filterType) {
@@ -544,7 +549,7 @@ window.CAPages = (function () {
       else if (c.filterKey || c.filterId) filterType = 'search';
     }
     if (!filterType || filterType === 'none') {
-      return '<th class="' + cls.join(' ') + '" scope="col"></th>';
+      return '<th class="' + cls.join(' ') + '"' + colAttr + ' scope="col"></th>';
     }
 
     var inputCls = 'crm-col-filter-input';
@@ -589,7 +594,7 @@ window.CAPages = (function () {
         ' placeholder="' + escapeAttr(placeholder) + '" aria-label="' + escapeAttr(ariaLabel) + '" autocomplete="off" />';
     }
 
-    return '<th class="' + cls.join(' ') + '" scope="col">' + control + '</th>';
+    return '<th class="' + cls.join(' ') + '"' + colAttr + ' scope="col">' + control + '</th>';
   }
 
   function listingFilterDataAttrs(f) {
@@ -669,6 +674,7 @@ window.CAPages = (function () {
     var inboxKey = opts.inboxKey || opts.tbodyId || '';
     if (opts.inbox) {
       cols.unshift({
+        key: 'selection',
         label: '<input type="checkbox" class="crm-inbox-check-all" data-inbox-table="' + inboxKey + '" aria-label="Select all rows" />',
         colCls: 'crm-col-check',
         thCls: 'crm-th-check sticky-left',
@@ -689,7 +695,7 @@ window.CAPages = (function () {
     var tableAttr = opts.tableId ? ' id="' + opts.tableId + '"' : '';
     var wrapAttr = opts.wrapId ? ' id="' + opts.wrapId + '"' : '';
     var colgroup = '<colgroup>' + cols.map(function (c) {
-      return '<col' + (c.colCls ? ' class="' + c.colCls + '"' : '') + ' />';
+      return '<col' + (c.colCls ? ' class="' + c.colCls + '"' : '') + columnDataAttr(c) + ' />';
     }).join('') + '</colgroup>';
     var ths = cols.map(function (c) {
       var cls = [];
@@ -698,7 +704,7 @@ window.CAPages = (function () {
       if (c.sticky === 'left-2') cls.push('sticky-left-2');
       if (c.sticky === 'left-3') cls.push('sticky-left-3');
       if (c.sticky === 'right') cls.push('sticky-right');
-      return '<th' + (cls.length ? ' class="' + cls.join(' ') + '"' : '') + ' scope="col">' +
+      return '<th' + (cls.length ? ' class="' + cls.join(' ') + '"' : '') + columnDataAttr(c) + ' scope="col">' +
         (c.html ? c.label : c.label) + '</th>';
     }).join('');
     var filterRow = '';
@@ -757,7 +763,9 @@ window.CAPages = (function () {
   }
 
   function caMasterStatusFilterOptions() {
+    // Single source: config/crm_statuses.php master_data_filter (mirrored here for SPA).
     return [
+      'New',
       'Interested',
       'Thinking',
       'Purchasing',
@@ -765,6 +773,7 @@ window.CAPages = (function () {
       'Not Interested',
       'Next Week',
       'Next Month',
+      'Left in between',
       'Hold',
     ];
   }
@@ -776,29 +785,52 @@ window.CAPages = (function () {
       }).join('');
   }
 
+  /**
+   * Single source of truth for All Firms (/ca-masters) columns.
+   * Keys must match body-cell data-column attributes in crm.js.
+   */
+  function caMasterColumnDefinitions() {
+    return [
+      { key: 'selection', label: 'Select', required: true, defaultVisible: true, picker: false },
+      { key: 'firm_name', label: 'Firm Name', required: true, defaultVisible: true, sticky: 'left', filterKey: 'firm_name', filterPlaceholder: 'search', colCls: 'crm-col-firm col-firm', thCls: 'crm-th-firm col-firm' },
+      { key: 'ca_name', label: 'CA Name', required: false, defaultVisible: true, filterKey: 'ca_name', filterPlaceholder: 'search', colCls: 'crm-col-ca col-ca', thCls: 'crm-th-ca col-ca' },
+      { key: 'team_size', label: 'Team Size', required: false, defaultVisible: true, sortField: 'team_size', filterKey: 'team_size', filterPlaceholder: 'search', colCls: 'crm-col-team-size', thCls: 'crm-th-team-size' },
+      { key: 'last_activity', label: 'Last Activity', required: false, defaultVisible: true, sortField: 'last_activity_at', colCls: 'crm-col-last-activity', thCls: 'crm-th-last-activity' },
+      { key: 'mobile', label: 'Mobile', required: false, defaultVisible: true, filterKey: 'mobile_no', filterPlaceholder: 'search', colCls: 'crm-col-mobile', thCls: 'crm-th-mobile', permission: 'mobile' },
+      { key: 'call_log', label: 'Call Log', required: false, defaultVisible: true, colCls: 'crm-col-call-log', thCls: 'crm-th-call-log' },
+      { key: 'alternate_mobile', label: 'Alt Mobile', required: false, defaultVisible: true, filterKey: 'alternate_mobile_no', filterPlaceholder: 'search', colCls: 'crm-col-mobile', thCls: 'crm-th-mobile', permission: 'mobile' },
+      { key: 'city', label: 'City', required: false, defaultVisible: true, filterKey: 'city', filterPlaceholder: 'search', colCls: 'crm-col-geo', thCls: 'crm-th-geo' },
+      { key: 'state', label: 'State', required: false, defaultVisible: true, filterKey: 'state', filterPlaceholder: 'search', colCls: 'crm-col-geo', thCls: 'crm-th-geo' },
+      { key: 'source', label: 'Source', required: false, defaultVisible: true, filterKey: 'source', filterPlaceholder: 'search', colCls: 'crm-col-source', thCls: 'crm-th-source' },
+      { key: 'rating', label: 'Rating', required: false, defaultVisible: true, colCls: 'crm-col-rating', thCls: 'crm-th-rating' },
+      { key: 'status', label: 'Status', required: false, defaultVisible: true, filterKey: 'status', filterType: 'select', filterOptionsHtml: caMasterStatusFilterOptionsHtml('All Status'), colCls: 'crm-col-status', thCls: 'crm-th-status' },
+      { key: 'employee', label: 'Employee', required: false, defaultVisible: true, filterKey: 'executive', filterPlaceholder: 'search', colCls: 'crm-col-person', thCls: 'crm-th-person', permission: 'assignment' },
+      { key: 'created_by', label: 'Created By', required: false, defaultVisible: true, colCls: 'crm-col-person', thCls: 'crm-th-person' },
+      { key: 'updated_at', label: 'Updated', required: false, defaultVisible: true, colCls: 'crm-col-date', thCls: 'crm-th-date' },
+      { key: 'google', label: 'Google', required: false, defaultVisible: true, colCls: 'crm-col-research cam-col-google', thCls: 'crm-th-research crm-th-google cam-col-google' },
+      { key: 'actions', label: 'Actions', required: true, defaultVisible: true, sticky: 'right', colCls: 'crm-col-actions col-actions', thCls: 'crm-th-actions col-actions' },
+    ];
+  }
+
   function caMasterFirmsTable(tbodyId, tableId, paginationId) {
     tbodyId = tbodyId || 'ca-master-data-table';
     tableId = tableId || 'ca-master-table';
     paginationId = paginationId || 'ca-master-pagination-slot';
-    return enterpriseTable([
-      { label: 'Firm Name', colCls: 'crm-col-firm col-firm', thCls: 'crm-th-firm col-firm', sticky: 'left', filterKey: 'firm_name', filterPlaceholder: 'search' },
-      { label: 'CA Name', colCls: 'crm-col-ca col-ca', thCls: 'crm-th-ca col-ca', filterKey: 'ca_name', filterPlaceholder: 'search' },
-      { label: 'Team Size', colCls: 'crm-col-team-size', thCls: 'crm-th-team-size', sortField: 'team_size', filterKey: 'team_size', filterPlaceholder: 'search' },
-      { label: 'Last Activity', colCls: 'crm-col-last-activity', thCls: 'crm-th-last-activity', sortField: 'last_activity_at' },
-      { label: 'Mobile', colCls: 'crm-col-mobile', thCls: 'crm-th-mobile', filterKey: 'mobile_no', filterPlaceholder: 'search' },
-      { label: 'Call Log', colCls: 'crm-col-call-log', thCls: 'crm-th-call-log' },
-      { label: 'Alt Mobile', colCls: 'crm-col-mobile', thCls: 'crm-th-mobile', filterKey: 'alternate_mobile_no', filterPlaceholder: 'search' },
-      { label: 'City', colCls: 'crm-col-geo', thCls: 'crm-th-geo', filterKey: 'city', filterPlaceholder: 'search' },
-      { label: 'State', colCls: 'crm-col-geo', thCls: 'crm-th-geo', filterKey: 'state', filterPlaceholder: 'search' },
-      { label: 'Source', colCls: 'crm-col-source', thCls: 'crm-th-source', filterKey: 'source', filterPlaceholder: 'search' },
-      { label: 'Rating', colCls: 'crm-col-rating', thCls: 'crm-th-rating' },
-      { label: 'Status', colCls: 'crm-col-status', thCls: 'crm-th-status', filterKey: 'status', filterType: 'select', filterOptionsHtml: caMasterStatusFilterOptionsHtml('All Status') },
-      { label: 'Employee', colCls: 'crm-col-person', thCls: 'crm-th-person', filterKey: 'executive', filterPlaceholder: 'search' },
-      { label: 'Created By', colCls: 'crm-col-person', thCls: 'crm-th-person' },
-      { label: 'Updated', colCls: 'crm-col-date', thCls: 'crm-th-date' },
-      { label: 'Google', colCls: 'crm-col-research cam-col-google', thCls: 'crm-th-research crm-th-google cam-col-google' },
-      { label: 'Actions', colCls: 'crm-col-actions col-actions', thCls: 'crm-th-actions col-actions', sticky: 'right' },
-    ], {
+    var cols = caMasterColumnDefinitions().filter(function (c) { return c.key !== 'selection'; }).map(function (c) {
+      return {
+        key: c.key,
+        label: c.label,
+        colCls: c.colCls,
+        thCls: c.thCls,
+        sticky: c.sticky,
+        filterKey: c.filterKey,
+        filterPlaceholder: c.filterPlaceholder,
+        filterType: c.filterType,
+        filterOptionsHtml: c.filterOptionsHtml,
+        sortField: c.sortField,
+      };
+    });
+    return enterpriseTable(cols, {
       tbodyId: tbodyId,
       tableId: tableId,
       wrapId: tableId + '-wrap',
@@ -2691,6 +2723,7 @@ window.CAPages = (function () {
       return pages[id] || pages.dashboard;
     },
     employeeDashboardPage: employeeDashboardPage,
+    caMasterColumnDefinitions: caMasterColumnDefinitions,
     ids: function () { return Object.keys(pages); },
     all: pages,
   };

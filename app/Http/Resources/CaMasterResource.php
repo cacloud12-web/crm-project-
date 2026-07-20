@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Models\OcrParsedFirm;
 use App\Services\Leads\LeadActivityTimelineService;
 use App\Services\Leads\LeadOwnershipService;
 use App\Services\Leads\LeadTeamMemberService;
@@ -9,6 +10,7 @@ use App\Services\Rbac\EmployeeLeadFieldGuard;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Schema;
 
 class CaMasterResource extends JsonResource
 {
@@ -52,6 +54,11 @@ class CaMasterResource extends JsonResource
     private static array $lastActivityByCaId = [];
 
     /**
+     * @var array<int, array{city: ?string, state: ?string}>
+     */
+    private static array $ocrGeoByCaId = [];
+
+    /**
      * @param  Collection<int, mixed>|array<int, mixed>  $leads
      */
     public static function prepareCollection(Collection|array $leads): void
@@ -60,6 +67,7 @@ class CaMasterResource extends JsonResource
         if ($collection->isEmpty()) {
             self::$executiveByCaId = [];
             self::$lastActivityByCaId = [];
+            self::$ocrGeoByCaId = [];
 
             return;
         }
@@ -74,6 +82,7 @@ class CaMasterResource extends JsonResource
         if ($caIds === []) {
             self::$executiveByCaId = [];
             self::$lastActivityByCaId = [];
+            self::$ocrGeoByCaId = [];
 
             return;
         }
@@ -99,6 +108,46 @@ class CaMasterResource extends JsonResource
         }
 
         self::$lastActivityByCaId = app(LeadActivityTimelineService::class)->summariesForCaIds($caIds);
+        self::$ocrGeoByCaId = self::loadOcrGeoFallback($caIds);
+    }
+
+    /**
+     * @param  list<int>  $caIds
+     * @return array<int, array{city: ?string, state: ?string}>
+     */
+    private static function loadOcrGeoFallback(array $caIds): array
+    {
+        if ($caIds === [] || ! Schema::hasTable('ocr_parsed_firms')) {
+            return [];
+        }
+
+        $out = [];
+        $rows = OcrParsedFirm::query()
+            ->where(function ($query) use ($caIds) {
+                $query->whereIn('crm_ca_id', $caIds)->orWhereIn('matched_ca_id', $caIds);
+            })
+            ->orderByDesc('mapped_at')
+            ->orderByDesc('id')
+            ->get(['crm_ca_id', 'matched_ca_id', 'city', 'state']);
+
+        foreach ($rows as $row) {
+            foreach ([(int) ($row->crm_ca_id ?? 0), (int) ($row->matched_ca_id ?? 0)] as $caId) {
+                if ($caId < 1 || isset($out[$caId])) {
+                    continue;
+                }
+                $city = trim((string) ($row->city ?? ''));
+                $state = trim((string) ($row->state ?? ''));
+                if ($city === '' && $state === '') {
+                    continue;
+                }
+                $out[$caId] = [
+                    'city' => $city !== '' ? $city : null,
+                    'state' => $state !== '' ? $state : null,
+                ];
+            }
+        }
+
+        return $out;
     }
 
     public function toArray(Request $request): array
@@ -117,13 +166,16 @@ class CaMasterResource extends JsonResource
             'city_id' => $this->city_id,
             'state_id' => $this->state_id,
             'source_id' => $this->source_id,
-            'city' => $this->city?->city_name,
-            'city_name' => $this->city?->city_name,
-            'state' => $this->state?->state_name,
-            'state_name' => $this->state?->state_name,
+            'city' => $this->resolveCityName(),
+            'city_name' => $this->resolveCityName(),
+            'state' => $this->resolveStateName(),
+            'state_name' => $this->resolveStateName(),
             'source' => $this->sourceLead?->source_name,
             'source_name' => $this->sourceLead?->source_name,
-            'team_size' => $this->team_size,
+            'team_size' => max(0, (int) ($this->team_size ?? 0)),
+            'primary_ca_name' => $this->resolvePrimaryCaName(),
+            'partner_count' => $this->resolvePartnerCount(),
+            'partners' => $this->resolvePartnersPayload(),
             'existing_software' => $this->existing_software,
             'website' => $this->website,
             'gst_no' => $this->gst_no,
@@ -257,6 +309,88 @@ class CaMasterResource extends JsonResource
         $summaries = app(LeadActivityTimelineService::class)->summariesForCaIds([(int) $this->ca_id]);
 
         return $summaries[(int) $this->ca_id] ?? null;
+    }
+
+    private function resolvePrimaryCaName(): string
+    {
+        if ($this->relationLoaded('partners')) {
+            $primary = $this->partners->firstWhere('is_primary', true) ?: $this->partners->first();
+            if ($primary && trim((string) $primary->ca_name) !== '') {
+                return (string) $primary->ca_name;
+            }
+        }
+
+        return (string) ($this->ca_name ?? '');
+    }
+
+    private function resolveCityName(): ?string
+    {
+        $fromMaster = trim((string) ($this->city?->city_name ?? ''));
+        if ($fromMaster !== '') {
+            return $fromMaster;
+        }
+
+        return $this->ocrGeoForCaId((int) $this->ca_id)['city'];
+    }
+
+    private function resolveStateName(): ?string
+    {
+        $fromMaster = trim((string) ($this->state?->state_name ?? ''));
+        if ($fromMaster !== '') {
+            return $fromMaster;
+        }
+
+        return $this->ocrGeoForCaId((int) $this->ca_id)['state'];
+    }
+
+    /**
+     * @return array{city: ?string, state: ?string}
+     */
+    private function ocrGeoForCaId(int $caId): array
+    {
+        if ($caId < 1) {
+            return ['city' => null, 'state' => null];
+        }
+        if (! array_key_exists($caId, self::$ocrGeoByCaId)) {
+            self::$ocrGeoByCaId = array_replace(self::$ocrGeoByCaId, self::loadOcrGeoFallback([$caId]));
+        }
+
+        return self::$ocrGeoByCaId[$caId] ?? ['city' => null, 'state' => null];
+    }
+
+    private function resolvePartnerCount(): int
+    {
+        if ($this->relationLoaded('partners')) {
+            return $this->partners->count();
+        }
+
+        return max(0, (int) ($this->partners_count ?? 0));
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function resolvePartnersPayload(): array
+    {
+        if (! $this->relationLoaded('partners')) {
+            return [];
+        }
+
+        return $this->partners->map(static function ($p) {
+            return [
+                'id' => (int) $p->id,
+                'ca_name' => $p->ca_name,
+                'membership_no' => $p->membership_no,
+                'mobile' => $p->mobile,
+                'alternate_mobile' => $p->alternate_mobile,
+                'email' => $p->email,
+                'team_size' => max(0, (int) ($p->team_size ?? 0)),
+                'designation' => $p->designation,
+                'is_primary' => (bool) $p->is_primary,
+                'status' => $p->status,
+                'sequence_no' => (int) ($p->sequence_no ?? 0),
+            ];
+        })->values()->all();
     }
 
     private static function resolveMasterPipelineStage(?string $status): string

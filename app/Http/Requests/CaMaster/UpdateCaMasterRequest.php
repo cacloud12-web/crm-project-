@@ -12,6 +12,20 @@ class UpdateCaMasterRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        if (! $this->exists('team_size')) {
+            $this->merge(['team_size' => 0]);
+
+            return;
+        }
+
+        $raw = $this->input('team_size');
+        if ($raw === '' || $raw === null) {
+            $this->merge(['team_size' => 0]);
+        }
+    }
+
     public function rules(): array
     {
         $storeRules = (new StoreCaMasterRequest)->rules();

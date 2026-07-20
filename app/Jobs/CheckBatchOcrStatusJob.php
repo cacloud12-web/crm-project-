@@ -13,9 +13,11 @@ class CheckBatchOcrStatusJob implements ShouldBeUnique, ShouldQueue
 {
     use Queueable;
 
-    public int $tries = 1;
+    public int $tries = 5;
 
     public int $timeout = 120;
+
+    public int $uniqueFor = 120;
 
     public function __construct(
         public readonly int $ocrDocumentId,
@@ -24,6 +26,11 @@ class CheckBatchOcrStatusJob implements ShouldBeUnique, ShouldQueue
     public function uniqueId(): string
     {
         return 'ocr-batch-check-'.$this->ocrDocumentId;
+    }
+
+    public function backoff(): array
+    {
+        return [10, 20, 30, 60];
     }
 
     public function handle(OcrDocumentService $ocrDocumentService): void

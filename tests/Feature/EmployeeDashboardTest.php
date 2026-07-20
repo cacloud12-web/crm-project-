@@ -174,6 +174,40 @@ class EmployeeDashboardTest extends TestCase
         $this->assertContains((int) $caId, $assignedIds);
     }
 
+    public function test_manager_dashboard_reflects_assigned_leads_for_employee_filter(): void
+    {
+        $employee = CrmTestAccounts::employee();
+        $caId = CaMaster::query()
+            ->whereDoesntHave('leadAssignments', fn ($q) => $q->where('status', 'Active'))
+            ->value('ca_id');
+
+        if (! $caId) {
+            $this->markTestSkipped('No unassigned lead available.');
+        }
+
+        $admin = CrmTestAccounts::admin();
+        $this->actingAs($admin);
+        $this->postJson('/lead-assignments', [
+            'ca_id' => $caId,
+            'employee_id' => $employee->employee_id,
+            'assignment_type' => 'Manual',
+            'reason' => 'MANUAL_ASSIGN',
+        ])->assertCreated();
+
+        $expected = CaMaster::query()
+            ->countableInStatistics()
+            ->whereHas('leadAssignments', fn ($q) => $q
+                ->where('employee_id', $employee->employee_id)
+                ->where('status', 'Active'))
+            ->count();
+
+        $response = $this->getJson('/dashboard/metrics?employee_id='.$employee->employee_id)->assertOk();
+        $this->assertSame($expected, (int) $response->json('data.total_leads'));
+        $this->assertSame($expected, (int) $response->json('data.assigned_leads'));
+        $this->assertTrue((bool) ($response->json('data.employee_productivity.has_activity') ?? false));
+        $this->assertSame($expected, (int) $response->json('data.employee_productivity.metrics.leads.total_assigned'));
+    }
+
     public function test_reassignment_moves_lead_between_employee_dashboards(): void
     {
         $employeeA = CrmTestAccounts::employee();

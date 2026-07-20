@@ -14,6 +14,20 @@ class StoreCaMasterRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        if (! $this->exists('team_size')) {
+            $this->merge(['team_size' => 0]);
+
+            return;
+        }
+
+        $raw = $this->input('team_size');
+        if ($raw === '' || $raw === null) {
+            $this->merge(['team_size' => 0]);
+        }
+    }
+
     public function rules(): array
     {
         return [
@@ -22,16 +36,14 @@ class StoreCaMasterRequest extends FormRequest
             'mobile_no' => ['nullable', 'string', 'max:20', new ValidPhoneNumber],
             'alternate_mobile_no' => ['nullable', 'string', 'max:20', new ValidPhoneNumber],
             'email_id' => 'nullable|string|max:255|email',
-            'gst_no' => 'nullable|string|max:50',
             'pan_no' => 'nullable|string|max:20',
             'google_place_id' => 'nullable|string|max:128',
             'state_id' => 'required|integer|exists:states,state_id',
             'city_id' => ['nullable', 'integer', 'exists:cities,city_id', new CityBelongsToState],
             'source_id' => 'nullable|integer|exists:source_leads,source_id',
-            'team_size' => 'nullable|integer|min:1',
+            'team_size' => 'nullable|integer|min:0',
             'existing_software' => 'nullable|string|max:255',
             'website' => 'nullable|string|max:255',
-            'rating' => 'nullable|integer|min:1|max:5',
             'is_newly_established' => 'nullable|in:yes,no,0,1,true,false',
             'status' => ['nullable', 'string', 'max:255', Rule::in(config('crm_statuses.allowed', []))],
             'lead_tags' => 'nullable|array',

@@ -2,6 +2,7 @@
 
 return [
     'master_data_filter' => [
+        'New',
         'Interested',
         'Thinking',
         'Purchasing',
@@ -9,6 +10,7 @@ return [
         'Not Interested',
         'Next Week',
         'Next Month',
+        'Left in between',
         'Hold',
     ],
 

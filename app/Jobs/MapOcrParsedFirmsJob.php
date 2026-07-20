@@ -49,7 +49,8 @@ class MapOcrParsedFirmsJob implements ShouldBeUnique, ShouldQueue
                 'ocr_document_id' => $this->ocrDocumentId,
                 'message' => 'MapOcrParsedFirmsJob refused Master CA import — use ImportMasterCaOcrJob.',
             ]);
-            ImportMasterCaOcrJob::dispatch($this->ocrDocumentId, $this->actorId);
+            ImportMasterCaOcrJob::dispatch($this->ocrDocumentId, $this->actorId)
+                ->onQueue((string) config('document-ai.import_queue', 'ocr-import'));
 
             return;
         }

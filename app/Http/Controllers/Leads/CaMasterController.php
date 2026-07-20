@@ -87,7 +87,11 @@ class CaMasterController extends Controller
         $this->leadLockService->expireIfStale($lead);
         $this->leadViewService->recordView($lead);
 
-        $fresh = $lead->fresh(['city', 'state', 'sourceLead', 'lockedByEmployee', 'activeTeamAssignments.employee']);
+        $relations = ['city', 'state', 'sourceLead', 'lockedByEmployee', 'activeTeamAssignments.employee'];
+        if (\Illuminate\Support\Facades\Schema::hasTable('ca_master_partners')) {
+            $relations[] = 'partners';
+        }
+        $fresh = $lead->fresh($relations);
 
         return ApiResponse::success(new CaMasterResource($fresh));
     }
@@ -206,6 +210,21 @@ class CaMasterController extends Controller
         } catch (DuplicateLeadException $exception) {
             return ApiResponse::error($exception->getMessage(), 409, [
                 'duplicate' => $exception->duplicateInfo(),
+            ]);
+        }
+    }
+
+    public function updateTeamSize(Request $request, string $caMaster): JsonResponse
+    {
+        try {
+            $lead = $this->caMasterService->find($caMaster);
+            $data = $request->validate(['team_size' => 'required|integer|min:0']);
+            $lead = $this->caMasterService->updateTeamSize($lead, (int) $data['team_size']);
+
+            return ApiResponse::success(new CaMasterResource($lead), 'Team size updated');
+        } catch (LeadLockedException $exception) {
+            return ApiResponse::error($exception->getMessage(), 423, [
+                'lock' => $exception->lockInfo(),
             ]);
         }
     }

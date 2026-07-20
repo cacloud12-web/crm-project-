@@ -41,8 +41,21 @@ class OcrSpreadsheetTableParser
             return true;
         }
 
-        // Serial + date pairs are strong evidence even without headers.
-        return preg_match_all('/(?:^|\n)\s*\d{1,3}\s*\n\s*\d{2}-\d{2}-\d{4}/', $rawText) >= 3;
+        // Serial + real calendar dates (reject membership/FRN OCR that looks like dd-mm-yyyy).
+        if (preg_match_all('/(?:^|\n)\s*\d{1,3}\s*\n\s*(\d{2})-(\d{2})-(\d{4})/', $rawText, $matches, PREG_SET_ORDER) < 3) {
+            return false;
+        }
+        $validDates = 0;
+        foreach ($matches as $match) {
+            $d = (int) $match[1];
+            $m = (int) $match[2];
+            $y = (int) $match[3];
+            if ($m >= 1 && $m <= 12 && $d >= 1 && $d <= 31 && $y >= 1990 && $y <= 2100) {
+                $validDates++;
+            }
+        }
+
+        return $validDates >= 3;
     }
 
     /**

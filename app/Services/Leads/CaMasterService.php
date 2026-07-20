@@ -235,7 +235,7 @@ class CaMasterService
      */
     private function listingRelations(): array
     {
-        return [
+        $relations = [
             'city:city_id,city_name',
             'state:state_id,state_name',
             'sourceLead:source_id,source_name',
@@ -243,14 +243,24 @@ class CaMasterService
             'activeAssignment.employee:employee_id,name',
             'activeTeamAssignments.employee:employee_id,name,role,status',
         ];
+        if (\Illuminate\Support\Facades\Schema::hasTable('ca_master_partners')) {
+            $relations[] = 'partners';
+        }
+
+        return $relations;
     }
 
     public function find(int|string $id): CaMaster
     {
         app(EmployeeDataScopeService::class)->ensureCanAccessCaMaster($id);
 
+        $relations = ['city', 'state', 'sourceLead', 'lockedByEmployee'];
+        if (\Illuminate\Support\Facades\Schema::hasTable('ca_master_partners')) {
+            $relations[] = 'partners';
+        }
+
         return CaMaster::query()
-            ->with(['city', 'state', 'sourceLead', 'lockedByEmployee'])
+            ->with($relations)
             ->findOrFail($id);
     }
 
@@ -309,6 +319,29 @@ class CaMasterService
             $this->employeeDataScope->resolveEmployeeId($user),
             (int) $lead->ca_id,
             $data,
+        );
+
+        return $lead;
+    }
+
+    public function updateTeamSize(CaMaster $caMaster, int $teamSize): CaMaster
+    {
+        $user = auth()->user();
+        if ($user) {
+            $this->leadOwnership->assertCanEdit($user, $caMaster);
+            $this->leadLockService->assertCanMutate($caMaster, $user);
+        }
+
+        $before = (int) ($caMaster->team_size ?? 0);
+        $teamSize = max(0, $teamSize);
+        $caMaster->update(['team_size' => $teamSize]);
+        $lead = $caMaster->fresh(['city', 'state', 'sourceLead', 'lockedByEmployee', 'partners']);
+
+        $this->activityLogService->log(
+            'CA_MASTER',
+            'Update Team Size',
+            $this->shortId((string) $lead->ca_id),
+            ($lead->firm_name ?: $lead->ca_name).' — '.$before.' → '.$teamSize,
         );
 
         return $lead;
@@ -747,7 +780,9 @@ class CaMasterService
             'city_id' => $cityId,
             'state_id' => $stateId,
             'source_id' => $sourceId,
-            'team_size' => $data['team_size'] ?? $existing?->team_size,
+            'team_size' => array_key_exists('team_size', $data)
+                ? $this->normalizeManualTeamSize($data['team_size'])
+                : max(0, (int) ($existing?->team_size ?? 0)),
             'existing_software' => $data['existing_software'] ?? $existing?->existing_software,
             'website' => $data['website'] ?? $existing?->website,
             'normalized_website' => $data['normalized_website'] ?? $existing?->normalized_website,
@@ -800,6 +835,15 @@ class CaMasterService
         $priority = $priority ?? 'Medium';
 
         return in_array($priority, $allowed, true) ? $priority : 'Medium';
+    }
+
+    private function normalizeManualTeamSize(mixed $value): int
+    {
+        if ($value === null || $value === '' || $value === false) {
+            return 0;
+        }
+
+        return max(0, (int) $value);
     }
 
     private function toBoolean(mixed $value): bool

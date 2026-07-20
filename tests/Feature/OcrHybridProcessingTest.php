@@ -545,4 +545,240 @@ class OcrHybridProcessingTest extends TestCase
 
         Queue::assertPushed(ProcessOcrDocumentJob::class);
     }
+
+    public function test_master_ca_upload_is_queued_even_when_small_file_sync_enabled(): void
+    {
+        config([
+            'document-ai.sync_small_files' => true,
+            'document-ai.sync_max_pages' => 5,
+            'document-ai.sync_max_file_mb' => 5,
+        ]);
+        $this->mock(PdfPageCounter::class, function ($mock) {
+            $mock->shouldReceive('count')->andReturn(4);
+        });
+
+        Queue::fake();
+        $this->actingAsAdmin();
+
+        $this->mock(\App\Contracts\Ocr\OcrProcessorInterface::class, function ($mock) {
+            $mock->shouldReceive('processBinary')->never();
+        });
+
+        $this->post('/ocr-documents', [
+            'import_type' => 'master_ca',
+            'document' => $this->fakePdf(),
+        ], ['Accept' => 'application/json'])
+            ->assertCreated()
+            ->assertJsonPath('data.status', 'queued')
+            ->assertJsonPath('data.import_type', 'master_ca')
+            ->assertJsonPath('data.processing_mode', 'online');
+
+        Queue::assertPushed(ProcessOcrDocumentJob::class, 1);
+    }
+
+    public function test_four_page_small_pdf_sync_path_stores_lean_structured_data(): void
+    {
+        config([
+            'document-ai.sync_small_files' => true,
+            'document-ai.sync_max_pages' => 5,
+            'document-ai.sync_max_file_mb' => 5,
+            'document-ai.imageless_mode' => true,
+            'crm_mapping.queue_after_ocr_parse' => false,
+        ]);
+
+        $this->mock(PdfPageCounter::class, function ($mock) {
+            $mock->shouldReceive('count')->andReturn(4);
+        });
+
+        Queue::fake();
+        $this->actingAsAdmin();
+
+        $pages = [];
+        for ($page = 1; $page <= 4; $page++) {
+            $paragraphs = [];
+            for ($i = 0; $i < 40; $i++) {
+                $paragraphs[] = [
+                    'text' => "FIRM {$page}-{$i} & ASSOCIATES",
+                    'x' => 0.12,
+                    'y' => round(0.05 + ($i * 0.02), 4),
+                    'confidence' => 0.91,
+                    'bounding_box' => [
+                        ['x' => 0.1, 'y' => 0.1],
+                        ['x' => 0.4, 'y' => 0.1],
+                        ['x' => 0.4, 'y' => 0.2],
+                        ['x' => 0.1, 'y' => 0.2],
+                    ],
+                ];
+            }
+            $pages[] = [
+                'page_number' => $page,
+                'languages' => ['en'],
+                'paragraph_count' => count($paragraphs),
+                'paragraphs' => $paragraphs,
+                'paragraph_layouts' => $paragraphs,
+                'tables' => [['page_number' => $page, 'body_rows' => []]],
+                'table_count' => 1,
+                'confidence' => 0.9,
+                'has_text' => true,
+                'text_length' => 1200,
+            ];
+        }
+
+        $peakBefore = memory_get_peak_usage(true);
+
+        $this->mock(\App\Contracts\Ocr\OcrProcessorInterface::class, function ($mock) use ($pages) {
+            $mock->shouldReceive('processBinary')->once()->andReturn([
+                'text' => "PUNE\nMEHTA & CO\nRAJ MEHTA\n",
+                'page_count' => 4,
+                'languages' => ['en'],
+                'detected_languages' => ['en'],
+                'pages' => $pages,
+                'entities' => [],
+                'tables' => [['page_number' => 1, 'body_rows' => [['text' => 'A']]]],
+                'structured_data' => [
+                    'pages' => $pages,
+                    'tables' => [['page_number' => 1, 'body_rows' => [['text' => 'A']]]],
+                    'extraction_mode' => 'document_ai_tables_and_paragraphs',
+                ],
+                'average_confidence' => 0.92,
+                'processor_name' => 'projects/test/locations/us/processors/test',
+                'provider_reference' => 'projects/test/locations/us/processors/test',
+                'metadata' => ['provider' => 'google_document_ai'],
+            ]);
+        });
+
+        $response = $this->post('/ocr-documents', [
+            'document' => UploadedFile::fake()->createWithContent(
+                'northprop_first_4_pages.pdf',
+                "%PDF-1.4\n".str_repeat('/Type /Page\n', 4)."\n%EOF",
+                'application/pdf',
+            ),
+        ], ['Accept' => 'application/json'])->assertCreated();
+
+        $peakAfter = memory_get_peak_usage(true);
+        $this->assertLessThan(128 * 1024 * 1024, $peakAfter, '4-page sync OCR path must stay under 128MB peak');
+        $this->assertLessThan(48 * 1024 * 1024, max(0, $peakAfter - $peakBefore), 'incremental memory for lean 4-page payload should stay practical');
+
+        $this->assertSame('completed', $response->json('data.status'));
+        $this->assertSame(4, $response->json('data.page_count'));
+        Queue::assertNotPushed(ProcessOcrDocumentJob::class);
+
+        $document = OcrDocument::query()->findOrFail($response->json('data.id'));
+        $structured = $document->structured_data;
+        $this->assertIsArray($structured);
+        $this->assertArrayHasKey('pages', $structured);
+        $this->assertArrayHasKey('tables', $structured);
+        $this->assertCount(4, $structured['pages']);
+        $this->assertArrayNotHasKey('paragraph_layouts', $structured['pages'][0]);
+        $this->assertArrayNotHasKey('tables', $structured['pages'][0]);
+        $this->assertArrayHasKey('paragraphs', $structured['pages'][0]);
+        $this->assertTrue((bool) ($structured['metadata']['imageless_mode'] ?? false));
+    }
+
+    public function test_online_processing_failure_marks_document_failed_and_clears_progress(): void
+    {
+        config([
+            'document-ai.sync_small_files' => true,
+            'document-ai.sync_max_pages' => 5,
+        ]);
+        $this->mock(PdfPageCounter::class, function ($mock) {
+            $mock->shouldReceive('count')->andReturn(4);
+        });
+
+        Queue::fake();
+        $this->actingAsAdmin();
+
+        $this->mock(\App\Contracts\Ocr\OcrProcessorInterface::class, function ($mock) {
+            $mock->shouldReceive('processBinary')->once()->andThrow(new \RuntimeException('simulated provider failure'));
+        });
+
+        $response = $this->post('/ocr-documents', [
+            'document' => $this->fakePdf(),
+        ], ['Accept' => 'application/json'])->assertCreated();
+
+        $document = OcrDocument::query()->findOrFail($response->json('data.id'));
+        $this->assertSame(OcrDocument::STATUS_FAILED, $document->status);
+        $this->assertNull($document->processing_progress);
+        $this->assertNotNull($document->error_code);
+        $this->assertNotNull($document->failed_at);
+        Queue::assertNothingPushed();
+    }
+
+    public function test_list_endpoint_does_not_serialize_full_ocr_payload(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $marker = 'FULL_OCR_PAGE_PAYLOAD_MARKER_'.uniqid('', true);
+
+        OcrDocument::query()->create([
+            'ca_id' => null,
+            'uploaded_by' => $admin->id,
+            'original_filename' => 'list-payload.pdf',
+            'stored_filename' => 'list-payload.pdf',
+            'storage_disk' => 'local',
+            'storage_path' => 'ocr-documents/test/list-payload.pdf',
+            'mime_type' => 'application/pdf',
+            'file_size' => 60600,
+            'status' => OcrDocument::STATUS_COMPLETED,
+            'processing_mode' => 'online',
+            'page_count' => 4,
+            'extracted_text' => $marker.' '.str_repeat('X', 5000),
+            'structured_data' => [
+                'pages' => [
+                    [
+                        'page_number' => 1,
+                        'paragraphs' => [['text' => $marker]],
+                        'tables' => [['body_rows' => [[$marker]]]],
+                    ],
+                ],
+                'tables' => [['page_number' => 1, 'body_rows' => [[$marker]]]],
+            ],
+            'processed_at' => now(),
+        ]);
+
+        $response = $this->getJson('/ocr-documents')->assertOk();
+        $json = $response->getContent();
+        $this->assertStringNotContainsString($marker, $json);
+        $item = collect($response->json('data.items') ?? [])->firstWhere('original_filename', 'list-payload.pdf');
+        $this->assertIsArray($item);
+        $this->assertArrayNotHasKey('structured_data', $item);
+        $this->assertArrayNotHasKey('extracted_text', $item);
+    }
+
+    public function test_retry_after_failed_memory_path_queues_without_duplicate_sync_dispatch(): void
+    {
+        config(['document-ai.sync_small_files' => false]);
+        $this->mock(PdfPageCounter::class, function ($mock) {
+            $mock->shouldReceive('count')->andReturn(4);
+        });
+
+        Queue::fake();
+        $admin = $this->actingAsAdmin();
+
+        $document = OcrDocument::query()->create([
+            'ca_id' => null,
+            'uploaded_by' => $admin->id,
+            'original_filename' => 'northprop_first_4_pages.pdf',
+            'stored_filename' => 'northprop_first_4_pages.pdf',
+            'storage_disk' => 'local',
+            'storage_path' => 'ocr-documents/test/northprop_first_4_pages.pdf',
+            'mime_type' => 'application/pdf',
+            'file_size' => 62084,
+            'status' => OcrDocument::STATUS_FAILED,
+            'processing_mode' => 'online',
+            'page_count' => 4,
+            'error_code' => 'memory_exhausted',
+            'error_message' => 'OCR processing ran out of memory while decoding the Document AI response. Please retry.',
+            'failed_at' => now(),
+        ]);
+        Storage::disk('local')->put($document->storage_path, "%PDF-1.4\n".str_repeat('/Type /Page\n', 4));
+
+        $this->postJson('/ocr-documents/'.$document->id.'/retry')
+            ->assertOk()
+            ->assertJsonPath('data.status', 'queued');
+
+        Queue::assertPushed(ProcessOcrDocumentJob::class, 1);
+        $document->refresh();
+        $this->assertSame(OcrDocument::STATUS_QUEUED, $document->status);
+        $this->assertNull($document->error_code);
+    }
 }

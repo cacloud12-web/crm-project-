@@ -6,12 +6,12 @@ use App\Models\CaMaster;
 use App\Models\City;
 use App\Models\OcrDocument;
 use App\Models\OcrParsedFirm;
-use App\Models\User;
 use App\Services\Mapping\DataNormalizationService;
 use App\Services\Ocr\MasterCaDirectImportService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Tests\Support\CrmTestAccounts;
 use Tests\TestCase;
 
 class OcrFirmCaCityMasterWriteTest extends TestCase
@@ -46,7 +46,7 @@ class OcrFirmCaCityMasterWriteTest extends TestCase
             $this->markTestSkipped('City master missing.');
         }
 
-        $admin = User::query()->where('email', 'admin@ca.local')->firstOrFail();
+        $admin = CrmTestAccounts::admin();
         $normalizer = app(DataNormalizationService::class);
         $firmName = 'Three Field Exact Firm '.uniqid();
         $caName = 'Three Field Exact CA';

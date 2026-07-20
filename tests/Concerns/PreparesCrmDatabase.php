@@ -21,6 +21,8 @@ trait PreparesCrmDatabase
 
     protected function prepareCrmDatabaseForTesting(): void
     {
+        $this->ensureSqliteTestDatabasesExist();
+
         if (! static::$crmDatabasePrepared) {
             Artisan::call('migrate', ['--force' => true]);
             Artisan::call('migrate', [
@@ -34,6 +36,8 @@ trait PreparesCrmDatabase
             $this->ensureRbacPermissions();
             static::$crmDatabasePrepared = true;
         } elseif (! CrmTestAccounts::$admin || ! User::query()->whereKey(CrmTestAccounts::$admin->id)->exists()) {
+            // Fixture seed should normally survive across DatabaseTransactions tests
+            // (prepared before the test transaction starts). Only rebuild when missing.
             if (! Schema::hasTable('users')) {
                 Artisan::call('migrate', ['--force' => true]);
             }
@@ -45,6 +49,30 @@ trait PreparesCrmDatabase
         }
 
         $this->ensureMinimalTestFixtures();
+    }
+
+    protected function ensureSqliteTestDatabasesExist(): void
+    {
+        foreach (['sqlite', 'ca_reference'] as $name) {
+            $database = config("database.connections.{$name}.database");
+            if (! is_string($database) || $database === ':memory:' || str_starts_with($database, 'file:')) {
+                continue;
+            }
+            if (config("database.connections.{$name}.driver") !== 'sqlite') {
+                continue;
+            }
+            $path = $database;
+            if (! str_starts_with($path, DIRECTORY_SEPARATOR) && ! preg_match('/^[A-Za-z]:\\\\/', $path)) {
+                $path = base_path($path);
+            }
+            if (! is_file($path)) {
+                $dir = dirname($path);
+                if (! is_dir($dir)) {
+                    mkdir($dir, 0777, true);
+                }
+                touch($path);
+            }
+        }
     }
 
     protected function ensureMinimalTestFixtures(): void
