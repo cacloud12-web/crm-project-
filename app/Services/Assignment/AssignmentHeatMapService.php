@@ -121,7 +121,7 @@ class AssignmentHeatMapService
             ->selectRaw("COALESCE(NULLIF(TRIM(c.city_name), ''), 'Unknown') as city_name")
             ->selectRaw('MAX(COALESCE(c.state_id, cm.state_id, 0)) as state_id')
             ->selectRaw('COUNT(*) as total_assigned')
-            ->groupByRaw("COALESCE(c.city_id, 0), COALESCE(NULLIF(TRIM(c.city_name), ''), 'Unknown')")
+            ->groupBy('c.city_id', 'c.city_name')
             ->orderBy('total_assigned', $sort)
             ->get();
 
