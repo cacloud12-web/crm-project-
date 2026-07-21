@@ -447,11 +447,13 @@ window.CrmReportAnalytics = (function () {
     var t = card.trend || {};
     var trendHtml = t.text ? '<span class="ra-lc-kpi-card__trend ' + (t.cls || '') + '" title="' + escapeHtml(t.text) + '">' + escapeHtml(t.text) + '</span>' : '';
     var tip = card.tooltip ? ' title="' + escapeHtml(card.tooltip) + '"' : '';
-    return '<article class="ra-lc-kpi-card ra-lc-kpi-card--' + (card.tone || 'blue') + '"' + tip + '>' +
-      '<span class="ra-lc-kpi-card__icon"><i data-lucide="' + card.icon + '" class="h-4 w-4"></i></span>' +
-      '<p class="ra-lc-kpi-card__value">' + escapeHtml(String(card.value)) + '</p>' +
-      '<p class="ra-lc-kpi-card__label">' + escapeHtml(card.label) + '</p>' +
-      trendHtml +
+    return '<article class="ra-lc-kpi-card"' + tip + '>' +
+      '<span class="ra-lc-kpi-card__icon" aria-hidden="true"><i data-lucide="' + card.icon + '" class="h-4 w-4"></i></span>' +
+      '<div class="ra-lc-kpi-card__body">' +
+        '<p class="ra-lc-kpi-card__label">' + escapeHtml(card.label) + '</p>' +
+        '<p class="ra-lc-kpi-card__value">' + escapeHtml(String(card.value)) + '</p>' +
+        trendHtml +
+      '</div>' +
     '</article>';
   }
 
@@ -733,7 +735,7 @@ window.CrmReportAnalytics = (function () {
       '<header class="ra-lc-table-section__head">' +
         '<div><i data-lucide="table" class="h-4 w-4"></i><h4>Detailed Data</h4></div>' +
         drillHtml +
-        '<label class="ra-table-search"><i data-lucide="search" class="h-4 w-4"></i>' +
+        '<label class="ra-table-search">' +
           '<input type="search" id="ra-table-search" placeholder="Search table…" value="' + escapeHtml(state.tableSearch) + '" aria-label="Search report table" /></label>' +
       '</header>' +
       '<p class="ra-table-meta">' + fmtNum(rows.length) + ' of ' + fmtNum(allRows.length) + ' rows · click column headers to sort</p>' +
@@ -748,17 +750,17 @@ window.CrmReportAnalytics = (function () {
       var filters = FILTER_PRESETS[slug] || ['date', 'employee', 'search'];
       var parts = [];
       if (filters.indexOf('date') >= 0) {
-        parts.push('<label class="ra-lc-filter" title="Date From"><i data-lucide="calendar" class="h-3.5 w-3.5"></i><input type="text" id="ra-filter-from" class="input-field input-field-sm" data-crm-date-input data-allow-past data-hide-preview data-optional aria-label="Date From" /></label>');
-        parts.push('<label class="ra-lc-filter" title="Date To"><i data-lucide="calendar-range" class="h-3.5 w-3.5"></i><input type="text" id="ra-filter-to" class="input-field input-field-sm" data-crm-date-input data-allow-past data-hide-preview data-optional aria-label="Date To" /></label>');
+        parts.push('<label class="ra-lc-filter" title="Date From"><input type="text" id="ra-filter-from" class="input-field input-field-sm" data-crm-date-input data-allow-past data-hide-preview data-optional aria-label="Date From" /></label>');
+        parts.push('<label class="ra-lc-filter" title="Date To"><input type="text" id="ra-filter-to" class="input-field input-field-sm" data-crm-date-input data-allow-past data-hide-preview data-optional aria-label="Date To" /></label>');
       }
       if (filters.indexOf('employee') >= 0) {
-        parts.push('<label class="ra-lc-filter ra-lc-filter--grow" title="Employee"><i data-lucide="user" class="h-3.5 w-3.5"></i><select id="ra-filter-employee" class="input-field input-field-sm" aria-label="Employee"><option value="">All employees</option></select></label>');
+        parts.push('<label class="ra-lc-filter ra-lc-filter--grow" title="Employee"><select id="ra-filter-employee" class="input-field input-field-sm" aria-label="Employee"><option value="">All employees</option></select></label>');
       }
       if (filters.indexOf('status') >= 0) {
-        parts.push('<label class="ra-lc-filter" title="Status"><i data-lucide="filter" class="h-3.5 w-3.5"></i><select id="ra-filter-status" class="input-field input-field-sm" aria-label="Status"><option value="">All statuses</option><option>Hot</option><option>Warm</option><option>New</option><option>Demo Scheduled</option><option>Lost</option></select></label>');
+        parts.push('<label class="ra-lc-filter" title="Status"><select id="ra-filter-status" class="input-field input-field-sm" aria-label="Status"><option value="">All statuses</option><option>Hot</option><option>Warm</option><option>New</option><option>Demo Scheduled</option><option>Lost</option></select></label>');
       }
       if (filters.indexOf('search') >= 0) {
-        parts.push('<label class="ra-lc-filter ra-lc-filter--grow" title="Search table"><i data-lucide="search" class="h-3.5 w-3.5"></i><input type="search" id="ra-filter-source" class="input-field input-field-sm" placeholder="Search table…" aria-label="Search table" /></label>');
+        parts.push('<label class="ra-lc-filter ra-lc-filter--grow" title="Search table"><input type="search" id="ra-filter-source" class="input-field input-field-sm" placeholder="Search table…" aria-label="Search table" /></label>');
       }
       parts.push('<button type="button" class="btn-primary btn-sm ra-lc-apply" id="ra-filter-apply">Apply</button>');
       parts.push('<button type="button" class="crm-toolbar-icon-btn" id="ra-filter-reset" title="Reset filters" aria-label="Reset filters"><i data-lucide="rotate-ccw" class="h-4 w-4"></i></button>');

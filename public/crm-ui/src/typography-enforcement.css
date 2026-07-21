@@ -103,11 +103,26 @@ body.crm-layout .text-card-heading,
 body.crm-layout .text-lg,
 body.crm-layout .mgr-panel-title,
 body.crm-layout .ca-modal-title,
-body.crm-layout .comm-card-label,
 body.crm-layout .ecfg-section-title {
   font-size: var(--crm-font-size-card-title) !important;
   font-weight: var(--crm-font-weight-card-title) !important;
   line-height: var(--crm-line-height-card-title) !important;
+}
+
+/* Communication hub cards — compact title / muted description */
+body.crm-layout .communication-card__title,
+body.crm-layout .comm-card-label {
+  font-size: 0.9375rem !important;
+  font-weight: 600 !important;
+  line-height: 1.25 !important;
+}
+
+body.crm-layout .communication-card__desc,
+body.crm-layout .comm-card-desc {
+  font-size: 0.75rem !important;
+  font-weight: 400 !important;
+  line-height: 1.3 !important;
+  letter-spacing: var(--crm-letter-spacing) !important;
 }
 
 /* Explicit section class wins over generic h3 (Bulk Import Wizard) */
@@ -283,7 +298,6 @@ body.crm-layout .detail-field,
 body.crm-layout .filter-time-heading,
 body.crm-layout .sc-combobox-empty,
 body.crm-layout .search-empty,
-body.crm-layout .comm-card-desc,
 body.crm-layout .mgr-priority-firm,
 body.crm-layout .mgr-team-name,
 body.crm-layout .mgr-table-name,

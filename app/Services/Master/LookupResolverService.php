@@ -69,6 +69,65 @@ class LookupResolverService
         }
 
         $name = trim((string) $value);
+        $normalized = $this->normalizeCityName($name);
+
+        $query = City::query()->where(function ($inner) use ($name, $normalized) {
+            $inner->where('city_name', $name)
+                ->orWhere('city_name', $normalized)
+                ->orWhereRaw('LOWER(city_name) = ?', [mb_strtolower($name)])
+                ->orWhereRaw('LOWER(city_name) = ?', [mb_strtolower($normalized)]);
+        });
+
+        if ($stateId) {
+            $query->where('state_id', $stateId);
+        }
+
+        return $this->cityCache[$cacheKey] = $query->value('city_id');
+    }
+
+    /**
+     * Resolve an existing city, or create it under the given / inferred state.
+     * Used on OCR Accept so a valid OCR city is not blocked by an incomplete master list.
+     */
+    public function ensureCityId(mixed $value, ?int $stateId = null): ?int
+    {
+        $existing = $this->resolveCityId($value, $stateId);
+        if ($existing !== null) {
+            return $existing;
+        }
+        if ($value === null || $value === '' || is_numeric($value)) {
+            return null;
+        }
+
+        $displayName = $this->normalizeCityName(trim((string) $value));
+        if ($displayName === '') {
+            return null;
+        }
+
+        $resolvedStateId = $stateId ?: $this->inferStateIdForCity($displayName);
+        if ($resolvedStateId === null) {
+            return null;
+        }
+
+        $city = City::query()->firstOrCreate(
+            [
+                'state_id' => $resolvedStateId,
+                'city_name' => $displayName,
+            ],
+            [
+                'state_id' => $resolvedStateId,
+                'city_name' => $displayName,
+                'is_active' => true,
+            ],
+        );
+
+        $this->cityCache = [];
+
+        return (int) $city->city_id;
+    }
+
+    private function normalizeCityName(string $name): string
+    {
         $aliases = [
             'bangalore' => 'Bengaluru',
             'bengaluru' => 'Bengaluru',
@@ -84,20 +143,32 @@ class LookupResolverService
             'trivandrum' => 'Thiruvananthapuram',
             'pondicherry' => 'Puducherry',
         ];
-        $normalized = $aliases[mb_strtolower($name)] ?? $name;
-
-        $query = City::query()->where(function ($inner) use ($name, $normalized) {
-            $inner->where('city_name', $name)
-                ->orWhere('city_name', $normalized)
-                ->orWhereRaw('LOWER(city_name) = ?', [mb_strtolower($name)])
-                ->orWhereRaw('LOWER(city_name) = ?', [mb_strtolower($normalized)]);
-        });
-
-        if ($stateId) {
-            $query->where('state_id', $stateId);
+        $key = mb_strtolower(trim($name));
+        if (isset($aliases[$key])) {
+            return $aliases[$key];
         }
 
-        return $this->cityCache[$cacheKey] = $query->value('city_id');
+        return mb_convert_case(mb_strtolower(trim($name)), MB_CASE_TITLE, 'UTF-8');
+    }
+
+    private function inferStateIdForCity(string $cityName): ?int
+    {
+        $path = database_path('data/india_states_cities.php');
+        if (! is_file($path)) {
+            return null;
+        }
+        /** @var array<string, list<string>> $dataset */
+        $dataset = require $path;
+        $needle = mb_strtolower($cityName);
+        foreach ($dataset as $stateName => $cities) {
+            foreach ($cities as $city) {
+                if (mb_strtolower((string) $city) === $needle) {
+                    return $this->resolveStateId($stateName);
+                }
+            }
+        }
+
+        return null;
     }
 
     public function cityBelongsToState(?int $cityId, ?int $stateId): bool

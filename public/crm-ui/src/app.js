@@ -53,26 +53,6 @@
   }
 
   /* ─── Detail Drawer ─── */
-  function detailFieldPillClass(label) {
-    var key = String(label || '').trim().toLowerCase();
-    if (key === 'status' || key === 'stage' || key === 'google status') return 'detail-pill detail-pill--status';
-    if (key === 'priority') return 'detail-pill detail-pill--priority';
-    if (key === 'scheduled' || key === 'scheduled date' || key === 'next follow-up' || key === 'time' || key === 'demo slot') return 'detail-pill detail-pill--date';
-    if (key === 'executive' || key === 'employee' || key === 'provider' || key === 'confirmed by') return 'detail-pill detail-pill--person';
-    return '';
-  }
-
-  function renderDetailFieldHtml(field) {
-    var label = field && field.label != null ? String(field.label) : '';
-    var value = field && field.value != null && field.value !== '' ? field.value : '—';
-    var pill = detailFieldPillClass(label);
-    var valueHtml = pill ? ('<span class="' + pill + '">' + value + '</span>') : value;
-    return '<div class="detail-field">' +
-      '<span class="detail-field-label">' + label + '</span>' +
-      '<span class="detail-field-value">' + valueHtml + '</span>' +
-    '</div>';
-  }
-
   function openDetailDrawer(data) {
     if (!detailDrawer) return;
     const title = document.getElementById('detail-drawer-title');
@@ -88,17 +68,14 @@
       const fields = data.fields || Object.keys(data).filter(function (k) { return k !== 'fields' && k !== 'title' && k !== 'mode' && k !== 'firm' && k !== 'extraHtml'; }).map(function (k) {
         return { label: k.replace(/([A-Z])/g, ' $1').replace(/^./, function (s) { return s.toUpperCase(); }), value: data[k] };
       });
-      var fieldsHtml = fields.length
-        ? '<div class="detail-fields-card"><div class="detail-fields-grid">' +
-          fields.map(renderDetailFieldHtml).join('') +
-          '</div></div>'
-        : '';
-      body.innerHTML = fieldsHtml + (data.extraHtml || '');
+      body.innerHTML = fields.map(function (f) {
+        return '<div class="detail-field"><span class="detail-field-label">' + f.label + '</span><span class="detail-field-value">' + (f.value != null && f.value !== '' ? f.value : '—') + '</span></div>';
+      }).join('') + (data.extraHtml || '');
     }
     if (mode === 'profile') {
       followBtn?.classList.add('hidden');
       if (editBtn) {
-        editBtn.innerHTML = '<i data-lucide="pencil" class="h-4 w-4" aria-hidden="true"></i><span class="detail-action-btn__label">Edit Profile</span>';
+        editBtn.innerHTML = '<i data-lucide="pencil" class="h-4 w-4"></i>';
         editBtn.setAttribute('title', 'Edit Profile');
         editBtn.setAttribute('aria-label', 'Edit Profile');
         editBtn.setAttribute('data-crm-tip', 'Edit Profile');
@@ -106,21 +83,22 @@
     } else {
       followBtn?.classList.remove('hidden');
       if (editBtn) {
-        editBtn.innerHTML = '<i data-lucide="pencil" class="h-4 w-4" aria-hidden="true"></i><span class="detail-action-btn__label">Edit</span>';
-        editBtn.setAttribute('title', 'Edit record');
+        editBtn.innerHTML = '<i data-lucide="pencil" class="h-4 w-4"></i>';
+        editBtn.setAttribute('title', 'Edit');
         editBtn.setAttribute('aria-label', 'Edit');
-        editBtn.setAttribute('data-crm-tip', 'Edit record');
+        editBtn.setAttribute('data-crm-tip', 'Edit');
       }
       if (followBtn) {
-        followBtn.innerHTML = '<i data-lucide="phone" class="h-4 w-4" aria-hidden="true"></i><span class="detail-action-btn__label">Follow Up</span>';
-        followBtn.setAttribute('title', 'Schedule follow-up');
+        followBtn.innerHTML = '<i data-lucide="phone" class="h-4 w-4"></i>';
+        followBtn.setAttribute('title', 'Follow Up');
         followBtn.setAttribute('aria-label', 'Follow Up');
-        followBtn.setAttribute('data-crm-tip', 'Schedule follow-up');
+        followBtn.setAttribute('data-crm-tip', 'Follow Up');
       }
     }
     closeAllOverlays();
     state.detailDrawerOpen = true;
     openModal(detailDrawer);
+    icons();
   }
 
   function setCrmScrollLock(locked) {
@@ -1050,7 +1028,10 @@
   }
 
   function initCommunicationCards() {
-    var cards = Array.prototype.slice.call(document.querySelectorAll('[data-comm-page]'));
+    var cards = Array.prototype.slice.call(document.querySelectorAll('.comm-card[data-comm-page], .communication-card[data-comm-page]'));
+    var footerLinks = Array.prototype.slice.call(document.querySelectorAll('.comm-footer-link[data-comm-page]'));
+    var allNav = cards.concat(footerLinks);
+
     cards.forEach(function (card, idx) {
       card.addEventListener('mouseenter', function () {
         cards.forEach(function (c) { c.classList.remove('comm-card-live'); });
@@ -1058,22 +1039,6 @@
       });
       card.addEventListener('mouseleave', function () {
         card.classList.remove('comm-card-live');
-      });
-      card.addEventListener('click', function (e) {
-        var inner = card.querySelector('.comm-card-inner');
-        if (inner) {
-          var ripple = document.createElement('span');
-          ripple.className = 'comm-card-ripple';
-          var rect = inner.getBoundingClientRect();
-          var size = Math.max(rect.width, rect.height);
-          ripple.style.width = size + 'px';
-          ripple.style.height = size + 'px';
-          ripple.style.left = (e.clientX - rect.left - size / 2) + 'px';
-          ripple.style.top = (e.clientY - rect.top - size / 2) + 'px';
-          inner.appendChild(ripple);
-          setTimeout(function () { ripple.remove(); }, 600);
-        }
-        navigateTo(card.dataset.commPage);
       });
       card.addEventListener('keydown', function (e) {
         if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
@@ -1083,6 +1048,26 @@
           e.preventDefault();
           cards[(idx - 1 + cards.length) % cards.length].focus();
         }
+      });
+    });
+
+    allNav.forEach(function (el) {
+      if (el._commNavBound) return;
+      el._commNavBound = true;
+      el.addEventListener('click', function (e) {
+        if (el.classList.contains('communication-card') || el.classList.contains('comm-card')) {
+          var ripple = document.createElement('span');
+          ripple.className = 'comm-card-ripple';
+          var rect = el.getBoundingClientRect();
+          var size = Math.max(rect.width, rect.height);
+          ripple.style.width = size + 'px';
+          ripple.style.height = size + 'px';
+          ripple.style.left = (e.clientX - rect.left - size / 2) + 'px';
+          ripple.style.top = (e.clientY - rect.top - size / 2) + 'px';
+          el.appendChild(ripple);
+          setTimeout(function () { ripple.remove(); }, 600);
+        }
+        navigateTo(el.dataset.commPage);
       });
     });
   }

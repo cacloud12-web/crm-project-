@@ -32,14 +32,10 @@ window.CrmReportFilterToolbar = (function () {
   }
 
   function selectField(cfg) {
-    var icon = cfg.icon
-      ? '<i data-lucide="' + escapeAttr(cfg.icon) + '" class="h-3.5 w-3.5 crm-report-filter__leading-icon" aria-hidden="true"></i>'
-      : '';
     return (
       '<div class="crm-report-filter crm-report-filter--select' + (cfg.grow ? ' crm-report-filter--grow' : '') + '">' +
         '<span class="crm-report-filter__label">' + escapeAttr(cfg.label) + '</span>' +
         '<div class="crm-report-filter__control-wrap">' +
-          icon +
           '<select id="' + escapeAttr(cfg.id) + '" class="input-field input-field-sm crm-report-filter__control" aria-label="' + escapeAttr(cfg.label) + '">' +
             (cfg.options || '') +
           '</select>' +
@@ -53,7 +49,6 @@ window.CrmReportFilterToolbar = (function () {
       '<div class="crm-report-filter crm-report-filter--search crm-report-filter--grow">' +
         '<span class="crm-report-filter__label">' + escapeAttr(cfg.label || 'SEARCH') + '</span>' +
         '<div class="crm-report-filter__control-wrap">' +
-          '<i data-lucide="search" class="h-3.5 w-3.5 crm-report-filter__leading-icon" aria-hidden="true"></i>' +
           '<input type="search" id="' + escapeAttr(cfg.id) + '" class="input-field input-field-sm crm-report-filter__control" ' +
             'placeholder="' + escapeAttr(cfg.placeholder || 'Search…') + '" aria-label="' + escapeAttr(cfg.label || 'Search') + '" autocomplete="off" />' +
         '</div>' +
@@ -95,7 +90,6 @@ window.CrmReportFilterToolbar = (function () {
           kind: 'select',
           id: defs.employee.id,
           label: 'EMPLOYEE',
-          icon: 'user',
           grow: defs.employee.grow !== false,
           options: defs.employee.options || '<option value="">All employees</option>',
         });
@@ -115,7 +109,6 @@ window.CrmReportFilterToolbar = (function () {
           kind: 'select',
           id: defs.type.id,
           label: defs.type.label || 'TYPE',
-          icon: 'filter',
           options: defs.type.options || '<option value="">All types</option>',
         });
         return;
@@ -125,7 +118,6 @@ window.CrmReportFilterToolbar = (function () {
           kind: 'select',
           id: defs.status.id,
           label: defs.status.label || 'STATUS',
-          icon: 'list-filter',
           options: defs.status.options || '<option value="">All statuses</option>',
         });
         return;

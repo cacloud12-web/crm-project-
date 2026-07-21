@@ -475,7 +475,9 @@ class MasterCaDirectImportService
                 $payload['state_id'] = $this->lookupResolver->resolveStateId($payload['state']);
             }
             if (empty($payload['city_id']) && filled($payload['city'] ?? null)) {
-                $payload['city_id'] = $this->lookupResolver->resolveCityId($payload['city'], $payload['state_id'] ?? null);
+                $payload['city_id'] = $forceCreate
+                    ? $this->lookupResolver->ensureCityId($payload['city'], $payload['state_id'] ?? null)
+                    : $this->lookupResolver->resolveCityId($payload['city'], $payload['state_id'] ?? null);
             }
             $payload['source_name'] = 'Master CA Import';
             $payload['_staging_id'] = $firm->id;

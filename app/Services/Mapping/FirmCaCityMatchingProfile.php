@@ -142,8 +142,9 @@ class FirmCaCityMatchingProfile
     private function matchCaMaster(string $firm, string $ca, mixed $cityRaw, string $cityNorm): MatchResult
     {
         $cityId = $this->lookups->resolveCityId(is_string($cityRaw) ? $cityRaw : null);
+        // Unknown city is not a parse failure — Accept can create the city + Master row.
         if ($cityId === null) {
-            return MatchResult::unmatched('city_not_in_master');
+            return MatchResult::unmatched('no_exact_firm_ca_city');
         }
 
         $query = CaMaster::query()

@@ -344,7 +344,6 @@ window.CAPages = (function () {
       '<div id="mgr-organization-target-panel" class="mgr-panel card dash-productivity-panel hidden"></div>' +
       '<div id="mgr-employee-productivity-panel" class="mgr-panel card dash-productivity-panel hidden"></div>' +
       '<section class="dash-section" aria-label="Key metrics"><div class="dash-kpi-sections" id="mgr-kpi-sections"></div></section>' +
-      '<section id="mgr-attendance-panel" class="mgr-panel card dash-section dash-attendance-panel hidden" aria-label="Today\'s Attendance"></section>' +
       '<div class="dash-toolbar-row">' +
         '<section class="mgr-panel card dash-quick-actions-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="zap" class="h-5 w-5 text-brand"></i> Quick Actions</h3></div><div id="dash-quick-actions" class="dash-quick-actions"></div></section>' +
         '<section class="mgr-panel card dash-activity-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="activity" class="h-5 w-5 text-brand"></i> Recent Activity</h3><button type="button" class="mgr-link-btn" data-nav-page="activity">View all</button></div><div id="recent-activity-list" class="mgr-activity-feed dash-activity-feed"></div></section>' +
@@ -354,9 +353,9 @@ window.CAPages = (function () {
       '<div class="dash-filter-chips dash-section" id="dash-filter-chips"></div>' +
       '<section class="dash-section" aria-label="SMS overview"><div class="dash-sms-kpi-grid" id="dash-sms-widgets">' +
         '<div class="dash-sms-kpi"><span class="dash-sms-kpi__icon"><i data-lucide="link" class="h-4 w-4"></i></span><div class="dash-sms-kpi__body"><p class="dash-sms-kpi__label">SMS Mapped Campaigns</p><p class="dash-sms-kpi__value" id="dash-sms-mapped">—</p></div></div>' +
-        '<div class="dash-sms-kpi"><span class="dash-sms-kpi__icon dash-sms-kpi__icon--warn"><i data-lucide="clock" class="h-4 w-4"></i></span><div class="dash-sms-kpi__body"><p class="dash-sms-kpi__label">SMS Pending Campaigns</p><p class="dash-sms-kpi__value" id="dash-sms-pending">—</p></div></div>' +
-        '<div class="dash-sms-kpi"><span class="dash-sms-kpi__icon dash-sms-kpi__icon--info"><i data-lucide="flask-conical" class="h-4 w-4"></i></span><div class="dash-sms-kpi__body"><p class="dash-sms-kpi__label">SMS Simulation Mode</p><p class="dash-sms-kpi__value" id="dash-sms-simulation">—</p></div></div>' +
-        '<div class="dash-sms-kpi"><span class="dash-sms-kpi__icon dash-sms-kpi__icon--success"><i data-lucide="radio" class="h-4 w-4"></i></span><div class="dash-sms-kpi__body"><p class="dash-sms-kpi__label">SMS Live Mode</p><p class="dash-sms-kpi__value" id="dash-sms-live">—</p></div></div>' +
+        '<div class="dash-sms-kpi"><span class="dash-sms-kpi__icon"><i data-lucide="clock" class="h-4 w-4"></i></span><div class="dash-sms-kpi__body"><p class="dash-sms-kpi__label">SMS Pending Campaigns</p><p class="dash-sms-kpi__value" id="dash-sms-pending">—</p></div></div>' +
+        '<div class="dash-sms-kpi"><span class="dash-sms-kpi__icon"><i data-lucide="flask-conical" class="h-4 w-4"></i></span><div class="dash-sms-kpi__body"><p class="dash-sms-kpi__label">SMS Simulation Mode</p><p class="dash-sms-kpi__value" id="dash-sms-simulation">—</p></div></div>' +
+        '<div class="dash-sms-kpi"><span class="dash-sms-kpi__icon"><i data-lucide="radio" class="h-4 w-4"></i></span><div class="dash-sms-kpi__body"><p class="dash-sms-kpi__label">SMS Live Mode</p><p class="dash-sms-kpi__value" id="dash-sms-live">—</p></div></div>' +
       '</div></section>' +
       '<section class="dash-section" aria-label="Analytics charts"><div class="dash-charts-grid">' +
         '<section class="mgr-panel card dash-chart-panel"><div class="mgr-panel-head"><div><h3 class="mgr-panel-title">Lead Source</h3><p class="mgr-panel-subtitle">Distribution by acquisition channel</p></div></div><div class="dash-chart-legend"><span class="dash-chart-legend__swatch"></span><span>Lead count</span></div><div id="dash-chart-source" class="mgr-bar-chart dash-bar-chart" data-dashboard-chart="source"></div></section>' +
@@ -1633,11 +1632,6 @@ window.CAPages = (function () {
   }
 
   /* ─── Communication Hub ─── */
-  var COMM_ASSETS = (window.__CRM_COMM_ASSETS__ || '/crm-ui/assets/communication/');
-  if (COMM_ASSETS.charAt(COMM_ASSETS.length - 1) !== '/') {
-    COMM_ASSETS += '/';
-  }
-
   function communicationPage() {
     var cards = [
       { id: 'campaigns', label: 'Campaigns', page: 'campaigns', desc: 'Unified Email, SMS & WhatsApp campaigns', icon: 'megaphone' },
@@ -1651,21 +1645,14 @@ window.CAPages = (function () {
     return hdr('Communication') +
       '<div class="comm-page">' +
       '<div class="comm-grid">' +
-        cards.map(function (c, i) {
-          var artSvg = COMM_ASSETS + c.id + '.svg';
-          return '<button type="button" class="comm-card" data-comm-page="' + c.page + '" data-comm-label="' + c.label + '" aria-label="Open ' + c.label + '" style="--i:' + i + '">' +
-            '<span class="comm-card-inner">' +
-              '<span class="comm-card-badge"><i data-lucide="' + c.icon + '" class="h-4 w-4"></i></span>' +
-              '<span class="comm-card-art">' +
-                '<img class="comm-card-img" src="' + artSvg + '" alt="" loading="' + (i < 3 ? 'eager' : 'lazy') + '" width="160" height="128" decoding="async" draggable="false" onerror="this.onerror=null;this.style.display=\'none\';" />' +
-              '</span>' +
-              '<span class="comm-card-body">' +
-                '<span class="comm-card-label">' + c.label + '</span>' +
-                '<span class="comm-card-desc">' + c.desc + '</span>' +
-              '</span>' +
-              '<span class="comm-card-shine" aria-hidden="true"></span>' +
-              '<span class="comm-card-overlay" aria-hidden="true"></span>' +
+        cards.map(function (c) {
+          return '<button type="button" class="comm-card communication-card" data-comm-page="' + c.page + '" data-comm-label="' + c.label + '" aria-label="Open ' + c.label + '">' +
+            '<span class="communication-card__icon" aria-hidden="true"><i data-lucide="' + c.icon + '"></i></span>' +
+            '<span class="communication-card__content">' +
+              '<span class="communication-card__title">' + c.label + '</span>' +
+              '<span class="communication-card__desc">' + c.desc + '</span>' +
             '</span>' +
+            '<span class="communication-card__action" aria-hidden="true"><i data-lucide="chevron-right"></i></span>' +
           '</button>';
         }).join('') +
       '</div>' +
@@ -1709,7 +1696,7 @@ window.CAPages = (function () {
         { icon: 'send', label: 'Sent', value: '—', trend: 'Live', valueId: 'sms-kpi-sent' },
         { icon: 'clock', label: 'Pending', value: '—', trend: 'Queue', valueId: 'sms-kpi-pending-logs' },
         { icon: 'alert-circle', label: 'Failed / API Error', value: '—', trend: 'Logs', valueId: 'sms-kpi-failed-logs' },
-      ]) +
+      ], { compact: true }) +
       '<div class="card p-4 mb-6" id="sms-templates-panel">' +
         '<div class="flex items-center justify-between gap-3 mb-4">' +
           '<div><h3 class="text-card-heading">DLT SMS Templates</h3><p class="text-caption text-slate-500">Manage approved templates with {#var#} placeholders.</p></div>' +
@@ -1775,7 +1762,10 @@ window.CAPages = (function () {
         { icon: 'check-circle-2', label: 'Sent to Meta', value: '—', trend: 'Live', valueId: 'wa-kpi-delivered' },
         { icon: 'alert-circle', label: 'Failed', value: '—', trend: 'Live', valueId: 'wa-kpi-failed' },
         { icon: 'clock', label: 'Queued', value: '—', trend: 'Pending', valueId: 'wa-kpi-queued' },
-      ]) +
+      ], {
+        compact: true,
+        gridClass: 'crm-kpi-grid crm-kpi-grid--compact grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2 mb-3',
+      }) +
       tabs([{ id: 'campaigns', label: 'Campaigns', icon: 'message-circle' }, { id: 'logs', label: 'Message Logs', icon: 'list' }], 'campaigns') +
       panel('campaigns', true, '<div id="campaigns-grid-whatsapp" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>') +
       panel('logs', false,
@@ -1833,7 +1823,10 @@ window.CAPages = (function () {
         { icon: 'reply', label: 'Replies Received', value: '—', trend: 'IMAP', valueId: 'email-kpi-replies' },
         { icon: 'inbox', label: 'Unread Replies', value: '—', trend: 'Inbox', valueId: 'email-kpi-unread-replies' },
         { icon: 'alert-circle', label: 'Failed', value: '—', trend: 'Live', valueId: 'email-kpi-failed' },
-      ]) +
+      ], {
+        compact: true,
+        gridClass: 'crm-kpi-grid crm-kpi-grid--compact grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 mb-3',
+      }) +
       tabs([
         { id: 'inbox', label: 'Inbox' },
         { id: 'campaigns', label: 'Campaigns' },
@@ -1871,7 +1864,10 @@ window.CAPages = (function () {
         { icon: 'x-circle', label: 'Consent Denied', value: '—', trend: 'No', valueId: 'safety-kpi-consent-no' },
         { icon: 'shield-off', label: 'Skipped · DND', value: '—', trend: 'Campaigns', valueId: 'safety-kpi-skip-dnd' },
         { icon: 'fingerprint', label: 'Skipped · No Consent', value: '—', trend: 'Campaigns', valueId: 'safety-kpi-skip-consent' },
-      ]) +
+      ], {
+        compact: true,
+        gridClass: 'crm-kpi-grid crm-kpi-grid--compact grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2 mb-3',
+      }) +
       listingFilterBar([
         { label: 'Channel', id: 'consent-dnd-channel-filter', type: 'select', options: '<option value="">All channels</option><option value="WhatsApp">WhatsApp</option><option value="Email">Email</option><option value="SMS">SMS</option>' },
       ], '', { id: 'consent-dnd-filter-bar' }) +
@@ -2221,7 +2217,7 @@ window.CAPages = (function () {
     }) : '';
 
     var bodyHtml =
-      '<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4" id="dup-attempts-metrics"></div>' +
+      '<div class="ra-lc-kpi-grid mb-4" id="dup-attempts-metrics"></div>' +
       table(
         ['Employee', 'Duplicate Number', 'Existing Lead', 'Saved Number', 'Attempt Time', 'Attempt Type', 'Status', 'Actions'],
         [],
