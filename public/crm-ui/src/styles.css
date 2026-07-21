@@ -2063,6 +2063,7 @@ select.input-field[multiple] {
 }
 .nav-item:hover { background: #f8fafc; color: #334155; }
 .nav-item.active {
+
   background: #e8f8f6; color: #25b7a7; font-weight: 600;
 }
 .nav-item.active::after {
@@ -17184,7 +17185,7 @@ body.ra-drawer-open .crm-header {
 @media (max-width: 960px) {
   .ocr-import-layout { grid-template-columns: 1fr; }
 }
-<<<<<<< HEAD
+
 /* Fix Master Data sticky first column overlap */
 
 #ca-masters-table th:first-child,
@@ -17205,7 +17206,4 @@ body.ra-drawer-open .crm-header {
 #ca-masters-table tbody tr:hover td:first-child {
     background: #f8fafc !important;
 }
-=======
 
-}
->>>>>>> cb64f65 (Improve communication UI and attendance interface)
