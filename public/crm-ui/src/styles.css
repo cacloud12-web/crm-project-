@@ -1110,11 +1110,12 @@ body.crm-scroll-locked {
 
 /* Tables with only two left stickies — Firm Name is the frozen scroll edge */
 .crm-table:not(:has(thead th.sticky-left-3)) tbody td.sticky-left-2,
-.ca-table--enterprise:not(:has(thead th.sticky-left-3)) tbody td.sticky-left-2 {
-  overflow: hidden !important;
-  /* cast shadow only to the right so checkbox stays visible */
-  box-shadow: 4px 0 8px -2px rgba(15, 23, 42, 0.12);
-  border-right: 1px solid #e2e8f0;
+.ca-table-enterprise:not(:has(thead th.sticky-left-3)) tbody td.sticky-left-2 {
+    overflow: hidden !important;
+    background: #ffffff !important;
+    z-index: 5;
+    box-shadow: 4px 0 8px -2px rgba(15, 23, 42, 0.12);
+    border-right: 1px solid #e2e8f0;
 }
 
 .crm-table:not(:has(thead th.sticky-left-3)) thead tr:first-child th.sticky-left-2,
@@ -17262,4 +17263,24 @@ body.ra-drawer-open .crm-header {
 .ocr-raw-text-panel { margin-top: 0.5rem; }
 @media (max-width: 960px) {
   .ocr-import-layout { grid-template-columns: 1fr; }
+}
+/* Fix Master Data sticky first column overlap */
+
+#ca-masters-table th:first-child,
+#ca-masters-table td:first-child {
+    position: sticky;
+    left: 0;
+    background: #ffffff !important;
+    z-index: 3;
+    overflow: hidden;
+    box-shadow: 1px 0 0 #e2e8f0;
+}
+
+#ca-masters-table thead th:first-child {
+    z-index: 6;
+    background: #f8fafc !important;
+}
+
+#ca-masters-table tbody tr:hover td:first-child {
+    background: #f8fafc !important;
 }
