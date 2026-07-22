@@ -183,6 +183,7 @@ return [
         'followups' => ['module' => 'followups', 'permission' => 'view'],
         'bulk' => ['module' => 'bulk', 'permission' => 'view'],
         'ocr-import' => ['module' => 'ocr', 'permission' => 'view'],
+        'employee-imports' => ['module' => 'ca_master', 'permission' => 'view'],
         'communication' => ['module' => 'campaigns', 'permission' => 'view'],
         'whatsapp' => ['module' => 'campaigns', 'permission' => 'view'],
         'sms' => ['module' => 'campaigns', 'permission' => 'view'],

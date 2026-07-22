@@ -78,20 +78,29 @@ class SalesImportController extends Controller
         ]);
     }
 
-    public function summary(): JsonResponse
+    public function summary(Request $request): JsonResponse
     {
-        $counts = SalesImportRow::query()
+        $validated = $request->validate([
+            'employee' => ['nullable', 'string', 'max:255'],
+        ]);
+        $employee = trim((string) ($validated['employee'] ?? ''));
+
+        $base = SalesImportRow::query()
+            ->when($employee !== '', fn ($builder) => $builder->where('employee_name', $employee));
+
+        $counts = (clone $base)
             ->selectRaw('mapping_status, COUNT(*) as total')
             ->groupBy('mapping_status')
             ->pluck('total', 'mapping_status');
 
         return ApiResponse::success([
-            'total' => SalesImportRow::query()->count(),
+            'total' => (clone $base)->count(),
             'matched' => (int) ($counts['matched'] ?? 0),
             'needs_review' => (int) ($counts['needs_review'] ?? 0),
             'unmatched' => (int) ($counts['unmatched'] ?? 0),
             'pending' => (int) ($counts['pending'] ?? 0),
             'ignored' => (int) ($counts['ignored'] ?? 0),
+            'selected_employee' => $employee !== '' ? $employee : null,
             'employees' => SalesImportRow::query()
                 ->whereNotNull('employee_name')
                 ->where('employee_name', '!=', '')
@@ -166,6 +175,53 @@ class SalesImportController extends Controller
         }
 
         return ApiResponse::success($this->serializeRow($row, true), 'Match confirmed');
+    }
+
+    public function acceptBestCandidate(Request $request, SalesImportRow $salesImportRow): JsonResponse
+    {
+        $validated = $request->validate([
+            'reason' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        try {
+            $row = $this->reviewService->acceptBestCandidate(
+                $salesImportRow,
+                $request->user(),
+                $validated['reason'] ?? null
+            );
+        } catch (AccessDeniedHttpException $e) {
+            return ApiResponse::error($e->getMessage(), 403);
+        } catch (ValidationException $e) {
+            return ApiResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (Throwable $e) {
+            report($e);
+
+            return ApiResponse::error('Unable to accept candidate.', 500);
+        }
+
+        return ApiResponse::success($this->serializeRow($row, true), 'Top candidate accepted');
+    }
+
+    public function acceptAllMatched(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'employee' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        try {
+            $result = $this->reviewService->acceptAllMatched(
+                $request->user(),
+                $validated['employee'] ?? null
+            );
+        } catch (AccessDeniedHttpException $e) {
+            return ApiResponse::error($e->getMessage(), 403);
+        } catch (Throwable $e) {
+            report($e);
+
+            return ApiResponse::error('Unable to accept matched rows.', 500);
+        }
+
+        return ApiResponse::success($result, 'Accepted '.$result['accepted'].' matched row(s)');
     }
 
     public function markUnmatched(Request $request, SalesImportRow $salesImportRow): JsonResponse

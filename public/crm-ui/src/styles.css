@@ -11006,6 +11006,14 @@ body.rw-open {
   line-height: 1.35;
 }
 
+.ei-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-content: flex-end;
+  min-width: 12rem;
+}
+
 .crm-kpi-card--clickable {
   cursor: pointer;
 }

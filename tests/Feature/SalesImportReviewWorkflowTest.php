@@ -308,6 +308,65 @@ class SalesImportReviewWorkflowTest extends TestCase
         $this->assertGreaterThanOrEqual(3, $count);
     }
 
+    public function test_accept_all_matched_only_updates_matched_rows(): void
+    {
+        $this->skipUnlessReady();
+        $admin = $this->actingAsAdmin();
+        $ca = $this->makeCa('Accept All Firm '.uniqid(), 'Jaipur');
+        $matched = $this->makeRow([
+            'matched_ca_id' => $ca->ca_id,
+            'mapping_status' => 'matched',
+            'matched_on' => 'exact_normalized_firm_city',
+            'remarks_1' => 'Keep remarks',
+            'employee_name' => 'ANKIT',
+        ]);
+        $review = $this->makeRow([
+            'mapping_status' => 'needs_review',
+            'employee_name' => 'ANKIT',
+            'source_row_number' => 77,
+        ]);
+        $beforeMasters = CaMaster::query()->count();
+
+        $response = $this->postJson('/employee-imports/accept-all-matched', [
+            'employee' => 'ANKIT',
+        ]);
+        $response->assertOk()
+            ->assertJsonPath('data.accepted', 1);
+
+        $matched->refresh();
+        $review->refresh();
+        $this->assertSame('matched', $matched->mapping_status);
+        $this->assertSame(SalesImportReviewService::ACTION_ACCEPT_MATCHED, $matched->matched_on);
+        $this->assertSame('Keep remarks', $matched->remarks_1);
+        $this->assertSame('needs_review', $review->mapping_status);
+        $this->assertSame($beforeMasters, CaMaster::query()->count());
+        $this->assertTrue(
+            MasterMappingDecision::query()
+                ->where('source_type', SalesImportReviewService::SOURCE_TYPE)
+                ->where('source_ref', (string) $matched->id)
+                ->where('actor_id', $admin->id)
+                ->exists()
+        );
+    }
+
+    public function test_summary_respects_employee_filter(): void
+    {
+        $this->skipUnlessReady();
+        $this->actingAsAdmin();
+        $this->makeRow(['employee_name' => 'SIMRAN', 'source_row_number' => 201, 'mapping_status' => 'unmatched']);
+        $this->makeRow(['employee_name' => 'RAHUL', 'source_row_number' => 202, 'mapping_status' => 'needs_review']);
+
+        $all = $this->getJson('/employee-imports/summary')->assertOk()->json('data');
+        $this->assertGreaterThanOrEqual(2, (int) ($all['total'] ?? 0));
+        $this->assertContains('SIMRAN', $all['employees'] ?? []);
+        $this->assertContains('RAHUL', $all['employees'] ?? []);
+
+        $simran = $this->getJson('/employee-imports/summary?employee=SIMRAN')->assertOk()->json('data');
+        $this->assertSame('SIMRAN', $simran['selected_employee']);
+        $this->assertSame(1, (int) ($simran['total'] ?? 0));
+        $this->assertSame(1, (int) ($simran['unmatched'] ?? 0));
+    }
+
     public function test_candidates_endpoint_returns_ranked_payload_shape(): void
     {
         $this->skipUnlessReady();

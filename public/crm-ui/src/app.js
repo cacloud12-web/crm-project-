@@ -364,6 +364,7 @@
     followups: '/follow-ups',
     bulk: '/bulk',
     'ocr-import': '/ocr-import',
+    'employee-imports': '/employee-imports',
     settings: '/settings',
     'roles-permissions': '/settings/roles-permissions',
     'settings-email-templates': '/settings/email-templates',
@@ -443,7 +444,7 @@
     if (fabWrap) {
       var hideFab = pageId === 'dashboard' || pageId === 'settings' || pageId === 'demo-calendar'
         || pageId === 'sales-list' || pageId === 'email-configuration'
-        || pageId === 'ca-master' || pageId === 'bulk' || pageId === 'ocr-import' || pageId === 'leads'
+        || pageId === 'ca-master' || pageId === 'bulk' || pageId === 'ocr-import' || pageId === 'employee-imports' || pageId === 'leads'
         || pageId === 'reports' || pageId === 'analytics' || pageId === 'activity' || pageId === 'audit'
         || !!document.getElementById('ra-root');
       fabWrap.classList.toggle('hidden', hideFab);

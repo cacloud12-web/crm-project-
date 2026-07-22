@@ -24834,7 +24834,10 @@ if (otherInput) {
   }
 
   function loadEmployeeImportsSummary() {
-    return apiFetch('/employee-imports/summary')
+    var params = new URLSearchParams();
+    if (employeeImportsState.employee) params.set('employee', employeeImportsState.employee);
+    var qs = params.toString();
+    return apiFetch('/employee-imports/summary' + (qs ? ('?' + qs) : ''))
       .then(function (body) {
         var summary = body && body.data ? body.data : {};
         setEmployeeImportText('employee-import-total-count', summary.total || 0);
@@ -24932,9 +24935,19 @@ if (otherInput) {
             : '') +
         '</div>';
       }
-      var reviewBtn = canDecide
-        ? '<button type="button" class="btn-secondary btn-sm" data-ei-review="' + escapeHtml(String(row.id)) + '">Review</button>'
-        : '<button type="button" class="btn-secondary btn-sm" data-ei-review="' + escapeHtml(String(row.id)) + '">View</button>';
+      var actions = '';
+      if (row.mapping_status === 'needs_review' && canDecide) {
+        actions =
+          '<div class="ei-row-actions">' +
+            '<button type="button" class="btn-secondary btn-sm" data-ei-review="' + escapeHtml(String(row.id)) + '">Review</button>' +
+            '<button type="button" class="btn-primary btn-sm" data-ei-accept-top="' + escapeHtml(String(row.id)) + '">Accept</button>' +
+            '<button type="button" class="btn-secondary btn-sm" data-ei-ignore-row="' + escapeHtml(String(row.id)) + '">Ignore</button>' +
+            '<button type="button" class="btn-secondary btn-sm text-rose-700" data-ei-reject-row="' + escapeHtml(String(row.id)) + '">Reject</button>' +
+          '</div>';
+      } else {
+        actions = '<button type="button" class="btn-secondary btn-sm" data-ei-review="' + escapeHtml(String(row.id)) + '">' +
+          (canDecide ? 'Review' : 'View') + '</button>';
+      }
       return '<tr class="ca-table-row crm-table-row" data-ei-id="' + escapeHtml(String(row.id)) + '">' +
         '<td class="crm-td-date">' + escapeHtml(row.call_date || '—') + '</td>' +
         '<td class="crm-td-person">' + escapeHtml(row.employee_name || '—') + '</td>' +
@@ -24948,7 +24961,7 @@ if (otherInput) {
         '<td class="crm-td-num">' + escapeHtml(String(row.candidate_count != null ? row.candidate_count : 0)) + '</td>' +
         '<td>' + employeeImportStatusBadge(row.mapping_status) + '</td>' +
         '<td class="ei-mapped-to-cell">' + mappedHtml + '</td>' +
-        '<td class="sticky-right crm-td-actions">' + reviewBtn + '</td>' +
+        '<td class="sticky-right crm-td-actions">' + actions + '</td>' +
       '</tr>';
     }).join('');
     if (typeof icons === 'function') icons();
@@ -25416,6 +25429,41 @@ if (otherInput) {
     if (ignoreBtn) ignoreBtn.addEventListener('click', ignoreEmployeeImportRow);
   }
 
+  function postEmployeeImportRowAction(rowId, path, payload) {
+    return apiFetch('/employee-imports/' + encodeURIComponent(rowId) + '/' + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(payload || {}),
+    }).then(function (body) {
+      toast((body && body.message) || 'Saved', 'success');
+      return refreshEmployeeImportsPage();
+    });
+  }
+
+  function acceptAllEmployeeImportMatched() {
+    if (!canDecideEmployeeImports()) {
+      toast('You do not have permission to accept matched rows.', 'error');
+      return;
+    }
+    var payload = {};
+    if (employeeImportsState.employee) payload.employee = employeeImportsState.employee;
+    apiFetch('/employee-imports/accept-all-matched', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(function (body) {
+      var data = body && body.data ? body.data : {};
+      toast(
+        'Accepted ' + (data.accepted || 0) + ' matched row(s)' +
+          (data.skipped ? (', skipped ' + data.skipped) : '') + '.',
+        'success'
+      );
+      return refreshEmployeeImportsPage();
+    }).catch(function (error) {
+      toast(error && error.message ? error.message : 'Unable to accept matched rows.', 'error');
+    });
+  }
+
   function initEmployeeImportsPage() {
     var root = document.getElementById('employee-imports-module');
     if (!root) return;
@@ -25427,9 +25475,11 @@ if (otherInput) {
     var searchInput = document.getElementById('employee-imports-search');
     var employeeFilter = document.getElementById('employee-imports-employee-filter');
     var refreshButton = document.getElementById('employee-imports-refresh');
+    var acceptMatchedBtn = document.getElementById('employee-imports-accept-matched');
 
     if (searchInput) searchInput.value = employeeImportsState.search;
-    if (employeeFilter) employeeFilter.value = employeeImportsState.employee;
+    if (employeeFilter) employeeFilter.value = employeeImportsState.employee || '';
+    if (acceptMatchedBtn) acceptMatchedBtn.classList.toggle('hidden', !canDecideEmployeeImports());
 
     if (!root._employeeImportsBound) {
       root._employeeImportsBound = true;
@@ -25440,12 +25490,39 @@ if (otherInput) {
           employeeImportsState.status = statusCard.getAttribute('data-employee-import-status') || '';
           employeeImportsState.page = 1;
           syncEmployeeImportStatusCards();
-          loadEmployeeImportsList();
+          refreshEmployeeImportsPage();
           return;
         }
         var reviewBtn = event.target.closest('[data-ei-review]');
         if (reviewBtn) {
           openEmployeeImportReview(reviewBtn.getAttribute('data-ei-review'));
+          return;
+        }
+        var acceptTopBtn = event.target.closest('[data-ei-accept-top]');
+        if (acceptTopBtn) {
+          postEmployeeImportRowAction(acceptTopBtn.getAttribute('data-ei-accept-top'), 'accept-top', {
+            reason: 'Accepted top candidate from Needs Review',
+          }).catch(function (error) {
+            toast(error && error.message ? error.message : 'Unable to accept candidate.', 'error');
+          });
+          return;
+        }
+        var ignoreRowBtn = event.target.closest('[data-ei-ignore-row]');
+        if (ignoreRowBtn) {
+          postEmployeeImportRowAction(ignoreRowBtn.getAttribute('data-ei-ignore-row'), 'ignore', {
+            reason: 'Ignored from Needs Review list',
+          }).catch(function (error) {
+            toast(error && error.message ? error.message : 'Unable to ignore row.', 'error');
+          });
+          return;
+        }
+        var rejectRowBtn = event.target.closest('[data-ei-reject-row]');
+        if (rejectRowBtn) {
+          postEmployeeImportRowAction(rejectRowBtn.getAttribute('data-ei-reject-row'), 'mark-unmatched', {
+            reason: 'Rejected from Needs Review list',
+          }).catch(function (error) {
+            toast(error && error.message ? error.message : 'Unable to reject row.', 'error');
+          });
           return;
         }
         var mappedBtn = event.target.closest('[data-ei-open-mapped]');
@@ -25469,13 +25546,19 @@ if (otherInput) {
         employeeFilter.addEventListener('change', function () {
           employeeImportsState.employee = employeeFilter.value || '';
           employeeImportsState.page = 1;
-          loadEmployeeImportsList();
+          refreshEmployeeImportsPage();
         });
       }
 
       if (refreshButton) {
         refreshButton.addEventListener('click', function () {
           refreshEmployeeImportsPage();
+        });
+      }
+
+      if (acceptMatchedBtn) {
+        acceptMatchedBtn.addEventListener('click', function () {
+          acceptAllEmployeeImportMatched();
         });
       }
     }

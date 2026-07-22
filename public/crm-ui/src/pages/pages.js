@@ -944,6 +944,7 @@ window.CAPages = (function () {
     var bulkItems = [
       { bulk: 'Bulk Import', icon: 'layers' },
       { bulk: 'OCR Import', icon: 'scan-text', nav: 'ocr-import' },
+      { bulk: 'Employee Imports', icon: 'users', nav: 'employee-imports' },
       { bulk: 'Bulk Assignment', icon: 'user-check' },
       { bulk: 'Bulk Export', icon: 'download' },
       { bulk: 'Bulk Status Update', icon: 'refresh-cw' },
@@ -2103,6 +2104,9 @@ window.CAPages = (function () {
           'Employee Imports',
           'Match employee calling lists with existing CA reference data while preserving remarks and call history.',
           null,
+          '<button type="button" class="btn-secondary btn-sm" id="employee-imports-accept-matched">' +
+            '<i data-lucide="check-check" class="h-4 w-4"></i> Accept All Matched' +
+          '</button>' +
           '<button type="button" class="btn-secondary btn-sm" id="employee-imports-refresh">' +
             '<i data-lucide="refresh-cw" class="h-4 w-4"></i> Refresh' +
           '</button>'

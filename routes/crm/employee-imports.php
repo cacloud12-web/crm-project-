@@ -16,6 +16,10 @@ Route::middleware(['auth', 'rbac'])->group(function () {
         ->middleware('spa.browser:ca-master')
         ->name('employee-imports.reference-search');
 
+    Route::post('employee-imports/accept-all-matched', [SalesImportController::class, 'acceptAllMatched'])
+        ->middleware(['spa.browser:ca-master', 'throttle:lead-action'])
+        ->name('employee-imports.accept-all-matched');
+
     Route::get('employee-imports/{salesImportRow}', [SalesImportController::class, 'show'])
         ->whereNumber('salesImportRow')
         ->middleware('spa.browser:ca-master')
@@ -30,6 +34,11 @@ Route::middleware(['auth', 'rbac'])->group(function () {
         ->whereNumber('salesImportRow')
         ->middleware(['spa.browser:ca-master', 'throttle:lead-action'])
         ->name('employee-imports.confirm-match');
+
+    Route::post('employee-imports/{salesImportRow}/accept-top', [SalesImportController::class, 'acceptBestCandidate'])
+        ->whereNumber('salesImportRow')
+        ->middleware(['spa.browser:ca-master', 'throttle:lead-action'])
+        ->name('employee-imports.accept-top');
 
     Route::post('employee-imports/{salesImportRow}/mark-unmatched', [SalesImportController::class, 'markUnmatched'])
         ->whereNumber('salesImportRow')

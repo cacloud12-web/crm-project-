@@ -28,6 +28,10 @@ class SalesImportReviewService
 
     public const ACTION_IGNORE = 'ignore';
 
+    public const ACTION_ACCEPT_MATCHED = 'accepted_matched';
+
+    public const ACTION_ACCEPT_TOP = 'accepted_top_candidate';
+
     public function __construct(
         private readonly DataNormalizationService $normalizer,
         private readonly SalesImportMatchingService $matcher,
@@ -253,6 +257,99 @@ class SalesImportReviewService
     }
 
     /**
+     * Accept the top ranked Needs Review candidate using existing confirmMatch logic.
+     */
+    public function acceptBestCandidate(SalesImportRow $row, User $actor, ?string $reason = null): SalesImportRow
+    {
+        $this->assertCanDecide($actor);
+
+        if ($row->mapping_status !== 'needs_review') {
+            throw ValidationException::withMessages([
+                'mapping_status' => ['Only Needs Review rows can be accepted from the list action.'],
+            ]);
+        }
+
+        $candidates = $this->candidatesForRow($row, 5);
+        $best = $candidates[0] ?? null;
+        $caId = isset($best['ca_id']) ? (int) $best['ca_id'] : null;
+        $referenceFirmId = isset($best['reference_firm_id']) ? (int) $best['reference_firm_id'] : null;
+
+        if ((! $caId || $caId <= 0) && (! $referenceFirmId || $referenceFirmId <= 0)) {
+            throw ValidationException::withMessages([
+                'matched_ca_id' => ['No acceptable CA Reference candidate is available for this row.'],
+            ]);
+        }
+
+        return $this->confirmMatch($row, $actor, [
+            'matched_ca_id' => $caId ?: null,
+            'matched_reference_firm_id' => $referenceFirmId ?: null,
+            'reason' => trim((string) ($reason ?: 'Accepted top candidate from Needs Review')),
+        ]);
+    }
+
+    /**
+     * Bulk-accept rows that Auto Match already marked as matched.
+     * Does not create/update CA records. Only mapping fields + audit.
+     *
+     * @return array{accepted: int, skipped: int, employee: string|null}
+     */
+    public function acceptAllMatched(User $actor, ?string $employee = null): array
+    {
+        $this->assertCanDecide($actor);
+        $employee = trim((string) ($employee ?? ''));
+
+        return DB::transaction(function () use ($actor, $employee) {
+            $query = SalesImportRow::query()
+                ->where('mapping_status', 'matched')
+                ->whereNotNull('matched_ca_id')
+                ->when($employee !== '', fn ($builder) => $builder->where('employee_name', $employee))
+                ->orderBy('id');
+
+            $accepted = 0;
+            $skipped = 0;
+
+            $query->chunkById(100, function ($rows) use ($actor, &$accepted, &$skipped) {
+                foreach ($rows as $row) {
+                    if (in_array((string) $row->matched_on, [self::ACTION_CONFIRM, self::ACTION_ACCEPT_MATCHED, self::ACTION_ACCEPT_TOP], true)) {
+                        $skipped++;
+                        continue;
+                    }
+
+                    $fresh = SalesImportRow::query()->lockForUpdate()->find($row->id);
+                    if (! $fresh || $fresh->mapping_status !== 'matched' || ! $fresh->matched_ca_id) {
+                        $skipped++;
+                        continue;
+                    }
+
+                    $before = $this->snapshot($fresh);
+                    $fresh->fill([
+                        'mapping_status' => 'matched',
+                        'matched_on' => self::ACTION_ACCEPT_MATCHED,
+                        'review_reason' => 'Accepted auto-matched mapping',
+                        'mapped_at' => now(),
+                    ]);
+                    $fresh->save();
+                    $this->audit(
+                        $actor,
+                        $fresh,
+                        self::ACTION_ACCEPT_MATCHED,
+                        $before,
+                        $this->snapshot($fresh),
+                        'Accepted auto-matched mapping'
+                    );
+                    $accepted++;
+                }
+            });
+
+            return [
+                'accepted' => $accepted,
+                'skipped' => $skipped,
+                'employee' => $employee !== '' ? $employee : null,
+            ];
+        });
+    }
+
+    /**
      * @param  array{matched_ca_id?: int|null, matched_reference_firm_id?: int|null, reason?: string|null}  $payload
      */
     public function confirmMatch(SalesImportRow $row, User $actor, array $payload): SalesImportRow
@@ -429,7 +526,7 @@ class SalesImportReviewService
         }
 
         $decision = match ($action) {
-            self::ACTION_CONFIRM => 'manual_confirm',
+            self::ACTION_CONFIRM, self::ACTION_ACCEPT_TOP, self::ACTION_ACCEPT_MATCHED => 'manual_confirm',
             self::ACTION_UNMATCHED => MasterMappingDecision::DECISION_REJECTED,
             self::ACTION_IGNORE => MasterMappingDecision::DECISION_SKIPPED,
             default => MasterMappingDecision::DECISION_NEEDS_REVIEW,
