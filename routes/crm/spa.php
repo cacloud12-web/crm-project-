@@ -13,6 +13,7 @@ Route::middleware(['auth', 'rbac'])->group(function () {
         'followups',
         'bulk',
         'ocr-import',
+        'employee-imports',
         'ca-master',
         'recycle-bin',
         'settings',
@@ -40,6 +41,7 @@ Route::middleware(['auth', 'rbac'])->group(function () {
     Route::get('leads', function (Request $request) {
         $user = $request->user();
         $role = $user ? strtolower((string) ($user->crm_role ?? 'employee')) : 'employee';
+
         if (in_array($role, ['super_admin', 'manager', 'admin'], true)) {
             return redirect('/ca-masters');
         }
@@ -49,23 +51,31 @@ Route::middleware(['auth', 'rbac'])->group(function () {
 
     Route::get('settings/sales-list', fn () => view('crm.index', ['spaPage' => 'sales-list']))
         ->middleware('spa.access:sales-list');
+
     Route::get('settings/roles-permissions', fn () => view('crm.index', ['spaPage' => 'roles-permissions']))
         ->middleware('spa.access:roles-permissions');
+
     Route::get('settings/email-templates', fn () => view('crm.index', ['spaPage' => 'settings-email-templates']))
         ->middleware('spa.access:settings-email-templates');
+
     Route::get('settings/whatsapp-templates', fn () => view('crm.index', ['spaPage' => 'settings-whatsapp-templates']))
         ->middleware('spa.access:settings-whatsapp-templates');
+
     Route::get('settings/google-api', fn () => view('crm.index', ['spaPage' => 'settings-google-api']))
         ->middleware('spa.access:settings');
+
     Route::get('settings/demo-providers', fn () => view('crm.index', ['spaPage' => 'settings-demo-providers']))
         ->middleware('spa.access:settings');
+
     Route::redirect('sales-list', '/settings/sales-list');
 
     Route::redirect('payments', '/dashboard');
     Route::redirect('reception', '/communication');
+
     // Legacy Security module URL — keep bookmarks/open tabs from 404ing.
     Route::get('security', function (Request $request) {
         $role = strtolower((string) ($request->user()?->crm_role ?? ''));
+
         if ($role === 'super_admin') {
             return redirect('/settings/roles-permissions');
         }

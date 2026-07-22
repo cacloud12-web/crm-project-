@@ -25,6 +25,15 @@ class DataNormalizationServiceTest extends TestCase
     }
 
     #[Test]
+    public function it_normalizes_sales_firm_and_city_for_auto_match(): void
+    {
+        $this->assertSame('AASTHA CO', $this->service->salesFirmName('Aastha & Co.'));
+        $this->assertSame('AASTHA CO', $this->service->salesFirmName('Aastha Co'));
+        $this->assertSame('JAIPUR', $this->service->salesCityName('Jaipur'));
+        $this->assertSame('NEW DELHI', $this->service->salesCityName('New Delhi'));
+    }
+
+    #[Test]
     public function it_normalizes_identifiers(): void
     {
         $this->assertSame('ABCDE1234F', $this->service->pan('abcde1234f'));

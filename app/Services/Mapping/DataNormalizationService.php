@@ -134,6 +134,44 @@ class DataNormalizationService
         return $value !== null ? mb_strtoupper($value) : null;
     }
 
+    /**
+     * Sales-list Auto Match firm key.
+     * Uppercase, strip punctuation, collapse spaces; firm connectors & / AND removed so
+     * "Aastha & Co." and "Aastha Co" both become AASTHA CO (product Auto Match example).
+     */
+    public function salesFirmName(?string $value): ?string
+    {
+        $value = $this->collapseWhitespace($value);
+        if ($value === null) {
+            return null;
+        }
+
+        $value = preg_replace('/\bM\/S\.?\b/iu', ' ', $value) ?? $value;
+        $value = str_ireplace(['& CD', '&CD'], ' CO ', $value);
+        $value = preg_replace('/\bCOMPANY\b/iu', ' CO ', $value) ?? $value;
+        $value = preg_replace('/\bCO\.?\b/iu', ' CO ', $value) ?? $value;
+        $value = str_replace(['&', '+'], ' ', $value);
+        $value = preg_replace('/\bAND\b/iu', ' ', $value) ?? $value;
+        $value = preg_replace('/[^\p{L}\p{N}\s]/iu', ' ', $value) ?? $value;
+        $value = mb_strtoupper((string) $this->collapseWhitespace($value));
+
+        return $value !== '' ? $value : null;
+    }
+
+    /** Sales-list Auto Match city key (uppercase, strip punctuation, collapse spaces). */
+    public function salesCityName(?string $value): ?string
+    {
+        $value = $this->collapseWhitespace($value);
+        if ($value === null) {
+            return null;
+        }
+
+        $value = preg_replace('/[^\p{L}\p{N}\s]/iu', ' ', $value) ?? $value;
+        $value = mb_strtoupper((string) $this->collapseWhitespace($value));
+
+        return $value !== '' ? $value : null;
+    }
+
     public function state(?string $value): ?string
     {
         return $this->city($value);

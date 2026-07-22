@@ -117,6 +117,63 @@ class CaMasterController extends Controller
         );
     }
 
+    public function employeeCallHistory(string $id): JsonResponse
+    {
+        $lead = $this->caMasterService->find($id);
+        $caId = (int) $lead->ca_id;
+
+        $rows = \App\Models\SalesImportRow::query()
+            ->where('matched_ca_id', $caId)
+            ->orderByDesc('call_date')
+            ->orderByDesc('id')
+            ->limit(200)
+            ->get([
+                'id',
+                'employee_name',
+                'call_date',
+                'mobile_no',
+                'alternate_mobile_no',
+                'remarks_1',
+                'remarks_2',
+                'source_file_name',
+                'source_sheet_name',
+                'source_row_number',
+                'firm_name',
+                'city_name',
+                'mapping_status',
+                'matched_on',
+            ]);
+
+        $items = $rows->map(static function (\App\Models\SalesImportRow $row) {
+            return [
+                'id' => $row->id,
+                'employee_name' => $row->employee_name,
+                'call_date' => $row->call_date?->format('Y-m-d'),
+                'mobile_no' => $row->mobile_no,
+                'alternate_mobile_no' => $row->alternate_mobile_no,
+                'remarks' => trim(implode(' | ', array_filter([
+                    $row->remarks_1,
+                    $row->remarks_2,
+                ]))) ?: null,
+                'remarks_1' => $row->remarks_1,
+                'remarks_2' => $row->remarks_2,
+                'source_file' => $row->source_file_name,
+                'source_sheet_name' => $row->source_sheet_name,
+                'source_row_number' => $row->source_row_number,
+                'firm_name' => $row->firm_name,
+                'city_name' => $row->city_name,
+                'mapping_status' => $row->mapping_status,
+                'matched_on' => $row->matched_on,
+            ];
+        })->values();
+
+        return ApiResponse::success([
+            'ca_id' => $caId,
+            'total' => $items->count(),
+            'items' => $items,
+        ], 'Employee calling history loaded');
+    }
+
     public function edit(string $id)
     {
         return redirect('/');
