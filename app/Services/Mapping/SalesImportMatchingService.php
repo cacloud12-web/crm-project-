@@ -60,6 +60,18 @@ class SalesImportMatchingService
             ]);
         }
 
+        // Distinguish offline CA Reference from a true firm+city miss so review UI
+        // does not claim "no match" when matching could not run.
+        if (! $this->caReferenceReady()) {
+            return array_merge($base, [
+                'status' => 'unmatched',
+                'ca_id' => null,
+                'matched_on' => null,
+                'score' => null,
+                'reason' => 'CA Reference is unavailable; automatic matching was skipped. Retry remap when CA Reference is online.',
+            ]);
+        }
+
         $referenceHits = $this->findCaReferenceFirmIds($firm, $city);
 
         if (count($referenceHits) > 1) {
