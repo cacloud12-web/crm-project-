@@ -8,6 +8,10 @@ Route::middleware(['auth', 'rbac'])->group(function () {
         ->middleware('spa.browser:ca-master')
         ->name('employee-imports.summary');
 
+    Route::get('employee-imports/files', [SalesImportController::class, 'files'])
+        ->middleware('spa.browser:ca-master')
+        ->name('employee-imports.files');
+
     Route::get('employee-imports/data', [SalesImportController::class, 'index'])
         ->middleware('spa.browser:ca-master')
         ->name('employee-imports.index');

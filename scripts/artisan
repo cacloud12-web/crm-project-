@@ -1,13 +1,48 @@
 #!/usr/bin/env bash
-set -euo pipefail
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck source=/dev/null
-source "$PROJECT_ROOT/scripts/lib/resolve-php.sh"
+# Cross-environment artisan runner.
+# - On Mac (this machine): uses ./.tools/php-bulk/php
+# - On Hostinger SSH: uses /opt/alt/php83/usr/bin/php when available
+#
+# Usage (from project root):
+#   bash scripts/artisan sales-list:import-all
+#   bash scripts/artisan route:list --path=employee-imports
 
-if ! resolve_project_php; then
-  echo "PHP not found. Run: bash scripts/setup-local-dev.sh" >&2
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+pick_php() {
+  local candidates=(
+    "${PHP_BIN:-}"
+    "$ROOT/.tools/php-bulk/php"
+    /opt/alt/php83/usr/bin/php
+    /opt/alt/php84/usr/bin/php
+    "$(command -v php 2>/dev/null || true)"
+  )
+  local bin
+  for bin in "${candidates[@]}"; do
+    if [[ -n "$bin" && -x "$bin" ]]; then
+      if "$bin" -r 'exit(PHP_VERSION_ID >= 80300 ? 0 : 1);' 2>/dev/null; then
+        echo "$bin"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+if ! PHP_CLI="$(pick_php)"; then
+  echo "ERROR: PHP 8.3+ not found."
+  echo
+  echo "On your Mac, use:"
+  echo "  ./php artisan ..."
+  echo "  or: bash scripts/artisan ..."
+  echo
+  echo "On Hostinger SSH only, use:"
+  echo "  /opt/alt/php83/usr/bin/php artisan ..."
+  echo "  (after: ssh into us-bos-web1999, then cd public_html)"
   exit 1
 fi
 
-cd "$PROJECT_ROOT"
-exec "$PHP_BIN" artisan "$@"
+echo "Using: $PHP_CLI ($("$PHP_CLI" -r 'echo PHP_VERSION;'))" >&2
+exec "$PHP_CLI" "$ROOT/artisan" "$@"
