@@ -347,26 +347,24 @@ class OcrFirmApprovalService
             && (bool) config('ocr_safety.require_verification', true)) {
             throw ValidationException::withMessages([
                 'approve_safe' => [
-                    'Bulk Approve All Safe is disabled. Review each row side-by-side and Approve individually.',
+                    'Accept All Eligible is disabled (OCR_ALLOW_BULK_APPROVE_SAFE=false). Set it to true in .env on the server, run php artisan config:clear, then retry — or Accept rows individually.',
                 ],
             ]);
         }
 
         if ($document->isMasterCaImport()) {
-            $stats = $this->masterCaImporter->processDocument(
-                (int) $document->id,
-                auth()->id() ? (int) auth()->id() : null,
-            );
-            $this->masterCaImporter->refreshDocumentCompletion($document->fresh());
+            $actorId = auth()->id() ? (int) auth()->id() : null;
+            $stats = $this->masterCaImporter->approveAllEligible($document->fresh(), $actorId);
 
             return [
                 'processed' => (int) ($stats['processed'] ?? 0),
                 'auto_created' => (int) ($stats['imported'] ?? 0),
                 'auto_updated' => (int) ($stats['updated'] ?? 0),
-                'needs_review' => (int) ($stats['review'] ?? 0),
+                'needs_review' => (int) ($stats['skipped'] ?? 0),
                 'conflicts' => (int) ($stats['duplicates'] ?? 0),
                 'failed' => (int) ($stats['failed'] ?? 0),
-                'import_batch_id' => $stats['import_batch_id'] ?? null,
+                'eligible' => (int) ($stats['eligible'] ?? 0),
+                'import_batch_id' => null,
             ];
         }
 

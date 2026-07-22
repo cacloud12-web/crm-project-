@@ -402,6 +402,127 @@ class MasterCaDirectImportService
     }
 
     /**
+     * Bulk Accept for Master CA: write eligible verified/matched staging rows into ca_masters.
+     * Uses the same forceCreate path as single-row Accept. Skips conflicts / collisions / missing names.
+     *
+     * @return array{
+     *     processed: int,
+     *     imported: int,
+     *     updated: int,
+     *     duplicates: int,
+     *     skipped: int,
+     *     failed: int,
+     *     eligible: int
+     * }
+     */
+    public function approveAllEligible(OcrDocument $document, ?int $actorId = null): array
+    {
+        if (! $document->isMasterCaImport()) {
+            throw new \InvalidArgumentException('approveAllEligible is only for Master CA imports.');
+        }
+
+        $stats = [
+            'processed' => 0,
+            'imported' => 0,
+            'updated' => 0,
+            'duplicates' => 0,
+            'skipped' => 0,
+            'failed' => 0,
+            'eligible' => 0,
+        ];
+
+        $query = OcrParsedFirm::query()
+            ->where('ocr_document_id', $document->id)
+            ->whereNull('crm_ca_id')
+            ->where(function ($q) {
+                $q->whereNull('review_status')
+                    ->orWhereNotIn('review_status', [
+                        OcrParsedFirm::REVIEW_APPROVED,
+                        OcrParsedFirm::REVIEW_REJECTED,
+                    ]);
+            })
+            ->whereIn('match_status', [self::MATCH_VERIFIED, self::MATCH_MATCHED])
+            ->where(function ($q) {
+                $q->whereNotNull('firm_name')->where('firm_name', '!=', '')
+                    ->orWhere(function ($inner) {
+                        $inner->whereNotNull('raw_firm_name')->where('raw_firm_name', '!=', '');
+                    });
+            });
+
+        $stats['eligible'] = (clone $query)->count();
+        $document->update([
+            'processing_progress' => sprintf(
+                'Accepting eligible Master CA rows — 0 / %d',
+                max(1, $stats['eligible']),
+            ),
+        ]);
+
+        $chunkSize = max(25, (int) config('crm_mapping.master_ca_import_chunk', 200));
+
+        (clone $query)
+            ->with('members')
+            ->orderBy('id')
+            ->chunkById($chunkSize, function ($firms) use ($document, $actorId, &$stats) {
+                foreach ($firms as $firm) {
+                    $stats['processed']++;
+                    try {
+                        $result = $this->importFirm($firm->fresh(['members']), $document, $actorId, true);
+                        $bucket = (string) ($result['bucket'] ?? 'failed');
+                        if ($bucket === 'imported') {
+                            $stats['imported']++;
+                        } elseif ($bucket === 'updated') {
+                            $stats['updated']++;
+                        } elseif ($bucket === 'duplicates') {
+                            $stats['duplicates']++;
+                        } elseif (in_array($bucket, ['review', 'conflict', 'verified'], true)) {
+                            $stats['skipped']++;
+                        } else {
+                            $stats['failed']++;
+                        }
+                    } catch (ValidationException $e) {
+                        $stats['skipped']++;
+                        Log::info('ocr.approve.pipeline', [
+                            'step' => 'bulk_eligible_skipped',
+                            'ocr_document_id' => $document->id,
+                            'staging_id' => $firm->id,
+                            'errors' => $e->errors(),
+                        ]);
+                    } catch (Throwable $e) {
+                        $stats['failed']++;
+                        Log::error('ocr.approve.pipeline', [
+                            'step' => 'bulk_eligible_failed',
+                            'ocr_document_id' => $document->id,
+                            'staging_id' => $firm->id,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+
+                    if ($stats['processed'] % 50 === 0) {
+                        $document->update([
+                            'processing_progress' => sprintf(
+                                'Accepting eligible Master CA rows — %d / %d (created %d)',
+                                $stats['processed'],
+                                max(1, $stats['eligible']),
+                                $stats['imported'],
+                            ),
+                        ]);
+                    }
+                }
+            });
+
+        $this->bustMasterCaches();
+        $this->refreshDocumentCompletion($document->fresh());
+
+        Log::info('ocr.approve.pipeline', [
+            'step' => 'bulk_eligible_complete',
+            'ocr_document_id' => $document->id,
+            'stats' => $stats,
+        ]);
+
+        return $stats;
+    }
+
+    /**
      * Mark document Completed when no staging rows remain Pending / Needs review.
      */
     public function refreshDocumentCompletion(OcrDocument $document): void

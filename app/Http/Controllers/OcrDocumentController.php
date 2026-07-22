@@ -595,6 +595,35 @@ class OcrDocumentController extends Controller
         $this->authorize('update', $ocrDocument);
 
         try {
+            if ($ocrDocument->isMasterCaImport()
+                && (bool) config('ocr_safety.allow_bulk_approve_safe', false)) {
+                $eligible = \App\Models\OcrParsedFirm::query()
+                    ->where('ocr_document_id', $ocrDocument->id)
+                    ->whereNull('crm_ca_id')
+                    ->whereIn('match_status', [
+                        \App\Services\Ocr\MasterCaDirectImportService::MATCH_VERIFIED,
+                        \App\Services\Ocr\MasterCaDirectImportService::MATCH_MATCHED,
+                    ])
+                    ->count();
+
+                // Large documents would time out in the browser request — queue instead.
+                if ($eligible > 100) {
+                    $ocrDocument->update([
+                        'processing_progress' => 'Queued Accept All Eligible ('.$eligible.' rows)',
+                        'error_message' => null,
+                    ]);
+                    \App\Jobs\ApproveEligibleMasterCaJob::dispatch(
+                        (int) $ocrDocument->id,
+                        auth()->id() ? (int) auth()->id() : null,
+                    );
+
+                    return ApiResponse::success([
+                        'queued' => true,
+                        'eligible' => $eligible,
+                    ], 'Accept All Eligible queued for '.$eligible.' row(s). Keep the queue worker running; refresh this document shortly.');
+                }
+            }
+
             $stats = $approvalService->approveAllSafe($ocrDocument);
         } catch (\Illuminate\Validation\ValidationException $exception) {
             return ApiResponse::error(

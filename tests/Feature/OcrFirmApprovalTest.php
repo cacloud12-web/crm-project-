@@ -322,7 +322,8 @@ class OcrFirmApprovalTest extends TestCase
         ]);
 
         $this->postJson('/ocr-documents/'.$document->id.'/approve-safe')
-            ->assertStatus(422);
+            ->assertStatus(422)
+            ->assertJsonFragment(['success' => false]);
 
         // Fail-closed: bulk stays off; individual Approve verified still writes Master.
         $this->patchJson('/ocr-documents/'.$document->id.'/firms/'.$firm->id.'/review', [
@@ -333,5 +334,34 @@ class OcrFirmApprovalTest extends TestCase
         $this->assertNotNull($firm->crm_ca_id);
         $this->assertSame('approved', $firm->review_status);
         $this->assertSame('Completed', $document->fresh()->processing_progress);
+
+        // With the flag enabled, Accept All Eligible writes verified Master CA rows.
+        config(['ocr_safety.allow_bulk_approve_safe' => true]);
+        $firm2 = OcrParsedFirm::query()->create([
+            'ocr_document_id' => $document->id,
+            'sequence_no' => 2,
+            'firm_name' => 'Bulk Eligible Master Firm',
+            'city' => 'Mumbai',
+            'frn' => 'FRNBULK'.random_int(100000, 999999),
+            'state' => 'Maharashtra',
+            'review_status' => OcrParsedFirm::REVIEW_PENDING,
+            'match_status' => 'verified',
+        ]);
+        OcrParsedMember::query()->create([
+            'ocr_parsed_firm_id' => $firm2->id,
+            'sequence_no' => 1,
+            'ca_name' => 'Bulk Eligible CA',
+            'membership_no' => 'MEMBULK'.random_int(100000, 999999),
+            'is_primary' => true,
+            'review_status' => 'pending',
+        ]);
+
+        $this->postJson('/ocr-documents/'.$document->id.'/approve-safe')
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $firm2->refresh();
+        $this->assertNotNull($firm2->crm_ca_id);
+        $this->assertSame(OcrParsedFirm::REVIEW_APPROVED, $firm2->review_status);
     }
 }

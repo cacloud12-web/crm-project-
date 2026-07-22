@@ -1306,14 +1306,19 @@
       approveSafeBtn.disabled = true;
       apiFetch('/ocr-documents/' + encodeURIComponent(approveDocId) + '/approve-safe', { method: 'POST' })
         .then(function (body) {
-          toast((body && body.message) || 'Safe records approved.', 'success');
+          var payload = body && body.data ? body.data : body;
+          if (payload && payload.queued) {
+            toast((body && body.message) || 'Accept All Eligible queued. Refresh shortly.', 'success');
+          } else {
+            toast((body && body.message) || 'Safe records approved.', 'success');
+          }
           openDetail(approveDocId, true);
           loadList().catch(function () {});
           if (window.CA_CRM && typeof window.CA_CRM.loadLeadsFromDatabase === 'function') {
             window.CA_CRM.loadLeadsFromDatabase(function () {});
           }
         })
-        .catch(function (err) { toast(err.message || 'Approve All Safe failed.', 'error'); })
+        .catch(function (err) { toast(err.message || 'Accept All Eligible failed.', 'error'); })
         .finally(function () { approveSafeBtn.disabled = false; });
       return;
     }
