@@ -1983,16 +1983,41 @@ body.crm-scroll-locked {
 .badge-warning { background: #fffbeb; color: #b45309; }
 
 .input-field {
-  width: 100%; border-radius: 12px; border: 1px solid #e2e8f0; background: #fff;
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
   min-height: var(--crm-control-height);
   padding: 0.625rem 0.875rem;
   font-family: var(--crm-font-family);
   font-size: var(--crm-font-size-body);
   font-weight: var(--crm-font-weight-input);
   letter-spacing: var(--crm-letter-spacing);
-  color: #1e293b; outline: none; transition: all 0.2s;
+  color: #1e293b;
+  outline: none;
+  transition: all 0.2s;
   box-sizing: border-box;
 }
+
+select.input-field {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+
+  padding-right: 3.25rem !important;
+
+  background-image:
+      linear-gradient(45deg, transparent 50%, #1e293b 50%),
+      linear-gradient(135deg, #1e293b 50%, transparent 50%);
+
+  background-position:
+      calc(100% - 22px) 50%,
+      calc(100% - 16px) 50%;
+
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+}
+
 textarea.input-field,
 select.input-field[multiple] {
   min-height: 0;
@@ -3184,8 +3209,8 @@ select.input-field[multiple] {
 }
 
 .dash-kpi-grid .mgr-kpi-card {
-  padding: 0.55rem 0.7rem 0.55rem 0.75rem;
-  min-height: 5.35rem;
+  padding: 0.45rem 0.65rem;
+  min-height: 4.4rem;
   border: 1px solid #e8edf2;
   border-left: 4px solid #14b8a6;
   border-radius: 10px;
@@ -3219,7 +3244,7 @@ select.input-field[multiple] {
 }
 
 .dash-kpi-grid .mgr-kpi-top {
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.2rem;
   align-items: center;
 }
 .dash-kpi-grid .mgr-kpi-icon {
@@ -3293,10 +3318,9 @@ select.input-field[multiple] {
   text-transform: none;
   color: #334155;
 }
-.dash-kpi-section-grid { margin-bottom: 0; }
 .dash-kpi-section-grid .mgr-kpi-card {
-  min-height: 5.5rem;
-  height: 100%;
+  min-height: 4.4rem;
+  height: auto;
 }
 
 @media (max-width: 639px) {
@@ -7221,13 +7245,13 @@ body:has(#modal-dcp-detail.open) #overlay.active {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   width: 100%;
   min-width: 0;
-  height: 100%;
-  min-height: 88px;
-  max-height: 96px;
-  padding: 14px 16px;
+  height: auto;
+  min-height: 72px;
+  max-height: none;
+  padding: 10px 16px;
   margin: 0;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
@@ -7287,7 +7311,7 @@ body:has(#modal-dcp-detail.open) #overlay.active {
   font-weight: 600 !important;
   line-height: 1.25 !important;
   letter-spacing: var(--crm-letter-spacing);
-  color: var(--comm-brand-dark);
+  color: #1e293b;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7350,17 +7374,16 @@ body:has(#modal-dcp-detail.open) #overlay.active {
 @media (max-width: 639px) {
   .comm-grid { grid-template-columns: 1fr; gap: 0.75rem; }
   .communication-card {
-    min-height: 82px;
-    max-height: 92px;
-    padding: 12px 14px;
-    gap: 12px;
-  }
-  .communication-card__icon {
-    width: 44px;
-    height: 44px;
-    flex-basis: 44px;
-    border-radius: 9px;
-  }
+    min-height: 68px;
+    max-height: none;
+    padding: 10px 12px;
+    gap: 10px;
+}
+.communication-card__icon {
+  width: 38px;
+  height: 38px;
+  flex-basis: 38px;
+}
 }
 
 .comm-footer {
@@ -15399,6 +15422,8 @@ body.crm-layout .reports-hub-page .report-card__icon {
   flex-shrink: 0;
   width: 2.5rem;
   height: 2.5rem;
+    background: #e8f8f6 !important;
+  color: #25b7a7 !important;
 }
 
 body.crm-layout .reports-hub-page .report-card__icon i {
@@ -17426,4 +17451,56 @@ body.ra-drawer-open .crm-header {
 #ca-masters-table tbody tr:hover td:first-child {
     background: #f8fafc !important;
 }
+/* Assignment Heat Map dropdown arrow spacing */
+.assign-heatmap-toolbar select.input-field {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 3rem !important;
 
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%231e293b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 18px center;
+  background-size: 16px 16px;
+}
+
+/* Tickets module */
+.ticket-kpi-grid .ticket-kpi-card { text-align: left; width: 100%; border: 1px solid #e2e8f0; }
+.ticket-kpi-card--open .crm-kpi-card__icon { background: #eff6ff; color: #2563eb; }
+.ticket-kpi-card--review .crm-kpi-card__icon { background: #fff7ed; color: #ea580c; }
+.ticket-kpi-card--closed .crm-kpi-card__icon { background: #ecfdf5; color: #059669; }
+.ticket-kpi-card--mine .crm-kpi-card__icon { background: #f1f5f9; color: #475569; }
+.ticket-kpi-card--assigned .crm-kpi-card__icon { background: #f0fdfa; color: #0d9488; }
+.ticket-kpi-card--high .crm-kpi-card__icon { background: #fef2f2; color: #dc2626; }
+.ticket-kpi-card--unread .crm-kpi-card__icon { background: #f5f3ff; color: #7c3aed; }
+.ticket-filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+@media (min-width: 768px) { .ticket-filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 1280px) { .ticket-filter-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.ticket-badge { display: inline-flex; align-items: center; border-radius: 9999px; padding: 0.125rem 0.5rem; font-size: 0.6875rem; font-weight: 600; line-height: 1.25; white-space: nowrap; }
+.ticket-badge--open { background: #eff6ff; color: #1d4ed8; }
+.ticket-badge--review { background: #fff7ed; color: #c2410c; }
+.ticket-badge--closed { background: #ecfdf5; color: #047857; }
+.ticket-badge--issue { background: #fef2f2; color: #b91c1c; }
+.ticket-badge--improvement { background: #eff6ff; color: #1d4ed8; }
+.ticket-badge--feature { background: #f5f3ff; color: #6d28d9; }
+.ticket-badge--prio-low { background: #f1f5f9; color: #475569; }
+.ticket-badge--prio-normal { background: #eff6ff; color: #1d4ed8; }
+.ticket-badge--prio-high { background: #fff7ed; color: #c2410c; }
+.ticket-badge--prio-urgent { background: #fef2f2; color: #b91c1c; }
+.ticket-badge--internal { background: #fef3c7; color: #92400e; }
+.ticket-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.ticket-desc-cell { max-width: 14rem; }
+.ticket-comment { border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 0.75rem; margin-bottom: 0.5rem; background: #fff; }
+.ticket-comment--internal { border-color: #fcd34d; background: #fffbeb; }
+.ticket-comment__head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem; }
+.ticket-comment__body { white-space: pre-wrap; color: #334155; font-size: 0.875rem; }
+.ticket-thread--internal { border-left: 3px solid #f59e0b; padding-left: 0.75rem; }
+.ticket-attachment-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.ticket-attachment-item { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 0.65rem 0.75rem; }
+.ticket-history__item { border-bottom: 1px solid #f1f5f9; padding: 0.5rem 0; }
+.ticket-history__meta { font-size: 0.75rem; color: #94a3b8; }
+.ticket-drawer-actions { margin: 0.75rem 0 1rem; padding: 0.75rem; border: 1px solid #e2e8f0; border-radius: 0.5rem; background: #f8fafc; }
+@media (max-width: 640px) {
+  #modal-ticket .ca-modal-footer-buttons { flex-direction: column; }
+  #modal-ticket #ticket-org-search-btn { width: 100%; }
+  #modal-ticket .flex.gap-2 { flex-direction: column; }
+}

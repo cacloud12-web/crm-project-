@@ -91,6 +91,7 @@ class RbacService
             'leads',
             'assignment',
             'followups',
+            'tickets',
             'sales_list',
             'bulk',
             'reports',
@@ -583,6 +584,26 @@ class RbacService
 
         if (preg_match('#^ca-masters/\d+/research#', $path)) {
             return ['module' => 'ca_master', 'permission' => 'edit'];
+        }
+
+        if (str_starts_with($path, 'ticket-organizations')) {
+            return ['module' => 'tickets', 'permission' => 'create'];
+        }
+
+        if (str_starts_with($path, 'tickets')) {
+            $permission = match (true) {
+                str_contains($path, '/attachments/') && str_contains($path, '/download') => 'download',
+                str_contains($path, '/attachments') && $method === 'POST' => 'edit',
+                str_contains($path, '/assign') && $method === 'POST' => 'edit',
+                $path === 'tickets/metadata' => 'view',
+                $method === 'POST' && $path === 'tickets' => 'create',
+                $method === 'DELETE' => 'delete',
+                in_array($method, ['PUT', 'PATCH'], true) => 'edit',
+                $method === 'POST' => 'edit',
+                default => 'view',
+            };
+
+            return ['module' => 'tickets', 'permission' => $permission];
         }
 
         if (str_starts_with($path, 'follow-ups')) {

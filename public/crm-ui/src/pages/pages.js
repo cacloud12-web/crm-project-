@@ -327,8 +327,8 @@ window.CAPages = (function () {
       '<section class="dash-section" aria-label="Key metrics"><div class="dash-kpi-sections" id="emp-kpi-sections"></div></section>' +
       '<div id="emp-productivity-panel" class="mgr-panel card dash-productivity-panel"></div>' +
       '<div class="dash-toolbar-row">' +
-        '<section class="mgr-panel card dash-quick-actions-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="zap" class="h-5 w-5 text-brand"></i> Quick Actions</h3></div><div class="emp-quick-actions dash-quick-actions" id="emp-quick-actions"></div></section>' +
-        '<section class="mgr-panel card dash-activity-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="activity" class="h-5 w-5 text-brand"></i> Recent Activity</h3></div><div id="emp-activity-list" class="mgr-activity-feed dash-activity-feed"></div></section>' +
+        '<section class="mgr-panel card dash-quick-actions-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><span class="dashboard-heading-icon"><i data-lucide="zap" class="h-5 w-5"></i></span> Quick Actions</h3></div><div class="emp-quick-actions dash-quick-actions" id="emp-quick-actions"></div></section>' +
+        '<section class="mgr-panel card dash-activity-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><span class="dashboard-heading-icon"><i data-lucide="activity" class="h-5 w-5"></i></span> Recent Activity</h3></div><div id="emp-activity-list" class="mgr-activity-feed dash-activity-feed"></div></section>' +
       '</div>' +
       '<div class="emp-grid-2 dash-section">' +
         '<section class="mgr-panel card"><div class="emp-panel-head"><h3 class="emp-panel-title mgr-panel-title">My Assigned Leads</h3><button type="button" class="mgr-link-btn" data-emp-nav="leads">Open My Leads</button></div><div id="emp-assigned-leads" class="emp-list"></div></section>' +
@@ -345,8 +345,8 @@ window.CAPages = (function () {
       '<div id="mgr-employee-productivity-panel" class="mgr-panel card dash-productivity-panel hidden"></div>' +
       '<section class="dash-section" aria-label="Key metrics"><div class="dash-kpi-sections" id="mgr-kpi-sections"></div></section>' +
       '<div class="dash-toolbar-row">' +
-        '<section class="mgr-panel card dash-quick-actions-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="zap" class="h-5 w-5 text-brand"></i> Quick Actions</h3></div><div id="dash-quick-actions" class="dash-quick-actions"></div></section>' +
-        '<section class="mgr-panel card dash-activity-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="activity" class="h-5 w-5 text-brand"></i> Recent Activity</h3><button type="button" class="mgr-link-btn" data-nav-page="activity">View all</button></div><div id="recent-activity-list" class="mgr-activity-feed dash-activity-feed"></div></section>' +
+        '<section class="mgr-panel card dash-quick-actions-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><span class="dashboard-heading-icon"><i data-lucide="zap" class="h-5 w-5"></i></span>Quick Actions</h3></div><div id="dash-quick-actions" class="dash-quick-actions"></div></section>' +
+        '<section class="mgr-panel card dash-activity-panel"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><span class="dashboard-heading-icon"><i data-lucide="activity" class="h-5 w-5"></i></span> Recent Activity</h3><button type="button" class="mgr-link-btn" data-nav-page="activity">View all</button></div><div id="recent-activity-list" class="mgr-activity-feed dash-activity-feed"></div></section>' +
       '</div>' +
       '<div id="mgr-productivity-panel" class="mgr-productivity-slot dash-section"></div>' +
       '<section id="mgr-duplicate-monitoring" class="mgr-panel card dash-section hidden"></section>' +
@@ -358,15 +358,15 @@ window.CAPages = (function () {
         '<div class="dash-sms-kpi"><span class="dash-sms-kpi__icon"><i data-lucide="radio" class="h-4 w-4"></i></span><div class="dash-sms-kpi__body"><p class="dash-sms-kpi__label">SMS Live Mode</p><p class="dash-sms-kpi__value" id="dash-sms-live">—</p></div></div>' +
       '</div></section>' +
       '<section class="dash-section" aria-label="Analytics charts"><div class="dash-charts-grid">' +
-        '<section class="mgr-panel card dash-chart-panel"><div class="mgr-panel-head"><div><h3 class="mgr-panel-title">Lead Source</h3><p class="mgr-panel-subtitle">Distribution by acquisition channel</p></div></div><div class="dash-chart-legend"><span class="dash-chart-legend__swatch"></span><span>Lead count</span></div><div id="dash-chart-source" class="mgr-bar-chart dash-bar-chart" data-dashboard-chart="source"></div></section>' +
-        '<section class="mgr-panel card dash-chart-panel"><div class="mgr-panel-head"><div><h3 class="mgr-panel-title">Lead Pipeline</h3><p class="mgr-panel-subtitle">Status breakdown across funnel</p></div></div><div class="dash-chart-legend"><span class="dash-chart-legend__swatch dash-chart-legend__swatch--alt"></span><span>Lead count</span></div><div id="dash-chart-status" class="mgr-bar-chart dash-bar-chart" data-dashboard-chart="status"></div></section>' +
-        '<section class="mgr-panel card dash-chart-panel"><div class="mgr-panel-head"><div><h3 class="mgr-panel-title">Monthly Leads</h3><p class="mgr-panel-subtitle">New leads over time</p></div></div><div class="dash-chart-legend"><span class="dash-chart-legend__swatch"></span><span>New leads</span></div><div class="ca-chart dash-column-chart h-44" data-chart="monthly" data-dashboard-chart="monthly"></div></section>' +
-        '<section class="mgr-panel card dash-chart-panel"><div class="mgr-panel-head"><div><h3 class="mgr-panel-title">Employee Productivity</h3><p class="mgr-panel-subtitle">Target achievement by executive</p></div></div><div class="dash-chart-legend"><span class="dash-chart-legend__swatch dash-chart-legend__swatch--alt"></span><span>Achievement %</span></div><div class="ca-chart dash-column-chart h-44" data-chart="employee" data-dashboard-chart="employee"></div></section>' +
-        '<section class="mgr-panel card dash-chart-panel"><div class="mgr-panel-head"><div><h3 class="mgr-panel-title">Campaign Performance</h3><p class="mgr-panel-subtitle">Delivered messages by channel</p></div></div><div class="dash-chart-legend"><span class="dash-chart-legend__swatch"></span><span>Delivered</span></div><div id="dash-chart-campaign" class="mgr-bar-chart dash-bar-chart" data-dashboard-chart="campaign"></div></section>' +
-        '<section class="mgr-panel card dash-chart-panel"><div class="mgr-panel-head"><div><h3 class="mgr-panel-title">City Performance</h3><p class="mgr-panel-subtitle">Leads by geography</p></div></div><div class="dash-chart-legend"><span class="dash-chart-legend__swatch dash-chart-legend__swatch--alt"></span><span>Total leads</span></div><div id="dash-chart-city" class="mgr-bar-chart dash-bar-chart" data-dashboard-chart="city"></div></section>' +
+        '<section class="mgr-panel card dash-chart-panel"><div class="mgr-panel-head"><div><h3 class="mgr-panel-title">Lead Source</h3></div></div><div class="dash-chart-legend"><span class="dash-chart-legend__swatch"></span><span>Lead count</span></div><div id="dash-chart-source" class="mgr-bar-chart dash-bar-chart" data-dashboard-chart="source"></div></section>' +
+        '<section class="mgr-panel card dash-chart-panel"><div class="mgr-panel-head"><div><h3 class="mgr-panel-title">Lead Pipeline</h3></div></div><div class="dash-chart-legend"><span class="dash-chart-legend__swatch dash-chart-legend__swatch--alt"></span><span>Lead count</span></div><div id="dash-chart-status" class="mgr-bar-chart dash-bar-chart" data-dashboard-chart="status"></div></section>' +
+        '<section class="mgr-panel card dash-chart-panel"><div class="mgr-panel-head"><div><h3 class="mgr-panel-title">Monthly Leads</h3></div></div><div class="dash-chart-legend"><span class="dash-chart-legend__swatch"></span><span>New leads</span></div><div class="ca-chart dash-column-chart h-44" data-chart="monthly" data-dashboard-chart="monthly"></div></section>' +
+        '<section class="mgr-panel card dash-chart-panel"><div class="mgr-panel-head"><div><h3 class="mgr-panel-title">Employee Productivity</h3></div></div><div class="dash-chart-legend"><span class="dash-chart-legend__swatch dash-chart-legend__swatch--alt"></span><span>Achievement %</span></div><div class="ca-chart dash-column-chart h-44" data-chart="employee" data-dashboard-chart="employee"></div></section>' +
+        '<section class="mgr-panel card dash-chart-panel"><div class="mgr-panel-head"><div><h3 class="mgr-panel-title">Campaign Performance</h3></div></div><div class="dash-chart-legend"><span class="dash-chart-legend__swatch"></span><span>Delivered</span></div><div id="dash-chart-campaign" class="mgr-bar-chart dash-bar-chart" data-dashboard-chart="campaign"></div></section>' +
+        '<section class="mgr-panel card dash-chart-panel"><div class="mgr-panel-head"><div><h3 class="mgr-panel-title">City Performance</h3></div></div><div class="dash-chart-legend"><span class="dash-chart-legend__swatch dash-chart-legend__swatch--alt"></span><span>Total leads</span></div><div id="dash-chart-city" class="mgr-bar-chart dash-bar-chart" data-dashboard-chart="city"></div></section>' +
       '</div></section>' +
       '<div class="mgr-grid-3 dash-section">' +
-        '<section class="mgr-panel card"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="git-branch" class="h-5 w-5 text-brand"></i> Sales Pipeline</h3><button type="button" class="mgr-link-btn" data-nav-page="ca-master">View all</button></div><div id="mgr-pipeline-funnel" class="mgr-pipeline"></div></section>' +
+        '<section class="mgr-panel card"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="git-branch" ></i> Sales Pipeline</h3><button type="button" class="mgr-link-btn" data-nav-page="ca-master">View all</button></div><div id="mgr-pipeline-funnel" class="mgr-pipeline"></div></section>' +
         '<section class="mgr-panel card"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="flame" class="h-5 w-5 text-amber-500"></i> Priority Today</h3><button type="button" class="mgr-link-btn" data-nav-page="followups">Follow-ups</button></div><div id="mgr-priority-list" class="mgr-priority-list"></div></section>' +
         '<section class="mgr-panel card"><div class="mgr-panel-head"><h3 class="mgr-panel-title"><i data-lucide="users" class="h-5 w-5 text-brand"></i> Team Snapshot</h3><button type="button" class="mgr-link-btn" data-nav-page="employees">Manage team</button></div><div id="mgr-team-cards" class="mgr-team-scroll"></div></section>' +
       '</div>' +
@@ -1260,7 +1260,7 @@ window.CAPages = (function () {
       '<div class="card assign-widget assign-widget--heatmap" id="assign-heatmap-widget">' +
         '<div class="assign-widget__head">' +
           '<div><h3 class="text-card-heading">Assignment Heat Map</h3>' +
-          '<p class="assign-section__subtitle">Lead distribution by city for selected period.</p></div>' +
+          '</div>' +
         '</div>' +
         '<div class="assign-heatmap-toolbar">' +
           '<select class="input-field input-field-sm" id="assign-heatmap-period" aria-label="Period">' +
@@ -1371,7 +1371,7 @@ window.CAPages = (function () {
       '<div class="assign-section__head assign-section__head--rotation">' +
         '<div>' +
           '<h3 class="text-card-heading">Automatic Lead Assignment Rules</h3>' +
-          '<p class="assign-section__subtitle">Configure how new leads are automatically distributed among employees.</p>' +
+          
         '</div>' +
       '</div>' +
       '<div class="assign-rotation-grid">' +
@@ -1401,7 +1401,7 @@ window.CAPages = (function () {
       '<div class="assign-active__header">' +
         '<div class="assign-active__header-main">' +
           '<h3 class="text-card-heading">Active Assignments</h3>' +
-          '<p class="assign-section__subtitle">Current lead assignments across employees.</p>' +
+         
           '<p class="assign-active__count" id="assignment-total-label">Showing: — Assignments</p>' +
         '</div>' +
         actPrimary('New Assignment', 'class="assign-active__new" data-open-modal="assign-lead"', 'user-plus') +
@@ -1483,10 +1483,10 @@ window.CAPages = (function () {
     var assignBody =
       '<div class="assign-page" id="assignment-page-root">' +
       kpis([
-        { icon: 'user-cog', label: 'Active Assignments', value: '—', trend: 'Live', valueId: 'assign-kpi-active' },
-        { icon: 'refresh-cw', label: 'Auto (Rotation)', value: '—', trend: 'Live', valueId: 'assign-kpi-auto' },
-        { icon: 'user-plus', label: 'Manual', value: '—', trend: 'Live', valueId: 'assign-kpi-manual' },
-        { icon: 'target', label: 'Assigned Leads', value: '—', trend: 'Live', valueId: 'assign-kpi-target' },
+        { icon: 'user-cog', label: 'Active Assignments', value: '—', trend: '', valueId: 'assign-kpi-active' },
+        { icon: 'refresh-cw', label: 'Auto (Rotation)', value: '—', trend: '', valueId: 'assign-kpi-auto' },
+        { icon: 'user-plus', label: 'Manual', value: '—', trend: '', valueId: 'assign-kpi-manual' },
+        { icon: 'target', label: 'Assigned Leads', value: '—', trend: '', valueId: 'assign-kpi-target' },
       ], {
         compact: true,
         gridClass: 'crm-kpi-grid crm-kpi-grid--compact assign-kpi-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 mb-3',
@@ -1498,7 +1498,7 @@ window.CAPages = (function () {
       '<section class="assign-section card mb-6" data-listing-toolbar="assignment_histories">' +
         '<div class="assign-section__head">' +
           '<div><h3 class="text-card-heading">Assignment History</h3>' +
-          '<p class="text-caption text-slate-500 mt-1">Reassignments and ownership changes over time.</p></div>' +
+        '</div>' +
         '</div>' +
         table([
           { label: 'From', colCls: 'crm-col-person assign-col-person', thCls: 'crm-th-person' },
@@ -1632,6 +1632,115 @@ window.CAPages = (function () {
       '</div>';
   }
 
+  function ticketsPage() {
+    var headerActions =
+      pageHeroToolbar(
+        actSecondary('Refresh', 'id="ticket-refresh-btn"', 'refresh-cw') +
+        actPrimary('Create Ticket', 'id="ticket-create-btn" data-open-modal="ticket"', 'plus')
+      );
+
+    var kpiItems = [
+      { key: 'open', label: 'Open', icon: 'circle-dot', valueId: 'ticket-kpi-open', accent: 'open' },
+      { key: 'under_review', label: 'Under Review', icon: 'eye', valueId: 'ticket-kpi-review', accent: 'review' },
+      { key: 'closed', label: 'Closed', icon: 'check-circle-2', valueId: 'ticket-kpi-closed', accent: 'closed' },
+      { key: 'mine', label: 'My Tickets', icon: 'user', valueId: 'ticket-kpi-mine', accent: 'mine' },
+      { key: 'assigned', label: 'Assigned To Me', icon: 'user-check', valueId: 'ticket-kpi-assigned', accent: 'assigned' },
+      { key: 'high', label: 'High Priority', icon: 'alert-triangle', valueId: 'ticket-kpi-high', accent: 'high' },
+      { key: 'unread', label: 'Unread Replies', icon: 'message-square', valueId: 'ticket-kpi-unread', accent: 'unread' },
+    ];
+
+    var kpiHtml = '<div class="crm-kpi-grid crm-kpi-grid--compact ticket-kpi-grid grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2 mb-3">' +
+      kpiItems.map(function (k) {
+        return '<button type="button" class="card-interactive crm-kpi-card crm-kpi-card--compact ticket-kpi-card ticket-kpi-card--' + k.accent + '"' +
+          ' data-ticket-kpi="' + k.key + '" aria-label="Filter ' + k.label + '">' +
+          '<div class="crm-kpi-card__icon"><i data-lucide="' + k.icon + '" class="h-4 w-4"></i></div>' +
+          '<div class="crm-kpi-card__body">' +
+            '<p class="crm-kpi-card__label">' + k.label + '</p>' +
+            '<p class="crm-kpi-card__value" id="' + k.valueId + '">—</p>' +
+          '</div>' +
+        '</button>';
+      }).join('') +
+      '</div>';
+
+    var filtersHtml =
+      '<div class="card p-4 lg:p-5 mb-4" id="ticket-filters-card">' +
+        '<form id="ticket-filters" class="space-y-3" onsubmit="return false;">' +
+          '<div class="flex flex-col lg:flex-row gap-3 lg:items-end">' +
+            '<div class="flex-1">' +
+              '<label class="form-label" for="ticket-search">Search</label>' +
+              '<input type="search" id="ticket-search" class="input-field" placeholder="Ticket number, customer, org, mobile, email, description…" autocomplete="off" />' +
+            '</div>' +
+            '<div class="w-full lg:w-56">' +
+              '<label class="form-label" for="ticket-sort">Sort</label>' +
+              '<select id="ticket-sort" class="input-field">' +
+                '<option value="created_at:desc">Newest</option>' +
+                '<option value="created_at:asc">Oldest</option>' +
+                '<option value="priority:desc">Priority</option>' +
+                '<option value="status:asc">Status</option>' +
+                '<option value="created_at:desc">Created Date</option>' +
+                '<option value="updated_at:desc">Updated Date</option>' +
+              '</select>' +
+            '</div>' +
+          '</div>' +
+          '<div class="crm-listing-filter-grid ticket-filter-grid">' +
+            '<div><label class="form-label" for="ticket-filter-problem-type">Problem Type</label><select id="ticket-filter-problem-type" class="input-field"><option value="">All problem types</option></select></div>' +
+            '<div><label class="form-label" for="ticket-filter-priority">Priority</label><select id="ticket-filter-priority" class="input-field"><option value="">All priorities</option></select></div>' +
+            '<div><label class="form-label" for="ticket-filter-status">Status</label><select id="ticket-filter-status" class="input-field"><option value="">All statuses</option></select></div>' +
+            '<div><label class="form-label" for="ticket-filter-assignee">Assigned Employee</label><select id="ticket-filter-assignee" class="input-field"><option value="">All assignees</option></select></div>' +
+            '<div><label class="form-label" for="ticket-filter-source">Source System</label><select id="ticket-filter-source" class="input-field"><option value="">All sources</option></select></div>' +
+            '<div><label class="form-label" for="ticket-filter-sync">Sync Status</label><select id="ticket-filter-sync" class="input-field"><option value="">All sync statuses</option></select></div>' +
+            '<div><label class="form-label" for="ticket-filter-ticket-number">Ticket Number</label><input type="text" id="ticket-filter-ticket-number" class="input-field" placeholder="TKT-…" /></div>' +
+            '<div><label class="form-label" for="ticket-filter-org-number">Organization Number</label><input type="text" id="ticket-filter-org-number" class="input-field" placeholder="Org number" /></div>' +
+            '<div><label class="form-label" for="ticket-filter-mobile">Mobile Number</label><input type="text" id="ticket-filter-mobile" class="input-field" placeholder="Mobile" /></div>' +
+            '<div><label class="form-label" for="ticket-filter-customer">Customer Name</label><input type="text" id="ticket-filter-customer" class="input-field" placeholder="Customer" /></div>' +
+            '<div><label class="form-label" for="ticket-filter-created-from">Created From</label><input type="date" id="ticket-filter-created-from" class="input-field" data-crm-date-input data-allow-past /></div>' +
+            '<div><label class="form-label" for="ticket-filter-created-to">Created To</label><input type="date" id="ticket-filter-created-to" class="input-field" data-crm-date-input data-allow-past /></div>' +
+            '<div><label class="form-label" for="ticket-filter-updated-from">Updated From</label><input type="date" id="ticket-filter-updated-from" class="input-field" data-crm-date-input data-allow-past /></div>' +
+            '<div><label class="form-label" for="ticket-filter-updated-to">Updated To</label><input type="date" id="ticket-filter-updated-to" class="input-field" data-crm-date-input data-allow-past /></div>' +
+          '</div>' +
+          '<div class="flex flex-wrap gap-2">' +
+            actSecondary('Reset', 'id="ticket-filter-reset"', 'rotate-ccw') +
+            actPrimary('Apply Filters', 'id="ticket-filter-apply"', 'filter') +
+          '</div>' +
+        '</form>' +
+      '</div>';
+
+    var tableHtml = table([
+      { label: 'Serial No', colCls: 'crm-col-num', thCls: 'crm-th-num' },
+      { label: 'Ticket Number', colCls: 'crm-col-code', thCls: 'crm-th-code' },
+      { label: 'Customer Name', colCls: 'crm-col-person', thCls: 'crm-th-person' },
+      { label: 'Organization Number', colCls: 'crm-col-code', thCls: 'crm-th-code' },
+      { label: 'Organization Name', colCls: 'crm-col-firm', thCls: 'crm-th-firm' },
+      { label: 'Raised By', colCls: 'crm-col-person', thCls: 'crm-th-person' },
+      { label: 'Mobile Number', colCls: 'crm-col-mobile', thCls: 'crm-th-mobile' },
+      { label: 'Email', colCls: 'crm-col-email', thCls: 'crm-th-email' },
+      { label: 'Problem Type', colCls: 'crm-col-status', thCls: 'crm-th-status' },
+      { label: 'Description', colCls: 'crm-col-remarks', thCls: 'crm-th-remarks' },
+      { label: 'Priority', colCls: 'crm-col-status', thCls: 'crm-th-status' },
+      { label: 'Status', colCls: 'crm-col-status', thCls: 'crm-th-status' },
+      { label: 'Assigned Employee', colCls: 'crm-col-person', thCls: 'crm-th-person' },
+      { label: 'Source System', colCls: 'crm-col-source', thCls: 'crm-th-source' },
+      { label: 'Sync Status', colCls: 'crm-col-status', thCls: 'crm-th-status' },
+      { label: 'Created Date', colCls: 'crm-col-date', thCls: 'crm-th-date' },
+      { label: 'Updated Date', colCls: 'crm-col-date', thCls: 'crm-th-date' },
+      { label: 'Actions', colCls: 'crm-col-actions-wide', thCls: 'crm-th-actions', sticky: 'right' },
+    ], [], {
+      tbodyId: 'tickets-data-table',
+      tableId: 'tickets-table',
+      wrapId: 'tickets-table-wrap',
+      enterprise: true,
+      cls: 'tickets-table-card',
+      paginationId: 'tickets-pagination-slot',
+    });
+
+    return '<div class="tickets-module" id="tickets-module">' +
+      hdr('Tickets', 'Support tickets for customers and organizations.', null, headerActions) +
+      kpiHtml +
+      filtersHtml +
+      tableHtml +
+      '</div>';
+  }
+
   /* ─── Communication Hub ─── */
   function communicationPage() {
     var cards = [
@@ -1653,7 +1762,7 @@ window.CAPages = (function () {
               '<span class="communication-card__title">' + c.label + '</span>' +
               '<span class="communication-card__desc">' + c.desc + '</span>' +
             '</span>' +
-            '<span class="communication-card__action" aria-hidden="true"><i data-lucide="chevron-right"></i></span>' +
+            
           '</button>';
         }).join('') +
       '</div>' +
@@ -1728,7 +1837,7 @@ window.CAPages = (function () {
   }
 
   function notificationsPage() {
-    return hdr('Notifications', 'View alerts, reminders, and system messages.', null,
+    return hdr('Notifications', '', null,
       actSecondary('Mark All Read', 'data-action="mark-all-read"', 'check-check')) +
       tabs([{ id: 'all', label: 'All', icon: 'bell' }, { id: 'unread', label: 'Unread', count: '0', countId: 'notifications-unread-tab-count' }], 'all') +
       panel('all', true, '<div id="notifications-all-list" class="space-y-3"></div>') +
@@ -2823,6 +2932,7 @@ window.CAPages = (function () {
     'leads-segments': { title: 'Lead Management', breadcrumb: 'Leads', er: 'LEAD_ACTION', html: leadsPage() },
     assignment: { title: 'Assignment', breadcrumb: 'Assignment', er: 'LEAD_ASSIGNMENT_ENGINE', html: assignmentPage('assign') },
     followups: { title: 'Follow-ups', breadcrumb: 'Follow-ups', er: 'FOLLOW_UP_MANAGEMENT', html: followupsPage() },
+    tickets: { title: 'Tickets', breadcrumb: 'Tickets', er: 'TICKETS', html: ticketsPage() },
     'consent-dnd': { title: 'Consent & DND', breadcrumb: 'Communication / Consent & DND', er: 'CONSENT_DND', html: consentDndPage() },
     whatsapp: { title: 'Chat', breadcrumb: 'Communication / Chat', er: 'WHATSAPP_CAMPAIGN', html: whatsappPage() },
     email: { title: 'Email', breadcrumb: 'Communication / Email', er: 'EMAIL_CAMPAIGN', html: emailPage() },

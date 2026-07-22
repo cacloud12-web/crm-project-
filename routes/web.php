@@ -13,6 +13,7 @@ $crmRoutes = [
     'bulk',
     'assignment',
     'followups',
+    'tickets',
     'workflow',
     'demo-calendar',
     'sales',

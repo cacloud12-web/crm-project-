@@ -44,6 +44,11 @@
         <span class="sidebar-label">Follow-ups</span>
       </a>
 
+      <a href="#" class="nav-item" data-page="tickets">
+        <i data-lucide="ticket" class="h-5 w-5 shrink-0"></i>
+        <span class="sidebar-label">Tickets</span>
+      </a>
+
       <a href="#" class="nav-item" data-page="reports">
         <i data-lucide="file-text" class="h-5 w-5 shrink-0"></i>
         <span class="sidebar-label">Reports</span>

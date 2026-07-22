@@ -96,6 +96,41 @@ return [
         'date_column' => 'scheduled_date',
     ],
 
+    'support_tickets' => [
+        'table' => 'support_tickets',
+        'primary_key' => 'id',
+        'default_per_page' => 10,
+        'max_per_page' => 200,
+        'allowed_per_page' => [10, 25, 50, 100, 200],
+        'default_sort' => 'created_at',
+        'default_sort_dir' => 'desc',
+        'sortable' => [
+            'serial_number', 'ticket_number', 'customer_name', 'organization_number', 'organization_name',
+            'problem_type', 'priority', 'status', 'assigned_to_employee_id', 'source_system', 'sync_status',
+            'created_at', 'updated_at',
+        ],
+        'search_columns' => [
+            'ticket_number', 'customer_name', 'organization_number', 'organization_name', 'raised_by_name',
+            'mobile_number', 'email', 'problem_type', 'description',
+        ],
+        'search_relations' => [
+            'assignedTo' => ['name'],
+            'raisedByUser' => ['name', 'email'],
+        ],
+        'filters' => [
+            'status' => 'exact',
+            'priority' => 'exact',
+            'problem_type' => 'exact',
+            'organization_number' => 'exact',
+            'assigned_to_employee_id' => 'exact_int',
+            'raised_by_user_id' => 'exact_int',
+            'source_system' => 'exact',
+            'sync_status' => 'exact',
+            'serial_number' => 'exact_int',
+        ],
+        'date_column' => 'created_at',
+    ],
+
     'lead_assignments' => [
         'table' => 'lead_assignment_engines',
         'primary_key' => 'assignment_id',

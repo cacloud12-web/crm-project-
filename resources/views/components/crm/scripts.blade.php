@@ -16,6 +16,7 @@
 <script src="{{ crm_ui_asset('crm-ui/src/components/research-workspace.js') }}"></script>
 <script src="{{ crm_ui_asset('crm-ui/src/components/ocr-panel.js') }}"></script>
 <script src="{{ crm_ui_asset('crm-ui/src/components/ocr-import-page.js') }}"></script>
+<script src="{{ crm_ui_asset('crm-ui/src/components/tickets-page.js') }}"></script>
 <script>window.__CRM_DOCUMENT_AI__ = @json(['max_file_mb' => (int) config('document-ai.max_file_mb', 10)]);</script>
 <script src="{{ crm_ui_asset('crm-ui/src/api/crm.js') }}"></script>
 <script src="{{ crm_ui_asset('crm-ui/src/components/lead-picker.js') }}"></script>

@@ -59,14 +59,19 @@ class RbacPermissionSeeder extends Seeder
                     continue;
                 }
 
-                // Preserve customized grants — only seed empty roles.
-                if (DB::table('crm_role_permissions')->where('crm_role_id', $role->id)->exists()) {
-                    continue;
-                }
-
                 $rows = [];
                 $now = now();
                 $grantedPermissionIds = [];
+
+                // Preserve existing grants — only insert permissions that are not already linked.
+                $existingPermissionIds = DB::table('crm_role_permissions')
+                    ->where('crm_role_id', $role->id)
+                    ->pluck('crm_permission_id')
+                    ->map(fn ($id) => (int) $id)
+                    ->all();
+                foreach ($existingPermissionIds as $existingId) {
+                    $grantedPermissionIds[$existingId] = true;
+                }
 
                 $grant = function (int $permissionId) use (&$rows, &$grantedPermissionIds, $role, $now): void {
                     if (isset($grantedPermissionIds[$permissionId])) {
@@ -82,6 +87,19 @@ class RbacPermissionSeeder extends Seeder
                     ];
                 };
 
+                // For roles that already have grants, only backfill modules with zero grants
+                // so customized roles pick up brand-new modules (e.g. tickets) without reset.
+                $roleAlreadySeeded = $existingPermissionIds !== [];
+                $modulesWithAnyGrant = [];
+                if ($roleAlreadySeeded) {
+                    $modulesWithAnyGrant = DB::table('crm_role_permissions')
+                        ->join('crm_permissions', 'crm_permissions.id', '=', 'crm_role_permissions.crm_permission_id')
+                        ->where('crm_role_permissions.crm_role_id', $role->id)
+                        ->distinct()
+                        ->pluck('crm_permissions.module')
+                        ->all();
+                }
+
                 if (isset($roleMatrix['*']) && in_array('*', $roleMatrix['*'], true)) {
                     foreach ($permissionMap as $permission) {
                         $grant((int) $permission->id);
@@ -93,6 +111,9 @@ class RbacPermissionSeeder extends Seeder
 
                     if ($wildcardActions !== []) {
                         foreach ($modules as $module) {
+                            if ($roleAlreadySeeded && in_array($module, $modulesWithAnyGrant, true)) {
+                                continue;
+                            }
                             foreach ($wildcardActions as $action) {
                                 foreach ($normalizer->expandLegacyAction((string) $action) as $expanded) {
                                     $permission = $permissionMap->get($module.'.'.$expanded);
@@ -106,6 +127,9 @@ class RbacPermissionSeeder extends Seeder
 
                     foreach ($roleMatrix as $module => $moduleActions) {
                         if ($module === '*' || ! is_array($moduleActions)) {
+                            continue;
+                        }
+                        if ($roleAlreadySeeded && in_array($module, $modulesWithAnyGrant, true)) {
                             continue;
                         }
                         foreach ($moduleActions as $action) {

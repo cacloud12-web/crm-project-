@@ -96,6 +96,20 @@ class CaMasterColumnVisibilityTest extends TestCase
     }
 
     #[Test]
+    public function partner_count_uses_same_dataset_as_expanded_partner_rows(): void
+    {
+        $js = $this->crmJs();
+        $this->assertStringContainsString('function normalizeCaPartnerName', $js);
+        $this->assertStringContainsString('function resolveCaMasterPartnerGroups', $js);
+        $this->assertStringContainsString('var partnerGroups = resolveCaMasterPartnerGroups(l);', $js);
+        $this->assertStringContainsString('var partnerCount = partnerGroups.partnerCount;', $js);
+        $this->assertStringContainsString('var expandedPartners = partnerGroups.expandedPartners;', $js);
+        // Expanded rows must not re-list the main-row CA.
+        $this->assertStringContainsString('expandedPartners.map(function (p)', $js);
+        $this->assertStringNotContainsString('function resolveCaMasterDisplayPartners', $js);
+    }
+
+    #[Test]
     public function unknown_stored_keys_are_normalized_away(): void
     {
         $js = $this->crmJs();

@@ -223,6 +223,7 @@ window.CA_CRM = (function () {
     employees: 'Employees',
     assignment: 'Assignment',
     followups: 'Follow-ups',
+    tickets: 'Tickets',
     demo_confirmation: 'Demo Confirmation',
     bulk: 'Bulk Operations',
     campaigns: 'Campaigns',
@@ -638,7 +639,7 @@ window.CA_CRM = (function () {
   }
 
   function formatTimeAgo(value) {
-    if (!value) return '—';
+    if (!value) return '-';
     var d = new Date(value);
     if (isNaN(d.getTime())) return '—';
     var diff = Date.now() - d.getTime();
@@ -653,7 +654,7 @@ window.CA_CRM = (function () {
   }
 
   function formatActivityTimestamp(value) {
-    if (!value) return '—';
+    if (!value) return '-';
     var d = new Date(value);
     if (isNaN(d.getTime())) return '—';
     return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -2706,7 +2707,7 @@ if (otherInput) {
   }
 
   function formatRelativeDate(value) {
-    if (!value) return '—';
+    if (!value) return '-';
     var d = new Date(value);
     if (isNaN(d.getTime())) return '—';
     var now = new Date();
@@ -4274,9 +4275,9 @@ if (otherInput) {
   function mapDashboardLeadSummary(lead) {
     return {
       ca_id: String(lead.ca_id),
-      firm_name: lead.firm_name || '—',
-      ca_name: lead.ca_name || '—',
-      city: lead.city || '—',
+      firm_name: lead.firm_name || '-',
+     ca_name: lead.ca_name || '-',
+      city: lead.city || '-',
       status: lead.status || 'New',
       stage: lead.stage || mapStatusToStage(lead.status),
       executive: lead.executive || 'Unassigned',
@@ -5111,7 +5112,7 @@ if (otherInput) {
   window._leadDuplicateBlocked = false;
 
   function formatDuplicateDate(value) {
-    if (!value) return '—';
+    if (!value) return '-';
     try {
       return new Date(value).toLocaleString();
     } catch (e) {
@@ -5517,12 +5518,12 @@ if (otherInput) {
         (card.followupFilter ? ' data-followup-filter="' + card.followupFilter + '"' : '');
     var accent = card.accent || (card.key || 'default').replace(/_/g, '-');
     return '<button type="button" class="mgr-kpi-card dash-kpi-card dash-kpi-card--premium" data-accent="' + escapeHtml(accent) + '"' + attrs + ' data-kpi="' + escapeHtml(card.label) + '">' +
-      '<div class="mgr-kpi-top">' +
-        '<span class="mgr-kpi-icon"><i data-lucide="' + card.icon + '" class="h-4 w-4"></i></span>' +
-      '</div>' +
-      '<p class="mgr-kpi-value" data-metric="' + (card.key || '') + '">' + escapeHtml(String(display)) + '</p>' +
-      '<p class="mgr-kpi-label">' + escapeHtml(card.label) + '</p>' +
-    '</button>';
+  '<div class="mgr-kpi-top">' +
+    '<span class="mgr-kpi-icon"><i data-lucide="' + card.icon + '" class="h-4 w-4"></i></span>' +
+  '</div>' +
+  '<p class="mgr-kpi-value" data-metric="' + (card.key || '') + '">' + escapeHtml(String(display)) + '</p>' +
+  '<p class="mgr-kpi-label">' + escapeHtml(card.label) + '</p>' +
+'</button>';
   }
 
   function renderDashboardKpiSections(containerId, sections, resolveValue, mode) {
@@ -7806,7 +7807,7 @@ if (otherInput) {
     if (!el) return;
     var items = getDashboardPriorityLeads();
     if (!items.length) {
-      el.innerHTML = '<p class="mgr-empty">No priority items — you\'re all caught up!</p>';
+      el.innerHTML = '<p class="mgr-empty">No priority items, you\'re all caught up!</p>';
       return;
     }
     el.innerHTML = items.map(function (l) {
@@ -10116,7 +10117,7 @@ if (otherInput) {
   }
 
   function formatDailyTargetDate(value) {
-    if (!value) return '—';
+    if (!value) return '-';
     var d = new Date(String(value).slice(0, 10) + 'T12:00:00');
     if (isNaN(d.getTime())) return String(value);
     return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -11380,14 +11381,14 @@ if (otherInput) {
   }
 
   function formatDateTime(value) {
-    if (!value) return '—';
+    if (!value) return '-';
     var d = new Date(value);
     if (isNaN(d.getTime())) return value;
     return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
 
   function formatDate(value) {
-    if (!value) return '—';
+    if (!value) return '-';
     var d = new Date(value);
     if (isNaN(d.getTime())) return value;
     return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -13412,23 +13413,65 @@ if (otherInput) {
     });
   }
 
+  function normalizeCaPartnerName(name) {
+    return String(name == null ? '' : name)
+      .trim()
+      .replace(/\s+/g, ' ')
+      .toLowerCase();
+  }
+
+  /**
+   * Unique partners for a firm (normalized CA name).
+   * - partnerCount includes the main-row CA
+   * - expandedPartners excludes the main-row CA (no duplicate under expand)
+   */
+  function resolveCaMasterPartnerGroups(lead) {
+    var mainName = (lead && (lead.primary_ca_name || lead.ca_name)) || '';
+    var mainKey = normalizeCaPartnerName(mainName);
+    var partners = Array.isArray(lead && lead.partners) ? lead.partners : [];
+    var seen = Object.create(null);
+    var uniquePartners = [];
+
+    partners.forEach(function (p) {
+      var key = normalizeCaPartnerName(p && p.ca_name);
+      if (!key || seen[key]) return;
+      seen[key] = true;
+      uniquePartners.push(p);
+    });
+
+    // Main-row CA must be included in the unique count even if missing from partners[].
+    if (mainKey && !seen[mainKey]) {
+      seen[mainKey] = true;
+      uniquePartners.unshift({
+        id: null,
+        ca_name: String(mainName).trim().replace(/\s+/g, ' '),
+        mobile: lead && lead.mobile_no ? lead.mobile_no : null,
+        membership_no: lead && lead.membership_no ? lead.membership_no : null,
+      });
+    }
+
+    var expandedPartners = uniquePartners.filter(function (p) {
+      return normalizeCaPartnerName(p && p.ca_name) !== mainKey;
+    });
+
+    return {
+      uniquePartners: uniquePartners,
+      partnerCount: uniquePartners.length,
+      expandedPartners: expandedPartners,
+    };
+  }
+
   function renderCaMasterTableRow(l, tableKey) {
     var data = JSON.stringify(CAData.leadToRowData(l)).replace(/'/g, '&#39;');
     tableKey = tableKey || getCaMasterTableContext().tbodyId || 'ca-master-data-table';
-    var partners = Array.isArray(l.partners) ? l.partners : [];
-    var displayPartners = partners.filter(function (p) { return !p.is_primary; });
-    if (displayPartners.length === 0 && partners.length > 1) {
-      var primaryName = String(l.primary_ca_name || l.ca_name || '').toLowerCase().trim();
-      displayPartners = partners.filter(function (p) {
-        return String(p.ca_name || '').toLowerCase().trim() !== primaryName;
-      });
-    }
-    var partnerCount = displayPartners.length;
+    var partnerGroups = resolveCaMasterPartnerGroups(l);
+    var partnerCount = partnerGroups.partnerCount;
+    var expandedPartners = partnerGroups.expandedPartners;
     var canEdit = !l.is_read_only;
     var canAssign = canEdit && !isEmployeeUser();
     var executiveCell = renderCaMasterExecutiveCell(l, canAssign);
     var mobileCell = renderCaMasterInlineMobileCell(l, canEdit && !l.employee_cannot_edit_mobile);
-    var firmCell = renderCaMasterFirmNameCell(l, partnerCount);
+    var firmCell = renderCaMasterFirmNameCell(l, partnerCount, expandedPartners.length);
     var caCell = caNameCell(l.primary_ca_name || l.ca_name);
     var teamCell = renderCaMasterInlineTeamSizeCell(l, canEdit);
     var parentRow = '<tr class="ca-table-row cam-table-row crm-table-row cam-master-data-row" data-lead-id="' + l.ca_id + '" data-row=\'' + data + '\'>' +
@@ -13452,20 +13495,25 @@ if (otherInput) {
       withCamDataColumn('actions', renderCaMasterActionCell(l)) +
     '</tr>';
 
-    if (displayPartners.length === 0) return parentRow;
-    var childRows = displayPartners.map(function (p) {
+    if (expandedPartners.length === 0) return parentRow;
+    var childRows = expandedPartners.map(function (p) {
       return renderCaMasterPartnerChildRow(l, p, tableKey, canEdit);
     }).join('');
     return parentRow + childRows;
   }
 
-  function renderCaMasterFirmNameCell(l, partnerCount) {
+  function renderCaMasterFirmNameCell(l, partnerCount, expandableCount) {
     var name = firmNameCell(l.firm_name);
     if (partnerCount < 1) return name;
+    var toggleHtml = '';
+    if (expandableCount > 0) {
+      toggleHtml =
+        '<button type="button" class="cam-partner-toggle" data-cam-partner-toggle="' + escapeHtml(String(l.ca_id)) + '" aria-expanded="false" title="Show partners">' +
+          '<i data-lucide="chevron-right" class="h-3.5 w-3.5"></i>' +
+        '</button>';
+    }
     return '<div class="cam-firm-with-partners">' +
-      '<button type="button" class="cam-partner-toggle" data-cam-partner-toggle="' + escapeHtml(String(l.ca_id)) + '" aria-expanded="false" title="Show partners">' +
-        '<i data-lucide="chevron-right" class="h-3.5 w-3.5"></i>' +
-      '</button>' +
+      toggleHtml +
       '<div class="cam-firm-with-partners__body">' + name +
         '<span class="cam-partner-meta">' + partnerCount + (partnerCount === 1 ? ' Partner' : ' Partners') + '</span>' +
       '</div></div>';
@@ -18909,6 +18957,13 @@ if (otherInput) {
       icons();
       return;
     }
+    if (pageId === 'tickets') {
+      if (window.CA_TICKETS && typeof window.CA_TICKETS.init === 'function') {
+        window.CA_TICKETS.init();
+      }
+      icons();
+      return;
+    }
     if (pageId === 'ca-master' || pageId === 'bulk' || pageId === 'ocr-import') {
       if (pageId === 'bulk' || pageId === 'ca-master' || pageId === 'ocr-import') window._leadSegmentFilter = 'all';
       var camHubEarly = document.getElementById('cam-hub');
@@ -21073,7 +21128,7 @@ if (otherInput) {
   };
 
   function formatBulkImportDate(value) {
-    if (!value) return '—';
+    if (!value) return '-';
     var date = new Date(value);
     if (isNaN(date.getTime())) return String(value);
     return date.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -21483,7 +21538,7 @@ if (otherInput) {
   }
 
   function formatDbHealthDate(value) {
-    if (!value) return '—';
+    if (!value) return '-';
     var date = new Date(value);
     if (isNaN(date.getTime())) return String(value);
     return date.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });

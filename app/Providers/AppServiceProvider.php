@@ -32,6 +32,16 @@ class AppServiceProvider extends ServiceProvider
             \App\Contracts\Ocr\OcrProcessorInterface::class,
             \App\Services\Ocr\GoogleDocumentAiService::class,
         );
+
+        $this->app->bind(
+            \App\Contracts\Ticket\OrganizationLookupServiceInterface::class,
+            \App\Services\Ticket\Integration\CaCloudDeskOrganizationLookupService::class,
+        );
+
+        $this->app->bind(
+            \App\Contracts\Ticket\OrganizationLookupRemoteClientInterface::class,
+            \App\Services\Ticket\Integration\CaCloudDeskHttpClient::class,
+        );
     }
 
     /**
@@ -44,6 +54,7 @@ class AppServiceProvider extends ServiceProvider
         $this->registerUsersTableSchemaGuard();
         Gate::policy(CaMaster::class, CaMasterPolicy::class);
         Gate::policy(\App\Models\OcrDocument::class, \App\Policies\OcrDocumentPolicy::class);
+        Gate::policy(\App\Models\SupportTicket::class, \App\Policies\SupportTicketPolicy::class);
         Event::listen(LeadSaved::class, RefreshEmployeeProductivityOnLeadSaved::class);
         Event::listen(
             \Illuminate\Console\Events\CommandStarting::class,
@@ -176,6 +187,8 @@ class AppServiceProvider extends ServiceProvider
         $this->registerUserActionLimiter('lead-action', 'lead_action');
         $this->registerUserActionLimiter('presence-heartbeat', 'presence_heartbeat');
         $this->registerUserActionLimiter('ocr-upload', 'ocr_upload');
+        $this->registerUserActionLimiter('ticket-action', 'ticket_action');
+        $this->registerUserActionLimiter('ticket-upload', 'ticket_upload');
     }
 
     private function registerUserActionLimiter(string $name, string $configKey): void

@@ -106,7 +106,13 @@ trait PreparesCrmDatabase
 
         $admin = CrmTestAccounts::admin();
         $rbac = app(RbacService::class);
-        if ($rbac->can($admin, 'dashboard', 'view') && $rbac->can($admin, 'ca_master', 'create')) {
+        $needsReseed = ! (
+            $rbac->can($admin, 'dashboard', 'view')
+            && $rbac->can($admin, 'ca_master', 'create')
+            && $rbac->can($admin, 'tickets', 'view')
+        );
+
+        if (! $needsReseed) {
             return;
         }
 

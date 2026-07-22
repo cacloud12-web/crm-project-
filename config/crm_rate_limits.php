@@ -38,4 +38,14 @@ return [
         'decay_minutes' => (int) env('CRM_RATE_OCR_UPLOAD_DECAY', 1),
     ],
 
+    'ticket_action' => [
+        'max_attempts' => (int) env('CRM_RATE_TICKET_ACTION_MAX', 30),
+        'decay_minutes' => (int) env('CRM_RATE_TICKET_ACTION_DECAY', 1),
+    ],
+
+    'ticket_upload' => [
+        'max_attempts' => (int) env('CRM_RATE_TICKET_UPLOAD_MAX', 10),
+        'decay_minutes' => (int) env('CRM_RATE_TICKET_UPLOAD_DECAY', 1),
+    ],
+
 ];

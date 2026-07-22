@@ -768,6 +768,103 @@
     </div>
   </div>
 
+  <!-- Create Ticket Modal — TICKETS -->
+  <div id="modal-ticket" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="ticket-create-title">
+    <div class="ca-modal-panel ca-modal-panel-lg">
+      <div class="ca-modal-header">
+        <h3 id="ticket-create-title" class="ca-modal-title">
+          <span class="ca-modal-icon"><i data-lucide="ticket" class="h-5 w-5"></i></span>
+          Create Ticket
+        </h3>
+        <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
+      </div>
+      <form id="form-ticket-create" class="ca-modal-body space-y-4">
+        <div class="grid md:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label" for="ticket-create-customer">Customer Name <span class="text-rose-600">*</span></label>
+            <input type="text" id="ticket-create-customer" class="input-field" required autocomplete="name" />
+          </div>
+          <div>
+            <label class="form-label" for="ticket-create-mobile">Mobile Number <span class="text-rose-600">*</span></label>
+            <div class="flex gap-2">
+              <input type="tel" id="ticket-create-mobile" class="input-field flex-1" required autocomplete="tel" />
+              <button type="button" class="btn-secondary shrink-0" id="ticket-org-search-btn">
+                <i data-lucide="search" class="h-4 w-4"></i> Search Organization
+              </button>
+            </div>
+            <p id="ticket-org-lookup-message" class="text-caption text-slate-500 mt-1" role="status"></p>
+          </div>
+        </div>
+
+        <div>
+          <label class="form-label" for="ticket-create-org-select">Organization</label>
+          <div class="flex gap-2">
+            <select id="ticket-create-org-select" class="input-field flex-1">
+              <option value="">Search organizations first</option>
+            </select>
+            <button type="button" class="btn-secondary shrink-0" id="ticket-org-verify-btn" disabled>
+              <i data-lucide="shield-check" class="h-4 w-4"></i> Verify Organization
+            </button>
+          </div>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label" for="ticket-create-org-number">Organization Number</label>
+            <input type="text" id="ticket-create-org-number" class="input-field bg-slate-50" readonly tabindex="-1" aria-readonly="true" />
+          </div>
+          <div>
+            <label class="form-label" for="ticket-create-org-name">Organization Name</label>
+            <input type="text" id="ticket-create-org-name" class="input-field bg-slate-50" readonly tabindex="-1" aria-readonly="true" />
+          </div>
+        </div>
+
+        <div>
+          <label class="form-label" for="ticket-create-email">Verified Email</label>
+          <input type="email" id="ticket-create-email" class="input-field bg-slate-50" readonly tabindex="-1" aria-readonly="true" placeholder="Appears after organization verification" />
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label" for="ticket-create-problem-type">Problem Type <span class="text-rose-600">*</span></label>
+            <select id="ticket-create-problem-type" class="input-field" required>
+              <option value="">Select problem type</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label" for="ticket-create-priority">Priority</label>
+            <select id="ticket-create-priority" class="input-field"></select>
+          </div>
+        </div>
+
+        <div>
+          <label class="form-label" for="ticket-create-description">Description <span class="text-rose-600">*</span></label>
+          <textarea id="ticket-create-description" class="input-field" rows="4" required placeholder="Describe the issue or request…"></textarea>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label" for="ticket-create-assignee">Assigned Employee</label>
+            <select id="ticket-create-assignee" class="input-field">
+              <option value="">Assign to…</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label" for="ticket-create-attachment">Attachment</label>
+            <input type="file" id="ticket-create-attachment" class="input-field" />
+          </div>
+        </div>
+      </form>
+      <div class="ca-modal-footer">
+        <div class="ca-modal-footer-buttons">
+          <button type="button" class="btn-secondary" data-close-crm-modal>Cancel</button>
+          <button type="button" class="btn-secondary" id="ticket-create-reset">Reset</button>
+          <button type="submit" form="form-ticket-create" class="btn-primary flex-1" id="ticket-create-submit" disabled>Create Ticket</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Follow-up Modal — FOLLOW_UP_MANAGEMENT -->
   <div id="modal-followup" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="followup-title">
     <div class="ca-modal-panel ca-modal-panel-lg">

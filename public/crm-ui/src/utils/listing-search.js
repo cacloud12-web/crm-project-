@@ -25,6 +25,7 @@
     email_logs: { endpoint: '/email-logs', tableId: 'email-logs-table' },
     sms_logs: { endpoint: '/sms-logs', tableId: 'sms-logs-table' },
     sales_list: { endpoint: '/sales-list', tableId: 'sales-list-data-table' },
+    support_tickets: { endpoint: '/tickets', tableId: 'tickets-data-table' },
     bulk_operations: { endpoint: '/ca-masters/bulk-operations/history', tableId: 'bulk-actions-data-table' },
   };
 
