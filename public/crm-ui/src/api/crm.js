@@ -19099,6 +19099,11 @@ if (otherInput) {
       icons();
       return;
     }
+    if (pageId === 'employee-imports' || document.getElementById('employee-imports-data-table')) {
+      initEmployeeImportsPage();
+      icons();
+      return;
+    }
     if (pageId === 'activity' || document.getElementById('activity-logs-table')) {
       initActivityLogsPage();
       icons();
@@ -24759,6 +24764,724 @@ if (otherInput) {
         return null;
       });
   }
+  /* ─── Employee Imports ─── */
+
+  var employeeImportsState = {
+    status: '',
+    employee: '',
+    search: '',
+    page: 1,
+    perPage: 25,
+    loading: false,
+    total: 0,
+    lastPage: 1,
+  };
+
+  var employeeImportReviewState = {
+    rowId: null,
+    row: null,
+    candidates: [],
+    selected: null,
+    searchPage: 1,
+  };
+
+  var employeeImportsPaginationRegistered = false;
+  var employeeImportsSearchTimer = null;
+
+  function canDecideEmployeeImports() {
+    return crmCanAction('ca_master', 'edit');
+  }
+
+  function setEmployeeImportText(id, value) {
+    var element = document.getElementById(id);
+    if (element) {
+      element.textContent = value === null || value === undefined ? '0' : String(value);
+    }
+  }
+
+  function employeeImportStatusBadge(status) {
+    var map = {
+      matched: 'bg-emerald-50 text-emerald-700',
+      needs_review: 'bg-amber-50 text-amber-800',
+      unmatched: 'bg-rose-50 text-rose-700',
+      ignored: 'bg-slate-100 text-slate-600',
+      pending: 'bg-slate-100 text-slate-700',
+    };
+    var label = String(status || 'pending').replace(/_/g, ' ');
+    return '<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ' +
+      (map[status] || map.pending) + '">' + escapeHtml(label) + '</span>';
+  }
+
+  function populateEmployeeImportsEmployeeFilter(employees) {
+    var select = document.getElementById('employee-imports-employee-filter');
+    if (!select) return;
+    var currentValue = select.value || employeeImportsState.employee || '';
+    select.innerHTML =
+      '<option value="">All Employees</option>' +
+      (Array.isArray(employees) ? employees : []).map(function (employee) {
+        var value = String(employee || '').trim();
+        if (!value) return '';
+        return '<option value="' + escapeHtml(value) + '">' + escapeHtml(value) + '</option>';
+      }).join('');
+    if (currentValue) select.value = currentValue;
+  }
+
+  function syncEmployeeImportStatusCards() {
+    document.querySelectorAll('.employee-import-status-card').forEach(function (card) {
+      var status = card.getAttribute('data-employee-import-status') || '';
+      card.classList.toggle('is-active', status === (employeeImportsState.status || ''));
+    });
+  }
+
+  function loadEmployeeImportsSummary() {
+    return apiFetch('/employee-imports/summary')
+      .then(function (body) {
+        var summary = body && body.data ? body.data : {};
+        setEmployeeImportText('employee-import-total-count', summary.total || 0);
+        setEmployeeImportText('employee-import-matched-count', summary.matched || 0);
+        setEmployeeImportText('employee-import-review-count', summary.needs_review || 0);
+        setEmployeeImportText('employee-import-unmatched-count', summary.unmatched || 0);
+        setEmployeeImportText('employee-import-ignored-count', summary.ignored || 0);
+        populateEmployeeImportsEmployeeFilter(summary.employees || []);
+        return summary;
+      })
+      .catch(function (error) {
+        setEmployeeImportText('employee-import-total-count', 0);
+        setEmployeeImportText('employee-import-matched-count', 0);
+        setEmployeeImportText('employee-import-review-count', 0);
+        setEmployeeImportText('employee-import-unmatched-count', 0);
+        setEmployeeImportText('employee-import-ignored-count', 0);
+        toast(error && error.message ? error.message : 'Unable to load employee import summary.', 'error');
+        throw error;
+      });
+  }
+
+  function registerEmployeeImportsPagination() {
+    if (employeeImportsPaginationRegistered || !window.CATablePagination) return;
+    employeeImportsPaginationRegistered = true;
+    CATablePagination.register('employee-imports', {
+      onPageChange: function (page) {
+        if (employeeImportsState.loading) return;
+        employeeImportsState.page = Math.max(1, parseInt(page, 10) || 1);
+        loadEmployeeImportsList();
+      },
+      onPerPageChange: function (perPage) {
+        if (employeeImportsState.loading) return;
+        employeeImportsState.perPage = Math.max(10, Math.min(100, parseInt(perPage, 10) || 25));
+        employeeImportsState.page = 1;
+        loadEmployeeImportsList();
+      },
+    });
+  }
+
+  function renderEmployeeImportsPagination() {
+    var slot = document.getElementById('employee-imports-pagination-slot');
+    if (!slot || !window.CATablePagination) return;
+    if (!employeeImportsState.total) {
+      slot.innerHTML = '';
+      slot.classList.add('crm-table-footer--empty');
+      return;
+    }
+    slot.classList.remove('crm-table-footer--empty');
+    CATablePagination.renderInto(slot, {
+      scope: 'employee-imports',
+      pagination: {
+        current_page: employeeImportsState.page,
+        last_page: employeeImportsState.lastPage,
+        per_page: employeeImportsState.perPage,
+        total: employeeImportsState.total,
+        from: employeeImportsState.total
+          ? ((employeeImportsState.page - 1) * employeeImportsState.perPage) + 1
+          : 0,
+        to: Math.min(employeeImportsState.page * employeeImportsState.perPage, employeeImportsState.total),
+      },
+      perPage: employeeImportsState.perPage,
+      perPageOptions: [10, 25, 50, 100],
+      showPerPage: true,
+    });
+    if (typeof iconsIn === 'function') iconsIn(slot);
+  }
+
+  function renderEmployeeImportsTable(items) {
+    var el = document.getElementById('employee-imports-data-table');
+    if (!el) return;
+    items = items || [];
+    if (!items.length) {
+      el.innerHTML = '<tr><td colspan="12" class="py-8 text-center text-slate-500">No employee import rows for this filter.</td></tr>';
+      return;
+    }
+    var canDecide = canDecideEmployeeImports();
+    el.innerHTML = items.map(function (row) {
+      var remarks = [row.remarks_1, row.remarks_2].filter(Boolean).join(' · ') || '—';
+      var mapped = row.mapped_to || row.matched_ca || null;
+      var mappedHtml = '—';
+      if (mapped && (mapped.ca_id || mapped.reference_firm_id || mapped.firm_name)) {
+        var mappedLines = [];
+        if (mapped.reference_firm_id != null) mappedLines.push('Ref #' + mapped.reference_firm_id);
+        else if (mapped.ca_id != null) mappedLines.push('CA #' + mapped.ca_id);
+        if (mapped.firm_name) mappedLines.push(mapped.firm_name);
+        if (mapped.ca_name) mappedLines.push(mapped.ca_name);
+        if (mapped.city_name) mappedLines.push(mapped.city_name);
+        mappedHtml = '<div class="ei-mapped-to">' +
+          '<div class="ei-mapped-to__text" title="' + escapeHtml(mappedLines.join(' · ')) + '">' +
+            escapeHtml(mappedLines.join(' · ') || '—') +
+          '</div>' +
+          (mapped.ca_id
+            ? '<button type="button" class="btn-secondary btn-sm mt-1" data-ei-open-mapped="' +
+              escapeHtml(String(mapped.ca_id)) + '">View Mapped CA</button>'
+            : '') +
+        '</div>';
+      }
+      var reviewBtn = canDecide
+        ? '<button type="button" class="btn-secondary btn-sm" data-ei-review="' + escapeHtml(String(row.id)) + '">Review</button>'
+        : '<button type="button" class="btn-secondary btn-sm" data-ei-review="' + escapeHtml(String(row.id)) + '">View</button>';
+      return '<tr class="ca-table-row crm-table-row" data-ei-id="' + escapeHtml(String(row.id)) + '">' +
+        '<td class="crm-td-date">' + escapeHtml(row.call_date || '—') + '</td>' +
+        '<td class="crm-td-person">' + escapeHtml(row.employee_name || '—') + '</td>' +
+        '<td class="crm-td-person">' + escapeHtml(row.ca_name || '—') + '</td>' +
+        '<td class="crm-td-firm">' + escapeHtml(row.firm_name || '—') + '</td>' +
+        '<td class="crm-td-geo">' + escapeHtml(row.city_name || '—') + '</td>' +
+        '<td class="crm-td-mobile">' + escapeHtml(row.mobile_no || '—') + '</td>' +
+        '<td class="max-w-[180px] truncate" title="' + escapeHtml(remarks) + '">' + escapeHtml(remarks) + '</td>' +
+        '<td class="max-w-[160px] truncate text-caption" title="' + escapeHtml(row.review_reason || '') + '">' +
+          escapeHtml(row.review_reason || '—') + '</td>' +
+        '<td class="crm-td-num">' + escapeHtml(String(row.candidate_count != null ? row.candidate_count : 0)) + '</td>' +
+        '<td>' + employeeImportStatusBadge(row.mapping_status) + '</td>' +
+        '<td class="ei-mapped-to-cell">' + mappedHtml + '</td>' +
+        '<td class="sticky-right crm-td-actions">' + reviewBtn + '</td>' +
+      '</tr>';
+    }).join('');
+    if (typeof icons === 'function') icons();
+  }
+
+  function loadEmployeeImportsList() {
+    var tbody = document.getElementById('employee-imports-data-table');
+    if (!tbody) return Promise.resolve(null);
+    if (employeeImportsState.loading) return Promise.resolve(null);
+    employeeImportsState.loading = true;
+    tbody.innerHTML = '<tr><td colspan="12" class="py-8 text-center text-slate-500">Loading employee imports…</td></tr>';
+
+    var params = new URLSearchParams();
+    params.set('page', String(employeeImportsState.page || 1));
+    params.set('per_page', String(employeeImportsState.perPage || 25));
+    if (employeeImportsState.status) params.set('status', employeeImportsState.status);
+    if (employeeImportsState.employee) params.set('employee', employeeImportsState.employee);
+    if (employeeImportsState.search) params.set('search', employeeImportsState.search);
+
+    return apiFetch('/employee-imports/data?' + params.toString())
+      .then(function (body) {
+        var payload = body && body.data ? body.data : {};
+        var items = Array.isArray(payload.data) ? payload.data : [];
+        var pagination = payload.pagination || {};
+        employeeImportsState.page = pagination.current_page || employeeImportsState.page;
+        employeeImportsState.lastPage = pagination.last_page || 1;
+        employeeImportsState.perPage = pagination.per_page || employeeImportsState.perPage;
+        employeeImportsState.total = pagination.total || 0;
+        renderEmployeeImportsTable(items);
+        renderEmployeeImportsPagination();
+        return items;
+      })
+      .catch(function (error) {
+        tbody.innerHTML = '<tr><td colspan="12" class="py-8 text-center text-rose-600">Unable to load employee imports.</td></tr>';
+        toast(error && error.message ? error.message : 'Unable to load employee imports.', 'error');
+        return null;
+      })
+      .finally(function () {
+        employeeImportsState.loading = false;
+      });
+  }
+
+  function refreshEmployeeImportsPage() {
+    return loadEmployeeImportsSummary().then(function () {
+      return loadEmployeeImportsList();
+    });
+  }
+
+  function eiDlRow(label, value, tone) {
+    var toneClass = tone === 'matched' ? ' ei-field--matched' : (tone === 'different' || tone === 'formatting' ? ' ei-field--different' : '');
+    return '<div class="ei-field-row' + toneClass + '"><dt>' + escapeHtml(label) +
+      '</dt><dd>' + escapeHtml(value || '—') + '</dd></div>';
+  }
+
+  function eiFieldTone(candidate, key) {
+    var labels = (candidate && candidate.comparison_labels) || [];
+    for (var i = 0; i < labels.length; i++) {
+      if (labels[i].key === key) return labels[i].status;
+    }
+    if (candidate && (candidate.matched_fields || candidate.exact_fields || []).indexOf(key) >= 0) return 'matched';
+    if (candidate && (candidate.different_fields || []).indexOf(key) >= 0) return 'different';
+    return '';
+  }
+
+  function renderEmployeeImportReviewLeft(row, candidate) {
+    var left = document.getElementById('ei-review-left');
+    if (!left || !row) return;
+    left.innerHTML =
+      eiDlRow('Employee Name', row.employee_name) +
+      eiDlRow('CA Name', row.ca_name, eiFieldTone(candidate, 'ca_name')) +
+      eiDlRow('Firm Name', row.firm_name, eiFieldTone(candidate, 'firm_name')) +
+      eiDlRow('City', row.city_name, eiFieldTone(candidate, 'city')) +
+      eiDlRow('Mobile', row.mobile_no, eiFieldTone(candidate, 'mobile')) +
+      eiDlRow('Alternate Mobile', row.alternate_mobile_no) +
+      eiDlRow('Call Date', row.call_date) +
+      eiDlRow('Remarks 1', row.remarks_1) +
+      eiDlRow('Remarks 2', row.remarks_2) +
+      eiDlRow('Source File', row.source_file_name) +
+      eiDlRow('Source Row Number', row.source_row_number != null ? String(row.source_row_number) : null);
+  }
+
+  function renderEmployeeImportReviewRight(candidate) {
+    var right = document.getElementById('ei-review-right');
+    var badge = document.getElementById('ei-confidence-badge');
+    if (!right) return;
+    if (!candidate) {
+      right.innerHTML = '<p class="text-caption text-slate-500">Select a candidate to compare.</p>';
+      if (badge) {
+        badge.hidden = true;
+        badge.textContent = '—';
+      }
+      renderEmployeeImportFieldComparison(null);
+      return;
+    }
+    var confidence = candidate.confidence_percent != null
+      ? candidate.confidence_percent
+      : (candidate.match_score != null && Number(candidate.match_score) <= 1
+        ? Math.round(Number(candidate.match_score) * 100)
+        : candidate.match_score);
+    if (badge) {
+      badge.hidden = false;
+      badge.textContent = confidence != null ? (String(confidence) + '%') : '—';
+    }
+    right.innerHTML =
+      eiDlRow('Reference ID', candidate.reference_firm_id != null ? String(candidate.reference_firm_id) : null) +
+      eiDlRow('CA Name', candidate.ca_name, eiFieldTone(candidate, 'ca_name')) +
+      eiDlRow('Firm Name', candidate.firm_name, eiFieldTone(candidate, 'firm_name')) +
+      eiDlRow('City', candidate.city, eiFieldTone(candidate, 'city')) +
+      eiDlRow('FRN', candidate.frn) +
+      eiDlRow('Membership Number', candidate.membership_number) +
+      eiDlRow('Partner Count', candidate.partner_count != null ? String(candidate.partner_count) : null) +
+      eiDlRow('Address', candidate.address) +
+      eiDlRow('State', candidate.state) +
+      eiDlRow('PIN', candidate.pin) +
+      eiDlRow('Source OCR File', candidate.source_ocr_file) +
+      eiDlRow('Canonical CA ID', candidate.ca_id != null ? String(candidate.ca_id) : null) +
+      eiDlRow('Confidence Score', confidence != null ? (String(confidence) + '%') : null) +
+      eiDlRow('Match Reason', candidate.match_reason);
+    renderEmployeeImportFieldComparison(candidate);
+  }
+
+  function renderEmployeeImportFieldComparison(candidate) {
+    var matchedEl = document.getElementById('ei-matched-fields');
+    var differentEl = document.getElementById('ei-different-fields');
+    var confidenceEl = document.getElementById('ei-compare-confidence');
+    if (!matchedEl || !differentEl) return;
+
+    if (!candidate) {
+      matchedEl.innerHTML = '<span class="ei-chip ei-chip--muted">No candidate selected</span>';
+      differentEl.innerHTML = '<span class="ei-chip ei-chip--muted">—</span>';
+      if (confidenceEl) confidenceEl.textContent = 'Confidence —';
+      return;
+    }
+
+    var labels = candidate.comparison_labels || [];
+    var matched = [];
+    var different = [];
+    labels.forEach(function (item) {
+      if (item.status === 'matched') matched.push(item);
+      else if (item.status === 'different' || item.status === 'formatting') different.push(item);
+    });
+    if (!labels.length) {
+      (candidate.matched_fields || candidate.exact_fields || []).forEach(function (key) {
+        matched.push({ key: key, label: key.replace(/_/g, ' '), status: 'matched' });
+      });
+      (candidate.different_fields || []).forEach(function (key) {
+        different.push({
+          key: key,
+          label: key === 'firm_name' ? 'Firm formatting' : key.replace(/_/g, ' '),
+          status: key === 'firm_name' ? 'formatting' : 'different',
+        });
+      });
+    }
+
+    matchedEl.innerHTML = matched.length
+      ? matched.map(function (item) {
+        return '<span class="ei-chip ei-chip--matched">✔ ' + escapeHtml(item.label || item.key) + '</span>';
+      }).join('')
+      : '<span class="ei-chip ei-chip--muted">None</span>';
+
+    differentEl.innerHTML = different.length
+      ? different.map(function (item) {
+        var label = item.status === 'formatting' && item.key === 'firm_name'
+          ? 'Firm formatting'
+          : (item.label || item.key);
+        return '<span class="ei-chip ei-chip--different">⚠ ' + escapeHtml(label) + '</span>';
+      }).join('')
+      : '<span class="ei-chip ei-chip--muted">None</span>';
+
+    var confidence = candidate.confidence_percent != null
+      ? Number(candidate.confidence_percent)
+      : (candidate.match_score != null
+        ? (Number(candidate.match_score) <= 1 ? Math.round(Number(candidate.match_score) * 100) : Math.round(Number(candidate.match_score)))
+        : null);
+    if (confidenceEl) {
+      confidenceEl.textContent = confidence != null ? ('Confidence ' + confidence + '%') : 'Confidence —';
+    }
+  }
+
+  function candidateKey(c) {
+    return (c.ca_id != null ? 'ca:' + c.ca_id : '') + '|' +
+      (c.reference_firm_id != null ? 'ref:' + c.reference_firm_id : '');
+  }
+
+  function renderEmployeeImportCandidates(candidates) {
+    var box = document.getElementById('ei-review-candidates');
+    if (!box) return;
+    candidates = candidates || [];
+    if (!candidates.length) {
+      box.innerHTML = '<p class="text-caption text-slate-500">No ranked candidates. Use Search Another CA.</p>';
+      return;
+    }
+    var selectedKey = employeeImportReviewState.selected
+      ? candidateKey(employeeImportReviewState.selected)
+      : '';
+    box.innerHTML = candidates.map(function (c, idx) {
+      var key = candidateKey(c);
+      var active = key === selectedKey || (!selectedKey && idx === 0);
+      var confidence = c.confidence_percent != null ? c.confidence_percent : c.match_score;
+      return '<button type="button" class="ei-candidate-item' + (active ? ' is-active' : '') +
+        '" data-ei-candidate="' + escapeHtml(String(idx)) + '">' +
+        '<div class="ei-candidate-item__rank">#' + (idx + 1) + '</div>' +
+        '<div class="ei-candidate-item__body">' +
+          '<div class="font-medium text-slate-900">' + escapeHtml(c.firm_name || '—') + '</div>' +
+          '<div class="text-caption text-slate-600">' + escapeHtml(c.ca_name || '—') +
+          ' · ' + escapeHtml(c.city || '—') + '</div>' +
+          '<div class="text-caption text-slate-500">' +
+            (c.reference_firm_id != null ? ('Ref #' + escapeHtml(String(c.reference_firm_id)) + ' · ') : '') +
+            'Confidence ' + escapeHtml(confidence != null ? String(confidence) + (Number(confidence) <= 1 ? '' : '%') : '—') +
+          '</div>' +
+        '</div>' +
+      '</button>';
+    }).join('');
+  }
+
+  function selectEmployeeImportCandidate(candidate) {
+    if (candidate && employeeImportReviewState.row) {
+      candidate = ensureEmployeeImportComparison(candidate, employeeImportReviewState.row);
+    }
+    employeeImportReviewState.selected = candidate || null;
+    renderEmployeeImportCandidates(employeeImportReviewState.candidates);
+    renderEmployeeImportReviewLeft(employeeImportReviewState.row, candidate);
+    renderEmployeeImportReviewRight(candidate);
+  }
+
+  function ensureEmployeeImportComparison(candidate, row) {
+    if (!candidate || !row) return candidate;
+    if (Array.isArray(candidate.comparison_labels) && candidate.comparison_labels.length) return candidate;
+    var labels = [
+      { key: 'ca_name', label: 'CA Name', sales: row.ca_name, ref: candidate.ca_name },
+      { key: 'firm_name', label: 'Firm Name', sales: row.firm_name, ref: candidate.firm_name },
+      { key: 'city', label: 'City', sales: row.city_name, ref: candidate.city },
+      { key: 'mobile', label: 'Mobile Number', sales: row.mobile_no, ref: candidate.mobile },
+    ].map(function (item) {
+      var sales = String(item.sales || '').trim().toUpperCase();
+      var ref = String(item.ref || '').trim().toUpperCase();
+      var status = 'missing';
+      if (sales && ref) status = sales === ref ? 'matched' : (item.key === 'firm_name' ? 'formatting' : 'different');
+      else if (sales || ref) status = 'different';
+      return { key: item.key, label: item.label, status: status };
+    });
+    candidate.comparison_labels = labels;
+    candidate.matched_fields = labels.filter(function (l) { return l.status === 'matched'; }).map(function (l) { return l.key; });
+    candidate.different_fields = labels.filter(function (l) { return l.status === 'different' || l.status === 'formatting'; }).map(function (l) { return l.key; });
+    return candidate;
+  }
+
+  function openMappedEmployeeImportCa(caId) {
+    if (!caId) return;
+    apiFetch('/ca-masters/' + encodeURIComponent(caId))
+      .then(function (body) {
+        var lead = body && body.data ? body.data : null;
+        if (!lead) {
+          toast('Mapped CA not found.', 'error');
+          return;
+        }
+        if (typeof navigateTo === 'function') navigateTo('ca-master');
+        if (typeof openLeadDrawer === 'function') openLeadDrawer(lead);
+        else if (typeof openLeadFormForEdit === 'function') openLeadFormForEdit(caId);
+      })
+      .catch(function (error) {
+        toast(error && error.message ? error.message : 'Unable to open mapped CA.', 'error');
+      });
+  }
+
+  function openEmployeeImportReview(rowId) {
+    var modal = document.getElementById('modal-employee-import-review');
+    if (!modal || !rowId) return;
+    employeeImportReviewState.rowId = rowId;
+    employeeImportReviewState.row = null;
+    employeeImportReviewState.candidates = [];
+    employeeImportReviewState.selected = null;
+    employeeImportReviewState.searchPage = 1;
+
+    var idInput = document.getElementById('ei-review-row-id');
+    if (idInput) idInput.value = String(rowId);
+    var reasonInput = document.getElementById('ei-review-reason');
+    if (reasonInput) reasonInput.value = '';
+    var searchResults = document.getElementById('ei-search-results');
+    if (searchResults) searchResults.innerHTML = '';
+    var searchPag = document.getElementById('ei-search-pagination');
+    if (searchPag) searchPag.textContent = '';
+
+    var canDecide = canDecideEmployeeImports();
+    ['ei-btn-confirm', 'ei-btn-unmatched', 'ei-btn-ignore'].forEach(function (id) {
+      var btn = document.getElementById(id);
+      if (btn) btn.classList.toggle('hidden', !canDecide);
+    });
+
+    openModal(modal);
+    renderEmployeeImportReviewLeft({ employee_name: 'Loading…' }, null);
+    renderEmployeeImportCandidates([]);
+    renderEmployeeImportReviewRight(null);
+
+    apiFetch('/employee-imports/' + encodeURIComponent(rowId) + '/candidates')
+      .then(function (body) {
+        var data = body && body.data ? body.data : {};
+        employeeImportReviewState.row = data.row || null;
+        employeeImportReviewState.candidates = Array.isArray(data.candidates) ? data.candidates : [];
+        if (employeeImportReviewState.candidates.length) {
+          selectEmployeeImportCandidate(employeeImportReviewState.candidates[0]);
+        } else {
+          renderEmployeeImportReviewLeft(employeeImportReviewState.row, null);
+          renderEmployeeImportCandidates([]);
+          renderEmployeeImportReviewRight(null);
+        }
+      })
+      .catch(function (error) {
+        toast(error && error.message ? error.message : 'Unable to load candidates.', 'error');
+      });
+  }
+
+  function renderEmployeeImportSearchResults(items, pagination) {
+    var box = document.getElementById('ei-search-results');
+    var pag = document.getElementById('ei-search-pagination');
+    if (!box) return;
+    items = items || [];
+    if (!items.length) {
+      box.innerHTML = '<p class="text-caption text-slate-500">No CA Reference results.</p>';
+      if (pag) pag.textContent = '';
+      return;
+    }
+    box.innerHTML = items.map(function (c, idx) {
+      return '<button type="button" class="w-full text-left rounded-lg border border-slate-200 px-3 py-2 text-sm hover:border-teal-400" data-ei-search-pick="' +
+        escapeHtml(String(idx)) + '">' +
+        '<div class="font-medium">' + escapeHtml(c.firm_name || '—') + '</div>' +
+        '<div class="text-caption text-slate-600">' + escapeHtml(c.ca_name || '—') +
+        ' · ' + escapeHtml(c.city || '—') +
+        (c.ca_id != null ? ' · CA #' + escapeHtml(String(c.ca_id)) : '') +
+        (c.reference_firm_id != null ? ' · Ref #' + escapeHtml(String(c.reference_firm_id)) : '') +
+        '</div></button>';
+    }).join('');
+    box._eiSearchItems = items;
+    if (pag && pagination) {
+      pag.textContent = 'Page ' + (pagination.current_page || 1) + ' of ' + (pagination.last_page || 1) +
+        ' · ' + (pagination.total || 0) + ' results';
+    }
+  }
+
+  function searchEmployeeImportReference(page) {
+    var firm = (document.getElementById('ei-search-firm') || {}).value || '';
+    var ca = (document.getElementById('ei-search-ca') || {}).value || '';
+    var city = (document.getElementById('ei-search-city') || {}).value || '';
+    employeeImportReviewState.searchPage = page || 1;
+    var params = new URLSearchParams();
+    if (firm.trim()) params.set('firm', firm.trim());
+    if (ca.trim()) params.set('ca', ca.trim());
+    if (city.trim()) params.set('city', city.trim());
+    params.set('page', String(employeeImportReviewState.searchPage));
+    params.set('per_page', '20');
+    return apiFetch('/employee-imports/reference-search?' + params.toString())
+      .then(function (body) {
+        var data = body && body.data ? body.data : {};
+        renderEmployeeImportSearchResults(data.items || [], data.pagination || {});
+      })
+      .catch(function (error) {
+        toast(error && error.message ? error.message : 'Reference search failed.', 'error');
+      });
+  }
+
+  function employeeImportDecisionReason() {
+    var input = document.getElementById('ei-review-reason');
+    return input && input.value ? String(input.value).trim() : '';
+  }
+
+  function postEmployeeImportDecision(path, payload) {
+    var rowId = employeeImportReviewState.rowId;
+    if (!rowId) return Promise.reject(new Error('No row selected'));
+    return apiFetch('/employee-imports/' + encodeURIComponent(rowId) + '/' + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(payload || {}),
+    }).then(function (body) {
+      toast((body && body.message) || 'Saved', 'success');
+      var modal = document.getElementById('modal-employee-import-review');
+      if (modal && typeof closeModal === 'function') closeModal(modal);
+      else if (modal) modal.classList.remove('is-open');
+      return refreshEmployeeImportsPage();
+    });
+  }
+
+  function confirmEmployeeImportMatch() {
+    if (!canDecideEmployeeImports()) {
+      toast('You do not have permission to confirm mappings.', 'error');
+      return;
+    }
+    var selected = employeeImportReviewState.selected;
+    if (!selected || (selected.ca_id == null && selected.reference_firm_id == null)) {
+      toast('Select a CA candidate before confirming.', 'error');
+      return;
+    }
+    var payload = { reason: employeeImportDecisionReason() || 'Confirmed after comparing firm and city' };
+    if (selected.ca_id != null) payload.matched_ca_id = selected.ca_id;
+    if (selected.reference_firm_id != null) payload.matched_reference_firm_id = selected.reference_firm_id;
+    postEmployeeImportDecision('confirm-match', payload).catch(function (error) {
+      toast(error && error.message ? error.message : 'Unable to confirm match.', 'error');
+    });
+  }
+
+  function markEmployeeImportUnmatched() {
+    if (!canDecideEmployeeImports()) {
+      toast('You do not have permission to update mappings.', 'error');
+      return;
+    }
+    postEmployeeImportDecision('mark-unmatched', {
+      reason: employeeImportDecisionReason() || 'No correct CA found in reference data',
+    }).catch(function (error) {
+      toast(error && error.message ? error.message : 'Unable to mark unmatched.', 'error');
+    });
+  }
+
+  function ignoreEmployeeImportRow() {
+    if (!canDecideEmployeeImports()) {
+      toast('You do not have permission to ignore rows.', 'error');
+      return;
+    }
+    postEmployeeImportDecision('ignore', {
+      reason: employeeImportDecisionReason() || 'Ignored during manual review',
+    }).catch(function (error) {
+      toast(error && error.message ? error.message : 'Unable to ignore row.', 'error');
+    });
+  }
+
+  function bindEmployeeImportReviewModal() {
+    var modal = document.getElementById('modal-employee-import-review');
+    if (!modal || modal._eiReviewBound) return;
+    modal._eiReviewBound = true;
+
+    modal.addEventListener('click', function (event) {
+      var candBtn = event.target.closest('[data-ei-candidate]');
+      if (candBtn) {
+        var idx = parseInt(candBtn.getAttribute('data-ei-candidate'), 10);
+        if (!isNaN(idx) && employeeImportReviewState.candidates[idx]) {
+          selectEmployeeImportCandidate(employeeImportReviewState.candidates[idx]);
+        }
+        return;
+      }
+      var pickBtn = event.target.closest('[data-ei-search-pick]');
+      if (pickBtn) {
+        var box = document.getElementById('ei-search-results');
+        var items = box && box._eiSearchItems ? box._eiSearchItems : [];
+        var pidx = parseInt(pickBtn.getAttribute('data-ei-search-pick'), 10);
+        if (!isNaN(pidx) && items[pidx]) {
+          var picked = items[pidx];
+          var exists = employeeImportReviewState.candidates.some(function (c) {
+            return candidateKey(c) === candidateKey(picked);
+          });
+          if (!exists) employeeImportReviewState.candidates.unshift(picked);
+          selectEmployeeImportCandidate(picked);
+        }
+      }
+    });
+
+    var searchBtn = document.getElementById('ei-search-btn');
+    if (searchBtn) {
+      searchBtn.addEventListener('click', function () {
+        searchEmployeeImportReference(1);
+      });
+    }
+    var confirmBtn = document.getElementById('ei-btn-confirm');
+    if (confirmBtn) confirmBtn.addEventListener('click', confirmEmployeeImportMatch);
+    var unmatchedBtn = document.getElementById('ei-btn-unmatched');
+    if (unmatchedBtn) unmatchedBtn.addEventListener('click', markEmployeeImportUnmatched);
+    var ignoreBtn = document.getElementById('ei-btn-ignore');
+    if (ignoreBtn) ignoreBtn.addEventListener('click', ignoreEmployeeImportRow);
+  }
+
+  function initEmployeeImportsPage() {
+    var root = document.getElementById('employee-imports-module');
+    if (!root) return;
+
+    registerEmployeeImportsPagination();
+    bindEmployeeImportReviewModal();
+    syncEmployeeImportStatusCards();
+
+    var searchInput = document.getElementById('employee-imports-search');
+    var employeeFilter = document.getElementById('employee-imports-employee-filter');
+    var refreshButton = document.getElementById('employee-imports-refresh');
+
+    if (searchInput) searchInput.value = employeeImportsState.search;
+    if (employeeFilter) employeeFilter.value = employeeImportsState.employee;
+
+    if (!root._employeeImportsBound) {
+      root._employeeImportsBound = true;
+
+      root.addEventListener('click', function (event) {
+        var statusCard = event.target.closest('[data-employee-import-status]');
+        if (statusCard) {
+          employeeImportsState.status = statusCard.getAttribute('data-employee-import-status') || '';
+          employeeImportsState.page = 1;
+          syncEmployeeImportStatusCards();
+          loadEmployeeImportsList();
+          return;
+        }
+        var reviewBtn = event.target.closest('[data-ei-review]');
+        if (reviewBtn) {
+          openEmployeeImportReview(reviewBtn.getAttribute('data-ei-review'));
+          return;
+        }
+        var mappedBtn = event.target.closest('[data-ei-open-mapped]');
+        if (mappedBtn) {
+          openMappedEmployeeImportCa(mappedBtn.getAttribute('data-ei-open-mapped'));
+        }
+      });
+
+      if (searchInput) {
+        searchInput.addEventListener('input', function () {
+          clearTimeout(employeeImportsSearchTimer);
+          employeeImportsSearchTimer = setTimeout(function () {
+            employeeImportsState.search = (searchInput.value || '').trim();
+            employeeImportsState.page = 1;
+            loadEmployeeImportsList();
+          }, 300);
+        });
+      }
+
+      if (employeeFilter) {
+        employeeFilter.addEventListener('change', function () {
+          employeeImportsState.employee = employeeFilter.value || '';
+          employeeImportsState.page = 1;
+          loadEmployeeImportsList();
+        });
+      }
+
+      if (refreshButton) {
+        refreshButton.addEventListener('click', function () {
+          refreshEmployeeImportsPage();
+        });
+      }
+    }
+
+    refreshEmployeeImportsPage();
+  }
 
   var salesListOptionsCache = null;
 
@@ -25239,6 +25962,7 @@ if (otherInput) {
     refreshSmsPage: refreshSmsPage,
     reloadListing: reloadListing,
     initSalesListPage: initSalesListPage,
+    initEmployeeImportsPage: initEmployeeImportsPage,
     applyFollowupTypeFilter: applyFollowupTypeFilter,
     loadDemoHistory: loadDemoHistory,
     loadFollowupActivityTimeline: loadFollowupActivityTimeline,

@@ -16,6 +16,7 @@ $crmRoutes = [
     'workflow',
     'demo-calendar',
     'sales',
+    'employee-imports',
     'communication',
     'reports',
     'settings',

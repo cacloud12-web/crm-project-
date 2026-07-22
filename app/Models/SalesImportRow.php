@@ -31,10 +31,12 @@ class SalesImportRow extends Model
         'normalized_city',
 
         'matched_ca_id',
+        'matched_reference_firm_id',
         'mapping_status',
         'matched_on',
         'match_score',
         'review_reason',
+        'match_candidates',
         'mapped_at',
 
         'raw_payload',
@@ -44,6 +46,7 @@ class SalesImportRow extends Model
         'call_date' => 'date',
         'mapped_at' => 'datetime',
         'raw_payload' => 'array',
+        'match_candidates' => 'array',
     ];
 
     public function ca()

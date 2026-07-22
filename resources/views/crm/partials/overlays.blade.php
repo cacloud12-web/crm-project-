@@ -1568,5 +1568,85 @@
     </div>
   </div>
 
+  <!-- Employee Imports review modal -->
+  <div id="modal-employee-import-review" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="employee-import-review-title">
+    <div class="ca-modal-panel ca-modal-panel-xl ei-review-modal-panel">
+      <div class="ca-modal-header">
+        <h3 id="employee-import-review-title" class="ca-modal-title">
+          <span class="ca-modal-icon"><i data-lucide="git-compare" class="h-5 w-5"></i></span>
+          Review Employee Import Match
+        </h3>
+        <button class="ca-modal-close" data-close-overlay aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
+      </div>
+      <div class="ca-modal-body space-y-4">
+        <input type="hidden" id="ei-review-row-id" value="" />
+
+        <div class="ei-review-layout">
+          <aside class="ei-candidate-rail">
+            <h4 class="text-card-heading mb-2">Ranked Candidates</h4>
+            <div id="ei-review-candidates" class="ei-candidate-list space-y-2"></div>
+          </aside>
+
+          <div class="ei-compare-grid">
+            <section class="ei-compare-card ei-compare-card--sales">
+              <h4 class="text-card-heading mb-3">Employee Sales List</h4>
+              <dl class="ei-field-list" id="ei-review-left"></dl>
+            </section>
+            <section class="ei-compare-card ei-compare-card--reference">
+              <div class="flex items-start justify-between gap-3 mb-3">
+                <h4 class="text-card-heading">Matched CA Reference Candidate</h4>
+                <div id="ei-confidence-badge" class="ei-confidence-badge" hidden>—</div>
+              </div>
+              <dl class="ei-field-list" id="ei-review-right">
+                <p class="text-caption text-slate-500">Select a candidate to compare.</p>
+              </dl>
+            </section>
+          </div>
+        </div>
+
+        <section class="ei-compare-summary" id="ei-field-comparison">
+          <div class="ei-compare-summary__header">
+            <h4 class="text-card-heading">Field Comparison</h4>
+            <div id="ei-compare-confidence" class="ei-compare-confidence">Confidence —</div>
+          </div>
+          <div class="ei-compare-summary__body">
+            <div>
+              <div class="ei-compare-section-label">Matched Fields</div>
+              <div id="ei-matched-fields" class="ei-chip-row"></div>
+            </div>
+            <div>
+              <div class="ei-compare-section-label">Different Fields</div>
+              <div id="ei-different-fields" class="ei-chip-row"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="rounded-xl border border-slate-200 p-4">
+          <h4 class="text-card-heading mb-2">Search Another CA</h4>
+          <div class="grid md:grid-cols-4 gap-2 mb-3">
+            <input type="search" id="ei-search-firm" class="input-field" placeholder="Firm name" autocomplete="off" />
+            <input type="search" id="ei-search-ca" class="input-field" placeholder="CA name" autocomplete="off" />
+            <input type="search" id="ei-search-city" class="input-field" placeholder="City" autocomplete="off" />
+            <button type="button" class="btn-secondary btn-sm" id="ei-search-btn">Search Reference</button>
+          </div>
+          <div id="ei-search-results" class="space-y-2 max-h-48 overflow-y-auto"></div>
+          <div id="ei-search-pagination" class="mt-2 text-caption text-slate-500"></div>
+        </section>
+        <div>
+          <label class="text-caption font-medium text-slate-600 mb-1.5 block" for="ei-review-reason">Decision reason</label>
+          <input type="text" id="ei-review-reason" class="input-field" placeholder="Optional reason for audit trail" maxlength="1000" />
+        </div>
+      </div>
+      <div class="ca-modal-footer">
+        <div class="ca-modal-footer-buttons flex flex-wrap gap-2">
+          <button type="button" class="btn-secondary btn-sm" data-close-overlay>Cancel</button>
+          <button type="button" class="btn-secondary btn-sm" id="ei-btn-ignore">Ignore</button>
+          <button type="button" class="btn-secondary btn-sm text-rose-700" id="ei-btn-unmatched">Mark Unmatched</button>
+          <button type="button" class="btn-primary btn-sm" id="ei-btn-confirm">Confirm Match</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div id="toast-container" aria-live="polite"></div>

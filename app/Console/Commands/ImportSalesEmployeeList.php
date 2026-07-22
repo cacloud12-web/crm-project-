@@ -4,9 +4,11 @@ namespace App\Console\Commands;
 
 use App\Models\SalesImportRow;
 use App\Services\Mapping\DataNormalizationService;
+use App\Services\Mapping\SalesImportMatchingService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 use SplFileObject;
 use Throwable;
@@ -18,10 +20,11 @@ class ImportSalesEmployeeList extends Command
                             {--employee= : Employee name, for example ANKIT}
                             {--replace : Delete previous rows imported from the same file}';
 
-    protected $description = 'Import an employee calling list and map it safely against existing CA reference records';
+    protected $description = 'Import an employee calling list and Auto Match against CA Reference (firm + city)';
 
     public function __construct(
         private readonly DataNormalizationService $normalizer,
+        private readonly SalesImportMatchingService $matcher,
     ) {
         parent::__construct();
     }
@@ -62,20 +65,12 @@ class ImportSalesEmployeeList extends Command
                 ->delete();
         }
 
-        $this->info('Building the CA reference matching index...');
-
-        $indexes = $this->buildReferenceIndexes();
-
+        $this->info('Auto Match rule: exact normalized firm + city against CA Reference (exactly one hit).');
         $this->info('Reading CSV: '.$fileName);
         $this->info('Employee: '.$employeeName);
 
         try {
-            $result = $this->importCsv(
-                $filePath,
-                $fileName,
-                $employeeName,
-                $indexes
-            );
+            $result = $this->importCsv($filePath, $fileName, $employeeName);
         } catch (Throwable $e) {
             $this->error('Import failed: '.$e->getMessage());
 
@@ -96,128 +91,16 @@ class ImportSalesEmployeeList extends Command
             ]
         );
 
-        $this->warn('No CA master/reference record was created or deleted.');
+        $this->warn('No CA master/reference record was created, updated, or deleted.');
 
         return self::SUCCESS;
     }
 
     /**
-     * @return array{
-     *     exact: array<string, list<int>>,
-     *     firm_city: array<string, list<int>>,
-     *     ca_city: array<string, list<int>>,
-     *     firm_ca: array<string, list<int>>
-     * }
+     * @return array{total: int, matched: int, needs_review: int, unmatched: int, skipped: int}
      */
-    private function buildReferenceIndexes(): array
+    private function importCsv(string $filePath, string $fileName, string $employeeName): array
     {
-        $indexes = [
-            'exact' => [],
-            'firm_city' => [],
-            'ca_city' => [],
-            'firm_ca' => [],
-        ];
-
-        $rows = DB::table('ca_masters')
-            ->leftJoin('cities', 'cities.city_id', '=', 'ca_masters.city_id')
-            ->select([
-                'ca_masters.ca_id',
-                'ca_masters.ca_name',
-                'ca_masters.firm_name',
-                'ca_masters.normalized_ca_name',
-                'ca_masters.normalized_firm_name',
-                'cities.city_name',
-            ])
-            ->orderBy('ca_masters.ca_id')
-            ->cursor();
-
-        foreach ($rows as $row) {
-            $caId = (int) $row->ca_id;
-
-            $firm = trim((string) (
-                $row->normalized_firm_name
-                ?: $this->normalizer->firmName($row->firm_name)
-            ));
-
-            $ca = trim((string) (
-                $row->normalized_ca_name
-                ?: $this->normalizer->caName($row->ca_name)
-            ));
-
-            $city = trim((string) $this->normalizer->city($row->city_name));
-
-            if ($firm !== '' && $ca !== '' && $city !== '') {
-                $this->addIndex(
-                    $indexes['exact'],
-                    $this->key($firm, $ca, $city),
-                    $caId
-                );
-            }
-
-            if ($firm !== '' && $city !== '') {
-                $this->addIndex(
-                    $indexes['firm_city'],
-                    $this->key($firm, $city),
-                    $caId
-                );
-            }
-
-            if ($ca !== '' && $city !== '') {
-                $this->addIndex(
-                    $indexes['ca_city'],
-                    $this->key($ca, $city),
-                    $caId
-                );
-            }
-
-            if ($firm !== '' && $ca !== '') {
-                $this->addIndex(
-                    $indexes['firm_ca'],
-                    $this->key($firm, $ca),
-                    $caId
-                );
-            }
-        }
-
-        return $indexes;
-    }
-
-    /**
-     * @param array<string, list<int>> $index
-     */
-    private function addIndex(array &$index, string $key, int $caId): void
-    {
-        if (! isset($index[$key])) {
-            $index[$key] = [];
-        }
-
-        if (! in_array($caId, $index[$key], true)) {
-            $index[$key][] = $caId;
-        }
-    }
-
-    /**
-     * @param array{
-     *     exact: array<string, list<int>>,
-     *     firm_city: array<string, list<int>>,
-     *     ca_city: array<string, list<int>>,
-     *     firm_ca: array<string, list<int>>
-     * } $indexes
-     *
-     * @return array{
-     *     total: int,
-     *     matched: int,
-     *     needs_review: int,
-     *     unmatched: int,
-     *     skipped: int
-     * }
-     */
-    private function importCsv(
-        string $filePath,
-        string $fileName,
-        string $employeeName,
-        array $indexes,
-    ): array {
         $csv = new SplFileObject($filePath, 'r');
         $csv->setFlags(
             SplFileObject::READ_CSV
@@ -235,9 +118,7 @@ class ImportSalesEmployeeList extends Command
 
         foreach (['date', 'firm_name', 'mobile_no', 'city'] as $required) {
             if (! array_key_exists($required, $columns)) {
-                throw new RuntimeException(
-                    "Required CSV column was not found: {$required}"
-                );
+                throw new RuntimeException("Required CSV column was not found: {$required}");
             }
         }
 
@@ -252,6 +133,8 @@ class ImportSalesEmployeeList extends Command
         $insertBuffer = [];
         $sourceRowNumber = 1;
         $now = now()->format('Y-m-d H:i:s');
+        $hasReferenceCol = Schema::hasColumn('sales_import_rows', 'matched_reference_firm_id');
+        $hasCandidatesCol = Schema::hasColumn('sales_import_rows', 'match_candidates');
 
         while (! $csv->eof()) {
             $row = $csv->fgetcsv();
@@ -267,16 +150,7 @@ class ImportSalesEmployeeList extends Command
             $rawFirmName = $this->value($row, $columns, 'firm_name');
             $rawCity = $this->value($row, $columns, 'city');
 
-            $normalizedCa = trim((string) $this->normalizer->caName($rawCaName));
-            $normalizedFirm = trim((string) $this->normalizer->firmName($rawFirmName));
-            $normalizedCity = trim((string) $this->normalizer->city($rawCity));
-
-            $mapping = $this->findMatch(
-                $normalizedFirm,
-                $normalizedCa,
-                $normalizedCity,
-                $indexes
-            );
+            $mapping = $this->matcher->match($rawFirmName, $rawCity);
 
             $counts['total']++;
             $counts[$mapping['status']]++;
@@ -288,47 +162,48 @@ class ImportSalesEmployeeList extends Command
                     $name = 'column_'.$index;
                 }
 
-                $rawPayload[$name] = isset($row[$index])
-                    ? trim((string) $row[$index])
-                    : null;
+                $rawPayload[$name] = isset($row[$index]) ? trim((string) $row[$index]) : null;
             }
 
-            $insertBuffer[] = [
+            $insert = [
                 'import_batch_id' => null,
                 'source_file_name' => $fileName,
                 'source_sheet_name' => $employeeName,
                 'source_row_number' => $sourceRowNumber,
                 'employee_name' => $employeeName,
-                'call_date' => $this->parseDate(
-                    $this->value($row, $columns, 'date')
-                ),
+                'call_date' => $this->parseDate($this->value($row, $columns, 'date')),
                 'ca_name' => $rawCaName,
                 'firm_name' => $rawFirmName,
-                'mobile_no' => $this->cleanPhone(
-                    $this->value($row, $columns, 'mobile_no')
-                ),
-                'alternate_mobile_no' => $this->cleanPhone(
-                    $this->value($row, $columns, 'alternate_mobile_no')
-                ),
+                'mobile_no' => $this->cleanPhone($this->value($row, $columns, 'mobile_no')),
+                'alternate_mobile_no' => $this->cleanPhone($this->value($row, $columns, 'alternate_mobile_no')),
                 'city_name' => $rawCity,
                 'remarks_1' => $this->value($row, $columns, 'remarks_1'),
                 'remarks_2' => $this->value($row, $columns, 'remarks_2'),
-                'normalized_ca_name' => $normalizedCa ?: null,
-                'normalized_firm_name' => $normalizedFirm ?: null,
-                'normalized_city' => $normalizedCity ?: null,
+                'normalized_ca_name' => $this->normalizer->caName($rawCaName),
+                'normalized_firm_name' => $mapping['normalized_firm_name'],
+                'normalized_city' => $mapping['normalized_city'],
                 'matched_ca_id' => $mapping['ca_id'],
                 'mapping_status' => $mapping['status'],
                 'matched_on' => $mapping['matched_on'],
                 'match_score' => $mapping['score'],
                 'review_reason' => $mapping['reason'],
                 'mapped_at' => $now,
-                'raw_payload' => json_encode(
-                    $rawPayload,
-                    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-                ),
+                'raw_payload' => json_encode($rawPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
+
+            if ($hasReferenceCol) {
+                $insert['matched_reference_firm_id'] = $mapping['matched_reference_firm_id'];
+            }
+            if ($hasCandidatesCol) {
+                $insert['match_candidates'] = json_encode(
+                    $mapping['candidates'] ?? [],
+                    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+                );
+            }
+
+            $insertBuffer[] = $insert;
 
             if (count($insertBuffer) >= 500) {
                 DB::table('sales_import_rows')->insert($insertBuffer);
@@ -344,118 +219,7 @@ class ImportSalesEmployeeList extends Command
     }
 
     /**
-     * Exact match requires CA name + firm name + city.
-     *
-     * Two-field matches are stored for manual review only.
-     *
-     * @param array{
-     *     exact: array<string, list<int>>,
-     *     firm_city: array<string, list<int>>,
-     *     ca_city: array<string, list<int>>,
-     *     firm_ca: array<string, list<int>>
-     * } $indexes
-     *
-     * @return array{
-     *     status: string,
-     *     ca_id: int|null,
-     *     matched_on: string|null,
-     *     score: float|null,
-     *     reason: string|null
-     * }
-     */
-    private function findMatch(
-        string $firm,
-        string $ca,
-        string $city,
-        array $indexes,
-    ): array {
-        if ($firm !== '' && $ca !== '' && $city !== '') {
-            $exact = $indexes['exact'][$this->key($firm, $ca, $city)] ?? [];
-
-            if (count($exact) === 1) {
-                return [
-                    'status' => 'matched',
-                    'ca_id' => $exact[0],
-                    'matched_on' => 'ca_name_firm_name_city_exact',
-                    'score' => 1.0000,
-                    'reason' => null,
-                ];
-            }
-
-            if (count($exact) > 1) {
-                return [
-                    'status' => 'needs_review',
-                    'ca_id' => null,
-                    'matched_on' => 'multiple_exact_reference_matches',
-                    'score' => 1.0000,
-                    'reason' => 'More than one reference record has the same CA name, firm name and city.',
-                ];
-            }
-        }
-
-        $possibleIds = [];
-        $methods = [];
-
-        if ($firm !== '' && $city !== '') {
-            $ids = $indexes['firm_city'][$this->key($firm, $city)] ?? [];
-            $possibleIds = array_merge($possibleIds, $ids);
-
-            if ($ids !== []) {
-                $methods[] = 'firm_name_city';
-            }
-        }
-
-        if ($ca !== '' && $city !== '') {
-            $ids = $indexes['ca_city'][$this->key($ca, $city)] ?? [];
-            $possibleIds = array_merge($possibleIds, $ids);
-
-            if ($ids !== []) {
-                $methods[] = 'ca_name_city';
-            }
-        }
-
-        if ($firm !== '' && $ca !== '') {
-            $ids = $indexes['firm_ca'][$this->key($firm, $ca)] ?? [];
-            $possibleIds = array_merge($possibleIds, $ids);
-
-            if ($ids !== []) {
-                $methods[] = 'firm_name_ca_name';
-            }
-        }
-
-        $possibleIds = array_values(array_unique(array_map('intval', $possibleIds)));
-
-        if (count($possibleIds) === 1) {
-            return [
-                'status' => 'needs_review',
-                'ca_id' => $possibleIds[0],
-                'matched_on' => implode('+', $methods),
-                'score' => 0.6700,
-                'reason' => 'Only two reference fields matched. Manual confirmation is required.',
-            ];
-        }
-
-        if (count($possibleIds) > 1) {
-            return [
-                'status' => 'needs_review',
-                'ca_id' => null,
-                'matched_on' => implode('+', $methods),
-                'score' => 0.5000,
-                'reason' => 'Multiple possible CA reference records were found.',
-            ];
-        }
-
-        return [
-            'status' => 'unmatched',
-            'ca_id' => null,
-            'matched_on' => null,
-            'score' => null,
-            'reason' => 'No matching CA name, firm name and city combination was found in the reference data.',
-        ];
-    }
-
-    /**
-     * @param list<mixed> $headers
+     * @param  list<mixed>  $headers
      * @return array<string, int>
      */
     private function buildColumnMap(array $headers): array
@@ -495,8 +259,8 @@ class ImportSalesEmployeeList extends Command
     }
 
     /**
-     * @param list<mixed> $row
-     * @param array<string, int> $columns
+     * @param  list<mixed>  $row
+     * @param  array<string, int>  $columns
      */
     private function value(array $row, array $columns, string $field): ?string
     {
@@ -509,9 +273,7 @@ class ImportSalesEmployeeList extends Command
         return $value !== '' ? $value : null;
     }
 
-    /**
-     * @param list<mixed> $row
-     */
+    /** @param  list<mixed>  $row */
     private function isBlankRow(array $row): bool
     {
         foreach ($row as $value) {
@@ -553,11 +315,6 @@ class ImportSalesEmployeeList extends Command
         }
 
         return null;
-    }
-
-    private function key(string ...$values): string
-    {
-        return implode('|', $values);
     }
 
     private function resolveFilePath(string $path): string

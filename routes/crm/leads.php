@@ -30,6 +30,8 @@ Route::middleware(['auth', 'rbac'])->group(function () {
         ->middleware('spa.browser:ca-master');
     Route::get('ca-masters/{ca_master}/activity-timeline', [CaMasterController::class, 'activityTimeline'])
         ->middleware('spa.browser:ca-master');
+    Route::get('ca-masters/{ca_master}/employee-call-history', [CaMasterController::class, 'employeeCallHistory'])
+        ->middleware('spa.browser:ca-master');
     Route::get('ca-masters/{lead}/demo-confirmation', [DemoConfirmationController::class, 'showForLead'])
         ->middleware('spa.browser:leads');
     Route::get('ca-masters/{caId}/email-communications', [LeadEmailCommunicationController::class, 'index'])

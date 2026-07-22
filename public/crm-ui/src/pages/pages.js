@@ -2095,6 +2095,101 @@ window.CAPages = (function () {
       { label: 'Actions', colCls: 'crm-col-actions', thCls: 'crm-th-actions', sticky: 'right', filterType: 'reset', filterId: 'sales-filter-reset' },
     ];
   }
+  function employeeImportsPage() {
+    return '' +
+      '<div class="employee-imports-module" id="employee-imports-module">' +
+
+        hdr(
+          'Employee Imports',
+          'Match employee calling lists with existing CA reference data while preserving remarks and call history.',
+          null,
+          '<button type="button" class="btn-secondary btn-sm" id="employee-imports-refresh">' +
+            '<i data-lucide="refresh-cw" class="h-4 w-4"></i> Refresh' +
+          '</button>'
+        ) +
+
+        '<div class="grid grid-cols-1 gap-4 mb-5 md:grid-cols-5">' +
+
+          '<button type="button" class="card p-4 text-left employee-import-status-card is-active" ' +
+            'data-employee-import-status="">' +
+            '<div class="text-caption text-slate-500">Total Rows</div>' +
+            '<div class="text-2xl font-semibold text-slate-900" id="employee-import-total-count">0</div>' +
+          '</button>' +
+
+          '<button type="button" class="card p-4 text-left employee-import-status-card" ' +
+            'data-employee-import-status="matched">' +
+            '<div class="text-caption text-slate-500">Matched</div>' +
+            '<div class="text-2xl font-semibold text-emerald-700" id="employee-import-matched-count">0</div>' +
+          '</button>' +
+
+          '<button type="button" class="card p-4 text-left employee-import-status-card" ' +
+            'data-employee-import-status="needs_review">' +
+            '<div class="text-caption text-slate-500">Needs Review</div>' +
+            '<div class="text-2xl font-semibold text-amber-700" id="employee-import-review-count">0</div>' +
+          '</button>' +
+
+          '<button type="button" class="card p-4 text-left employee-import-status-card" ' +
+            'data-employee-import-status="unmatched">' +
+            '<div class="text-caption text-slate-500">Unmatched</div>' +
+            '<div class="text-2xl font-semibold text-rose-700" id="employee-import-unmatched-count">0</div>' +
+          '</button>' +
+
+          '<button type="button" class="card p-4 text-left employee-import-status-card" ' +
+            'data-employee-import-status="ignored">' +
+            '<div class="text-caption text-slate-500">Ignored</div>' +
+            '<div class="text-2xl font-semibold text-slate-600" id="employee-import-ignored-count">0</div>' +
+          '</button>' +
+
+        '</div>' +
+
+        '<div class="card p-4 mb-4">' +
+          '<div class="flex flex-wrap items-center gap-3">' +
+
+            '<label class="flex-1 min-w-[240px]">' +
+              '<span class="sr-only">Search employee imports</span>' +
+              '<input type="search" id="employee-imports-search" class="input-field" ' +
+                'placeholder="Search CA, firm, city, mobile or remarks…" autocomplete="off" />' +
+            '</label>' +
+
+            '<select id="employee-imports-employee-filter" class="input-field max-w-[220px]">' +
+              '<option value="">All Employees</option>' +
+            '</select>' +
+
+          '</div>' +
+        '</div>' +
+
+        '<div class="card overflow-hidden">' +
+          '<div class="overflow-x-auto">' +
+            '<table class="ca-table w-full" id="employee-imports-table">' +
+              '<thead>' +
+                '<tr>' +
+                  '<th>Call Date</th>' +
+                  '<th>Employee</th>' +
+                  '<th>CA Name</th>' +
+                  '<th>Firm Name</th>' +
+                  '<th>City</th>' +
+                  '<th>Mobile</th>' +
+                  '<th>Remarks</th>' +
+                  '<th>Review Reason</th>' +
+                  '<th>Candidates</th>' +
+                  '<th>Status</th>' +
+                  '<th>Mapped To</th>' +
+                  '<th></th>' +
+                '</tr>' +
+              '</thead>' +
+              '<tbody id="employee-imports-data-table">' +
+                '<tr>' +
+                  '<td colspan="12" class="py-8 text-center text-slate-500">Loading employee imports…</td>' +
+                '</tr>' +
+              '</tbody>' +
+            '</table>' +
+          '</div>' +
+
+          '<div id="employee-imports-pagination-slot" class="p-4 border-t border-slate-200"></div>' +
+        '</div>' +
+
+      '</div>';
+  }
 
   function salesListPage() {
     var content =
@@ -2666,7 +2761,6 @@ window.CAPages = (function () {
     'leads-segments': { title: 'Lead Management', breadcrumb: 'Leads', er: 'LEAD_ACTION', html: leadsPage() },
     assignment: { title: 'Assignment', breadcrumb: 'Assignment', er: 'LEAD_ASSIGNMENT_ENGINE', html: assignmentPage('assign') },
     followups: { title: 'Follow-ups', breadcrumb: 'Follow-ups', er: 'FOLLOW_UP_MANAGEMENT', html: followupsPage() },
-    communication: { title: 'Communication', breadcrumb: 'Communication', er: 'COMMUNICATION_MODULE', html: communicationPage() },
     'consent-dnd': { title: 'Consent & DND', breadcrumb: 'Communication / Consent & DND', er: 'CONSENT_DND', html: consentDndPage() },
     whatsapp: { title: 'Chat', breadcrumb: 'Communication / Chat', er: 'WHATSAPP_CAMPAIGN', html: whatsappPage() },
     email: { title: 'Email', breadcrumb: 'Communication / Email', er: 'EMAIL_CAMPAIGN', html: emailPage() },
@@ -2679,22 +2773,107 @@ window.CAPages = (function () {
     activity: { title: 'Activity Logs', breadcrumb: 'Reports / Activity', er: 'ACTIVITY_LOGS', html: reportsHubPage('activity') },
     audit: { title: 'Audit Logs', breadcrumb: 'Reports / Audit', er: 'ACTIVITY_LOGS', html: reportsHubPage('audit') },
     'duplicate-attempts': { title: 'Duplicate Attempts', breadcrumb: 'Reports / Duplicate Attempts', er: 'CA_MASTER', html: duplicateAttemptsPage() },
-    bulk: { title: 'Bulk Operations', breadcrumb: 'Master Data / Bulk', er: 'BULK_ACTIONS', html: caMasterPage('bulk') },
-    'ocr-import': { title: 'OCR Import', breadcrumb: 'Master Data / OCR Import', er: 'OCR_DOCUMENTS', html: caMasterPage('ocr') },
-    employees: { title: 'Team', breadcrumb: 'Assignment / Team', er: 'EMPLOYEE_MASTER', html: assignmentPage('team') },
-    queue: { title: 'System Health', breadcrumb: 'Queue', er: 'QUEUE_SYSTEM', html: queuePage() },
-    'db-health': { title: 'Database Health', breadcrumb: 'Admin / Database Health', er: 'DEV_DB_HEALTH', html: dbHealthPage() },
-    'email-configuration': { title: 'Settings — Email Configuration', breadcrumb: 'Settings / Email Configuration', er: 'ENTERPRISE_EMAIL', html: emailConfigurationPage() },
-    'roles-permissions': { title: 'Settings — Roles & Permissions', breadcrumb: 'Settings / Roles & Permissions', er: 'RBAC', html: rolesPermissionsPage() },
-    'settings-email-templates': { title: 'Settings — Email Templates', breadcrumb: 'Settings / Email Templates', er: 'Configuration', html: emailTemplatesPage() },
-    'settings-whatsapp-templates': { title: 'Settings — WhatsApp Templates', breadcrumb: 'Settings / WhatsApp Templates', er: 'Configuration', html: whatsAppTemplatesPage() },
-    'settings-google-api': { title: 'Settings — Google API Settings', breadcrumb: 'Settings / Google API Settings', er: 'Configuration', html: googleApiSettingsPage() },
-    'settings-demo-providers': { title: 'Settings — Demo Providers', breadcrumb: 'Settings / Demo Providers', er: 'Configuration', html: demoProvidersSettingsPage() },
-    settings: { title: 'Settings', breadcrumb: 'Settings', er: 'Configuration', html: settingsPage() },
-  };
+    'bulk': {
+      title: 'Bulk Operations',
+      breadcrumb: 'Master Data / Bulk',
+      er: 'BULK_ACTIONS',
+      html: caMasterPage('bulk')
+  },
 
-  return {
-    get: function (id) {
+  'ocr-import': {
+    title: 'OCR Import',
+    breadcrumb: 'Master Data / OCR Import',
+    er: 'OCR_DOCUMENTS',
+    html: caMasterPage('ocr')
+},
+
+'employee-imports': {
+    title: 'Employee Imports',
+    breadcrumb: 'Master Data / Employee Imports',
+    er: 'CA_MASTER',
+    html: employeeImportsPage()
+},
+
+communication: {
+    title: 'Communication',
+    breadcrumb: 'Communication',
+    er: 'COMMUNICATION_MODULE',
+    html: communicationPage()
+},
+
+employees: {
+    title: 'Team',
+    breadcrumb: 'Assignment / Team',
+    er: 'EMPLOYEE_MASTER',
+    html: assignmentPage('team')
+},
+
+queue: {
+    title: 'System Health',
+    breadcrumb: 'Queue',
+    er: 'QUEUE_SYSTEM',
+    html: queuePage()
+},
+
+'db-health': {
+    title: 'Database Health',
+    breadcrumb: 'Admin / Database Health',
+    er: 'DEV_DB_HEALTH',
+    html: dbHealthPage()
+},
+
+'email-configuration': {
+    title: 'Settings — Email Configuration',
+    breadcrumb: 'Settings / Email Configuration',
+    er: 'ENTERPRISE_EMAIL',
+    html: emailConfigurationPage()
+},
+
+'roles-permissions': {
+    title: 'Settings — Roles & Permissions',
+    breadcrumb: 'Settings / Roles & Permissions',
+    er: 'RBAC',
+    html: rolesPermissionsPage()
+},
+
+'settings-email-templates': {
+    title: 'Settings — Email Templates',
+    breadcrumb: 'Settings / Email Templates',
+    er: 'Configuration',
+    html: emailTemplatesPage()
+},
+
+'settings-whatsapp-templates': {
+    title: 'Settings — WhatsApp Templates',
+    breadcrumb: 'Settings / WhatsApp Templates',
+    er: 'Configuration',
+    html: whatsAppTemplatesPage()
+},
+
+'settings-google-api': {
+    title: 'Settings — Google API Settings',
+    breadcrumb: 'Settings / Google API Settings',
+    er: 'Configuration',
+    html: googleApiSettingsPage()
+},
+
+'settings-demo-providers': {
+    title: 'Settings — Demo Providers',
+    breadcrumb: 'Settings / Demo Providers',
+    er: 'Configuration',
+    html: demoProvidersSettingsPage()
+},
+
+settings: {
+  title: 'Settings',
+  breadcrumb: 'Settings',
+  er: 'Configuration',
+  html: settingsPage(),
+},
+};
+
+return {
+get: function (id) {
       var u = window.__CRM_USER__ || {};
       if (id === 'dashboard' && u.role === 'employee') {
         return {
@@ -2718,9 +2897,14 @@ window.CAPages = (function () {
       }
       return pages[id] || pages.dashboard;
     },
+
     employeeDashboardPage: employeeDashboardPage,
     caMasterColumnDefinitions: caMasterColumnDefinitions,
-    ids: function () { return Object.keys(pages); },
+
+    ids: function () {
+      return Object.keys(pages);
+    },
+
     all: pages,
   };
 })();

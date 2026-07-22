@@ -22,7 +22,7 @@
 
   const REPORTS_PAGES = ['reports', 'analytics', 'activity', 'audit', 'duplicate-attempts'];
   const ASSIGNMENT_PAGES = ['assignment', 'employees'];
-  const CA_MASTER_PAGES = ['ca-master', 'bulk', 'ocr-import'];
+  const CA_MASTER_PAGES = ['ca-master', 'bulk', 'ocr-import','employee-imports'];
   const SETTINGS_PAGES = [
     'settings', 'sales-list', 'email-configuration', 'roles-permissions',
     'settings-email-templates', 'settings-whatsapp-templates', 'settings-google-api',
@@ -331,6 +331,7 @@
     '/followups': 'followups',
     '/bulk': 'bulk',
     '/ocr-import': 'ocr-import',
+    '/employee-imports': 'employee-imports',
     '/settings': 'settings',
     '/settings/roles-permissions': 'roles-permissions',
     '/settings/email-templates': 'settings-email-templates',
