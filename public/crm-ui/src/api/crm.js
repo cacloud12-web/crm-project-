@@ -24767,6 +24767,7 @@ if (otherInput) {
   /* ─── Employee Imports ─── */
 
   var employeeImportsState = {
+    view: 'files',
     status: '',
     employee: '',
     search: '',
@@ -24775,6 +24776,16 @@ if (otherInput) {
     loading: false,
     total: 0,
     lastPage: 1,
+    importBatchId: null,
+    sourceFileName: '',
+    selectedEmployee: '',
+    filesSearch: '',
+    filesEmployee: '',
+    filesPage: 1,
+    filesPerPage: 25,
+    filesTotal: 0,
+    filesLastPage: 1,
+    filesLoading: false,
   };
 
   var employeeImportReviewState = {
@@ -24786,7 +24797,9 @@ if (otherInput) {
   };
 
   var employeeImportsPaginationRegistered = false;
+  var employeeImportsFilesPaginationRegistered = false;
   var employeeImportsSearchTimer = null;
+  var employeeImportsFilesSearchTimer = null;
 
   function canDecideEmployeeImports() {
     return crmCanAction('ca_master', 'edit');
@@ -24814,16 +24827,25 @@ if (otherInput) {
 
   function populateEmployeeImportsEmployeeFilter(employees) {
     var select = document.getElementById('employee-imports-employee-filter');
-    if (!select) return;
-    var currentValue = select.value || employeeImportsState.employee || '';
-    select.innerHTML =
+    var filesSelect = document.getElementById('employee-imports-files-employee-filter');
+    var list = Array.isArray(employees) ? employees : [];
+    var optionsHtml =
       '<option value="">All Employees</option>' +
-      (Array.isArray(employees) ? employees : []).map(function (employee) {
+      list.map(function (employee) {
         var value = String(employee || '').trim();
         if (!value) return '';
         return '<option value="' + escapeHtml(value) + '">' + escapeHtml(value) + '</option>';
       }).join('');
-    if (currentValue) select.value = currentValue;
+    if (select) {
+      var currentValue = select.value || employeeImportsState.employee || '';
+      select.innerHTML = optionsHtml;
+      if (currentValue) select.value = currentValue;
+    }
+    if (filesSelect) {
+      var filesValue = filesSelect.value || employeeImportsState.filesEmployee || '';
+      filesSelect.innerHTML = optionsHtml;
+      if (filesValue) filesSelect.value = filesValue;
+    }
   }
 
   function syncEmployeeImportStatusCards() {
@@ -24833,29 +24855,210 @@ if (otherInput) {
     });
   }
 
+  function syncEmployeeImportsView() {
+    var root = document.getElementById('employee-imports-module');
+    var filesView = document.getElementById('employee-imports-files-view');
+    var mappingView = document.getElementById('employee-imports-mapping-view');
+    var backBtn = document.getElementById('employee-imports-back-files');
+    var acceptBtn = document.getElementById('employee-imports-accept-matched');
+    var isFiles = employeeImportsState.view !== 'mapping';
+    if (root) root.setAttribute('data-ei-view', isFiles ? 'files' : 'mapping');
+    if (filesView) filesView.classList.toggle('hidden', !isFiles);
+    if (mappingView) mappingView.classList.toggle('hidden', isFiles);
+    if (backBtn) backBtn.classList.toggle('hidden', isFiles);
+    if (acceptBtn) {
+      acceptBtn.classList.toggle('hidden', isFiles || !canDecideEmployeeImports());
+    }
+    var nameEl = document.getElementById('employee-imports-selected-file-name');
+    var empEl = document.getElementById('employee-imports-selected-employee');
+    if (nameEl) nameEl.textContent = employeeImportsState.sourceFileName || '—';
+    if (empEl) empEl.textContent = 'Employee: ' + (employeeImportsState.selectedEmployee || '—');
+  }
+
+  function openEmployeeImportsFile(file) {
+    employeeImportsState.view = 'mapping';
+    employeeImportsState.importBatchId = file && file.import_batch_id ? file.import_batch_id : null;
+    employeeImportsState.sourceFileName = file && file.source_file_name ? file.source_file_name : '';
+    employeeImportsState.selectedEmployee = file && file.employee_name ? file.employee_name : '';
+    employeeImportsState.employee = '';
+    employeeImportsState.status = '';
+    employeeImportsState.search = '';
+    employeeImportsState.page = 1;
+    syncEmployeeImportsView();
+    syncEmployeeImportStatusCards();
+    return refreshEmployeeImportsMapping();
+  }
+
+  function backToEmployeeImportsFiles() {
+    employeeImportsState.view = 'files';
+    employeeImportsState.importBatchId = null;
+    employeeImportsState.sourceFileName = '';
+    employeeImportsState.selectedEmployee = '';
+    employeeImportsState.status = '';
+    employeeImportsState.search = '';
+    employeeImportsState.page = 1;
+    syncEmployeeImportsView();
+    return loadEmployeeImportsFiles();
+  }
+
   function loadEmployeeImportsSummary() {
     var params = new URLSearchParams();
     if (employeeImportsState.employee) params.set('employee', employeeImportsState.employee);
+    if (employeeImportsState.importBatchId) params.set('import_batch_id', String(employeeImportsState.importBatchId));
+    else if (employeeImportsState.sourceFileName) params.set('source_file_name', employeeImportsState.sourceFileName);
     var qs = params.toString();
     return apiFetch('/employee-imports/summary' + (qs ? ('?' + qs) : ''))
       .then(function (body) {
         var summary = body && body.data ? body.data : {};
-        setEmployeeImportText('employee-import-total-count', summary.total || 0);
-        setEmployeeImportText('employee-import-matched-count', summary.matched || 0);
-        setEmployeeImportText('employee-import-review-count', summary.needs_review || 0);
-        setEmployeeImportText('employee-import-unmatched-count', summary.unmatched || 0);
-        setEmployeeImportText('employee-import-ignored-count', summary.ignored || 0);
+        setEmployeeImportText('employee-import-map-total-count', summary.total || 0);
+        setEmployeeImportText('employee-import-map-matched-count', summary.matched || 0);
+        setEmployeeImportText('employee-import-map-review-count', summary.needs_review || 0);
+        setEmployeeImportText('employee-import-map-unmatched-count', summary.unmatched || 0);
+        setEmployeeImportText('employee-import-map-ignored-count', summary.ignored || 0);
+        if (summary.selected_file) {
+          if (summary.selected_file.source_file_name) {
+            employeeImportsState.sourceFileName = summary.selected_file.source_file_name;
+          }
+          if (summary.selected_file.employee_name) {
+            employeeImportsState.selectedEmployee = summary.selected_file.employee_name;
+          }
+          syncEmployeeImportsView();
+        }
         populateEmployeeImportsEmployeeFilter(summary.employees || []);
         return summary;
       })
       .catch(function (error) {
-        setEmployeeImportText('employee-import-total-count', 0);
-        setEmployeeImportText('employee-import-matched-count', 0);
-        setEmployeeImportText('employee-import-review-count', 0);
-        setEmployeeImportText('employee-import-unmatched-count', 0);
-        setEmployeeImportText('employee-import-ignored-count', 0);
+        setEmployeeImportText('employee-import-map-total-count', 0);
+        setEmployeeImportText('employee-import-map-matched-count', 0);
+        setEmployeeImportText('employee-import-map-review-count', 0);
+        setEmployeeImportText('employee-import-map-unmatched-count', 0);
+        setEmployeeImportText('employee-import-map-ignored-count', 0);
         toast(error && error.message ? error.message : 'Unable to load employee import summary.', 'error');
         throw error;
+      });
+  }
+
+  function registerEmployeeImportsFilesPagination() {
+    if (employeeImportsFilesPaginationRegistered || !window.CATablePagination) return;
+    employeeImportsFilesPaginationRegistered = true;
+    CATablePagination.register('employee-imports-files', {
+      onPageChange: function (page) {
+        if (employeeImportsState.filesLoading) return;
+        employeeImportsState.filesPage = Math.max(1, parseInt(page, 10) || 1);
+        loadEmployeeImportsFiles();
+      },
+      onPerPageChange: function (perPage) {
+        if (employeeImportsState.filesLoading) return;
+        employeeImportsState.filesPerPage = Math.max(10, Math.min(100, parseInt(perPage, 10) || 25));
+        employeeImportsState.filesPage = 1;
+        loadEmployeeImportsFiles();
+      },
+    });
+  }
+
+  function renderEmployeeImportsFilesPagination() {
+    var slot = document.getElementById('employee-imports-files-pagination-slot');
+    if (!slot || !window.CATablePagination) return;
+    if (!employeeImportsState.filesTotal) {
+      slot.innerHTML = '';
+      slot.classList.add('crm-table-footer--empty');
+      return;
+    }
+    slot.classList.remove('crm-table-footer--empty');
+    CATablePagination.renderInto(slot, {
+      scope: 'employee-imports-files',
+      pagination: {
+        current_page: employeeImportsState.filesPage,
+        last_page: employeeImportsState.filesLastPage,
+        per_page: employeeImportsState.filesPerPage,
+        total: employeeImportsState.filesTotal,
+        from: employeeImportsState.filesTotal
+          ? ((employeeImportsState.filesPage - 1) * employeeImportsState.filesPerPage) + 1
+          : 0,
+        to: Math.min(
+          employeeImportsState.filesPage * employeeImportsState.filesPerPage,
+          employeeImportsState.filesTotal
+        ),
+      },
+      perPage: employeeImportsState.filesPerPage,
+      perPageOptions: [10, 25, 50, 100],
+      showPerPage: true,
+    });
+    if (typeof iconsIn === 'function') iconsIn(slot);
+  }
+
+  function renderEmployeeImportsFilesTable(items) {
+    var el = document.getElementById('employee-imports-files-tbody');
+    if (!el) return;
+    items = items || [];
+    if (!items.length) {
+      el.innerHTML = '<tr><td colspan="10" class="py-8 text-center text-slate-500">No imported files yet. Run php artisan sales-list:import-all</td></tr>';
+      return;
+    }
+    el.innerHTML = items.map(function (file) {
+      var imported = file.imported_at ? String(file.imported_at).slice(0, 19).replace('T', ' ') : '—';
+      return '<tr class="ca-table-row crm-table-row">' +
+        '<td class="crm-td-firm">' + escapeHtml(file.source_file_name || '—') + '</td>' +
+        '<td class="crm-td-person">' + escapeHtml(file.employee_name || '—') + '</td>' +
+        '<td class="crm-td-num">' + escapeHtml(String(file.total_rows || 0)) + '</td>' +
+        '<td class="crm-td-num text-emerald-700">' + escapeHtml(String(file.matched_count || 0)) + '</td>' +
+        '<td class="crm-td-num text-amber-700">' + escapeHtml(String(file.needs_review_count || 0)) + '</td>' +
+        '<td class="crm-td-num text-rose-700">' + escapeHtml(String(file.unmatched_count || 0)) + '</td>' +
+        '<td class="crm-td-num">' + escapeHtml(String(file.ignored_count || 0)) + '</td>' +
+        '<td class="crm-td-date">' + escapeHtml(imported) + '</td>' +
+        '<td>' + employeeImportStatusBadge(file.batch_status || 'completed') + '</td>' +
+        '<td class="sticky-right crm-td-actions">' +
+          '<button type="button" class="btn-primary btn-sm" data-ei-open-file="1"' +
+            ' data-ei-batch-id="' + escapeHtml(String(file.import_batch_id || '')) + '"' +
+            ' data-ei-file-name="' + escapeHtml(file.source_file_name || '') + '"' +
+            ' data-ei-employee="' + escapeHtml(file.employee_name || '') + '">' +
+            'Open Mapping</button>' +
+        '</td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  function loadEmployeeImportsFiles() {
+    var tbody = document.getElementById('employee-imports-files-tbody');
+    if (!tbody) return Promise.resolve(null);
+    if (employeeImportsState.filesLoading) return Promise.resolve(null);
+    employeeImportsState.filesLoading = true;
+    tbody.innerHTML = '<tr><td colspan="10" class="py-8 text-center text-slate-500">Loading imported files…</td></tr>';
+
+    var params = new URLSearchParams();
+    params.set('page', String(employeeImportsState.filesPage || 1));
+    params.set('per_page', String(employeeImportsState.filesPerPage || 25));
+    if (employeeImportsState.filesEmployee) params.set('employee', employeeImportsState.filesEmployee);
+    if (employeeImportsState.filesSearch) params.set('search', employeeImportsState.filesSearch);
+
+    return apiFetch('/employee-imports/files?' + params.toString())
+      .then(function (body) {
+        var payload = body && body.data ? body.data : {};
+        var items = Array.isArray(payload.data) ? payload.data : [];
+        var pagination = payload.pagination || {};
+        var summary = payload.summary || {};
+        employeeImportsState.filesPage = pagination.current_page || employeeImportsState.filesPage;
+        employeeImportsState.filesLastPage = pagination.last_page || 1;
+        employeeImportsState.filesPerPage = pagination.per_page || employeeImportsState.filesPerPage;
+        employeeImportsState.filesTotal = pagination.total || 0;
+        setEmployeeImportText('employee-import-files-count', summary.total_files != null ? summary.total_files : employeeImportsState.filesTotal);
+        setEmployeeImportText('employee-import-total-count', summary.total_rows || 0);
+        setEmployeeImportText('employee-import-matched-count', summary.matched || 0);
+        setEmployeeImportText('employee-import-review-count', summary.needs_review || 0);
+        setEmployeeImportText('employee-import-unmatched-count', summary.unmatched || 0);
+        setEmployeeImportText('employee-import-ignored-count', summary.ignored || 0);
+        populateEmployeeImportsEmployeeFilter(payload.employees || []);
+        renderEmployeeImportsFilesTable(items);
+        renderEmployeeImportsFilesPagination();
+        return items;
+      })
+      .catch(function (error) {
+        tbody.innerHTML = '<tr><td colspan="10" class="py-8 text-center text-rose-600">Unable to load imported files.</td></tr>';
+        toast(error && error.message ? error.message : 'Unable to load imported files.', 'error');
+        return null;
+      })
+      .finally(function () {
+        employeeImportsState.filesLoading = false;
       });
   }
 
@@ -24980,6 +25183,8 @@ if (otherInput) {
     if (employeeImportsState.status) params.set('status', employeeImportsState.status);
     if (employeeImportsState.employee) params.set('employee', employeeImportsState.employee);
     if (employeeImportsState.search) params.set('search', employeeImportsState.search);
+    if (employeeImportsState.importBatchId) params.set('import_batch_id', String(employeeImportsState.importBatchId));
+    else if (employeeImportsState.sourceFileName) params.set('source_file_name', employeeImportsState.sourceFileName);
 
     return apiFetch('/employee-imports/data?' + params.toString())
       .then(function (body) {
@@ -25004,10 +25209,17 @@ if (otherInput) {
       });
   }
 
-  function refreshEmployeeImportsPage() {
+  function refreshEmployeeImportsMapping() {
     return loadEmployeeImportsSummary().then(function () {
       return loadEmployeeImportsList();
     });
+  }
+
+  function refreshEmployeeImportsPage() {
+    if (employeeImportsState.view === 'mapping') {
+      return refreshEmployeeImportsMapping();
+    }
+    return loadEmployeeImportsFiles();
   }
 
   function eiDlRow(label, value, tone) {
@@ -25445,7 +25657,13 @@ if (otherInput) {
       toast('You do not have permission to accept matched rows.', 'error');
       return;
     }
+    if (employeeImportsState.view !== 'mapping' || (!employeeImportsState.importBatchId && !employeeImportsState.sourceFileName)) {
+      toast('Open a file first. Accept All Matched only applies to the selected file.', 'error');
+      return;
+    }
     var payload = {};
+    if (employeeImportsState.importBatchId) payload.import_batch_id = employeeImportsState.importBatchId;
+    else if (employeeImportsState.sourceFileName) payload.source_file_name = employeeImportsState.sourceFileName;
     if (employeeImportsState.employee) payload.employee = employeeImportsState.employee;
     apiFetch('/employee-imports/accept-all-matched', {
       method: 'POST',
@@ -25458,7 +25676,7 @@ if (otherInput) {
           (data.skipped ? (', skipped ' + data.skipped) : '') + '.',
         'success'
       );
-      return refreshEmployeeImportsPage();
+      return refreshEmployeeImportsMapping();
     }).catch(function (error) {
       toast(error && error.message ? error.message : 'Unable to accept matched rows.', 'error');
     });
@@ -25469,28 +25687,46 @@ if (otherInput) {
     if (!root) return;
 
     registerEmployeeImportsPagination();
+    registerEmployeeImportsFilesPagination();
     bindEmployeeImportReviewModal();
+    syncEmployeeImportsView();
     syncEmployeeImportStatusCards();
 
     var searchInput = document.getElementById('employee-imports-search');
+    var filesSearchInput = document.getElementById('employee-imports-files-search');
     var employeeFilter = document.getElementById('employee-imports-employee-filter');
+    var filesEmployeeFilter = document.getElementById('employee-imports-files-employee-filter');
     var refreshButton = document.getElementById('employee-imports-refresh');
     var acceptMatchedBtn = document.getElementById('employee-imports-accept-matched');
+    var backBtn = document.getElementById('employee-imports-back-files');
 
     if (searchInput) searchInput.value = employeeImportsState.search;
+    if (filesSearchInput) filesSearchInput.value = employeeImportsState.filesSearch;
     if (employeeFilter) employeeFilter.value = employeeImportsState.employee || '';
-    if (acceptMatchedBtn) acceptMatchedBtn.classList.toggle('hidden', !canDecideEmployeeImports());
+    if (filesEmployeeFilter) filesEmployeeFilter.value = employeeImportsState.filesEmployee || '';
+    if (acceptMatchedBtn) acceptMatchedBtn.classList.toggle('hidden', employeeImportsState.view !== 'mapping' || !canDecideEmployeeImports());
 
     if (!root._employeeImportsBound) {
       root._employeeImportsBound = true;
 
       root.addEventListener('click', function (event) {
+        var openFileBtn = event.target.closest('[data-ei-open-file]');
+        if (openFileBtn) {
+          openEmployeeImportsFile({
+            import_batch_id: openFileBtn.getAttribute('data-ei-batch-id')
+              ? parseInt(openFileBtn.getAttribute('data-ei-batch-id'), 10)
+              : null,
+            source_file_name: openFileBtn.getAttribute('data-ei-file-name') || '',
+            employee_name: openFileBtn.getAttribute('data-ei-employee') || '',
+          });
+          return;
+        }
         var statusCard = event.target.closest('[data-employee-import-status]');
-        if (statusCard) {
+        if (statusCard && employeeImportsState.view === 'mapping') {
           employeeImportsState.status = statusCard.getAttribute('data-employee-import-status') || '';
           employeeImportsState.page = 1;
           syncEmployeeImportStatusCards();
-          refreshEmployeeImportsPage();
+          refreshEmployeeImportsMapping();
           return;
         }
         var reviewBtn = event.target.closest('[data-ei-review]');
@@ -25542,17 +25778,42 @@ if (otherInput) {
         });
       }
 
+      if (filesSearchInput) {
+        filesSearchInput.addEventListener('input', function () {
+          clearTimeout(employeeImportsFilesSearchTimer);
+          employeeImportsFilesSearchTimer = setTimeout(function () {
+            employeeImportsState.filesSearch = (filesSearchInput.value || '').trim();
+            employeeImportsState.filesPage = 1;
+            loadEmployeeImportsFiles();
+          }, 300);
+        });
+      }
+
       if (employeeFilter) {
         employeeFilter.addEventListener('change', function () {
           employeeImportsState.employee = employeeFilter.value || '';
           employeeImportsState.page = 1;
-          refreshEmployeeImportsPage();
+          refreshEmployeeImportsMapping();
+        });
+      }
+
+      if (filesEmployeeFilter) {
+        filesEmployeeFilter.addEventListener('change', function () {
+          employeeImportsState.filesEmployee = filesEmployeeFilter.value || '';
+          employeeImportsState.filesPage = 1;
+          loadEmployeeImportsFiles();
         });
       }
 
       if (refreshButton) {
         refreshButton.addEventListener('click', function () {
           refreshEmployeeImportsPage();
+        });
+      }
+
+      if (backBtn) {
+        backBtn.addEventListener('click', function () {
+          backToEmployeeImportsFiles();
         });
       }
 

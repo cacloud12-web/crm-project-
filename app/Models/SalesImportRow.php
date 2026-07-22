@@ -9,6 +9,8 @@ class SalesImportRow extends Model
     protected $fillable = [
         'import_batch_id',
         'source_file_name',
+        'source_file_hash',
+        'row_fingerprint',
         'source_sheet_name',
         'source_row_number',
         'employee_name',
@@ -52,5 +54,10 @@ class SalesImportRow extends Model
     public function ca()
     {
         return $this->belongsTo(CaMaster::class, 'matched_ca_id', 'ca_id');
+    }
+
+    public function importBatch()
+    {
+        return $this->belongsTo(MasterImportBatch::class, 'import_batch_id');
     }
 }

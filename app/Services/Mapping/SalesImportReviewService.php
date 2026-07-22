@@ -291,18 +291,25 @@ class SalesImportReviewService
      * Bulk-accept rows that Auto Match already marked as matched.
      * Does not create/update CA records. Only mapping fields + audit.
      *
-     * @return array{accepted: int, skipped: int, employee: string|null}
+     * @return array{accepted: int, skipped: int, employee: string|null, import_batch_id: int|null, source_file_name: string|null}
      */
-    public function acceptAllMatched(User $actor, ?string $employee = null): array
-    {
+    public function acceptAllMatched(
+        User $actor,
+        ?string $employee = null,
+        ?int $importBatchId = null,
+        ?string $sourceFileName = null,
+    ): array {
         $this->assertCanDecide($actor);
         $employee = trim((string) ($employee ?? ''));
+        $sourceFileName = trim((string) ($sourceFileName ?? ''));
 
-        return DB::transaction(function () use ($actor, $employee) {
+        return DB::transaction(function () use ($actor, $employee, $importBatchId, $sourceFileName) {
             $query = SalesImportRow::query()
                 ->where('mapping_status', 'matched')
                 ->whereNotNull('matched_ca_id')
                 ->when($employee !== '', fn ($builder) => $builder->where('employee_name', $employee))
+                ->when($importBatchId !== null, fn ($builder) => $builder->where('import_batch_id', $importBatchId))
+                ->when($sourceFileName !== '', fn ($builder) => $builder->where('source_file_name', $sourceFileName))
                 ->orderBy('id');
 
             $accepted = 0;
@@ -345,6 +352,8 @@ class SalesImportReviewService
                 'accepted' => $accepted,
                 'skipped' => $skipped,
                 'employee' => $employee !== '' ? $employee : null,
+                'import_batch_id' => $importBatchId,
+                'source_file_name' => $sourceFileName !== '' ? $sourceFileName : null,
             ];
         });
     }

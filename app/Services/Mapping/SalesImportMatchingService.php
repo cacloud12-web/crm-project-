@@ -267,6 +267,78 @@ class SalesImportMatchingService
         return self::$caReferenceReady;
     }
 
+    public function resetCaReferenceCache(): void
+    {
+        self::$caReferenceReady = null;
+    }
+
+    /**
+     * Hard preflight for remap runs. Does not mark rows unmatched when offline.
+     *
+     * @return array{
+     *   ok: bool,
+     *   error: string|null,
+     *   has_ca_firms: bool,
+     *   has_ca_addresses: bool,
+     *   has_ca_partners: bool,
+     *   firm_count: int,
+     *   has_normalized_firm: bool,
+     *   has_normalized_city: bool
+     * }
+     */
+    public function preflightCaReference(): array
+    {
+        $this->resetCaReferenceCache();
+
+        $result = [
+            'ok' => false,
+            'error' => null,
+            'has_ca_firms' => false,
+            'has_ca_addresses' => false,
+            'has_ca_partners' => false,
+            'firm_count' => 0,
+            'has_normalized_firm' => false,
+            'has_normalized_city' => false,
+        ];
+
+        try {
+            DB::connection('ca_reference')->getPdo();
+            $result['has_ca_firms'] = Schema::connection('ca_reference')->hasTable('ca_firms');
+            $result['has_ca_addresses'] = Schema::connection('ca_reference')->hasTable('ca_addresses');
+            $result['has_ca_partners'] = Schema::connection('ca_reference')->hasTable('ca_partners');
+
+            if (! $result['has_ca_firms'] || ! $result['has_ca_addresses'] || ! $result['has_ca_partners']) {
+                $result['error'] = 'CA Reference is reachable but required tables ca_firms / ca_partners / ca_addresses are missing.';
+
+                return $result;
+            }
+
+            if (Schema::connection('ca_reference')->hasColumn('ca_firms', 'normalized_firm_name')) {
+                $result['has_normalized_firm'] = true;
+            }
+            if (Schema::connection('ca_reference')->hasColumn('ca_addresses', 'normalized_city')) {
+                $result['has_normalized_city'] = true;
+            }
+
+            $result['firm_count'] = (int) CaFirm::query()->count();
+            if ($result['firm_count'] < 1) {
+                $result['error'] = 'CA Reference ca_firms is empty — refuse to remap.';
+
+                return $result;
+            }
+
+            self::$caReferenceReady = true;
+            $result['ok'] = true;
+
+            return $result;
+        } catch (\Throwable $e) {
+            self::$caReferenceReady = false;
+            $result['error'] = 'CA Reference connection unavailable: '.$e->getMessage();
+
+            return $result;
+        }
+    }
+
     /**
      * Ranked review candidates (exact + controlled fuzzy). Does not auto-confirm.
      *

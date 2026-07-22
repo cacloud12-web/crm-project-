@@ -2098,13 +2098,16 @@ window.CAPages = (function () {
   }
   function employeeImportsPage() {
     return '' +
-      '<div class="employee-imports-module" id="employee-imports-module">' +
+      '<div class="employee-imports-module" id="employee-imports-module" data-ei-view="files">' +
 
         hdr(
           'Employee Imports',
-          'Match employee calling lists with existing CA reference data while preserving remarks and call history.',
+          'Imported employee calling-list files and per-file CA mapping review.',
           null,
-          '<button type="button" class="btn-secondary btn-sm" id="employee-imports-accept-matched">' +
+          '<button type="button" class="btn-secondary btn-sm hidden" id="employee-imports-back-files">' +
+            '<i data-lucide="arrow-left" class="h-4 w-4"></i> Back to Files' +
+          '</button>' +
+          '<button type="button" class="btn-secondary btn-sm hidden" id="employee-imports-accept-matched">' +
             '<i data-lucide="check-check" class="h-4 w-4"></i> Accept All Matched' +
           '</button>' +
           '<button type="button" class="btn-secondary btn-sm" id="employee-imports-refresh">' +
@@ -2112,84 +2115,139 @@ window.CAPages = (function () {
           '</button>'
         ) +
 
-        '<div class="grid grid-cols-1 gap-4 mb-5 md:grid-cols-5">' +
+        '<div id="employee-imports-files-view">' +
+          '<div class="card p-4 mb-4 border border-amber-200 bg-amber-50 text-amber-950" id="employee-imports-remap-hint">' +
+            '<div class="font-semibold mb-1">Map / re-map files (CLI)</div>' +
+            '<div class="text-sm">Browser Map-All is disabled to avoid Hostinger timeouts. After CA Reference is reachable, run from the project root:</div>' +
+            '<pre class="mt-2 text-xs whitespace-pre-wrap break-all">' +
+              './php artisan sales-list:remap --all --dry-run\n' +
+              './php artisan sales-list:remap --file=&quot;CA CloudDesk Leads - simran.csv&quot; --dry-run\n' +
+              './php artisan sales-list:remap --all' +
+            '</pre>' +
+            '<div class="text-sm mt-2">ANKIT matched rows stay skipped unless you pass --include-auto-matched. Manual Confirm/Ignore/Reject are never overwritten. Use --include-manual-unmatched only for mark_unmatched rows.</div>' +
+          '</div>' +
 
-          '<button type="button" class="card p-4 text-left employee-import-status-card is-active" ' +
-            'data-employee-import-status="">' +
-            '<div class="text-caption text-slate-500">Total Rows</div>' +
-            '<div class="text-2xl font-semibold text-slate-900" id="employee-import-total-count">0</div>' +
-          '</button>' +
+          '<div class="grid grid-cols-1 gap-4 mb-5 md:grid-cols-6">' +
+            '<div class="card p-4"><div class="text-caption text-slate-500">Total Files</div>' +
+              '<div class="text-2xl font-semibold text-slate-900" id="employee-import-files-count">0</div></div>' +
+            '<div class="card p-4"><div class="text-caption text-slate-500">Total Rows</div>' +
+              '<div class="text-2xl font-semibold text-slate-900" id="employee-import-total-count">0</div></div>' +
+            '<div class="card p-4"><div class="text-caption text-slate-500">Matched</div>' +
+              '<div class="text-2xl font-semibold text-emerald-700" id="employee-import-matched-count">0</div></div>' +
+            '<div class="card p-4"><div class="text-caption text-slate-500">Needs Review</div>' +
+              '<div class="text-2xl font-semibold text-amber-700" id="employee-import-review-count">0</div></div>' +
+            '<div class="card p-4"><div class="text-caption text-slate-500">Unmatched</div>' +
+              '<div class="text-2xl font-semibold text-rose-700" id="employee-import-unmatched-count">0</div></div>' +
+            '<div class="card p-4"><div class="text-caption text-slate-500">Ignored</div>' +
+              '<div class="text-2xl font-semibold text-slate-600" id="employee-import-ignored-count">0</div></div>' +
+          '</div>' +
 
-          '<button type="button" class="card p-4 text-left employee-import-status-card" ' +
-            'data-employee-import-status="matched">' +
-            '<div class="text-caption text-slate-500">Matched</div>' +
-            '<div class="text-2xl font-semibold text-emerald-700" id="employee-import-matched-count">0</div>' +
-          '</button>' +
+          '<div class="card p-4 mb-4">' +
+            '<div class="flex flex-wrap items-center gap-3">' +
+              '<label class="flex-1 min-w-[240px]">' +
+                '<span class="sr-only">Search imported files</span>' +
+                '<input type="search" id="employee-imports-files-search" class="input-field" ' +
+                  'placeholder="Search file name or employee…" autocomplete="off" />' +
+              '</label>' +
+              '<select id="employee-imports-files-employee-filter" class="input-field max-w-[220px]">' +
+                '<option value="">All Employees</option>' +
+              '</select>' +
+            '</div>' +
+          '</div>' +
 
-          '<button type="button" class="card p-4 text-left employee-import-status-card" ' +
-            'data-employee-import-status="needs_review">' +
-            '<div class="text-caption text-slate-500">Needs Review</div>' +
-            '<div class="text-2xl font-semibold text-amber-700" id="employee-import-review-count">0</div>' +
-          '</button>' +
-
-          '<button type="button" class="card p-4 text-left employee-import-status-card" ' +
-            'data-employee-import-status="unmatched">' +
-            '<div class="text-caption text-slate-500">Unmatched</div>' +
-            '<div class="text-2xl font-semibold text-rose-700" id="employee-import-unmatched-count">0</div>' +
-          '</button>' +
-
-          '<button type="button" class="card p-4 text-left employee-import-status-card" ' +
-            'data-employee-import-status="ignored">' +
-            '<div class="text-caption text-slate-500">Ignored</div>' +
-            '<div class="text-2xl font-semibold text-slate-600" id="employee-import-ignored-count">0</div>' +
-          '</button>' +
-
-        '</div>' +
-
-        '<div class="card p-4 mb-4">' +
-          '<div class="flex flex-wrap items-center gap-3">' +
-
-            '<label class="flex-1 min-w-[240px]">' +
-              '<span class="sr-only">Search employee imports</span>' +
-              '<input type="search" id="employee-imports-search" class="input-field" ' +
-                'placeholder="Search CA, firm, city, mobile or remarks…" autocomplete="off" />' +
-            '</label>' +
-
-            '<select id="employee-imports-employee-filter" class="input-field max-w-[220px]">' +
-              '<option value="">All Employees</option>' +
-            '</select>' +
-
+          '<div class="card overflow-hidden">' +
+            '<div class="overflow-x-auto">' +
+              '<table class="ca-table w-full" id="employee-imports-files-table">' +
+                '<thead><tr>' +
+                  '<th>File Name</th><th>Employee</th><th>Total Rows</th><th>Matched</th>' +
+                  '<th>Needs Review</th><th>Unmatched</th><th>Ignored</th>' +
+                  '<th>Import Date</th><th>Status</th><th></th>' +
+                '</tr></thead>' +
+                '<tbody id="employee-imports-files-tbody">' +
+                  '<tr><td colspan="10" class="py-8 text-center text-slate-500">Loading imported files…</td></tr>' +
+                '</tbody>' +
+              '</table>' +
+            '</div>' +
+            '<div id="employee-imports-files-pagination-slot" class="p-4 border-t border-slate-200"></div>' +
           '</div>' +
         '</div>' +
 
-        '<div class="card overflow-hidden">' +
-          '<div class="overflow-x-auto">' +
-            '<table class="ca-table w-full" id="employee-imports-table">' +
-              '<thead>' +
-                '<tr>' +
-                  '<th>Call Date</th>' +
-                  '<th>Employee</th>' +
-                  '<th>CA Name</th>' +
-                  '<th>Firm Name</th>' +
-                  '<th>City</th>' +
-                  '<th>Mobile</th>' +
-                  '<th>Remarks</th>' +
-                  '<th>Review Reason</th>' +
-                  '<th>Candidates</th>' +
-                  '<th>Status</th>' +
-                  '<th>Mapped To</th>' +
-                  '<th></th>' +
-                '</tr>' +
-              '</thead>' +
-              '<tbody id="employee-imports-data-table">' +
-                '<tr>' +
-                  '<td colspan="12" class="py-8 text-center text-slate-500">Loading employee imports…</td>' +
-                '</tr>' +
-              '</tbody>' +
-            '</table>' +
+        '<div id="employee-imports-mapping-view" class="hidden">' +
+          '<div class="card p-4 mb-4" id="employee-imports-selected-file-banner">' +
+            '<div class="text-sm text-slate-500">Selected file</div>' +
+            '<div class="text-lg font-semibold text-slate-900" id="employee-imports-selected-file-name">—</div>' +
+            '<div class="text-sm text-slate-600" id="employee-imports-selected-employee">Employee: —</div>' +
           '</div>' +
 
-          '<div id="employee-imports-pagination-slot" class="p-4 border-t border-slate-200"></div>' +
+          '<div class="grid grid-cols-1 gap-4 mb-5 md:grid-cols-5">' +
+            '<button type="button" class="card p-4 text-left employee-import-status-card is-active" ' +
+              'data-employee-import-status="">' +
+              '<div class="text-caption text-slate-500">Total</div>' +
+              '<div class="text-2xl font-semibold text-slate-900" id="employee-import-map-total-count">0</div>' +
+            '</button>' +
+            '<button type="button" class="card p-4 text-left employee-import-status-card" ' +
+              'data-employee-import-status="matched">' +
+              '<div class="text-caption text-slate-500">Matched</div>' +
+              '<div class="text-2xl font-semibold text-emerald-700" id="employee-import-map-matched-count">0</div>' +
+            '</button>' +
+            '<button type="button" class="card p-4 text-left employee-import-status-card" ' +
+              'data-employee-import-status="needs_review">' +
+              '<div class="text-caption text-slate-500">Needs Review</div>' +
+              '<div class="text-2xl font-semibold text-amber-700" id="employee-import-map-review-count">0</div>' +
+            '</button>' +
+            '<button type="button" class="card p-4 text-left employee-import-status-card" ' +
+              'data-employee-import-status="unmatched">' +
+              '<div class="text-caption text-slate-500">Unmatched</div>' +
+              '<div class="text-2xl font-semibold text-rose-700" id="employee-import-map-unmatched-count">0</div>' +
+            '</button>' +
+            '<button type="button" class="card p-4 text-left employee-import-status-card" ' +
+              'data-employee-import-status="ignored">' +
+              '<div class="text-caption text-slate-500">Ignored</div>' +
+              '<div class="text-2xl font-semibold text-slate-600" id="employee-import-map-ignored-count">0</div>' +
+            '</button>' +
+          '</div>' +
+
+          '<div class="card p-4 mb-4">' +
+            '<div class="flex flex-wrap items-center gap-3">' +
+              '<label class="flex-1 min-w-[240px]">' +
+                '<span class="sr-only">Search employee imports</span>' +
+                '<input type="search" id="employee-imports-search" class="input-field" ' +
+                  'placeholder="Search CA, firm, city, mobile or remarks…" autocomplete="off" />' +
+              '</label>' +
+              '<select id="employee-imports-employee-filter" class="input-field max-w-[220px] hidden">' +
+                '<option value="">All Employees</option>' +
+              '</select>' +
+            '</div>' +
+          '</div>' +
+
+          '<div class="card overflow-hidden">' +
+            '<div class="overflow-x-auto">' +
+              '<table class="ca-table w-full" id="employee-imports-table">' +
+                '<thead>' +
+                  '<tr>' +
+                    '<th>Call Date</th>' +
+                    '<th>Employee</th>' +
+                    '<th>CA Name</th>' +
+                    '<th>Firm Name</th>' +
+                    '<th>City</th>' +
+                    '<th>Mobile</th>' +
+                    '<th>Remarks</th>' +
+                    '<th>Review Reason</th>' +
+                    '<th>Candidates</th>' +
+                    '<th>Status</th>' +
+                    '<th>Mapped To</th>' +
+                    '<th></th>' +
+                  '</tr>' +
+                '</thead>' +
+                '<tbody id="employee-imports-data-table">' +
+                  '<tr>' +
+                    '<td colspan="12" class="py-8 text-center text-slate-500">Select a file to load mapping rows…</td>' +
+                  '</tr>' +
+                '</tbody>' +
+              '</table>' +
+            '</div>' +
+            '<div id="employee-imports-pagination-slot" class="p-4 border-t border-slate-200"></div>' +
+          '</div>' +
         '</div>' +
 
       '</div>';
