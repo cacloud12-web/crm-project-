@@ -33,6 +33,14 @@ class OcrImportRemainingToMasterService
         private readonly FirmCaCityMatchingProfile $matcher,
     ) {}
 
+    public const ISSUE_MISSING_CA = 'missing_ca_name';
+
+    public const ISSUE_MISSING_CITY = 'missing_city';
+
+    public const ISSUE_INVALID_CA = 'invalid_ca_name';
+
+    public const ISSUE_PENDING = 'pending_incomplete';
+
     /**
      * @param  array{
      *   all?: bool,
@@ -43,9 +51,11 @@ class OcrImportRemainingToMasterService
      *   chunk?: int,
      *   verified_only?: bool,
      *   needs_verification_only?: bool,
+     *   force_needs_verification?: bool,
      *   limit?: int,
      *   show_errors?: bool,
-     *   error_limit?: int
+     *   error_limit?: int,
+     *   on_progress?: callable|null
      * }  $options
      * @return array<string, mixed>
      */
@@ -67,8 +77,16 @@ class OcrImportRemainingToMasterService
         $limit = max(0, (int) ($options['limit'] ?? 0));
         $verifiedOnly = (bool) ($options['verified_only'] ?? false);
         $needsOnly = (bool) ($options['needs_verification_only'] ?? false);
+        $forceNv = (bool) ($options['force_needs_verification'] ?? false);
         $showErrors = (bool) ($options['show_errors'] ?? false);
         $errorLimit = max(1, min(500, (int) ($options['error_limit'] ?? 50)));
+        $onProgress = $options['on_progress'] ?? null;
+
+        // Force NV implies needs-verification-only semantics for incomplete rows.
+        if ($forceNv) {
+            $needsOnly = true;
+            $verifiedOnly = false;
+        }
 
         $hasOcrCityText = Schema::hasColumn('ca_masters', 'ocr_city_text');
         $hasSourceOcrRowId = Schema::hasColumn('ca_masters', 'source_ocr_row_id');
@@ -76,6 +94,7 @@ class OcrImportRemainingToMasterService
 
         $counts = [
             'dry_run' => $dryRun,
+            'force_needs_verification' => $forceNv,
             'scanned' => 0,
             'revalidated_verified' => 0,
             'revalidated_needs_review' => 0,
@@ -90,6 +109,7 @@ class OcrImportRemainingToMasterService
             'ambiguous_rows' => 0,
             'noise_rows_skipped' => 0,
             'invalid_rows_skipped' => 0,
+            'force_skipped' => 0,
             'already_linked_skipped' => 0,
             'created_verified' => 0,
             'created_needs_verification' => 0,
@@ -120,11 +140,13 @@ class OcrImportRemainingToMasterService
             $limit,
             $verifiedOnly,
             $needsOnly,
+            $forceNv,
             $showErrors,
             $errorLimit,
             $hasOcrCityText,
             $hasSourceOcrRowId,
             $hasVerificationStatus,
+            $onProgress,
         ) {
             foreach ($rows as $firm) {
                 /** @var OcrParsedFirm $firm */
@@ -137,60 +159,101 @@ class OcrImportRemainingToMasterService
                         $counts['already_linked_skipped']++;
                     } elseif ((bool) ($firm->is_noise ?? false)) {
                         $counts['noise_rows_skipped']++;
-                    } elseif ($needsOnly && $this->looksCompleteForVerifiedBucket($firm)) {
-                        // Skip complete rows before expensive revalidation when NV-only.
-                        $counts['eligible_verified_rows']++;
-                        $countsTowardLimit = false;
                     } else {
-                        $reval = $this->revalidateStaging($firm, $dryRun);
-                        if (! empty($reval['ok'])) {
-                            $counts['revalidated_verified']++;
-                        } else {
-                            $counts['revalidated_needs_review']++;
-                        }
-                        if ($dryRun) {
-                            foreach ($reval['updates'] ?? [] as $key => $value) {
-                                $firm->setAttribute($key, $value);
-                            }
-                        } else {
-                            $firm->refresh();
-                        }
+                        $forceClass = $forceNv ? $this->classifyForceNeedsVerification($firm) : null;
+                        $isVerifiedUnlinked = $this->isVerifiedUnlinkedComplete($firm);
 
-                        $plan = $this->planImport($firm, $hasOcrCityText, $hasSourceOcrRowId, $hasVerificationStatus);
-                        if ($plan['action'] === 'skip_invalid') {
-                            $counts['invalid_rows_skipped']++;
-                        } elseif ($plan['action'] === 'ambiguous') {
-                            $counts['ambiguous_rows']++;
-                        } elseif ($plan['action'] === 'link') {
-                            $counts['would_link_existing']++;
-                            $counts['duplicate_links']++;
-                            $linkBucket = (string) ($plan['bucket'] ?? 'link');
-                            if ($linkBucket === self::VERIFICATION_NEEDS || $linkBucket === 'needs_verification') {
-                                $counts['would_link_needs_verification_master']++;
-                            } else {
+                        if ($forceNv && ! ($forceClass['eligible'] ?? false) && ! $isVerifiedUnlinked) {
+                            $counts['force_skipped']++;
+                            $countsTowardLimit = false;
+                        } elseif ($forceNv && $isVerifiedUnlinked) {
+                            // Fast path: already-complete verified staging → verified Master path (no revalidate).
+                            $plan = $this->planImport($firm, $hasOcrCityText, $hasSourceOcrRowId, $hasVerificationStatus);
+                            if (($plan['action'] ?? '') === 'link') {
+                                $counts['would_link_existing']++;
+                                $counts['duplicate_links']++;
                                 $counts['would_link_verified_master']++;
+                                if ($apply && ! $dryRun) {
+                                    $this->linkExisting($firm, (int) $plan['ca_id'], $actorId, $plan);
+                                    $counts['linked_existing']++;
+                                }
+                            } elseif (($plan['action'] ?? '') === 'ambiguous') {
+                                $counts['ambiguous_rows']++;
+                            } elseif (($plan['action'] ?? '') === 'skip_invalid') {
+                                $counts['invalid_rows_skipped']++;
+                            } else {
+                                $counts['eligible_verified_rows']++;
+                                $counts['would_create_verified_master']++;
+                                if ($apply && ! $dryRun) {
+                                    $this->importVerified($firm, $actorId);
+                                    $counts['created_verified']++;
+                                }
                             }
-                            if ($apply && ! $dryRun) {
-                                $this->linkExisting($firm, (int) $plan['ca_id'], $actorId, $plan);
-                                $counts['linked_existing']++;
-                            }
-                        } elseif (($plan['bucket'] ?? '') === 'verified') {
+                        } elseif ($needsOnly && ! $forceNv && $this->looksCompleteForVerifiedBucket($firm)) {
                             $counts['eligible_verified_rows']++;
-                            $counts['would_create_verified_master']++;
-                            if ($needsOnly) {
-                                $countsTowardLimit = false;
-                            } elseif ($apply && ! $dryRun) {
-                                $this->importVerified($firm, $actorId);
-                                $counts['created_verified']++;
-                            }
+                            $countsTowardLimit = false;
                         } else {
-                            $counts['needs_verification_rows']++;
-                            $counts['would_create_needs_verification_master']++;
-                            if ($verifiedOnly) {
-                                $countsTowardLimit = false;
-                            } elseif ($apply && ! $dryRun) {
-                                $this->importNeedsVerification($firm, $actorId, $plan);
-                                $counts['created_needs_verification']++;
+                            // Force-NV incomplete rows: skip revalidate→verified; keep staging pending/needs_review.
+                            if (! ($forceNv && ($forceClass['eligible'] ?? false))) {
+                                $reval = $this->revalidateStaging($firm, $dryRun);
+                                if (! empty($reval['ok'])) {
+                                    $counts['revalidated_verified']++;
+                                } else {
+                                    $counts['revalidated_needs_review']++;
+                                }
+                                if ($dryRun) {
+                                    foreach ($reval['updates'] ?? [] as $key => $value) {
+                                        $firm->setAttribute($key, $value);
+                                    }
+                                } else {
+                                    $firm->refresh();
+                                }
+                            }
+
+                            $plan = $this->planImport(
+                                $firm,
+                                $hasOcrCityText,
+                                $hasSourceOcrRowId,
+                                $hasVerificationStatus,
+                                $forceNv && ($forceClass['eligible'] ?? false),
+                                $forceClass['issue'] ?? null,
+                            );
+
+                            if ($plan['action'] === 'skip_invalid') {
+                                $counts['invalid_rows_skipped']++;
+                            } elseif ($plan['action'] === 'ambiguous') {
+                                $counts['ambiguous_rows']++;
+                            } elseif ($plan['action'] === 'link') {
+                                $counts['would_link_existing']++;
+                                $counts['duplicate_links']++;
+                                $linkBucket = (string) ($plan['bucket'] ?? 'link');
+                                if ($linkBucket === self::VERIFICATION_NEEDS || $linkBucket === 'needs_verification') {
+                                    $counts['would_link_needs_verification_master']++;
+                                } else {
+                                    $counts['would_link_verified_master']++;
+                                }
+                                if ($apply && ! $dryRun) {
+                                    $this->linkExisting($firm, (int) $plan['ca_id'], $actorId, $plan);
+                                    $counts['linked_existing']++;
+                                }
+                            } elseif (($plan['bucket'] ?? '') === 'verified') {
+                                $counts['eligible_verified_rows']++;
+                                $counts['would_create_verified_master']++;
+                                if ($needsOnly && ! $isVerifiedUnlinked) {
+                                    $countsTowardLimit = false;
+                                } elseif ($apply && ! $dryRun) {
+                                    $this->importVerified($firm, $actorId);
+                                    $counts['created_verified']++;
+                                }
+                            } else {
+                                $counts['needs_verification_rows']++;
+                                $counts['would_create_needs_verification_master']++;
+                                if ($verifiedOnly) {
+                                    $countsTowardLimit = false;
+                                } elseif ($apply && ! $dryRun) {
+                                    $this->importNeedsVerification($firm, $actorId, $plan);
+                                    $counts['created_needs_verification']++;
+                                }
                             }
                         }
                     }
@@ -202,9 +265,17 @@ class OcrImportRemainingToMasterService
                 if ($countsTowardLimit) {
                     $processed++;
                     if ($limit > 0 && $processed >= $limit) {
+                        if (is_callable($onProgress)) {
+                            $onProgress($counts);
+                        }
+
                         return false;
                     }
                 }
+            }
+
+            if (is_callable($onProgress)) {
+                $onProgress($counts);
             }
 
             return true;
@@ -223,6 +294,88 @@ class OcrImportRemainingToMasterService
         $city = trim((string) ($firm->city ?: ($parsed['city'] ?? '') ?: ($raw['city'] ?? '')));
 
         return $firmName !== '' && $caName !== '' && $city !== '';
+    }
+
+    private function isVerifiedUnlinkedComplete(OcrParsedFirm $firm): bool
+    {
+        return $this->looksCompleteForVerifiedBucket($firm)
+            && in_array((string) $firm->match_status, [
+                MasterCaDirectImportService::MATCH_VERIFIED,
+                MasterCaDirectImportService::MATCH_MATCHED,
+            ], true);
+    }
+
+    /**
+     * Classify whether a staging row is in the remaining force-NV cohort.
+     *
+     * @return array{eligible: bool, issue: ?string, reason: string}
+     */
+    public function classifyForceNeedsVerification(OcrParsedFirm $firm): array
+    {
+        $source = is_array($firm->source_data) ? $firm->source_data : [];
+        $raw = is_array($source['raw'] ?? null) ? $source['raw'] : [];
+        $parsed = is_array($source['parsed'] ?? null) ? $source['parsed'] : [];
+        $firmName = trim((string) ($firm->firm_name ?: $firm->raw_firm_name ?: ($parsed['firm_name'] ?? '') ?: ($raw['firm_name'] ?? '')));
+        $caName = trim((string) (($parsed['ca_name'] ?? '') ?: ($raw['ca_name'] ?? '')));
+        $city = trim((string) ($firm->city ?: ($parsed['city'] ?? '') ?: ($raw['city'] ?? '')));
+        $reason = trim((string) ($firm->match_reason ?? ''));
+        $reasonLower = mb_strtolower($reason);
+        $status = (string) ($firm->match_status ?? '');
+
+        if ((bool) ($firm->is_noise ?? false) || $firmName === '' || mb_strlen($firmName) < 2) {
+            return ['eligible' => false, 'issue' => null, 'reason' => 'blank_or_noise_firm'];
+        }
+
+        $invalidPersonReason = str_contains($reasonLower, 'valid person name')
+            || str_contains($reasonLower, 'invalid_person')
+            || str_contains($reasonLower, 'invalid person');
+
+        // Complete firm+CA+city rows are not part of the force-NV remaining cohort,
+        // unless CA is an invalid person name that must be cleared.
+        if ($this->looksCompleteForVerifiedBucket($firm) && ! $invalidPersonReason) {
+            if ($this->isVerifiedUnlinkedComplete($firm)) {
+                return ['eligible' => false, 'issue' => null, 'reason' => 'verified_unlinked_complete'];
+            }
+
+            return ['eligible' => false, 'issue' => null, 'reason' => 'complete_out_of_force_scope'];
+        }
+
+        if (str_contains($reasonLower, 'ca name is required')
+            || str_contains($reasonLower, 'missing_ca_name')
+            || ($caName === '' && $city !== '')) {
+            return ['eligible' => true, 'issue' => self::ISSUE_MISSING_CA, 'reason' => 'missing_ca_name'];
+        }
+
+        if (str_contains($reasonLower, 'city is required')
+            || str_contains($reasonLower, 'missing_city')
+            || ($city === '' && $caName !== '')) {
+            return ['eligible' => true, 'issue' => self::ISSUE_MISSING_CITY, 'reason' => 'missing_city'];
+        }
+
+        if ($invalidPersonReason) {
+            return ['eligible' => true, 'issue' => self::ISSUE_INVALID_CA, 'reason' => 'invalid_ca_name'];
+        }
+
+        if ($caName !== '' && ! $this->entities->isPerson($caName)
+            && ($this->entities->isAddress($caName) || $this->entities->isAddressShape($caName) || ! $this->entities->isFirmName($caName))) {
+            return ['eligible' => true, 'issue' => self::ISSUE_INVALID_CA, 'reason' => 'invalid_ca_name'];
+        }
+
+        if ($status === '' || $status === 'pending' || $status === MasterCaDirectImportService::MATCH_NEEDS_REVIEW) {
+            if ($caName === '' && $city === '') {
+                return ['eligible' => true, 'issue' => self::ISSUE_PENDING, 'reason' => 'pending_with_firm'];
+            }
+            if ($caName === '') {
+                return ['eligible' => true, 'issue' => self::ISSUE_MISSING_CA, 'reason' => 'pending_missing_ca'];
+            }
+            if ($city === '') {
+                return ['eligible' => true, 'issue' => self::ISSUE_MISSING_CITY, 'reason' => 'pending_missing_city'];
+            }
+
+            return ['eligible' => true, 'issue' => self::ISSUE_PENDING, 'reason' => 'pending_with_firm'];
+        }
+
+        return ['eligible' => false, 'issue' => null, 'reason' => 'out_of_force_scope'];
     }
 
     /**
@@ -350,6 +503,8 @@ class OcrImportRemainingToMasterService
         ?bool $hasOcrCityText = null,
         ?bool $hasSourceOcrRowId = null,
         ?bool $hasVerificationStatus = null,
+        bool $forceNeedsVerification = false,
+        ?string $forceIssue = null,
     ): array {
         $hasOcrCityText ??= Schema::hasColumn('ca_masters', 'ocr_city_text');
         $hasSourceOcrRowId ??= Schema::hasColumn('ca_masters', 'source_ocr_row_id');
@@ -367,22 +522,34 @@ class OcrImportRemainingToMasterService
             return ['action' => 'skip_invalid', 'reason' => 'blank_or_noise_firm'];
         }
 
-        // Address-only / building-as-CA: clear CA for planning.
+        // Address/building/invalid person as CA: never store as ca_name.
         $addressAsCa = $caName !== '' && ($this->entities->isAddress($caName) || $this->entities->isAddressShape($caName));
+        $invalidPersonCa = $caName !== '' && ! $addressAsCa && ! $this->entities->isPerson($caName)
+            && (
+                $forceIssue === self::ISSUE_INVALID_CA
+                || str_contains(mb_strtolower((string) ($firm->match_reason ?? '')), 'valid person name')
+                || str_contains(mb_strtolower((string) ($firm->match_reason ?? '')), 'invalid_person')
+            );
         $addressText = null;
         if ($addressAsCa) {
             $addressText = $caName;
+            $caName = '';
+        } elseif ($invalidPersonCa || ($forceNeedsVerification && $forceIssue === self::ISSUE_INVALID_CA && $caName !== '' && ! $this->entities->isPerson($caName))) {
+            if ($this->entities->isAddress($caName) || $this->entities->isAddressShape($caName)) {
+                $addressText = $caName;
+            }
             $caName = '';
         }
 
         $hasMeaningfulSource = $this->hasMeaningfulSourceData($firm, $raw, $parsed, $addressText);
 
-        // Minimum: firm + (ca OR city). Firm + neither → NV only with meaningful source, else skip.
+        // Default minimum: firm + (ca OR city). Force mode: firm alone is enough.
         if ($caName === '' && $city === '') {
-            if (! $hasMeaningfulSource) {
+            if ($forceNeedsVerification) {
+                // firm_name present → eligible Needs Verification
+            } elseif (! $hasMeaningfulSource) {
                 return ['action' => 'skip_invalid', 'reason' => 'missing_ca_and_city'];
             }
-            // Usable incomplete row (e.g. address-only after CA clear, or rich raw OCR).
         }
 
         // Already imported from this OCR row?
@@ -402,7 +569,6 @@ class OcrImportRemainingToMasterService
             }
         }
 
-        // Fingerprint link (OCR staging fingerprints mirrored onto Master when present).
         $fpLink = $this->findByFingerprint($firm);
         if ($fpLink !== null) {
             return $fpLink;
@@ -436,36 +602,51 @@ class OcrImportRemainingToMasterService
             ];
         }
 
-        $complete = $firmName !== '' && $caName !== '' && $city !== '' && ! $addressAsCa;
-        $verifiedEligible = $complete
+        $complete = $firmName !== '' && $caName !== '' && $city !== '' && ! $addressAsCa && ! $invalidPersonCa;
+        $verifiedEligible = ! $forceNeedsVerification
+            && $complete
             && in_array((string) $firm->match_status, [
                 MasterCaDirectImportService::MATCH_VERIFIED,
                 MasterCaDirectImportService::MATCH_MATCHED,
             ], true);
 
-        $issue = null;
-        if ($caName === '' && $city === '') {
-            $issue = $addressAsCa ? 'Address used as CA' : 'Incomplete OCR';
-        } elseif ($caName === '') {
-            $issue = 'CA Name Missing';
-        } elseif ($city === '') {
-            $issue = 'City Missing';
-        } elseif ($addressAsCa) {
-            $issue = 'Address used as CA';
-        } else {
-            try {
-                $classified = $this->audit->classifyRow($firm);
-                if (in_array('firm_name_person_extraction_conflict', $classified['issue_codes'] ?? [], true)) {
-                    $issue = 'OCR Conflict';
+        $issue = $forceIssue;
+        if ($issue === null) {
+            if ($caName === '' && ($forceNeedsVerification || $city !== '')) {
+                $issue = self::ISSUE_MISSING_CA;
+            } elseif ($city === '' && $caName !== '') {
+                $issue = self::ISSUE_MISSING_CITY;
+            } elseif ($addressAsCa || $invalidPersonCa) {
+                $issue = self::ISSUE_INVALID_CA;
+            } elseif ($caName === '' && $city === '') {
+                $issue = $forceNeedsVerification ? self::ISSUE_PENDING : 'Incomplete OCR';
+            } else {
+                try {
+                    $classified = $this->audit->classifyRow($firm);
+                    if (in_array('firm_name_person_extraction_conflict', $classified['issue_codes'] ?? [], true)) {
+                        $issue = 'OCR Conflict';
+                        $verifiedEligible = false;
+                    } elseif (in_array('invalid_person_name', $classified['issue_codes'] ?? [], true)) {
+                        $issue = self::ISSUE_INVALID_CA;
+                        $verifiedEligible = false;
+                        $caName = '';
+                    }
+                } catch (Throwable) {
+                    $issue = 'Incomplete OCR';
                     $verifiedEligible = false;
                 }
-            } catch (Throwable) {
-                $issue = 'Incomplete OCR';
-                $verifiedEligible = false;
             }
         }
 
-        if ($verifiedEligible && $issue === null) {
+        // Normalize legacy display labels to stable codes for Master filters.
+        $issue = match ($issue) {
+            'CA Name Missing' => self::ISSUE_MISSING_CA,
+            'City Missing' => self::ISSUE_MISSING_CITY,
+            'Address used as CA' => self::ISSUE_INVALID_CA,
+            default => $issue,
+        };
+
+        if ($verifiedEligible && ($issue === null || $issue === '')) {
             return [
                 'action' => 'create',
                 'bucket' => 'verified',
@@ -475,6 +656,7 @@ class OcrImportRemainingToMasterService
             ];
         }
 
+        // Force mode: never verified.
         return [
             'action' => 'create',
             'bucket' => 'needs_verification',
@@ -482,7 +664,7 @@ class OcrImportRemainingToMasterService
             'ca_name' => $caName !== '' ? $caName : null,
             'city' => $city !== '' ? $city : null,
             'address_text' => $addressText,
-            'data_quality_issue' => $issue ?? 'Incomplete OCR',
+            'data_quality_issue' => $issue ?? self::ISSUE_PENDING,
             'data_quality_status' => 'incomplete',
         ];
     }

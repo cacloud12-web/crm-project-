@@ -13763,15 +13763,15 @@ if (otherInput) {
       label = 'Needs Verification';
     } else if (key === 'missing-ca') {
       filters.verification_status = 'needs_verification';
-      filters.data_quality_issue = 'CA Name Missing';
+      filters.data_quality_issue = 'missing_ca_name';
       label = 'Missing CA Name';
     } else if (key === 'missing-city') {
       filters.verification_status = 'needs_verification';
-      filters.data_quality_issue = 'City Missing';
+      filters.data_quality_issue = 'missing_city';
       label = 'Missing City';
     } else if (key === 'ocr-conflict') {
       filters.verification_status = 'needs_verification';
-      filters.data_quality_issue = 'OCR Conflict';
+      filters.data_quality_issue = 'invalid_ca_name';
       label = 'OCR Conflict';
     } else {
       key = 'total';
@@ -13873,21 +13873,21 @@ if (otherInput) {
         setText('cam-stat-needs-verification', total != null ? total : '—');
       })
       .catch(function () { setText('cam-stat-needs-verification', '—'); });
-    apiFetch('/ca-masters?per_page=1&verification_status=needs_verification&data_quality_issue=' + encodeURIComponent('CA Name Missing'))
+    apiFetch('/ca-masters?per_page=1&verification_status=needs_verification&data_quality_issue=' + encodeURIComponent('missing_ca_name'))
       .then(function (body) {
         var parsed = window.CA_LISTING_SEARCH ? CA_LISTING_SEARCH.unwrapListingBody(body) : { pagination: null };
         var total = parsed.pagination ? parsed.pagination.total : null;
         setText('cam-stat-missing-ca', total != null ? total : '—');
       })
       .catch(function () { setText('cam-stat-missing-ca', '—'); });
-    apiFetch('/ca-masters?per_page=1&verification_status=needs_verification&data_quality_issue=' + encodeURIComponent('City Missing'))
+    apiFetch('/ca-masters?per_page=1&verification_status=needs_verification&data_quality_issue=' + encodeURIComponent('missing_city'))
       .then(function (body) {
         var parsed = window.CA_LISTING_SEARCH ? CA_LISTING_SEARCH.unwrapListingBody(body) : { pagination: null };
         var total = parsed.pagination ? parsed.pagination.total : null;
         setText('cam-stat-missing-city', total != null ? total : '—');
       })
       .catch(function () { setText('cam-stat-missing-city', '—'); });
-    apiFetch('/ca-masters?per_page=1&verification_status=needs_verification&data_quality_issue=' + encodeURIComponent('OCR Conflict'))
+    apiFetch('/ca-masters?per_page=1&verification_status=needs_verification&data_quality_issue=' + encodeURIComponent('invalid_ca_name'))
       .then(function (body) {
         var parsed = window.CA_LISTING_SEARCH ? CA_LISTING_SEARCH.unwrapListingBody(body) : { pagination: null };
         var total = parsed.pagination ? parsed.pagination.total : null;

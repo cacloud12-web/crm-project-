@@ -50,7 +50,7 @@ class OcrImportRemainingToMasterTest extends TestCase
         $plan = $this->service->planImport($firm, false, false, false);
         $this->assertSame('create', $plan['action']);
         $this->assertSame('needs_verification', $plan['bucket']);
-        $this->assertSame('CA Name Missing', $plan['data_quality_issue']);
+        $this->assertSame('missing_ca_name', $plan['data_quality_issue']);
         $this->assertNull($plan['ca_name']);
         $this->assertSame('SURAT', $plan['city']);
     }
@@ -94,7 +94,7 @@ class OcrImportRemainingToMasterTest extends TestCase
             'ca_name' => 'SURESH PATEL',
             'city' => null,
             'address_text' => null,
-            'data_quality_issue' => 'City Missing',
+            'data_quality_issue' => 'missing_city',
             'data_quality_status' => 'incomplete',
         ];
         $ref = new \ReflectionClass($this->service);
@@ -253,7 +253,7 @@ class OcrImportRemainingToMasterTest extends TestCase
         $master = CaMaster::query()->find($firm->crm_ca_id);
         $this->assertSame('needs_verification', $master->verification_status);
         $this->assertFalse((bool) $master->is_verified);
-        $this->assertSame('CA Name Missing', $master->data_quality_issue);
+        $this->assertSame('missing_ca_name', $master->data_quality_issue);
         $this->assertTrue($master->ca_name === null || $master->ca_name === '');
         $this->assertSame((int) $firm->id, (int) $master->source_ocr_row_id);
         $this->assertSame('MISSING CA FIRM LLP', $firm->source_data['raw']['firm_name']);
@@ -284,7 +284,7 @@ class OcrImportRemainingToMasterTest extends TestCase
         $this->assertNotNull($firm->crm_ca_id, json_encode($report));
         $master = CaMaster::query()->findOrFail($firm->crm_ca_id);
         $this->assertSame('needs_verification', $master->verification_status);
-        $this->assertSame('City Missing', $master->data_quality_issue);
+        $this->assertSame('missing_city', $master->data_quality_issue);
         $this->assertSame('RAJESH SHARMA', $master->ca_name);
     }
 
@@ -326,7 +326,7 @@ class OcrImportRemainingToMasterTest extends TestCase
             'rating' => 1,
             'is_verified' => false,
             'verification_status' => 'needs_verification',
-            'data_quality_issue' => 'CA Name Missing',
+            'data_quality_issue' => 'missing_ca_name',
             'ocr_city_text' => 'JAIPUR',
             'source_type' => 'ocr',
         ]);
@@ -544,7 +544,7 @@ class OcrImportRemainingToMasterTest extends TestCase
             'rating' => 1,
             'is_verified' => false,
             'verification_status' => 'needs_verification',
-            'data_quality_issue' => 'CA Name Missing',
+            'data_quality_issue' => 'missing_ca_name',
             'source_type' => 'ocr',
         ]);
 
@@ -562,6 +562,168 @@ class OcrImportRemainingToMasterTest extends TestCase
             $response = $this->patchJson('/api/ca-masters/1/mark-verified');
         }
         $this->assertTrue(in_array($response->status(), [401, 403, 302], true), 'Expected auth failure, got '.$response->status());
+    }
+
+    public function test_force_missing_ca_creates_needs_verification(): void
+    {
+        $firm = $this->seedUnlinked([
+            'firm_name' => 'FORCE MISS CA FIRM',
+            'city' => 'SURAT',
+            'match_reason' => 'ca_name: CA name is required.',
+            'source_data' => [
+                'raw' => ['firm_name' => 'FORCE MISS CA FIRM', 'ca_name' => '', 'city' => 'SURAT'],
+                'parsed' => ['firm_name' => 'FORCE MISS CA FIRM', 'ca_name' => '', 'city' => 'SURAT'],
+            ],
+        ]);
+        $before = CaMaster::query()->count();
+        $report = $this->service->run([
+            'document' => (int) $firm->ocr_document_id,
+            'apply' => true,
+            'actor' => 1,
+            'force_needs_verification' => true,
+        ]);
+        $firm->refresh();
+        $this->assertSame(0, $report['errors'], json_encode($report['error_samples'] ?? []));
+        $this->assertSame($before + 1, CaMaster::query()->count());
+        $master = CaMaster::query()->findOrFail($firm->crm_ca_id);
+        $this->assertSame('needs_verification', $master->verification_status);
+        $this->assertFalse((bool) $master->is_verified);
+        $this->assertSame('missing_ca_name', $master->data_quality_issue);
+        $this->assertTrue($master->ca_name === null || $master->ca_name === '');
+    }
+
+    public function test_force_missing_city_creates_needs_verification(): void
+    {
+        $firm = $this->seedUnlinked([
+            'firm_name' => 'FORCE MISS CITY FIRM',
+            'city' => null,
+            'match_reason' => 'city: City is required.',
+            'source_data' => [
+                'raw' => ['firm_name' => 'FORCE MISS CITY FIRM', 'ca_name' => 'KIRAN SHAH', 'city' => ''],
+                'parsed' => ['firm_name' => 'FORCE MISS CITY FIRM', 'ca_name' => 'KIRAN SHAH', 'city' => ''],
+            ],
+        ]);
+        $report = $this->service->run([
+            'document' => (int) $firm->ocr_document_id,
+            'apply' => true,
+            'actor' => 1,
+            'force_needs_verification' => true,
+        ]);
+        $firm->refresh();
+        $this->assertSame(0, $report['errors']);
+        $master = CaMaster::query()->findOrFail($firm->crm_ca_id);
+        $this->assertSame('missing_city', $master->data_quality_issue);
+        $this->assertNull($master->city_id);
+        $this->assertTrue($master->ocr_city_text === null || $master->ocr_city_text === '');
+        $this->assertSame('KIRAN SHAH', $master->ca_name);
+        $this->assertFalse((bool) $master->is_verified);
+    }
+
+    public function test_force_invalid_ca_creates_blank_ca_needs_verification(): void
+    {
+        $firm = $this->seedUnlinked([
+            'firm_name' => 'FORCE INVALID CA FIRM',
+            'city' => 'PUNE',
+            'match_reason' => 'CA name does not look like a valid person name.',
+            'source_data' => [
+                'raw' => ['firm_name' => 'FORCE INVALID CA FIRM', 'ca_name' => '14 NIRMAN SQUARE', 'city' => 'PUNE'],
+                'parsed' => ['firm_name' => 'FORCE INVALID CA FIRM', 'ca_name' => '14 NIRMAN SQUARE', 'city' => 'PUNE'],
+            ],
+        ]);
+        $this->service->run([
+            'document' => (int) $firm->ocr_document_id,
+            'apply' => true,
+            'actor' => 1,
+            'force_needs_verification' => true,
+        ]);
+        $firm->refresh();
+        $master = CaMaster::query()->findOrFail($firm->crm_ca_id);
+        $this->assertSame('invalid_ca_name', $master->data_quality_issue);
+        $this->assertTrue($master->ca_name === null || $master->ca_name === '');
+        $this->assertNotEquals('14 NIRMAN SQUARE', $master->ca_name);
+        $this->assertFalse((bool) $master->is_verified);
+    }
+
+    public function test_force_pending_with_firm_creates_needs_verification(): void
+    {
+        $firm = $this->seedUnlinked([
+            'firm_name' => 'FORCE PENDING FIRM LLP',
+            'city' => null,
+            'match_status' => 'pending',
+            'match_reason' => '',
+            'source_data' => [
+                'raw' => ['firm_name' => 'FORCE PENDING FIRM LLP', 'ca_name' => '', 'city' => ''],
+                'parsed' => ['firm_name' => 'FORCE PENDING FIRM LLP', 'ca_name' => '', 'city' => ''],
+            ],
+        ]);
+        $this->service->run([
+            'document' => (int) $firm->ocr_document_id,
+            'apply' => true,
+            'actor' => 1,
+            'force_needs_verification' => true,
+        ]);
+        $firm->refresh();
+        $this->assertNotNull($firm->crm_ca_id);
+        $master = CaMaster::query()->findOrFail($firm->crm_ca_id);
+        $this->assertSame('needs_verification', $master->verification_status);
+        $this->assertFalse((bool) $master->is_verified);
+    }
+
+    public function test_force_dry_run_writes_nothing(): void
+    {
+        $firm = $this->seedUnlinked([
+            'firm_name' => 'FORCE DRY FIRM',
+            'city' => 'SURAT',
+            'match_reason' => 'ca_name: CA name is required.',
+            'source_data' => [
+                'raw' => ['firm_name' => 'FORCE DRY FIRM', 'ca_name' => '', 'city' => 'SURAT'],
+                'parsed' => ['firm_name' => 'FORCE DRY FIRM', 'ca_name' => '', 'city' => 'SURAT'],
+            ],
+        ]);
+        $before = CaMaster::query()->count();
+        $report = $this->service->run([
+            'document' => (int) $firm->ocr_document_id,
+            'dry_run' => true,
+            'actor' => 1,
+            'force_needs_verification' => true,
+        ]);
+        $firm->refresh();
+        $this->assertNull($firm->crm_ca_id);
+        $this->assertSame($before, CaMaster::query()->count());
+        $this->assertGreaterThan(0, $report['would_create_needs_verification_master']);
+        $this->assertSame(0, $report['created_needs_verification']);
+    }
+
+    public function test_force_rerun_is_idempotent(): void
+    {
+        $firm = $this->seedUnlinked([
+            'firm_name' => 'FORCE IDEMP FIRM',
+            'city' => 'JAIPUR',
+            'match_reason' => 'ca_name: CA name is required.',
+            'source_data' => [
+                'raw' => ['firm_name' => 'FORCE IDEMP FIRM', 'ca_name' => '', 'city' => 'JAIPUR'],
+                'parsed' => ['firm_name' => 'FORCE IDEMP FIRM', 'ca_name' => '', 'city' => 'JAIPUR'],
+            ],
+        ]);
+        $this->service->run([
+            'document' => (int) $firm->ocr_document_id,
+            'apply' => true,
+            'actor' => 1,
+            'force_needs_verification' => true,
+        ]);
+        $firm->refresh();
+        $id = $firm->crm_ca_id;
+        $count = CaMaster::query()->count();
+        $report = $this->service->run([
+            'document' => (int) $firm->ocr_document_id,
+            'apply' => true,
+            'actor' => 1,
+            'force_needs_verification' => true,
+        ]);
+        $this->assertSame($count, CaMaster::query()->count());
+        $firm->refresh();
+        $this->assertSame($id, $firm->crm_ca_id);
+        $this->assertSame(0, $report['created_needs_verification']);
     }
 
     /** @param  array<string, mixed>  $attrs */

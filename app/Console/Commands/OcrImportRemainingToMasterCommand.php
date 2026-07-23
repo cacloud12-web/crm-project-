@@ -22,6 +22,7 @@ class OcrImportRemainingToMasterCommand extends Command
         {--limit=0 : Stop after N rows (0 = all)}
         {--verified-only : Only process rows eligible for verified Master}
         {--needs-verification-only : Only process Needs Verification creates}
+        {--force-needs-verification : Import remaining incomplete OCR rows as Needs Verification only (never verified)}
         {--show-errors : Print error category breakdown (read-only)}
         {--error-limit=50 : Max sample rows across error categories}';
 
@@ -52,7 +53,13 @@ class OcrImportRemainingToMasterCommand extends Command
         $this->info($dryRun
             ? 'OCR import remaining → Master — DRY-RUN (no writes)'
             : 'OCR import remaining → Master — APPLY');
-        $this->warn('Unresolved rows become Needs Verification — never silently verified.');
+        if ((bool) $this->option('force-needs-verification')) {
+            $this->warn('FORCE Needs Verification mode — incomplete rows only; never marked verified.');
+        } else {
+            $this->warn('Unresolved rows become Needs Verification — never silently verified.');
+        }
+        $this->comment('Scanning unlinked OCR rows… progress prints every chunk (can take several minutes on ~24k rows).');
+        $this->comment('Tip: use --limit=100 for a quick smoke check.');
 
         try {
             $report = $service->run([
@@ -69,8 +76,22 @@ class OcrImportRemainingToMasterCommand extends Command
                 'limit' => (int) ($this->option('limit') ?? 0),
                 'verified_only' => (bool) $this->option('verified-only'),
                 'needs_verification_only' => (bool) $this->option('needs-verification-only'),
+                'force_needs_verification' => (bool) $this->option('force-needs-verification'),
                 'show_errors' => (bool) $this->option('show-errors'),
                 'error_limit' => (int) ($this->option('error-limit') ?? 50),
+                'on_progress' => function (array $snapshot): void {
+                    $this->line(sprintf(
+                        '  … scanned=%d nv=%d verified=%d link=%d ambig=%d skip=%d force_skip=%d errors=%d',
+                        $snapshot['scanned'] ?? 0,
+                        $snapshot['needs_verification_rows'] ?? 0,
+                        $snapshot['eligible_verified_rows'] ?? 0,
+                        $snapshot['would_link_existing'] ?? 0,
+                        $snapshot['ambiguous_rows'] ?? 0,
+                        ($snapshot['invalid_rows_skipped'] ?? 0) + ($snapshot['noise_rows_skipped'] ?? 0),
+                        $snapshot['force_skipped'] ?? 0,
+                        $snapshot['errors'] ?? 0,
+                    ));
+                },
             ]);
         } catch (Throwable $e) {
             $this->error($e->getMessage());
@@ -103,6 +124,7 @@ class OcrImportRemainingToMasterCommand extends Command
             ['Ambiguous rows', $report['ambiguous_rows'] ?? 0],
             ['Noise rows skipped', $report['noise_rows_skipped'] ?? 0],
             ['Invalid rows skipped', $report['invalid_rows_skipped'] ?? 0],
+            ['Force mode skipped (out of scope)', $report['force_skipped'] ?? 0],
             ['Created verified (apply)', $report['created_verified'] ?? 0],
             ['Created Needs Verification (apply)', $report['created_needs_verification'] ?? 0],
             ['Linked existing (apply)', $report['linked_existing'] ?? 0],
