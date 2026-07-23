@@ -21,7 +21,9 @@ class OcrImportRemainingToMasterCommand extends Command
         {--chunk=500 : Chunk size}
         {--limit=0 : Stop after N rows (0 = all)}
         {--verified-only : Only process rows eligible for verified Master}
-        {--needs-verification-only : Only process Needs Verification creates}';
+        {--needs-verification-only : Only process Needs Verification creates}
+        {--show-errors : Print error category breakdown (read-only)}
+        {--error-limit=50 : Max sample rows across error categories}';
 
     protected $description = 'Import remaining unlinked OCR rows as Verified or Needs Verification Master (dry-run default)';
 
@@ -67,11 +69,22 @@ class OcrImportRemainingToMasterCommand extends Command
                 'limit' => (int) ($this->option('limit') ?? 0),
                 'verified_only' => (bool) $this->option('verified-only'),
                 'needs_verification_only' => (bool) $this->option('needs-verification-only'),
+                'show_errors' => (bool) $this->option('show-errors'),
+                'error_limit' => (int) ($this->option('error-limit') ?? 50),
             ]);
         } catch (Throwable $e) {
             $this->error($e->getMessage());
 
             return self::FAILURE;
+        }
+
+        $schema = $report['schema'] ?? [];
+        if ($schema !== []) {
+            $this->newLine();
+            $this->line('Schema flags (ca_masters): '
+                .'ocr_city_text='.(! empty($schema['ocr_city_text']) ? 'yes' : 'NO')
+                .' source_ocr_row_id='.(! empty($schema['source_ocr_row_id']) ? 'yes' : 'NO')
+                .' verification_status='.(! empty($schema['verification_status']) ? 'yes' : 'NO'));
         }
 
         $this->newLine();
@@ -96,6 +109,10 @@ class OcrImportRemainingToMasterCommand extends Command
             ['Errors', $report['errors'] ?? 0],
         ]);
 
+        if ((bool) $this->option('show-errors') || (int) ($report['errors'] ?? 0) > 0) {
+            $this->renderErrorReport($report, (bool) $this->option('show-errors'));
+        }
+
         if ($dryRun) {
             $this->newLine();
             $this->comment('Dry-run complete. No Master writes. Review counts before --apply.');
@@ -103,5 +120,101 @@ class OcrImportRemainingToMasterCommand extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    /**
+     * @param  array<string, mixed>  $report
+     */
+    private function renderErrorReport(array $report, bool $showDetails): void
+    {
+        $categories = $report['error_categories'] ?? [];
+        if ($categories === []) {
+            if ($showDetails) {
+                $this->newLine();
+                $this->info('No errors to display.');
+            }
+
+            return;
+        }
+
+        $this->newLine();
+        $this->warn('Error categories');
+        $rows = [];
+        foreach ($categories as $cat) {
+            $rows[] = [
+                $cat['category'] ?? 'unknown',
+                $cat['count'] ?? 0,
+                $cat['sqlstate'] ?? '',
+                implode(',', $cat['sample_row_ids'] ?? []),
+                $cat['origin'] ?? '',
+                mb_substr((string) ($cat['message'] ?? ''), 0, 120),
+            ];
+        }
+        usort($rows, static fn ($a, $b) => ($b[1] <=> $a[1]));
+        $this->table(
+            ['Error category', 'Count', 'SQLSTATE', 'Sample row IDs', 'Origin (file:line)', 'Exception/message'],
+            $rows
+        );
+
+        if (! $showDetails) {
+            $this->comment('Re-run with --show-errors --error-limit=50 for firm/CA/city samples.');
+
+            return;
+        }
+
+        $this->newLine();
+        $this->warn('Error samples (firm / CA / city / validation / exception)');
+        $detailRows = [];
+        foreach ($categories as $cat) {
+            foreach ($cat['samples'] ?? [] as $sample) {
+                $detailRows[] = [
+                    $sample['category'] ?? ($cat['category'] ?? ''),
+                    $sample['id'] ?? '',
+                    mb_substr((string) ($sample['firm'] ?? ''), 0, 40),
+                    mb_substr((string) ($sample['ca'] ?? ''), 0, 30),
+                    mb_substr((string) ($sample['city'] ?? ''), 0, 20),
+                    mb_substr((string) ($sample['validation_reason'] ?? ''), 0, 40),
+                    mb_substr((string) ($sample['exception'] ?? ''), 0, 80),
+                ];
+            }
+        }
+        if ($detailRows === []) {
+            foreach (array_slice($report['error_samples'] ?? [], 0, 50) as $sample) {
+                $detailRows[] = [
+                    $sample['category'] ?? '',
+                    $sample['id'] ?? '',
+                    mb_substr((string) ($sample['firm'] ?? ''), 0, 40),
+                    mb_substr((string) ($sample['ca'] ?? ''), 0, 30),
+                    mb_substr((string) ($sample['city'] ?? ''), 0, 20),
+                    mb_substr((string) ($sample['validation_reason'] ?? ''), 0, 40),
+                    mb_substr((string) ($sample['exception'] ?? ''), 0, 80),
+                ];
+            }
+        }
+        $this->table(
+            ['Error category', 'Row ID', 'Firm', 'CA', 'City', 'Validation reason', 'Exception/message'],
+            $detailRows
+        );
+        $payloadRows = [];
+        foreach ($categories as $cat) {
+            foreach ($cat['samples'] ?? [] as $sample) {
+                $payloadRows[] = [
+                    $sample['id'] ?? '',
+                    $sample['plan_action'] ?? '',
+                    $sample['plan_bucket'] ?? '',
+                    $sample['data_quality_issue'] ?? '',
+                    implode(',', $sample['payload_keys'] ?? []),
+                    $sample['sqlstate'] ?? '',
+                ];
+            }
+        }
+        if ($payloadRows !== []) {
+            $this->newLine();
+            $this->warn('Error payload context');
+            $this->table(
+                ['Row ID', 'Plan action', 'Bucket', 'Quality issue', 'Payload keys', 'SQLSTATE'],
+                $payloadRows
+            );
+        }
     }
 }

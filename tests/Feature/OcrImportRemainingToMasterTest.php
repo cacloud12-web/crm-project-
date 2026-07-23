@@ -33,6 +33,111 @@ class OcrImportRemainingToMasterTest extends TestCase
         }
     }
 
+    public function test_missing_ca_with_city_plans_needs_verification_without_ocr_city_text_column(): void
+    {
+        $firm = $this->seedUnlinked([
+            'firm_name' => 'SCHEMA SAFE FIRM LLP',
+            'city' => 'SURAT',
+            'source_data' => [
+                'raw' => ['firm_name' => 'SCHEMA SAFE FIRM LLP', 'ca_name' => '', 'city' => 'SURAT'],
+                'parsed' => ['firm_name' => 'SCHEMA SAFE FIRM LLP', 'ca_name' => '', 'city' => 'SURAT'],
+            ],
+            'match_status' => 'needs_review',
+            'match_reason' => 'missing_ca_name',
+        ]);
+
+        // Simulate production before Needs Verification migration (no ocr_city_text).
+        $plan = $this->service->planImport($firm, false, false, false);
+        $this->assertSame('create', $plan['action']);
+        $this->assertSame('needs_verification', $plan['bucket']);
+        $this->assertSame('CA Name Missing', $plan['data_quality_issue']);
+        $this->assertNull($plan['ca_name']);
+        $this->assertSame('SURAT', $plan['city']);
+    }
+
+    public function test_dry_run_with_city_does_not_error_when_ocr_city_text_absent(): void
+    {
+        $firm = $this->seedUnlinked([
+            'firm_name' => 'NO COL FIRM AND CO',
+            'city' => 'NAGPUR',
+            'source_data' => [
+                'raw' => ['firm_name' => 'NO COL FIRM AND CO', 'ca_name' => '', 'city' => 'NAGPUR'],
+                'parsed' => ['firm_name' => 'NO COL FIRM AND CO', 'ca_name' => '', 'city' => 'NAGPUR'],
+            ],
+            'match_status' => 'needs_review',
+        ]);
+
+        // Force candidate search path with hasOcrCityText=false via planImport (no exception).
+        $plan = $this->service->planImport($firm, false, true, true);
+        $this->assertNotSame('skip_invalid', $plan['action']);
+        $this->assertContains($plan['action'], ['create', 'link', 'ambiguous']);
+    }
+
+    public function test_needs_verification_create_without_verification_columns_in_attrs(): void
+    {
+        $firm = $this->seedUnlinked([
+            'firm_name' => 'NO MIGRATE FIRM LLP',
+            'city' => null,
+            'source_data' => [
+                'raw' => ['firm_name' => 'NO MIGRATE FIRM LLP', 'ca_name' => 'SURESH PATEL', 'city' => ''],
+                'parsed' => ['firm_name' => 'NO MIGRATE FIRM LLP', 'ca_name' => 'SURESH PATEL', 'city' => ''],
+            ],
+            'match_status' => 'needs_review',
+        ]);
+        $before = CaMaster::query()->count();
+
+        // Force the create path with quality issue present even if columns absent.
+        $plan = [
+            'action' => 'create',
+            'bucket' => 'needs_verification',
+            'firm_name' => 'NO MIGRATE FIRM LLP',
+            'ca_name' => 'SURESH PATEL',
+            'city' => null,
+            'address_text' => null,
+            'data_quality_issue' => 'City Missing',
+            'data_quality_status' => 'incomplete',
+        ];
+        $ref = new \ReflectionClass($this->service);
+        $method = $ref->getMethod('importNeedsVerification');
+        $method->setAccessible(true);
+        $method->invoke($this->service, $firm, 1, $plan);
+
+        $firm->refresh();
+        $this->assertNotNull($firm->crm_ca_id);
+        $this->assertSame($before + 1, CaMaster::query()->count());
+        $master = CaMaster::query()->findOrFail($firm->crm_ca_id);
+        $this->assertSame('SURESH PATEL', $master->ca_name);
+        $this->assertNull($master->city_id);
+        $this->assertFalse((bool) $master->is_verified);
+    }
+
+    public function test_blank_ca_needs_verification_does_not_copy_firm_into_ca_name(): void
+    {
+        $firm = $this->seedUnlinked([
+            'firm_name' => 'BLANK CA MASTER FIRM',
+            'city' => 'SURAT',
+            'source_data' => [
+                'raw' => ['firm_name' => 'BLANK CA MASTER FIRM', 'ca_name' => '', 'city' => 'SURAT'],
+                'parsed' => ['firm_name' => 'BLANK CA MASTER FIRM', 'ca_name' => '', 'city' => 'SURAT'],
+            ],
+            'match_status' => 'needs_review',
+        ]);
+
+        $report = $this->service->run([
+            'document' => (int) $firm->ocr_document_id,
+            'apply' => true,
+            'actor' => 1,
+            'needs_verification_only' => true,
+        ]);
+
+        $firm->refresh();
+        $this->assertSame(0, $report['errors'], json_encode($report['error_samples'] ?? []));
+        $this->assertNotNull($firm->crm_ca_id);
+        $master = CaMaster::query()->findOrFail($firm->crm_ca_id);
+        $this->assertTrue($master->ca_name === null || $master->ca_name === '');
+        $this->assertNotEquals('BLANK CA MASTER FIRM', $master->ca_name);
+    }
+
     public function test_revalidate_sets_review_and_match_verified(): void
     {
         $firm = $this->seedUnlinked([

@@ -82,6 +82,12 @@ Route::middleware(['auth', 'rbac'])->group(function () {
         ->middleware(['spa.browser:ca-master', 'throttle:lead-action']);
     Route::delete('ca-masters/{id}/force', [CaMasterController::class, 'forceDestroy'])
         ->middleware(['spa.browser:ca-master', 'throttle:lead-action']);
+    Route::patch('ca-masters/{ca_master}/mark-verified', [CaMasterController::class, 'markVerified'])
+        ->middleware(['spa.browser:ca-master', 'throttle:lead-action']);
+    Route::patch('ca-masters/{ca_master}/mark-noise', [CaMasterController::class, 'markNoise'])
+        ->middleware(['spa.browser:ca-master', 'throttle:lead-action']);
+    Route::get('ca-masters/{ca_master}/ocr-source', [CaMasterController::class, 'ocrSource'])
+        ->middleware('spa.browser:ca-master');
     Route::resource('ca-masters', CaMasterController::class)
         ->middleware('spa.browser:ca-master');
 
