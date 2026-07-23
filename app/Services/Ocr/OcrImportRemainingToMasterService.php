@@ -130,98 +130,77 @@ class OcrImportRemainingToMasterService
                 /** @var OcrParsedFirm $firm */
                 $counts['scanned']++;
                 $plan = null;
-                $countedTowardLimit = false;
+                $countsTowardLimit = true;
 
                 try {
                     if ($firm->crm_ca_id) {
                         $counts['already_linked_skipped']++;
-                        $countedTowardLimit = true;
-                        continue;
-                    }
-                    if ((bool) ($firm->is_noise ?? false)) {
+                    } elseif ((bool) ($firm->is_noise ?? false)) {
                         $counts['noise_rows_skipped']++;
-                        $countedTowardLimit = true;
-                        continue;
-                    }
-
-                    // Step 1: revalidate staging status consistency (never throws for incomplete data).
-                    $reval = $this->revalidateStaging($firm, $dryRun);
-                    if (! empty($reval['ok'])) {
-                        $counts['revalidated_verified']++;
-                    } else {
-                        $counts['revalidated_needs_review']++;
-                    }
-                    if ($dryRun) {
-                        foreach ($reval['updates'] ?? [] as $key => $value) {
-                            $firm->setAttribute($key, $value);
-                        }
-                    } else {
-                        $firm->refresh();
-                    }
-
-                    $plan = $this->planImport($firm, $hasOcrCityText, $hasSourceOcrRowId, $hasVerificationStatus);
-                    if ($plan['action'] === 'skip_invalid') {
-                        $counts['invalid_rows_skipped']++;
-                        $countedTowardLimit = true;
-                        continue;
-                    }
-                    if ($plan['action'] === 'ambiguous') {
-                        $counts['ambiguous_rows']++;
-                        $countedTowardLimit = true;
-                        continue;
-                    }
-                    if ($plan['action'] === 'link') {
-                        $counts['would_link_existing']++;
-                        $counts['duplicate_links']++;
-                        $linkBucket = (string) ($plan['bucket'] ?? 'link');
-                        if ($linkBucket === self::VERIFICATION_NEEDS || $linkBucket === 'needs_verification') {
-                            $counts['would_link_needs_verification_master']++;
-                        } else {
-                            $counts['would_link_verified_master']++;
-                        }
-                        if ($apply && ! $dryRun) {
-                            $this->linkExisting($firm, (int) $plan['ca_id'], $actorId, $plan);
-                            $counts['linked_existing']++;
-                        }
-                        $countedTowardLimit = true;
-                        continue;
-                    }
-
-                    if (($plan['bucket'] ?? '') === 'verified') {
+                    } elseif ($needsOnly && $this->looksCompleteForVerifiedBucket($firm)) {
+                        // Skip complete rows before expensive revalidation when NV-only.
                         $counts['eligible_verified_rows']++;
-                        $counts['would_create_verified_master']++;
-                        if ($needsOnly) {
-                            $countedTowardLimit = true;
-                            continue;
+                        $countsTowardLimit = false;
+                    } else {
+                        $reval = $this->revalidateStaging($firm, $dryRun);
+                        if (! empty($reval['ok'])) {
+                            $counts['revalidated_verified']++;
+                        } else {
+                            $counts['revalidated_needs_review']++;
                         }
-                        if ($apply && ! $dryRun) {
-                            $this->importVerified($firm, $actorId);
-                            $counts['created_verified']++;
+                        if ($dryRun) {
+                            foreach ($reval['updates'] ?? [] as $key => $value) {
+                                $firm->setAttribute($key, $value);
+                            }
+                        } else {
+                            $firm->refresh();
                         }
-                        $countedTowardLimit = true;
-                        continue;
-                    }
 
-                    // needs_verification
-                    $counts['needs_verification_rows']++;
-                    $counts['would_create_needs_verification_master']++;
-                    if ($verifiedOnly) {
-                        $countedTowardLimit = true;
-                        continue;
+                        $plan = $this->planImport($firm, $hasOcrCityText, $hasSourceOcrRowId, $hasVerificationStatus);
+                        if ($plan['action'] === 'skip_invalid') {
+                            $counts['invalid_rows_skipped']++;
+                        } elseif ($plan['action'] === 'ambiguous') {
+                            $counts['ambiguous_rows']++;
+                        } elseif ($plan['action'] === 'link') {
+                            $counts['would_link_existing']++;
+                            $counts['duplicate_links']++;
+                            $linkBucket = (string) ($plan['bucket'] ?? 'link');
+                            if ($linkBucket === self::VERIFICATION_NEEDS || $linkBucket === 'needs_verification') {
+                                $counts['would_link_needs_verification_master']++;
+                            } else {
+                                $counts['would_link_verified_master']++;
+                            }
+                            if ($apply && ! $dryRun) {
+                                $this->linkExisting($firm, (int) $plan['ca_id'], $actorId, $plan);
+                                $counts['linked_existing']++;
+                            }
+                        } elseif (($plan['bucket'] ?? '') === 'verified') {
+                            $counts['eligible_verified_rows']++;
+                            $counts['would_create_verified_master']++;
+                            if ($needsOnly) {
+                                $countsTowardLimit = false;
+                            } elseif ($apply && ! $dryRun) {
+                                $this->importVerified($firm, $actorId);
+                                $counts['created_verified']++;
+                            }
+                        } else {
+                            $counts['needs_verification_rows']++;
+                            $counts['would_create_needs_verification_master']++;
+                            if ($verifiedOnly) {
+                                $countsTowardLimit = false;
+                            } elseif ($apply && ! $dryRun) {
+                                $this->importNeedsVerification($firm, $actorId, $plan);
+                                $counts['created_needs_verification']++;
+                            }
+                        }
                     }
-                    if ($apply && ! $dryRun) {
-                        $this->importNeedsVerification($firm, $actorId, $plan);
-                        $counts['created_needs_verification']++;
-                    }
-                    $countedTowardLimit = true;
                 } catch (Throwable $e) {
                     $counts['errors']++;
                     $this->recordError($counts, $firm, $e, $showErrors, $errorLimit, is_array($plan) ? $plan : null);
-                    $countedTowardLimit = true;
-                } finally {
-                    if ($countedTowardLimit) {
-                        $processed++;
-                    }
+                }
+
+                if ($countsTowardLimit) {
+                    $processed++;
                     if ($limit > 0 && $processed >= $limit) {
                         return false;
                     }
@@ -232,6 +211,18 @@ class OcrImportRemainingToMasterService
         });
 
         return $counts;
+    }
+
+    private function looksCompleteForVerifiedBucket(OcrParsedFirm $firm): bool
+    {
+        $src = is_array($firm->source_data) ? $firm->source_data : [];
+        $raw = is_array($src['raw'] ?? null) ? $src['raw'] : [];
+        $parsed = is_array($src['parsed'] ?? null) ? $src['parsed'] : [];
+        $firmName = trim((string) ($firm->firm_name ?: ($parsed['firm_name'] ?? '') ?: ($raw['firm_name'] ?? '')));
+        $caName = trim((string) (($parsed['ca_name'] ?? '') ?: ($raw['ca_name'] ?? '')));
+        $city = trim((string) ($firm->city ?: ($parsed['city'] ?? '') ?: ($raw['city'] ?? '')));
+
+        return $firmName !== '' && $caName !== '' && $city !== '';
     }
 
     /**
