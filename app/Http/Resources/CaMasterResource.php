@@ -192,6 +192,39 @@ class CaMasterResource extends JsonResource
             'address' => $this->address,
             'researched_at' => $this->researched_at,
             'is_verified' => (bool) $this->is_verified,
+            'verification_status' => $this->verification_status
+                ?? ($this->is_verified ? 'verified' : null),
+            'data_quality_status' => $this->data_quality_status,
+            'data_quality_issue' => $this->data_quality_issue,
+            'source_type' => $this->source_type,
+            'source_ocr_document_id' => $this->source_ocr_document_id,
+            'source_ocr_row_id' => $this->source_ocr_row_id,
+            'ocr_match_status' => $this->ocr_match_status,
+            'ocr_review_status' => $this->ocr_review_status,
+            'ocr_match_reason' => $this->ocr_match_reason,
+            'ocr_validation_errors' => $this->ocr_validation_errors,
+            'ocr_city_text' => $this->ocr_city_text,
+            'review_required' => ($this->verification_status ?? null) === 'needs_verification'
+                || (! $this->is_verified && ($this->source_type ?? null) === 'ocr'),
+            'ca_name_display' => ($this->ca_name === null || trim((string) $this->ca_name) === '')
+                ? ((($this->verification_status ?? null) === 'needs_verification') ? 'CA Name Missing' : '—')
+                : $this->ca_name,
+            'city_display' => $this->when(
+                true,
+                function () {
+                    $cityName = $this->relationLoaded('city') ? ($this->city?->city_name) : null;
+                    if ($cityName) {
+                        return $cityName;
+                    }
+                    if (($this->verification_status ?? null) === 'needs_verification'
+                        && (empty($this->city_id))
+                        && empty($this->ocr_city_text)) {
+                        return 'City Missing';
+                    }
+
+                    return $this->ocr_city_text ?: '—';
+                }
+            ),
             'is_wrong_number' => (bool) $this->is_wrong_number,
             'wrong_number_reason' => $this->wrong_number_reason,
             'rating' => $this->rating,

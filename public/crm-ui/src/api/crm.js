@@ -2762,6 +2762,13 @@ if (otherInput) {
       rating_stars: l.rating || 1,
       created_by: l.created_by_name || l.created_by || '—',
       is_verified: !!l.is_verified,
+      verification_status: l.verification_status || (l.is_verified ? 'verified' : null),
+      data_quality_status: l.data_quality_status || null,
+      data_quality_issue: l.data_quality_issue || null,
+      source_type: l.source_type || null,
+      review_required: !!l.review_required,
+      ca_name_display: l.ca_name_display || l.ca_name || null,
+      city_display: l.city_display || l.city || null,
       is_wrong_number: !!l.is_wrong_number,
       last_action: l.last_action || '—',
       google_place_id: l.google_place_id || null,
@@ -13472,9 +13479,22 @@ if (otherInput) {
     var executiveCell = renderCaMasterExecutiveCell(l, canAssign);
     var mobileCell = renderCaMasterInlineMobileCell(l, canEdit && !l.employee_cannot_edit_mobile);
     var firmCell = renderCaMasterFirmNameCell(l, partnerCount, expandedPartners.length);
-    var caCell = caNameCell(l.primary_ca_name || l.ca_name);
+    var caLabel = l.ca_name_display || l.primary_ca_name || l.ca_name;
+    var caCell = caNameCell(caLabel);
+    if (l.verification_status === 'needs_verification' || l.review_required) {
+      var issue = l.data_quality_issue ? String(l.data_quality_issue) : 'Review Required';
+      caCell = '<div class="cam-nv-ca">' + caCell +
+        '<span class="cam-badge cam-badge--needs-verification" title="Needs Verification">Needs Verification</span>' +
+        '<span class="cam-badge cam-badge--quality-issue" title="' + escapeAttr(issue) + '">' + escapeHtml(issue) + '</span>' +
+        (l.source_type === 'ocr' ? '<span class="cam-badge cam-badge--ocr-source">OCR Source</span>' : '') +
+        '</div>';
+    }
     var teamCell = renderCaMasterInlineTeamSizeCell(l, canEdit);
-    var parentRow = '<tr class="ca-table-row cam-table-row crm-table-row cam-master-data-row" data-lead-id="' + l.ca_id + '" data-row=\'' + data + '\'>' +
+    var rowCls = 'ca-table-row cam-table-row crm-table-row cam-master-data-row';
+    if (l.verification_status === 'needs_verification' || l.review_required) {
+      rowCls += ' cam-row--needs-verification';
+    }
+    var parentRow = '<tr class="' + rowCls + '" data-lead-id="' + l.ca_id + '" data-row=\'' + data + '\'>' +
       withCamDataColumn('selection', renderInboxCheckCell(tableKey, l.ca_id)) +
       camColTd('firm_name', 'sticky-left-2 crm-td-firm cam-master-data-cell', firmCell) +
       camColTd('ca_name', 'crm-td-ca cam-master-data-cell', caCell) +
@@ -13736,7 +13756,23 @@ if (otherInput) {
       label = 'Missing Mobile';
     } else if (key === 'verified') {
       filters.is_verified = 'true';
+      filters.verification_status = 'verified';
       label = 'Verified Firms';
+    } else if (key === 'needs-verification') {
+      filters.verification_status = 'needs_verification';
+      label = 'Needs Verification';
+    } else if (key === 'missing-ca') {
+      filters.verification_status = 'needs_verification';
+      filters.data_quality_issue = 'CA Name Missing';
+      label = 'Missing CA Name';
+    } else if (key === 'missing-city') {
+      filters.verification_status = 'needs_verification';
+      filters.data_quality_issue = 'City Missing';
+      label = 'Missing City';
+    } else if (key === 'ocr-conflict') {
+      filters.verification_status = 'needs_verification';
+      filters.data_quality_issue = 'OCR Conflict';
+      label = 'OCR Conflict';
     } else {
       key = 'total';
       label = 'Total Firms';
@@ -13830,6 +13866,34 @@ if (otherInput) {
         setText('cam-stat-verified', total != null ? total : '—');
       })
       .catch(function () { setText('cam-stat-verified', '—'); });
+    apiFetch('/ca-masters?per_page=1&verification_status=needs_verification')
+      .then(function (body) {
+        var parsed = window.CA_LISTING_SEARCH ? CA_LISTING_SEARCH.unwrapListingBody(body) : { pagination: null };
+        var total = parsed.pagination ? parsed.pagination.total : null;
+        setText('cam-stat-needs-verification', total != null ? total : '—');
+      })
+      .catch(function () { setText('cam-stat-needs-verification', '—'); });
+    apiFetch('/ca-masters?per_page=1&verification_status=needs_verification&data_quality_issue=' + encodeURIComponent('CA Name Missing'))
+      .then(function (body) {
+        var parsed = window.CA_LISTING_SEARCH ? CA_LISTING_SEARCH.unwrapListingBody(body) : { pagination: null };
+        var total = parsed.pagination ? parsed.pagination.total : null;
+        setText('cam-stat-missing-ca', total != null ? total : '—');
+      })
+      .catch(function () { setText('cam-stat-missing-ca', '—'); });
+    apiFetch('/ca-masters?per_page=1&verification_status=needs_verification&data_quality_issue=' + encodeURIComponent('City Missing'))
+      .then(function (body) {
+        var parsed = window.CA_LISTING_SEARCH ? CA_LISTING_SEARCH.unwrapListingBody(body) : { pagination: null };
+        var total = parsed.pagination ? parsed.pagination.total : null;
+        setText('cam-stat-missing-city', total != null ? total : '—');
+      })
+      .catch(function () { setText('cam-stat-missing-city', '—'); });
+    apiFetch('/ca-masters?per_page=1&verification_status=needs_verification&data_quality_issue=' + encodeURIComponent('OCR Conflict'))
+      .then(function (body) {
+        var parsed = window.CA_LISTING_SEARCH ? CA_LISTING_SEARCH.unwrapListingBody(body) : { pagination: null };
+        var total = parsed.pagination ? parsed.pagination.total : null;
+        setText('cam-stat-ocr-conflict', total != null ? total : '—');
+      })
+      .catch(function () { setText('cam-stat-ocr-conflict', '—'); });
   }
 
   function readCaMasterColumnFilters() {

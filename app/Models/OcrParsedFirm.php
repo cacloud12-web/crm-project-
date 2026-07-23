@@ -14,6 +14,9 @@ class OcrParsedFirm extends Model
 
     public const REVIEW_REJECTED = 'rejected';
 
+    /** Phase-3 / import: corrected complete OCR row ready for verified Master path. */
+    public const REVIEW_VERIFIED = 'verified';
+
     protected $fillable = [
         'ocr_document_id',
         'parse_run_id',

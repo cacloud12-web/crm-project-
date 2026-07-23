@@ -384,4 +384,25 @@ class CaMasterController extends Controller
 
         return ApiResponse::success($result, $result['deleted_count'].' lead(s) permanently deleted');
     }
+
+    public function markVerified(Request $request, string $ca_master): JsonResponse
+    {
+        $lead = $this->caMasterService->markOcrNeedsVerificationVerified((int) $ca_master, $request->user());
+
+        return ApiResponse::success(new CaMasterResource($lead), 'Marked verified');
+    }
+
+    public function markNoise(Request $request, string $ca_master): JsonResponse
+    {
+        $lead = $this->caMasterService->markOcrNeedsVerificationNoise((int) $ca_master, $request->user());
+
+        return ApiResponse::success(new CaMasterResource($lead), 'Marked as noise / rejected');
+    }
+
+    public function ocrSource(Request $request, string $ca_master): JsonResponse
+    {
+        $payload = $this->caMasterService->ocrSourcePayload((int) $ca_master, $request->user());
+
+        return ApiResponse::success($payload, 'OCR source loaded');
+    }
 }

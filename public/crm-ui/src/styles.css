@@ -17451,6 +17451,46 @@ body.ra-drawer-open .crm-header {
 #ca-masters-table tbody tr:hover td:first-child {
     background: #f8fafc !important;
 }
+
+/* OCR Needs Verification Master rows */
+#ca-masters-table tbody tr.cam-row--needs-verification td {
+    background: #fffbeb;
+}
+#ca-masters-table tbody tr.cam-row--needs-verification td:first-child {
+    background: #fffbeb !important;
+}
+.cam-badge--needs-verification {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 0.25rem;
+    padding: 0.125rem 0.4rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    background: #fef3c7;
+    color: #92400e;
+    border: 1px solid #f59e0b;
+}
+.cam-badge--quality-issue {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 0.25rem;
+    padding: 0.125rem 0.4rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    background: #fee2e2;
+    color: #991b1b;
+}
+.cam-badge--ocr-source {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 0.25rem;
+    padding: 0.125rem 0.4rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    background: #e0f2fe;
+    color: #075985;
+}
+
 /* Assignment Heat Map dropdown arrow spacing */
 .assign-heatmap-toolbar select.input-field {
   appearance: none;

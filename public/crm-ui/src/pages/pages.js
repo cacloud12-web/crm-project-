@@ -750,6 +750,10 @@ window.CAPages = (function () {
       { id: 'cam-stat-duplicates', key: 'duplicates', label: 'Duplicate Attempts', icon: 'copy-x', tone: 'rose' },
       { id: 'cam-stat-missing-mobile', key: 'missing-mobile', label: 'Missing Mobile', icon: 'phone-off', tone: 'slate' },
       { id: 'cam-stat-verified', key: 'verified', label: 'Verified Firms', icon: 'shield-check', tone: 'teal' },
+      { id: 'cam-stat-needs-verification', key: 'needs-verification', label: 'Needs Verification', icon: 'shield-alert', tone: 'amber' },
+      { id: 'cam-stat-missing-ca', key: 'missing-ca', label: 'Missing CA Name', icon: 'user-x', tone: 'rose' },
+      { id: 'cam-stat-missing-city', key: 'missing-city', label: 'Missing City', icon: 'map-pin-off', tone: 'slate' },
+      { id: 'cam-stat-ocr-conflict', key: 'ocr-conflict', label: 'OCR Conflict', icon: 'git-compare', tone: 'rose' },
     ];
     return '<div class="cam-summary-grid" id="cam-summary-grid">' + cards.map(function (c) {
       return '<button type="button" class="cam-summary-card cam-summary-card--clickable cam-summary-card--' + c.tone + '" data-cam-summary="' + c.key + '" title="Show ' + c.label + '">' +

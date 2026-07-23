@@ -6,6 +6,7 @@ use App\Events\LeadSaved;
 use App\Exceptions\DuplicateLeadException;
 use App\Models\CaMaster;
 use App\Models\LeadPhoneNumber;
+use App\Models\OcrParsedFirm;
 use App\Services\Activity\ActivityLogService;
 use App\Services\Assignment\AssignmentRecorder;
 use App\Services\Cache\CrmCacheService;
@@ -990,5 +991,95 @@ class CaMasterService
                 'message' => config('crm_duplicates.messages.phone'),
             ],
         );
+    }
+
+    public function markOcrNeedsVerificationVerified(int $caId, $user): CaMaster
+    {
+        $lead = CaMaster::query()->findOrFail($caId);
+        if ($user) {
+            $this->leadLockService->assertCanMutate($lead, $user);
+        }
+        if (($lead->verification_status ?? null) !== 'needs_verification'
+            && ! (($lead->source_type ?? null) === 'ocr' && ! $lead->is_verified)) {
+            throw new \InvalidArgumentException('Only Needs Verification OCR masters can be marked verified here.');
+        }
+        if (trim((string) ($lead->ca_name ?? '')) === '' || empty($lead->city_id)) {
+            throw new \InvalidArgumentException('CA name and city are required before marking verified.');
+        }
+        $before = $this->auditSnapshot($lead);
+        $lead->update([
+            'verification_status' => 'verified',
+            'is_verified' => true,
+            'data_quality_status' => 'complete',
+            'data_quality_issue' => null,
+            'verified_by' => $user?->id,
+        ]);
+        $this->activityLogService->log(
+            'CA_MASTER',
+            'Mark Verified',
+            $this->shortId((string) $lead->ca_id),
+            'OCR Needs Verification marked verified',
+            beforeValue: $before,
+            afterValue: $this->auditSnapshot($lead->fresh()),
+        );
+
+        return $lead->fresh();
+    }
+
+    public function markOcrNeedsVerificationNoise(int $caId, $user): CaMaster
+    {
+        $lead = CaMaster::query()->findOrFail($caId);
+        if ($user) {
+            $this->leadLockService->assertCanMutate($lead, $user);
+        }
+        $before = $this->auditSnapshot($lead);
+        $lead->update([
+            'verification_status' => 'needs_verification',
+            'is_verified' => false,
+            'data_quality_status' => 'noise',
+            'data_quality_issue' => 'Marked Noise',
+            'status' => 'Not Interested',
+        ]);
+        if ($lead->source_ocr_row_id) {
+            OcrParsedFirm::query()->where('id', $lead->source_ocr_row_id)->update([
+                'is_noise' => true,
+                'match_reason' => 'master_marked_noise',
+            ]);
+        }
+        $this->activityLogService->log(
+            'CA_MASTER',
+            'Mark Noise',
+            $this->shortId((string) $lead->ca_id),
+            'OCR Needs Verification marked noise',
+            beforeValue: $before,
+            afterValue: $this->auditSnapshot($lead->fresh()),
+        );
+
+        return $lead->fresh();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function ocrSourcePayload(int $caId, $user): array
+    {
+        $lead = CaMaster::query()->findOrFail($caId);
+        $firm = null;
+        if ($lead->source_ocr_row_id) {
+            $firm = OcrParsedFirm::query()->find($lead->source_ocr_row_id);
+        }
+
+        return [
+            'ca_id' => $lead->ca_id,
+            'verification_status' => $lead->verification_status,
+            'data_quality_issue' => $lead->data_quality_issue,
+            'source_ocr_document_id' => $lead->source_ocr_document_id,
+            'source_ocr_row_id' => $lead->source_ocr_row_id,
+            'raw' => is_array($firm?->source_data) ? ($firm->source_data['raw'] ?? null) : null,
+            'parsed' => is_array($firm?->source_data) ? ($firm->source_data['parsed'] ?? null) : null,
+            'match_status' => $firm?->match_status,
+            'match_reason' => $firm?->match_reason,
+            'validation_errors' => $firm?->validation_errors,
+        ];
     }
 }
