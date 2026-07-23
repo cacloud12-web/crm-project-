@@ -40,7 +40,7 @@ class OcrHumanNameClassifier
         if ($firmName !== null && mb_strtolower($text) === mb_strtolower(trim($firmName))) {
             return false;
         }
-        if (preg_match('/\b(?:road|street|floor|ward|plot|building|colony|market|mandi|hospital|school|society|near|opp|opposite|house|shop|sector|nagar|complex|tower|plaza|pin|frn|membership|associates|llp|&\s*co|and\s+co|company|chartered)\b/iu', $text)) {
+        if (preg_match('/\b(?:road|street|floor|ward|plot|building|colony|market|mandi|hospital|school|society|near|opp|opposite|house|shop|sector|nagar|complex|tower|plaza|square|centre|center|tenament|tenement|business|chambers|comm|commercial|arcade|mall|highway|pin|frn|membership|associates|llp|&\s*co|and\s+co|company|chartered)\b/iu', $text)) {
             return false;
         }
         if (! preg_match('/^[A-Za-z][A-Za-z .\'\-]{1,78}$/u', $text)) {

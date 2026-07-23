@@ -77,6 +77,49 @@ class OcrParsedFirmResource extends JsonResource
             'crm_ca_id' => $this->crm_ca_id,
             'ca_id' => $this->crm_ca_id,
             'source_fingerprint' => $this->source_fingerprint ?? ($source['source_fingerprint'] ?? null),
+            // Phase 3 suggestion payload for future review UI (additive; non-breaking).
+            ...$this->suggestionFields($source, $raw, $parsed, $firmName, $caName, $city),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $source
+     * @param  array<string, mixed>  $raw
+     * @param  array<string, mixed>  $parsed
+     * @return array<string, mixed>
+     */
+    private function suggestionFields(
+        array $source,
+        array $raw,
+        array $parsed,
+        mixed $firmName,
+        mixed $caName,
+        mixed $city,
+    ): array {
+        $meta = is_array($this->field_meta) ? $this->field_meta : [];
+        $suggested = is_array($meta['suggested_ca_name'] ?? null) ? $meta['suggested_ca_name'] : [];
+        $correction = is_array($source['correction'] ?? null) ? $source['correction'] : [];
+        $issueCategory = $correction['category']
+            ?? ($meta['issue_category'] ?? null);
+        $suggestedCity = $meta['city']['suggested'] ?? ($correction['suggested_city'] ?? null);
+        $suggestedAddress = $meta['suggested_address']['value'] ?? ($correction['suggested_address'] ?? null);
+
+        return [
+            'issue_category' => $issueCategory,
+            'raw_firm' => $raw['firm_name'] ?? $this->raw_firm_name,
+            'raw_ca' => $raw['ca_name'] ?? null,
+            'raw_city' => $raw['city'] ?? null,
+            'parsed_firm' => $parsed['firm_name'] ?? $firmName,
+            'parsed_ca' => $parsed['ca_name'] ?? $caName,
+            'parsed_city' => $parsed['city'] ?? $city,
+            'suggested_ca' => $suggested['value'] ?? null,
+            'suggested_city' => $suggestedCity,
+            'suggested_address' => $suggestedAddress,
+            'correction_reason' => $correction['reason'] ?? ($suggested['reason'] ?? null),
+            'confidence' => $suggested['confidence'] ?? $this->overall_confidence,
+            'safe_repair_candidate' => (bool) ($suggested['safe_repair_candidate'] ?? false),
+            'manual_review_required' => (bool) ($suggested['manual_review_required']
+                ?? ($this->match_status === 'needs_review')),
         ];
     }
 

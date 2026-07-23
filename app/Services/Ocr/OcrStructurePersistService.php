@@ -921,7 +921,11 @@ class OcrStructurePersistService
                     $rawState = $this->isThreeFieldMode() ? null : $this->rawString($firmData['state'] ?? null);
                     $rawPincode = $this->isThreeFieldMode() ? null : $this->rawString($firmData['pincode'] ?? null);
                     $parsedCaName = $this->rawString($firmData['ca_name'] ?? ($members[0]['ca_name'] ?? null));
-                    $rawCaName = $this->rawString($firmData['raw_ca_name'] ?? ($members[0]['raw_ca_name'] ?? null)) ?? $parsedCaName;
+                    $explicitRawCa = $this->rawString($firmData['raw_ca_name'] ?? ($members[0]['raw_ca_name'] ?? null));
+                    $firmDerivedNoRaw = ($firmData['classification_reason'] ?? null) === 'firm_derived_missing_raw_ca'
+                        || (($firmData['field_meta']['ca_name']['evidence'] ?? null) === 'firm_derived_missing_raw_ca');
+                    // Do not invent raw OCR from parsed firm-derived CA (source verification).
+                    $rawCaName = $firmDerivedNoRaw ? $explicitRawCa : ($explicitRawCa ?? $parsedCaName);
                     $rawMembership = $this->isThreeFieldMode() ? null : $this->rawString($firmData['membership_no'] ?? ($members[0]['membership_no'] ?? null));
 
                     $rawPayload = $this->isThreeFieldMode()
@@ -1278,10 +1282,14 @@ class OcrStructurePersistService
 
         $isPartnership = $this->isPartnershipFirmData($firmData);
         $parsedCa = $this->rawString($firmData['ca_name'] ?? null);
-        $rawCa = $this->rawString($firmData['raw_ca_name'] ?? null) ?? $parsedCa;
+        $explicitRawCa = $this->rawString($firmData['raw_ca_name'] ?? null);
+        $firmDerivedNoRaw = ($firmData['classification_reason'] ?? null) === 'firm_derived_missing_raw_ca'
+            || (($firmData['field_meta']['ca_name']['evidence'] ?? null) === 'firm_derived_missing_raw_ca');
+        $rawCa = $firmDerivedNoRaw ? $explicitRawCa : ($explicitRawCa ?? $parsedCa);
         if ($parsedCa === null && is_array($firmData['members'] ?? null) && ($firmData['members'][0]['ca_name'] ?? null)) {
             $parsedCa = $this->rawString($firmData['members'][0]['ca_name']);
-            $rawCa = $this->rawString($firmData['members'][0]['raw_ca_name'] ?? null) ?? $parsedCa;
+            $memberRaw = $this->rawString($firmData['members'][0]['raw_ca_name'] ?? null);
+            $rawCa = $firmDerivedNoRaw ? $memberRaw : ($memberRaw ?? $parsedCa);
         }
         $parsedFirm = $this->rawString($firmData['firm_name'] ?? null);
         $rawFirm = $this->rawString($firmData['raw_firm_name'] ?? null) ?? $parsedFirm;
@@ -1296,7 +1304,7 @@ class OcrStructurePersistService
             $rawCity = $rawCity ?? $parsedCity;
         }
         $fieldMeta = is_array($firmData['field_meta'] ?? null) ? $firmData['field_meta'] : [];
-        $fieldMeta = array_intersect_key($fieldMeta, array_flip(['firm_name', 'ca_name', 'city']));
+        $fieldMeta = array_intersect_key($fieldMeta, array_flip(['firm_name', 'ca_name', 'city', 'suggested_ca_name', 'suggested_address']));
         $members = $isPartnership && is_array($firmData['members'] ?? null) ? $firmData['members'] : [];
         $partners = $isPartnership && is_array($firmData['partners'] ?? null) ? $firmData['partners'] : [];
         $partnerCount = $isPartnership

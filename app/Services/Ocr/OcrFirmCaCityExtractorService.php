@@ -192,19 +192,30 @@ class OcrFirmCaCityExtractorService
         // Peel person characters that appear inside the firm title token itself
         // (proprietorship "LOVISH GARG AND ASSOCIATES") — only multi-word, never single-token invent.
         // Does not invent CA when the firm title has no person-shaped prefix.
+        $suggestedCa = null;
+        $suggestedCaAnalysis = null;
         if ($caName === null && $firmName !== null) {
-            $derived = $this->deriveCaFromFirmName($firmName, $entities);
+            $derived = $this->deriveCaFromFirmName($firmName, $entities, $city);
             if ($derived !== null) {
-                $caName = $derived;
-                $rawCaName = $derived;
-                $caClassificationReason = 'peeled_person_prefix_from_firm_token';
+                if ($city !== null && trim((string) $city) !== '') {
+                    // Staging fill only — never invent raw OCR to bypass source verification.
+                    $caName = $derived;
+                    // Leave $rawCaName null/empty so raw ≠ fabricated.
+                    $caClassificationReason = 'firm_derived_missing_raw_ca';
+                    $suggestedCa = $derived;
+                    $suggestedCaAnalysis = $this->analyzeCaDerivation('', $derived, $firmName);
+                } else {
+                    $suggestedCa = $derived;
+                    $suggestedCaAnalysis = $this->analyzeCaDerivation('', $derived, $firmName);
+                }
             }
         } elseif ($caName !== null && $firmName !== null) {
-            $derived = $this->deriveCaFromFirmName($firmName, $entities);
+            $derived = $this->deriveCaFromFirmName($firmName, $entities, $city);
             if ($derived !== null && $this->shouldPreferDerivedCa($caName, $derived)) {
-                $caName = $derived;
-                // Keep original OCR raw when expanding a given-name token using firm evidence.
-                $caClassificationReason = 'expanded_from_firm_with_person_token';
+                // Never overwrite a valid raw/OCR CA — keep as suggestion for review.
+                $suggestedCa = $derived;
+                $suggestedCaAnalysis = $this->analyzeCaDerivation($caName, $derived, $firmName);
+                $caClassificationReason = $caClassificationReason ?? 'verified_person_name';
             }
         }
 
@@ -269,12 +280,30 @@ class OcrFirmCaCityExtractorService
                 $caClassificationReason === 'unicode_confusable_normalized' ? 0.84 : 0.86,
                 'ca_name',
                 $caClassificationReason ?? 'verified_person_name',
-                $rawCaName ?? $caName,
+                $caClassificationReason === 'firm_derived_missing_raw_ca' ? '' : ($rawCaName ?? $caName),
             )
             : null;
+        if ($caClassificationReason === 'firm_derived_missing_raw_ca' && is_array($fieldMeta['ca_name'] ?? null)) {
+            $fieldMeta['ca_name']['raw_value'] = null;
+            $fieldMeta['ca_name']['source_text'] = null;
+        }
         $fieldMeta['city'] = $city !== null
             ? $this->meta($city, $cityToken ?? $tokens[0], $cityFromSection ? 0.9 : 0.8, 'city', $cityFromSection ? 'section_heading' : 'city_token', $rawCity ?? $city)
             : null;
+        if ($suggestedCa !== null) {
+            $fieldMeta['suggested_ca_name'] = [
+                'value' => $suggestedCa,
+                'confidence' => 0.72,
+                'reason' => $caClassificationReason === 'firm_derived_missing_raw_ca'
+                    ? 'firm_derived_missing_raw_ca'
+                    : 'firm_derived_suggestion',
+                'analysis' => $suggestedCaAnalysis,
+                'safe_repair_candidate' => $caClassificationReason === 'firm_derived_missing_raw_ca'
+                    && $city !== null
+                    && trim((string) $city) !== '',
+                'manual_review_required' => $caClassificationReason !== 'firm_derived_missing_raw_ca',
+            ];
+        }
         $fieldMeta = array_filter($fieldMeta);
 
         $thresholds = [
@@ -303,6 +332,8 @@ class OcrFirmCaCityExtractorService
             'row_number' => $context['sequence_no'] ?? 1,
             'firm_name' => $firmName,
             'ca_name' => $caName,
+            'suggested_ca_name' => $suggestedCa,
+            'suggested_ca_analysis' => $suggestedCaAnalysis,
             'city' => $city,
             'ca_role' => null,
             'firm_type' => null,
@@ -352,7 +383,9 @@ class OcrFirmCaCityExtractorService
                 'y_center' => $t['y_center'] ?? null,
             ], $tokens),
             'raw_firm_name' => $rawFirmName ?? $firmName,
-            'raw_ca_name' => $rawCaName ?? $caName,
+            'raw_ca_name' => $caClassificationReason === 'firm_derived_missing_raw_ca'
+                ? null
+                : ($rawCaName ?? $caName),
             'raw_city' => $rawCity ?? $city,
             'classification_reason' => $caClassificationReason,
         ];
@@ -456,9 +489,17 @@ class OcrFirmCaCityExtractorService
     }
 
     /**
+     * Public wrapper for staging reprocess / UI suggestions.
+     */
+    public function suggestCaFromFirmName(string $firmName, ?string $city = null): ?string
+    {
+        return $this->deriveCaFromFirmName($firmName, new OcrEntityClassificationService, $city);
+    }
+
+    /**
      * Derive CA from proprietorship firm titles: "NAME [&|AND] ASSOCIATES/CO".
      */
-    private function deriveCaFromFirmName(string $firmName, OcrEntityClassificationService $entities): ?string
+    private function deriveCaFromFirmName(string $firmName, OcrEntityClassificationService $entities, ?string $city = null): ?string
     {
         $base = trim((string) preg_replace(
             '/\s+(?:&\s*|AND\s+)?(?:ASSOCIATES|CO\.?|COMPANY|LLP|CHARTERED\s+ACCOUNTANTS)\s*$/iu',
@@ -471,23 +512,37 @@ class OcrFirmCaCityExtractorService
             return null;
         }
         $words = preg_split('/\s+/', $base) ?: [];
-        // Multi-word proprietor names only (LOVISH GARG). Never invent CA from "SHAH & ASSOCIATES" → SHAH alone.
-        if (count($words) < 2 || count($words) > 4) {
+        // Multi-word proprietor names only (2–5 tokens). Never invent CA from "SHAH & ASSOCIATES".
+        if (count($words) < 2 || count($words) > 5) {
+            return null;
+        }
+        if ($entities->isAddress($base) || $entities->isAddressShape($base) || $entities->isCity($base)) {
+            return null;
+        }
+        // Reject org/brand stems (not person-like proprietorships).
+        if (preg_match('/\b(?:ltd|limited|pvt|private|inc|corp|corporation|group|holdings|services|consultants|consultancy|solutions|technologies|bank|insurance|hospital|university|institute|foundation|trust|society|federation|chamber|bureau|enterprises?|industries|international|global|india)\b/iu', $base)) {
+            return null;
+        }
+        if (preg_match('/\d/u', $base) || ! preg_match('/^[A-Za-z .\'\-]+$/u', $base)) {
+            return null;
+        }
+        // Multi-partner brands: "A & B & ASSOCIATES" / "MEHTA AND SHAH AND CO".
+        if (substr_count(mb_strtoupper($firmName), ' & ') >= 2
+            || preg_match('/\bAND\b.+\bAND\b/iu', $firmName)) {
+            return null;
+        }
+        $human = new OcrHumanNameClassifier($entities);
+        if (! $human->isValid($base, $firmName, $city)) {
             return null;
         }
         if ($this->isValidCaName($base, $firmName, $entities)) {
             return $base;
         }
-        if (! $entities->isAddress($base) && ! $entities->isFirmName($base)
-            && ! $entities->isCity($base) && ! preg_match('/\d/', $base)
-            && preg_match('/^[A-Za-z .\'\-]+$/', $base)) {
-            return $entities->stripPersonDecorations($base);
-        }
 
-        return null;
+        return $entities->stripPersonDecorations($base);
     }
 
-    /** Prefer "ANMOL ARJUN" from firm over a lone given-name token "ANMOL". */
+    /** Prefer longer firm-derived name over a shorter OCR given-name token (suggestion only). */
     private function shouldPreferDerivedCa(string $current, string $derived): bool
     {
         $curWords = preg_split('/\s+/', trim($current)) ?: [];
@@ -495,8 +550,56 @@ class OcrFirmCaCityExtractorService
         if (count($derWords) <= count($curWords)) {
             return false;
         }
+        if (mb_strtolower($curWords[0] ?? '') !== mb_strtolower($derWords[0] ?? '')) {
+            return false;
+        }
+        // Contradictory surname: last tokens differ and both longer than 1 char.
+        $curLast = mb_strtolower((string) end($curWords));
+        $derLast = mb_strtolower((string) end($derWords));
+        if ($curLast !== $derLast && mb_strlen($curLast) > 1 && mb_strlen($derLast) > 1) {
+            return false;
+        }
 
-        return mb_strtolower($curWords[0] ?? '') === mb_strtolower($derWords[0] ?? '');
+        return true;
+    }
+
+    /**
+     * @return array{
+     *   raw_tokens: list<string>,
+     *   derived_tokens: list<string>,
+     *   added: list<string>,
+     *   removed: list<string>,
+     *   compatible: bool,
+     *   comparison_class: string,
+     *   reason: string
+     * }
+     */
+    private function analyzeCaDerivation(string $rawCa, string $derived, string $firmName): array
+    {
+        $rawTokens = array_values(array_filter(preg_split('/\s+/', mb_strtoupper(trim($rawCa))) ?: []));
+        $derTokens = array_values(array_filter(preg_split('/\s+/', mb_strtoupper(trim($derived))) ?: []));
+        $added = array_values(array_diff($derTokens, $rawTokens));
+        $removed = array_values(array_diff($rawTokens, $derTokens));
+        $compatible = ($rawTokens[0] ?? null) === ($derTokens[0] ?? null) || $rawTokens === [];
+        $class = 'firm_derived_suggestion';
+        if ($rawTokens === []) {
+            $class = 'firm_derived_missing_raw';
+        } elseif ($added !== [] && $removed === [] && count($added) === 1 && mb_strlen($added[0]) === 1) {
+            $class = 'initials_expansion_suggestion';
+        } elseif ($removed !== []) {
+            $class = 'incompatible_change';
+            $compatible = false;
+        }
+
+        return [
+            'raw_tokens' => $rawTokens,
+            'derived_tokens' => $derTokens,
+            'added' => $added,
+            'removed' => $removed,
+            'compatible' => $compatible,
+            'comparison_class' => $class,
+            'reason' => 'derived_from_firm:'.$firmName,
+        ];
     }
 
     private function cityLooksLikeFirmFragment(string $city, string $firmName, ?string $caName): bool

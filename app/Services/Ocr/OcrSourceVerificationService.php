@@ -262,18 +262,8 @@ class OcrSourceVerificationService
             if ($r === $p) {
                 continue;
             }
-            // Safe Unicode confusable normalization (Greek/Cyrillic look-alikes) is allowed.
-            if ($unicode !== null) {
-                $rNorm = $unicode->classificationValue($r);
-                $pNorm = $unicode->classificationValue($p);
-                if ($rNorm === $pNorm || $rNorm === $p || mb_strtoupper($rNorm) === mb_strtoupper($pNorm)) {
-                    continue;
-                }
-            }
-            // Leading partner markers (* / CA / PROP) are decorations, not spelling changes.
-            $rDecor = preg_replace('/^[\*\•\·\-\–\—]+\s*/u', '', $r) ?? $r;
-            $rDecor = preg_replace('/^(?:ca\.?|prop(?:rietor)?\.?|shri|smt|mr\.?|mrs\.?|ms\.?)\s+/iu', '', trim($rDecor)) ?? $rDecor;
-            if (mb_strtoupper(trim($rDecor)) === mb_strtoupper($p)) {
+            $class = $this->comparisonClass($r, $p, $unicode);
+            if (in_array($class, ['exact', 'formatting_only', 'safe_decoration_removal'], true)) {
                 continue;
             }
 
@@ -293,5 +283,42 @@ class OcrSourceVerificationService
         }
 
         return true;
+    }
+
+    /**
+     * Explicit raw vs parsed comparison class (does not weaken fail-closed policy).
+     *
+     * @return 'exact'|'formatting_only'|'safe_decoration_removal'|'incompatible_change'|'empty'
+     */
+    public function comparisonClass(string $raw, string $parsed, ?OcrUnicodeNormalizationService $unicode = null): string
+    {
+        $r = trim($raw);
+        $p = trim($parsed);
+        if ($r === '' || $p === '') {
+            return 'empty';
+        }
+        if ($r === $p) {
+            return 'exact';
+        }
+        $unicode ??= new OcrUnicodeNormalizationService;
+        $rNorm = $unicode->classificationValue($r);
+        $pNorm = $unicode->classificationValue($p);
+        if ($rNorm === $pNorm || mb_strtoupper($rNorm) === mb_strtoupper($pNorm)) {
+            return 'formatting_only';
+        }
+        $rDecor = preg_replace('/^[\*\•\·\-\–\—]+\s*/u', '', $r) ?? $r;
+        $rDecor = preg_replace('/^(?:ca\.?|prop(?:rietor)?\.?|shri|smt|mr\.?|mrs\.?|ms\.?)\s+/iu', '', trim($rDecor)) ?? $rDecor;
+        if (mb_strtoupper(trim($rDecor)) === mb_strtoupper($p)) {
+            return 'safe_decoration_removal';
+        }
+        $rFmt = mb_strtoupper(trim(preg_replace('/[^\p{L}\p{N}\s]+/u', ' ', $r) ?? $r));
+        $pFmt = mb_strtoupper(trim(preg_replace('/[^\p{L}\p{N}\s]+/u', ' ', $p) ?? $p));
+        $rFmt = trim(preg_replace('/\s+/', ' ', $rFmt) ?? $rFmt);
+        $pFmt = trim(preg_replace('/\s+/', ' ', $pFmt) ?? $pFmt);
+        if ($rFmt === $pFmt) {
+            return 'formatting_only';
+        }
+
+        return 'incompatible_change';
     }
 }

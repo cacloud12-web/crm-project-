@@ -55,6 +55,9 @@ class OcrEntityClassificationService
         'bank', 'stand', 'jail', 'land', 'bypass', 'path', 'park', 'garden',
         'huda', 'vihar', 'bagh', 'enclave', 'extension', 'layout', 'society',
         'apartment', 'flat', 'house', 'bazaar', 'bazar', 'gali', 'marg', 'city',
+        // Building / commercial lines that must never become ca_name.
+        'square', 'centre', 'center', 'tenament', 'tenement', 'business', 'chambers',
+        'commercial', 'comm', 'arcade', 'mall', 'highway', 'cross', 'beside', 'above', 'below',
     ];
 
   /** @var list<string> */
@@ -81,6 +84,8 @@ class OcrEntityClassificationService
         'behind', 'opposite', 'opp', 'complex', 'plaza', 'tower', 'building',
         'shop', 'floor', 'plot', 'house', 'flat', 'sco', 'park', 'garden', 'bypass',
         'temple', 'school', 'clinic',
+        'square', 'centre', 'center', 'tenament', 'tenement', 'business', 'chambers',
+        'commercial', 'comm', 'arcade', 'mall', 'highway', 'beside', 'above', 'below',
     ];
 
     /**
@@ -391,11 +396,17 @@ class OcrEntityClassificationService
         if (preg_match('/\b(?:shop|plot|flat|house|sco|door|block|phase|sector|ward)\s*(?:no\.?|number)?\s*[#:]?\s*\d+/i', $text)) {
             return true;
         }
-        if (preg_match('/\b(?:near|opp\.?|opposite|behind|backside|above|below)\b/iu', $text)) {
+        if (preg_match('/\b(?:near|opp\.?|opposite|behind|backside|above|below|beside)\b/iu', $text)) {
+            return true;
+        }
+        // Leading shop/office/building number + building/locality token.
+        if (preg_match('#^\d{1,6}[\s.\-/]+.+#u', trim($text))
+            && preg_match('/\b(?:square|centre|center|tenament|tenement|complex|plaza|tower|building|business|chambers|comm|commercial|arcade|mall|market|road|street|nagar|colony|society|apartment|floor|block|office|shop|estate|highway)\b/iu', $text)
+            && ! preg_match('/\b(?:associates|llp|pvt|private\s+limited|&\s*co\b|and\s+co\b|&\s*company|and\s+company|&\s*sons)\b/iu', $text)) {
             return true;
         }
         // Locality lines without a firm-title suffix are addresses.
-        if (preg_match('/\b(?:road|street|sadak|lane|nagar|nagri|colony|sector|mohalla|mandi|estate|cantt|vihar|enclave|chowk|crossing|bypass|marg|gali|hospital|clinic|bank|stand|jail|land|gaon|majri|village|tehsil|ward|backside|post\s*office|temple|school|market|building|tower|plaza|complex|palace|chambers)\b/iu', $text)
+        if (preg_match('/\b(?:road|street|sadak|lane|nagar|nagri|colony|sector|mohalla|mandi|estate|cantt|vihar|enclave|chowk|crossing|bypass|marg|gali|hospital|clinic|bank|stand|jail|land|gaon|majri|village|tehsil|ward|backside|post\s*office|temple|school|market|building|tower|plaza|complex|palace|chambers|square|centre|center|tenament|tenement|business|comm|commercial|arcade|mall|highway)\b/iu', $text)
             && ! preg_match('/\b(?:associates|llp|pvt|private\s+limited|&\s*co\b|and\s+co\b|&\s*company|and\s+company|&\s*sons)\b/iu', $text)) {
             return true;
         }
@@ -448,26 +459,34 @@ class OcrEntityClassificationService
         if ($text === null || trim($text) === '') {
             return false;
         }
-        $text = $this->unicode()->classificationValue($text);
-        if ($this->isFirmName($text) || $this->isAddress($text)) {
+        $original = $this->unicode()->classificationValue($text);
+        // Address evidence on the original line always wins — never strip digits first.
+        if ($this->isAddressShape($original) || $this->isAddress($original)) {
             return false;
         }
-        if (preg_match('/^chartered\s+accountants?\.?$/iu', trim($text))) {
+        if ($this->isFirmName($original)) {
             return false;
         }
-        if ($this->isCity($text)) {
+        if (preg_match('/^chartered\s+accountants?\.?$/iu', trim($original))) {
             return false;
         }
-        if (($this->extractPincode($text) || $this->extractGst($text) || $this->extractPan($text))
-            && ! preg_match('/\b(?:m\.?\s*no\.?|mem(?:bership)?)\b/i', $text)) {
+        if ($this->isCity($original)) {
+            return false;
+        }
+        if (($this->extractPincode($original) || $this->extractGst($original) || $this->extractPan($original))
+            && ! preg_match('/\b(?:m\.?\s*no\.?|mem(?:bership)?)\b/i', $original)) {
             return false;
         }
 
-        $clean = preg_replace('/\b(?:m\.?\s*no\.?|mem(?:bership)?\.?\s*no\.?)\s*[:\-]?\s*[A-Z0-9\/\-]+/i', '', $text) ?? $text;
+        $clean = preg_replace('/\b(?:m\.?\s*no\.?|mem(?:bership)?\.?\s*no\.?)\s*[:\-]?\s*[A-Z0-9\/\-]+/i', '', $original) ?? $original;
         $clean = preg_replace('/\b[6-9]\d{9}\b/', '', $clean) ?? $clean;
-        $clean = preg_replace('/^[\*\•\·\-\–\—\d\.\)]+\s*/u', '', trim($clean)) ?? $clean;
+        // Harmless decorations only — do not strip house/shop/office numbers.
+        $clean = preg_replace('/^[\*\•\·\-\–\—\.\)]+\s*/u', '', trim($clean)) ?? $clean;
         $clean = trim($clean);
         if ($clean === '') {
+            return false;
+        }
+        if (preg_match('#^\d{1,6}[\s.\-/]+#u', $clean)) {
             return false;
         }
 
@@ -793,7 +812,8 @@ class OcrEntityClassificationService
     private function stripPersonDecorationsInternal(string $text): string
     {
         $t = trim($text);
-        $t = preg_replace('/^[\*\•\·\-\–\—\d\.\)]+\s*/u', '', $t) ?? $t;
+        // Never strip leading house/shop/office numbers — address classification must see them.
+        $t = preg_replace('/^[\*\•\·\-\–\—\.\)]+\s*/u', '', $t) ?? $t;
         foreach (self::PERSON_PREFIXES as $prefix) {
             if (str_starts_with(mb_strtolower($t), $prefix)) {
                 $t = trim(mb_substr($t, mb_strlen($prefix)));
@@ -801,6 +821,37 @@ class OcrEntityClassificationService
         }
 
         return trim($t);
+    }
+
+    /**
+     * @return array{is_person: bool, is_address: bool, reason: string, cleaned: string, original: string}
+     */
+    public function classifyNameCandidate(string $text): array
+    {
+        $original = trim($text);
+        $cleaned = $this->stripPersonDecorations($original);
+        if ($this->isAddressShape($original) || $this->isAddress($original)) {
+            $reason = preg_match('/^\d{1,6}[\s.\-\/]+/u', $original)
+                ? 'address_numeric_prefix'
+                : 'address_building_keyword';
+
+            return [
+                'is_person' => false,
+                'is_address' => true,
+                'reason' => $reason,
+                'cleaned' => $cleaned,
+                'original' => $original,
+            ];
+        }
+        $isPerson = $this->isPerson($original);
+
+        return [
+            'is_person' => $isPerson,
+            'is_address' => false,
+            'reason' => $isPerson ? 'person_after_safe_decoration_strip' : 'not_person_not_address',
+            'cleaned' => $cleaned,
+            'original' => $original,
+        ];
     }
 
     private function isState(string $text): bool
