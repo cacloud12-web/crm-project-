@@ -8224,6 +8224,146 @@ if (otherInput) {
       '</div></div>';
   }
 
+  function renderLeadSalesPanelSection(title, bodyHtml) {
+    return '<section class="mt-4 rounded-xl border border-slate-200 p-4">' +
+      '<h4 class="text-card-heading mb-2">' + escapeHtml(title) + '</h4>' +
+      bodyHtml +
+      '</section>';
+  }
+
+  function renderLeadSalesKv(label, value) {
+    return '<div class="flex justify-between gap-3 py-1 text-sm border-b border-slate-100 last:border-0">' +
+      '<span class="text-slate-500">' + escapeHtml(label) + '</span>' +
+      '<span class="text-right text-slate-800">' + escapeHtml(value == null || value === '' ? '—' : String(value)) + '</span>' +
+      '</div>';
+  }
+
+  function renderLeadSalesTable(headers, rows) {
+    if (!rows || !rows.length) {
+      return '<p class="text-caption text-slate-500">No records.</p>';
+    }
+    return '<div class="overflow-x-auto"><table class="ca-table w-full text-sm"><thead><tr>' +
+      headers.map(function (h) { return '<th>' + escapeHtml(h) + '</th>'; }).join('') +
+      '</tr></thead><tbody>' +
+      rows.map(function (cols) {
+        return '<tr>' + cols.map(function (c) {
+          return '<td>' + escapeHtml(c == null || c === '' ? '—' : String(c)) + '</td>';
+        }).join('') + '</tr>';
+      }).join('') +
+      '</tbody></table></div>';
+  }
+
+  function loadLeadSalesPanels(caId) {
+    var host = document.getElementById('lead-sales-panel-host');
+    if (!host || !caId) return;
+    Promise.all([
+      apiFetch('/ca-masters/' + encodeURIComponent(caId) + '/sales-summary'),
+      apiFetch('/ca-masters/' + encodeURIComponent(caId) + '/sales-contacts?limit=50'),
+      apiFetch('/ca-masters/' + encodeURIComponent(caId) + '/sales-history?limit=100'),
+      apiFetch('/ca-masters/' + encodeURIComponent(caId) + '/sales-import-history?limit=50'),
+    ]).then(function (results) {
+      if (!document.getElementById('lead-sales-panel-host')) return;
+      var summary = (results[0] && results[0].data) || {};
+      var contacts = ((results[1] && results[1].data) || {}).items || [];
+      var histories = ((results[2] && results[2].data) || {}).items || [];
+      var importPayload = (results[3] && results[3].data) || {};
+      var importHistory = importPayload.import_history || [];
+      var reviews = importPayload.reviews || [];
+
+      if (!summary.total_sales_links && !contacts.length && !histories.length && !importHistory.length) {
+        host.innerHTML = renderLeadSalesPanelSection(
+          'Sales Mapping',
+          '<p class="text-caption text-slate-500">No Sales Mapping data linked to this Master.</p>'
+        );
+        return;
+      }
+
+      host.innerHTML =
+        renderLeadSalesPanelSection('Sales Information',
+          renderLeadSalesKv('Total Sales Links', summary.total_sales_links) +
+          renderLeadSalesKv('First Sales Import', summary.first_sales_import ? String(summary.first_sales_import).slice(0, 19).replace('T', ' ') : '—') +
+          renderLeadSalesKv('Latest Sales Import', summary.latest_sales_import ? String(summary.latest_sales_import).slice(0, 19).replace('T', ' ') : '—') +
+          renderLeadSalesKv('Employees', (summary.employees || []).join(', ') || '—') +
+          renderLeadSalesKv('Latest Mapping Tier', summary.latest_mapping_tier) +
+          renderLeadSalesKv('Latest Confidence', summary.latest_confidence != null
+            ? (Math.round(Number(summary.latest_confidence) * 1000) / 10) + '%'
+            : '—')
+        ) +
+        renderLeadSalesPanelSection('Sales Contacts',
+          renderLeadSalesTable(
+            ['Sales Mobile', 'Alternate', 'Email', 'Website', 'Employee', 'Import Date', 'Source File'],
+            contacts.map(function (c) {
+              return [
+                c.sales_mobile,
+                c.sales_alternate_mobile,
+                c.sales_email,
+                c.sales_website,
+                c.employee_name,
+                c.imported_at ? String(c.imported_at).slice(0, 19).replace('T', ' ') : '',
+                c.source_file,
+              ];
+            })
+          )
+        ) +
+        renderLeadSalesPanelSection('Sales History / Call History',
+          renderLeadSalesTable(
+            ['Date', 'Employee', 'Remarks', 'Remarks 2', 'Notes', 'Call Status', 'Follow-up', 'Software', 'Source', 'Filename', 'CSV Row'],
+            histories.map(function (h) {
+              return [
+                h.call_date,
+                h.employee_name,
+                h.remarks,
+                h.remarks_2,
+                h.employee_notes,
+                h.call_status,
+                h.follow_up,
+                h.software,
+                h.sales_source,
+                h.csv_filename,
+                h.csv_row_number,
+              ];
+            })
+          )
+        ) +
+        renderLeadSalesPanelSection('Import History',
+          renderLeadSalesTable(
+            ['Batch', 'Employee', 'Filename', 'Imported At', 'Mapping Tier', 'Confidence'],
+            importHistory.map(function (r) {
+              return [
+                r.import_batch_id,
+                r.employee_name,
+                r.csv_filename,
+                r.linked_at ? String(r.linked_at).slice(0, 19).replace('T', ' ') : '',
+                r.match_tier,
+                r.confidence != null ? (Math.round(Number(r.confidence) * 1000) / 10) + '%' : '',
+              ];
+            })
+          )
+        ) +
+        renderLeadSalesPanelSection('Review Status',
+          renderLeadSalesTable(
+            ['Status', 'Reviewer', 'Review Note', 'Reviewed At'],
+            reviews.map(function (r) {
+              return [
+                r.status,
+                r.reviewed_by_name || r.reviewed_by,
+                r.review_notes || r.reason,
+                r.reviewed_at ? String(r.reviewed_at).slice(0, 19).replace('T', ' ') : '',
+              ];
+            })
+          )
+        );
+      if (typeof icons === 'function') icons();
+    }).catch(function (error) {
+      var el = document.getElementById('lead-sales-panel-host');
+      if (!el) return;
+      el.innerHTML = renderLeadSalesPanelSection(
+        'Sales Mapping',
+        '<p class="text-sm text-rose-600">' + escapeHtml(error && error.message ? error.message : 'Unable to load Sales panels.') + '</p>'
+      );
+    });
+  }
+
   function openLeadDrawer(lead) {
     if (!lead || typeof openDetailDrawer !== 'function') return;
     var data = CAData.leadToRowData(lead);
@@ -8268,12 +8408,14 @@ if (otherInput) {
           '<i data-lucide="map-pin" class="h-4 w-4"></i> Google Places Lookup</button></div>'
         : '') +
         '<div id="lead-ocr-panel-host" class="mt-4"></div>' +
+        '<div id="lead-sales-panel-host" class="mt-4"><p class="text-caption text-slate-400">Loading Sales Mapping…</p></div>' +
         '<div id="lead-email-communications-section"><p class="text-caption text-slate-400 mt-4">Loading communication history…</p></div>' +
         '<div id="lead-demo-confirmation-section"><p class="text-caption text-slate-400 mt-4">Loading confirmation…</p></div>',
     });
     if (window.CrmOcrPanel && typeof window.CrmOcrPanel.mountIntoDrawer === 'function') {
       window.CrmOcrPanel.mountIntoDrawer(lead.ca_id);
     }
+    loadLeadSalesPanels(lead.ca_id);
     apiFetch('/ca-masters/' + encodeURIComponent(lead.ca_id) + '/email-communications')
       .then(function (body) {
         var section = document.getElementById('lead-email-communications-section');
@@ -24937,7 +25079,13 @@ if (otherInput) {
       needs_review: 'bg-amber-50 text-amber-800',
       unmatched: 'bg-rose-50 text-rose-700',
       ignored: 'bg-slate-100 text-slate-600',
+      skipped: 'bg-slate-100 text-slate-600',
+      rejected: 'bg-rose-100 text-rose-800',
+      duplicate: 'bg-slate-100 text-slate-700',
       pending: 'bg-slate-100 text-slate-700',
+      completed: 'bg-emerald-50 text-emerald-700',
+      processing: 'bg-amber-50 text-amber-800',
+      failed: 'bg-rose-50 text-rose-700',
     };
     var label = String(status || 'pending').replace(/_/g, ' ');
     return '<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ' +
@@ -24985,9 +25133,7 @@ if (otherInput) {
     if (filesView) filesView.classList.toggle('hidden', !isFiles);
     if (mappingView) mappingView.classList.toggle('hidden', isFiles);
     if (backBtn) backBtn.classList.toggle('hidden', isFiles);
-    if (acceptBtn) {
-      acceptBtn.classList.toggle('hidden', isFiles || !canDecideEmployeeImports());
-    }
+    if (acceptBtn) acceptBtn.classList.add('hidden');
     var nameEl = document.getElementById('employee-imports-selected-file-name');
     var empEl = document.getElementById('employee-imports-selected-employee');
     if (nameEl) nameEl.textContent = employeeImportsState.sourceFileName || '—';
@@ -25033,7 +25179,9 @@ if (otherInput) {
         setEmployeeImportText('employee-import-map-matched-count', summary.matched || 0);
         setEmployeeImportText('employee-import-map-review-count', summary.needs_review || 0);
         setEmployeeImportText('employee-import-map-unmatched-count', summary.unmatched || 0);
-        setEmployeeImportText('employee-import-map-ignored-count', summary.ignored || 0);
+        setEmployeeImportText('employee-import-map-duplicate-count', summary.duplicate || 0);
+        setEmployeeImportText('employee-import-map-rejected-count', summary.rejected || 0);
+        setEmployeeImportText('employee-import-map-ignored-count', summary.skipped || summary.ignored || 0);
         if (summary.selected_file) {
           if (summary.selected_file.source_file_name) {
             employeeImportsState.sourceFileName = summary.selected_file.source_file_name;
@@ -25111,11 +25259,12 @@ if (otherInput) {
     if (!el) return;
     items = items || [];
     if (!items.length) {
-      el.innerHTML = '<tr><td colspan="10" class="py-8 text-center text-slate-500">No imported files yet. Run php artisan sales-list:import-all</td></tr>';
+      el.innerHTML = '<tr><td colspan="13" class="py-8 text-center text-slate-500">No imported files yet. Run php artisan sales-list:import-all</td></tr>';
       return;
     }
     el.innerHTML = items.map(function (file) {
       var imported = file.imported_at ? String(file.imported_at).slice(0, 19).replace('T', ' ') : '—';
+      var processing = file.processing_ms != null ? (Math.round(file.processing_ms / 100) / 10) + 's' : '—';
       return '<tr class="ca-table-row crm-table-row">' +
         '<td class="crm-td-firm">' + escapeHtml(file.source_file_name || '—') + '</td>' +
         '<td class="crm-td-person">' + escapeHtml(file.employee_name || '—') + '</td>' +
@@ -25123,7 +25272,10 @@ if (otherInput) {
         '<td class="crm-td-num text-emerald-700">' + escapeHtml(String(file.matched_count || 0)) + '</td>' +
         '<td class="crm-td-num text-amber-700">' + escapeHtml(String(file.needs_review_count || 0)) + '</td>' +
         '<td class="crm-td-num text-rose-700">' + escapeHtml(String(file.unmatched_count || 0)) + '</td>' +
-        '<td class="crm-td-num">' + escapeHtml(String(file.ignored_count || 0)) + '</td>' +
+        '<td class="crm-td-num">' + escapeHtml(String(file.duplicate_count || 0)) + '</td>' +
+        '<td class="crm-td-num">' + escapeHtml(String(file.rejected_count || 0)) + '</td>' +
+        '<td class="crm-td-num">' + escapeHtml(String(file.skipped_count || file.ignored_count || 0)) + '</td>' +
+        '<td class="crm-td-num">' + escapeHtml(processing) + '</td>' +
         '<td class="crm-td-date">' + escapeHtml(imported) + '</td>' +
         '<td>' + employeeImportStatusBadge(file.batch_status || 'completed') + '</td>' +
         '<td class="sticky-right crm-td-actions">' +
@@ -25142,7 +25294,7 @@ if (otherInput) {
     if (!tbody) return Promise.resolve(null);
     if (employeeImportsState.filesLoading) return Promise.resolve(null);
     employeeImportsState.filesLoading = true;
-    tbody.innerHTML = '<tr><td colspan="10" class="py-8 text-center text-slate-500">Loading imported files…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="py-8 text-center text-slate-500">Loading imported files…</td></tr>';
 
     var params = new URLSearchParams();
     params.set('page', String(employeeImportsState.filesPage || 1));
@@ -25165,14 +25317,16 @@ if (otherInput) {
         setEmployeeImportText('employee-import-matched-count', summary.matched || 0);
         setEmployeeImportText('employee-import-review-count', summary.needs_review || 0);
         setEmployeeImportText('employee-import-unmatched-count', summary.unmatched || 0);
-        setEmployeeImportText('employee-import-ignored-count', summary.ignored || 0);
+        setEmployeeImportText('employee-import-duplicate-count', summary.duplicate || 0);
+        setEmployeeImportText('employee-import-rejected-count', summary.rejected || 0);
+        setEmployeeImportText('employee-import-ignored-count', summary.skipped || summary.ignored || 0);
         populateEmployeeImportsEmployeeFilter(payload.employees || []);
         renderEmployeeImportsFilesTable(items);
         renderEmployeeImportsFilesPagination();
         return items;
       })
       .catch(function (error) {
-        tbody.innerHTML = '<tr><td colspan="10" class="py-8 text-center text-rose-600">Unable to load imported files.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="13" class="py-8 text-center text-rose-600">Unable to load imported files.</td></tr>';
         toast(error && error.message ? error.message : 'Unable to load imported files.', 'error');
         return null;
       })
@@ -25232,7 +25386,7 @@ if (otherInput) {
     if (!el) return;
     items = items || [];
     if (!items.length) {
-      el.innerHTML = '<tr><td colspan="12" class="py-8 text-center text-slate-500">No employee import rows for this filter.</td></tr>';
+      el.innerHTML = '<tr><td colspan="14" class="py-8 text-center text-slate-500">No employee import rows for this filter.</td></tr>';
       return;
     }
     var canDecide = canDecideEmployeeImports();
@@ -25240,29 +25394,31 @@ if (otherInput) {
       var remarks = [row.remarks_1, row.remarks_2].filter(Boolean).join(' · ') || '—';
       var mapped = row.mapped_to || row.matched_ca || null;
       var mappedHtml = '—';
-      if (mapped && (mapped.ca_id || mapped.reference_firm_id || mapped.firm_name)) {
+      if (mapped && (mapped.ca_id || mapped.firm_name)) {
         var mappedLines = [];
-        if (mapped.reference_firm_id != null) mappedLines.push('Ref #' + mapped.reference_firm_id);
-        else if (mapped.ca_id != null) mappedLines.push('CA #' + mapped.ca_id);
+        if (mapped.ca_id != null) mappedLines.push('Master CA ID ' + mapped.ca_id);
         if (mapped.firm_name) mappedLines.push(mapped.firm_name);
         if (mapped.ca_name) mappedLines.push(mapped.ca_name);
         if (mapped.city_name) mappedLines.push(mapped.city_name);
+        if (mapped.verification_status) mappedLines.push(String(mapped.verification_status).replace(/_/g, ' '));
         mappedHtml = '<div class="ei-mapped-to">' +
           '<div class="ei-mapped-to__text" title="' + escapeHtml(mappedLines.join(' · ')) + '">' +
             escapeHtml(mappedLines.join(' · ') || '—') +
           '</div>' +
           (mapped.ca_id
             ? '<button type="button" class="btn-secondary btn-sm mt-1" data-ei-open-mapped="' +
-              escapeHtml(String(mapped.ca_id)) + '">View Mapped CA</button>'
+              escapeHtml(String(mapped.ca_id)) + '">View Master</button>'
             : '') +
         '</div>';
       }
+      var confidence = row.confidence != null || row.match_score != null
+        ? (Math.round(Number(row.confidence != null ? row.confidence : row.match_score) * 1000) / 10) + '%'
+        : '—';
       var actions = '';
-      if (row.mapping_status === 'needs_review' && canDecide) {
+      if ((row.mapping_status === 'needs_review' || row.mapping_status === 'unmatched') && canDecide) {
         actions =
           '<div class="ei-row-actions">' +
             '<button type="button" class="btn-secondary btn-sm" data-ei-review="' + escapeHtml(String(row.id)) + '">Review</button>' +
-            '<button type="button" class="btn-primary btn-sm" data-ei-accept-top="' + escapeHtml(String(row.id)) + '">Accept</button>' +
             '<button type="button" class="btn-secondary btn-sm" data-ei-ignore-row="' + escapeHtml(String(row.id)) + '">Ignore</button>' +
             '<button type="button" class="btn-secondary btn-sm text-rose-700" data-ei-reject-row="' + escapeHtml(String(row.id)) + '">Reject</button>' +
           '</div>';
@@ -25271,18 +25427,20 @@ if (otherInput) {
           (canDecide ? 'Review' : 'View') + '</button>';
       }
       return '<tr class="ca-table-row crm-table-row" data-ei-id="' + escapeHtml(String(row.id)) + '">' +
-        '<td class="crm-td-date">' + escapeHtml(row.call_date || '—') + '</td>' +
+        '<td class="crm-td-num">' + escapeHtml(String(row.source_row_number || '—')) + '</td>' +
         '<td class="crm-td-person">' + escapeHtml(row.employee_name || '—') + '</td>' +
-        '<td class="crm-td-person">' + escapeHtml(row.ca_name || '—') + '</td>' +
         '<td class="crm-td-firm">' + escapeHtml(row.firm_name || '—') + '</td>' +
+        '<td class="crm-td-person">' + escapeHtml(row.ca_name || '—') + '</td>' +
         '<td class="crm-td-geo">' + escapeHtml(row.city_name || '—') + '</td>' +
         '<td class="crm-td-mobile">' + escapeHtml(row.mobile_no || '—') + '</td>' +
-        '<td class="max-w-[180px] truncate" title="' + escapeHtml(remarks) + '">' + escapeHtml(remarks) + '</td>' +
-        '<td class="max-w-[160px] truncate text-caption" title="' + escapeHtml(row.review_reason || '') + '">' +
-          escapeHtml(row.review_reason || '—') + '</td>' +
-        '<td class="crm-td-num">' + escapeHtml(String(row.candidate_count != null ? row.candidate_count : 0)) + '</td>' +
+        '<td class="max-w-[140px] truncate">' + escapeHtml(row.email || '—') + '</td>' +
+        '<td class="max-w-[160px] truncate" title="' + escapeHtml(remarks) + '">' + escapeHtml(remarks) + '</td>' +
         '<td>' + employeeImportStatusBadge(row.mapping_status) + '</td>' +
+        '<td class="text-caption">' + escapeHtml(String(row.match_tier || row.matched_on || '—').replace(/_/g, ' ')) + '</td>' +
+        '<td class="crm-td-num">' + escapeHtml(confidence) + '</td>' +
         '<td class="ei-mapped-to-cell">' + mappedHtml + '</td>' +
+        '<td class="max-w-[140px] truncate text-caption" title="' + escapeHtml(row.review_reason || '') + '">' +
+          escapeHtml(row.review_reason || '—') + '</td>' +
         '<td class="sticky-right crm-td-actions">' + actions + '</td>' +
       '</tr>';
     }).join('');
@@ -25294,7 +25452,7 @@ if (otherInput) {
     if (!tbody) return Promise.resolve(null);
     if (employeeImportsState.loading) return Promise.resolve(null);
     employeeImportsState.loading = true;
-    tbody.innerHTML = '<tr><td colspan="12" class="py-8 text-center text-slate-500">Loading employee imports…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="14" class="py-8 text-center text-slate-500">Loading employee imports…</td></tr>';
 
     var params = new URLSearchParams();
     params.set('page', String(employeeImportsState.page || 1));
@@ -25319,7 +25477,7 @@ if (otherInput) {
         return items;
       })
       .catch(function (error) {
-        tbody.innerHTML = '<tr><td colspan="12" class="py-8 text-center text-rose-600">Unable to load employee imports.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="14" class="py-8 text-center text-rose-600">Unable to load employee imports.</td></tr>';
         toast(error && error.message ? error.message : 'Unable to load employee imports.', 'error');
         return null;
       })
@@ -25360,18 +25518,31 @@ if (otherInput) {
   function renderEmployeeImportReviewLeft(row, candidate) {
     var left = document.getElementById('ei-review-left');
     if (!left || !row) return;
+    var extra = row.extra_columns && typeof row.extra_columns === 'object'
+      ? Object.keys(row.extra_columns).map(function (k) {
+        return eiDlRow('Extra: ' + k, String(row.extra_columns[k] == null ? '' : row.extra_columns[k]));
+      }).join('')
+      : '';
     left.innerHTML =
-      eiDlRow('Employee Name', row.employee_name) +
-      eiDlRow('CA Name', row.ca_name, eiFieldTone(candidate, 'ca_name')) +
-      eiDlRow('Firm Name', row.firm_name, eiFieldTone(candidate, 'firm_name')) +
+      eiDlRow('Firm', row.firm_name, eiFieldTone(candidate, 'firm_name')) +
+      eiDlRow('CA', row.ca_name, eiFieldTone(candidate, 'ca_name')) +
       eiDlRow('City', row.city_name, eiFieldTone(candidate, 'city')) +
       eiDlRow('Mobile', row.mobile_no, eiFieldTone(candidate, 'mobile')) +
       eiDlRow('Alternate Mobile', row.alternate_mobile_no) +
-      eiDlRow('Call Date', row.call_date) +
-      eiDlRow('Remarks 1', row.remarks_1) +
+      eiDlRow('Email', row.email) +
+      eiDlRow('Website', row.website) +
+      eiDlRow('Address', row.address) +
+      eiDlRow('Pincode', row.pincode || row.pin) +
+      eiDlRow('Remarks', row.remarks_1) +
       eiDlRow('Remarks 2', row.remarks_2) +
-      eiDlRow('Source File', row.source_file_name) +
-      eiDlRow('Source Row Number', row.source_row_number != null ? String(row.source_row_number) : null);
+      eiDlRow('Employee Notes', row.employee_notes) +
+      eiDlRow('Call Status', row.call_status) +
+      eiDlRow('Follow-up', row.follow_up) +
+      eiDlRow('Software', row.software) +
+      eiDlRow('Filename', row.source_file_name) +
+      eiDlRow('CSV Row Number', row.source_row_number != null ? String(row.source_row_number) : null) +
+      eiDlRow('Employee', row.employee_name) +
+      extra;
   }
 
   function renderEmployeeImportReviewRight(candidate) {
@@ -25389,28 +25560,28 @@ if (otherInput) {
     }
     var confidence = candidate.confidence_percent != null
       ? candidate.confidence_percent
-      : (candidate.match_score != null && Number(candidate.match_score) <= 1
-        ? Math.round(Number(candidate.match_score) * 100)
-        : candidate.match_score);
+      : (candidate.confidence != null && Number(candidate.confidence) <= 1
+        ? Math.round(Number(candidate.confidence) * 100)
+        : (candidate.match_score != null && Number(candidate.match_score) <= 1
+          ? Math.round(Number(candidate.match_score) * 100)
+          : candidate.match_score));
     if (badge) {
       badge.hidden = false;
       badge.textContent = confidence != null ? (String(confidence) + '%') : '—';
     }
     right.innerHTML =
-      eiDlRow('Reference ID', candidate.reference_firm_id != null ? String(candidate.reference_firm_id) : null) +
-      eiDlRow('CA Name', candidate.ca_name, eiFieldTone(candidate, 'ca_name')) +
-      eiDlRow('Firm Name', candidate.firm_name, eiFieldTone(candidate, 'firm_name')) +
-      eiDlRow('City', candidate.city, eiFieldTone(candidate, 'city')) +
-      eiDlRow('FRN', candidate.frn) +
-      eiDlRow('Membership Number', candidate.membership_number) +
-      eiDlRow('Partner Count', candidate.partner_count != null ? String(candidate.partner_count) : null) +
-      eiDlRow('Address', candidate.address) +
-      eiDlRow('State', candidate.state) +
-      eiDlRow('PIN', candidate.pin) +
-      eiDlRow('Source OCR File', candidate.source_ocr_file) +
-      eiDlRow('Canonical CA ID', candidate.ca_id != null ? String(candidate.ca_id) : null) +
-      eiDlRow('Confidence Score', confidence != null ? (String(confidence) + '%') : null) +
-      eiDlRow('Match Reason', candidate.match_reason);
+      eiDlRow('Master CA ID', candidate.ca_id != null ? String(candidate.ca_id) : null) +
+      eiDlRow('Firm', candidate.firm_name, eiFieldTone(candidate, 'firm_name')) +
+      eiDlRow('CA', candidate.ca_name, eiFieldTone(candidate, 'ca_name')) +
+      eiDlRow('City', candidate.city || candidate.city_name, eiFieldTone(candidate, 'city')) +
+      eiDlRow('Mobile', candidate.mobile_no || candidate.mobile, eiFieldTone(candidate, 'mobile')) +
+      eiDlRow('Email', candidate.email || candidate.email_id) +
+      eiDlRow('Verification Status', candidate.verification_status
+        ? String(candidate.verification_status).replace(/_/g, ' ')
+        : null) +
+      eiDlRow('Match Tier', candidate.match_tier || candidate.matched_on) +
+      eiDlRow('Confidence', confidence != null ? (String(confidence) + '%') : null) +
+      eiDlRow('Candidate Reason', candidate.candidate_reason || candidate.match_reason || candidate.reason);
     renderEmployeeImportFieldComparison(candidate);
   }
 
@@ -25577,7 +25748,7 @@ if (otherInput) {
     if (searchPag) searchPag.textContent = '';
 
     var canDecide = canDecideEmployeeImports();
-    ['ei-btn-confirm', 'ei-btn-unmatched', 'ei-btn-ignore'].forEach(function (id) {
+    ['ei-btn-confirm', 'ei-btn-unmatched', 'ei-btn-ignore', 'ei-btn-reject'].forEach(function (id) {
       var btn = document.getElementById(id);
       if (btn) btn.classList.toggle('hidden', !canDecide);
     });
@@ -25587,7 +25758,7 @@ if (otherInput) {
     renderEmployeeImportCandidates([]);
     renderEmployeeImportReviewRight(null);
 
-    apiFetch('/employee-imports/' + encodeURIComponent(rowId) + '/candidates')
+    apiFetch('/employee-imports/' + encodeURIComponent(rowId) + '/review')
       .then(function (body) {
         var data = body && body.data ? body.data : {};
         employeeImportReviewState.row = data.row || null;
@@ -25601,7 +25772,7 @@ if (otherInput) {
         }
       })
       .catch(function (error) {
-        toast(error && error.message ? error.message : 'Unable to load candidates.', 'error');
+        toast(error && error.message ? error.message : 'Unable to load review payload.', 'error');
       });
   }
 
@@ -25611,7 +25782,7 @@ if (otherInput) {
     if (!box) return;
     items = items || [];
     if (!items.length) {
-      box.innerHTML = '<p class="text-caption text-slate-500">No CA Reference results.</p>';
+      box.innerHTML = '<p class="text-caption text-slate-500">No Master found.</p>';
       if (pag) pag.textContent = '';
       return;
     }
@@ -25620,9 +25791,9 @@ if (otherInput) {
         escapeHtml(String(idx)) + '">' +
         '<div class="font-medium">' + escapeHtml(c.firm_name || '—') + '</div>' +
         '<div class="text-caption text-slate-600">' + escapeHtml(c.ca_name || '—') +
-        ' · ' + escapeHtml(c.city || '—') +
-        (c.ca_id != null ? ' · CA #' + escapeHtml(String(c.ca_id)) : '') +
-        (c.reference_firm_id != null ? ' · Ref #' + escapeHtml(String(c.reference_firm_id)) : '') +
+        ' · ' + escapeHtml(c.city || c.city_name || '—') +
+        (c.ca_id != null ? ' · Master CA ID ' + escapeHtml(String(c.ca_id)) : '') +
+        (c.verification_status ? ' · ' + escapeHtml(String(c.verification_status).replace(/_/g, ' ')) : '') +
         '</div></button>';
     }).join('');
     box._eiSearchItems = items;
@@ -25636,20 +25807,26 @@ if (otherInput) {
     var firm = (document.getElementById('ei-search-firm') || {}).value || '';
     var ca = (document.getElementById('ei-search-ca') || {}).value || '';
     var city = (document.getElementById('ei-search-city') || {}).value || '';
+    var mobile = (document.getElementById('ei-search-mobile') || {}).value || '';
+    var email = (document.getElementById('ei-search-email') || {}).value || '';
+    var caId = (document.getElementById('ei-search-ca-id') || {}).value || '';
     employeeImportReviewState.searchPage = page || 1;
     var params = new URLSearchParams();
     if (firm.trim()) params.set('firm', firm.trim());
     if (ca.trim()) params.set('ca', ca.trim());
     if (city.trim()) params.set('city', city.trim());
+    if (mobile.trim()) params.set('mobile', mobile.trim());
+    if (email.trim()) params.set('email', email.trim());
+    if (caId.trim()) params.set('ca_id', caId.trim());
     params.set('page', String(employeeImportReviewState.searchPage));
     params.set('per_page', '20');
-    return apiFetch('/employee-imports/reference-search?' + params.toString())
+    return apiFetch('/employee-imports/search-masters?' + params.toString())
       .then(function (body) {
         var data = body && body.data ? body.data : {};
         renderEmployeeImportSearchResults(data.items || [], data.pagination || {});
       })
       .catch(function (error) {
-        toast(error && error.message ? error.message : 'Reference search failed.', 'error');
+        toast(error && error.message ? error.message : 'Master search failed.', 'error');
       });
   }
 
@@ -25680,15 +25857,28 @@ if (otherInput) {
       return;
     }
     var selected = employeeImportReviewState.selected;
-    if (!selected || (selected.ca_id == null && selected.reference_firm_id == null)) {
-      toast('Select a CA candidate before confirming.', 'error');
+    if (!selected || selected.ca_id == null) {
+      toast('Select an existing Master before confirming.', 'error');
       return;
     }
-    var payload = { reason: employeeImportDecisionReason() || 'Confirmed after comparing firm and city' };
-    if (selected.ca_id != null) payload.matched_ca_id = selected.ca_id;
-    if (selected.reference_firm_id != null) payload.matched_reference_firm_id = selected.reference_firm_id;
+    var payload = {
+      matched_ca_id: selected.ca_id,
+      reason: employeeImportDecisionReason() || 'Confirmed after comparing firm and city',
+    };
     postEmployeeImportDecision('confirm-match', payload).catch(function (error) {
       toast(error && error.message ? error.message : 'Unable to confirm match.', 'error');
+    });
+  }
+
+  function rejectEmployeeImportRow() {
+    if (!canDecideEmployeeImports()) {
+      toast('You do not have permission to reject rows.', 'error');
+      return;
+    }
+    postEmployeeImportDecision('reject', {
+      reason: employeeImportDecisionReason() || 'Rejected during manual review',
+    }).catch(function (error) {
+      toast(error && error.message ? error.message : 'Unable to reject row.', 'error');
     });
   }
 
@@ -25758,6 +25948,8 @@ if (otherInput) {
     if (unmatchedBtn) unmatchedBtn.addEventListener('click', markEmployeeImportUnmatched);
     var ignoreBtn = document.getElementById('ei-btn-ignore');
     if (ignoreBtn) ignoreBtn.addEventListener('click', ignoreEmployeeImportRow);
+    var rejectBtn = document.getElementById('ei-btn-reject');
+    if (rejectBtn) rejectBtn.addEventListener('click', rejectEmployeeImportRow);
   }
 
   function postEmployeeImportRowAction(rowId, path, payload) {
@@ -25823,7 +26015,7 @@ if (otherInput) {
     if (filesSearchInput) filesSearchInput.value = employeeImportsState.filesSearch;
     if (employeeFilter) employeeFilter.value = employeeImportsState.employee || '';
     if (filesEmployeeFilter) filesEmployeeFilter.value = employeeImportsState.filesEmployee || '';
-    if (acceptMatchedBtn) acceptMatchedBtn.classList.toggle('hidden', employeeImportsState.view !== 'mapping' || !canDecideEmployeeImports());
+    if (acceptMatchedBtn) acceptMatchedBtn.classList.add('hidden');
 
     if (!root._employeeImportsBound) {
       root._employeeImportsBound = true;
@@ -25855,11 +26047,7 @@ if (otherInput) {
         }
         var acceptTopBtn = event.target.closest('[data-ei-accept-top]');
         if (acceptTopBtn) {
-          postEmployeeImportRowAction(acceptTopBtn.getAttribute('data-ei-accept-top'), 'accept-top', {
-            reason: 'Accepted top candidate from Needs Review',
-          }).catch(function (error) {
-            toast(error && error.message ? error.message : 'Unable to accept candidate.', 'error');
-          });
+          toast('Auto Accept Top Candidate is disabled for Sales Mapping.', 'error');
           return;
         }
         var ignoreRowBtn = event.target.closest('[data-ei-ignore-row]');
@@ -25873,7 +26061,7 @@ if (otherInput) {
         }
         var rejectRowBtn = event.target.closest('[data-ei-reject-row]');
         if (rejectRowBtn) {
-          postEmployeeImportRowAction(rejectRowBtn.getAttribute('data-ei-reject-row'), 'mark-unmatched', {
+          postEmployeeImportRowAction(rejectRowBtn.getAttribute('data-ei-reject-row'), 'reject', {
             reason: 'Rejected from Needs Review list',
           }).catch(function (error) {
             toast(error && error.message ? error.message : 'Unable to reject row.', 'error');
@@ -25938,7 +26126,7 @@ if (otherInput) {
 
       if (acceptMatchedBtn) {
         acceptMatchedBtn.addEventListener('click', function () {
-          acceptAllEmployeeImportMatched();
+          toast('Bulk Accept Matched is disabled for Sales Mapping.', 'error');
         });
       }
     }

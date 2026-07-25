@@ -19,7 +19,7 @@ class RemapSalesEmployeeList extends Command
                             {--include-auto-matched : Also remap automatic matched rows}
                             {--include-manual-unmatched : Also remap mark_unmatched rows (never manual_confirmed)}';
 
-    protected $description = 'Remap existing employee sales-import rows against CA Reference (no re-import, no CA writes)';
+    protected $description = 'Remap existing employee sales-import rows against ca_masters (Sales Mapping tiers; no re-import, no CA writes)';
 
     public function __construct(
         private readonly SalesImportRemapService $remap,
@@ -29,8 +29,8 @@ class RemapSalesEmployeeList extends Command
 
     public function handle(): int
     {
-        $this->info('CA Reference preflight + Auto Match (exact normalized firm + city).');
-        $this->info('No CSV re-import. No CA Master / CA Reference create/update/delete.');
+        $this->info('Sales Mapping preflight + Auto Match tiers (Firm+CA+City → … → Email).');
+        $this->info('No CSV re-import. No CA Master identity/verification/OCR/Google writes.');
         $this->info('Manual Confirm / Accept / Ignore stay protected.');
 
         $scopeBits = [];

@@ -2,8 +2,11 @@
 
 namespace App\Services\Mapping;
 
+use App\Models\Employee;
 use App\Models\MasterImportBatch;
 use App\Models\SalesImportRow;
+use App\Services\SalesMapping\SalesEnrichmentWriter;
+use App\Services\SalesMapping\SalesMasterMatcher;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -15,9 +18,31 @@ class SalesEmployeeListImportService
 {
     public const SOURCE_TYPE = 'employee_sales_list';
 
+    /** @var list<string> */
+    private const KNOWN_FIELDS = [
+        'date',
+        'ca_name',
+        'firm_name',
+        'mobile_no',
+        'alternate_mobile_no',
+        'email',
+        'website',
+        'city',
+        'state_name',
+        'address',
+        'pincode',
+        'remarks_1',
+        'remarks_2',
+        'call_status',
+        'follow_up',
+        'software',
+        'sales_source',
+    ];
+
     public function __construct(
         private readonly DataNormalizationService $normalizer,
-        private readonly SalesImportMatchingService $matcher,
+        private readonly SalesMasterMatcher $matcher,
+        private readonly SalesEnrichmentWriter $enrichment,
     ) {}
 
     public function directory(): string
@@ -106,7 +131,6 @@ class SalesEmployeeListImportService
         }
 
         $stem = pathinfo($base, PATHINFO_FILENAME);
-        // "CA CloudDesk Leads - ANKIT" / "… - Rahul"
         if (preg_match('/-\s*([A-Za-z][A-Za-z0-9 .\'-]{0,60})$/', $stem, $matches) === 1) {
             $token = $this->normalizeEmployeeToken($matches[1]);
             if ($token !== null) {
@@ -114,7 +138,6 @@ class SalesEmployeeListImportService
             }
         }
 
-        // Simple "SIMRAN.csv" or "RAHUL SALES LIST.csv" → RAHUL
         $token = $this->normalizeEmployeeToken($stem);
         if ($token !== null && mb_strlen($token) <= 40 && ! preg_match('/\s/', $token)) {
             return $token;
@@ -123,20 +146,32 @@ class SalesEmployeeListImportService
         return null;
     }
 
+    public function resolveEmployeeId(?string $employeeName): ?int
+    {
+        if ($employeeName === null || trim($employeeName) === '' || ! Schema::hasTable('employees')) {
+            return null;
+        }
+
+        $needle = mb_strtoupper(trim($employeeName));
+        $id = Employee::query()
+            ->whereRaw('UPPER(TRIM(name)) = ?', [$needle])
+            ->value('employee_id');
+
+        return $id !== null ? (int) $id : null;
+    }
+
     private function normalizeEmployeeToken(string $raw): ?string
     {
         $raw = trim(preg_replace('/\s+/', ' ', $raw) ?? $raw);
         if ($raw === '') {
             return null;
         }
-        // Strip trailing noise like "SALES LIST" when the first word is a clear name.
         if (preg_match('/^([A-Za-z][A-Za-z0-9\'-]*)(?:\s+SALES(?:\s+LIST)?)?$/i', $raw, $m) === 1) {
             return mb_strtoupper($m[1]);
         }
         if (preg_match('/^[A-Za-z][A-Za-z0-9\'. -]{0,40}$/', $raw) !== 1) {
             return null;
         }
-        // Reject overly generic stems.
         $upper = mb_strtoupper($raw);
         if (in_array($upper, ['LEADS', 'SALES', 'LIST', 'EXPORT', 'DATA', 'CSV'], true)) {
             return null;
@@ -169,27 +204,13 @@ class SalesEmployeeListImportService
 
     /**
      * Import one CSV file into sales_import_rows with one master_import_batches row.
-     * One DB transaction per file. Never creates/updates/deletes CA Master or CA Reference.
+     * Never creates/updates/deletes CA Master or CA Reference.
      *
-     * @return array{
-     *   status: string,
-     *   file: string,
-     *   employee: string|null,
-     *   import_batch_id: int|null,
-     *   total_rows: int,
-     *   imported: int,
-     *   already_existing: int,
-     *   matched: int,
-     *   needs_review: int,
-     *   unmatched: int,
-     *   failed: int,
-     *   skipped_blank: int,
-     *   reason: string|null,
-     *   error: string|null
-     * }
+     * @return array<string, mixed>
      */
     public function importFile(string $filePath, ?string $employeeName = null, bool $forceReimport = false): array
     {
+        $startedMs = (int) floor(microtime(true) * 1000);
         $fileName = basename($filePath);
         $empty = [
             'status' => 'failed',
@@ -199,11 +220,15 @@ class SalesEmployeeListImportService
             'total_rows' => 0,
             'imported' => 0,
             'already_existing' => 0,
+            'duplicate' => 0,
             'matched' => 0,
             'needs_review' => 0,
             'unmatched' => 0,
             'failed' => 0,
+            'rejected' => 0,
             'skipped_blank' => 0,
+            'skipped' => 0,
+            'processing_ms' => 0,
             'reason' => null,
             'error' => null,
         ];
@@ -223,6 +248,7 @@ class SalesEmployeeListImportService
             ]);
         }
         $empty['employee'] = $employee;
+        $employeeId = $this->resolveEmployeeId($employee);
 
         $fileHash = hash_file('sha256', $filePath) ?: null;
 
@@ -238,6 +264,7 @@ class SalesEmployeeListImportService
                     'status' => 'skipped',
                     'import_batch_id' => (int) $prior->id,
                     'already_existing' => (int) $prior->duplicate_count + (int) $prior->created_count,
+                    'duplicate' => (int) $prior->duplicate_count + (int) $prior->created_count,
                     'reason' => 'Same file hash already imported (batch #'.$prior->id.')',
                 ]);
             }
@@ -245,7 +272,7 @@ class SalesEmployeeListImportService
 
         $batch = null;
         if (Schema::hasTable('master_import_batches')) {
-            $batch = MasterImportBatch::query()->create([
+            $batchAttrs = [
                 'source_type' => self::SOURCE_TYPE,
                 'source_ref' => $fileName,
                 'file_name' => $fileName,
@@ -254,19 +281,39 @@ class SalesEmployeeListImportService
                 'progress_stage' => 'importing',
                 'progress_pct' => 0,
                 'remarks' => json_encode(['employee_name' => $employee], JSON_UNESCAPED_UNICODE),
-            ]);
+            ];
+            $batch = MasterImportBatch::query()->create($batchAttrs);
+            $batch->forceFill(array_filter([
+                'employee_id' => $employeeId,
+                'started_at' => now(),
+            ], fn ($v) => $v !== null))->save();
         }
 
         try {
-            $result = DB::transaction(function () use ($filePath, $fileName, $fileHash, $employee, $batch) {
-                return $this->importCsvInsideTransaction($filePath, $fileName, $fileHash, $employee, $batch?->id);
+            $result = DB::transaction(function () use ($filePath, $fileName, $fileHash, $employee, $employeeId, $batch) {
+                return $this->importCsvInsideTransaction(
+                    $filePath,
+                    $fileName,
+                    $fileHash,
+                    $employee,
+                    $employeeId,
+                    $batch?->id
+                );
             });
+
+            // Enrichment after commit of row inserts (chunked, never mutates ca_masters).
+            if ($batch?->id) {
+                $chunk = max(100, min(2000, (int) config('sales_imports.import.chunk_size', 500)));
+                $this->enrichment->applyForBatch((int) $batch->id, $chunk);
+            }
         } catch (Throwable $e) {
             if ($batch) {
-                $batch->fill([
+                $batch->forceFill([
                     'status' => MasterImportBatch::STATUS_FAILED,
                     'progress_stage' => 'failed',
                     'progress_pct' => 100,
+                    'finished_at' => now(),
+                    'processing_ms' => max(0, (int) floor(microtime(true) * 1000) - $startedMs),
                     'remarks' => json_encode([
                         'employee_name' => $employee,
                         'error' => $e->getMessage(),
@@ -279,28 +326,45 @@ class SalesEmployeeListImportService
                 'import_batch_id' => $batch?->id,
                 'error' => $e->getMessage(),
                 'reason' => $e->getMessage(),
+                'processing_ms' => max(0, (int) floor(microtime(true) * 1000) - $startedMs),
             ]);
         }
 
+        $processingMs = max(0, (int) floor(microtime(true) * 1000) - $startedMs);
+        $duplicate = (int) $result['already_existing'];
+        $skipped = (int) $result['skipped_blank'];
+        $rejected = (int) $result['failed'];
+
         if ($batch) {
-            $batch->fill([
+            $batch->forceFill([
                 'status' => MasterImportBatch::STATUS_COMPLETED,
                 'total_records' => $result['total_rows'],
                 'created_count' => $result['imported'],
-                'duplicate_count' => $result['already_existing'],
+                'duplicate_count' => $duplicate,
                 'review_count' => $result['needs_review'],
                 'conflict_count' => $result['unmatched'],
-                'failed_count' => $result['failed'],
+                'failed_count' => $rejected,
+                'matched_count' => $result['matched'],
+                'unmatched_count' => $result['unmatched'],
+                'rejected_count' => $rejected,
+                'skipped_count' => $skipped,
+                'processing_ms' => $processingMs,
+                'column_map' => $result['column_map'] ?? null,
+                'finished_at' => now(),
                 'progress_stage' => 'completed',
                 'progress_pct' => 100,
                 'remarks' => json_encode([
                     'employee_name' => $employee,
+                    'employee_id' => $employeeId,
                     'matched_count' => $result['matched'],
                     'needs_review_count' => $result['needs_review'],
                     'unmatched_count' => $result['unmatched'],
+                    'duplicate_count' => $duplicate,
+                    'skipped_count' => $skipped,
+                    'rejected_count' => $rejected,
                     'ignored_count' => 0,
-                    'skipped_blank' => $result['skipped_blank'],
                     'force_reimport' => $forceReimport,
+                    'processing_ms' => $processingMs,
                 ], JSON_UNESCAPED_UNICODE),
             ])->save();
         }
@@ -309,26 +373,22 @@ class SalesEmployeeListImportService
             'status' => 'completed',
             'import_batch_id' => $batch?->id,
             'employee' => $employee,
+            'duplicate' => $duplicate,
+            'skipped' => $skipped,
+            'rejected' => $rejected,
+            'processing_ms' => $processingMs,
         ]);
     }
 
     /**
-     * @return array{
-     *   total_rows: int,
-     *   imported: int,
-     *   already_existing: int,
-     *   matched: int,
-     *   needs_review: int,
-     *   unmatched: int,
-     *   failed: int,
-     *   skipped_blank: int
-     * }
+     * @return array<string, mixed>
      */
     private function importCsvInsideTransaction(
         string $filePath,
         string $fileName,
         ?string $fileHash,
         string $employeeName,
+        ?int $employeeId,
         ?int $batchId,
     ): array {
         $csv = new SplFileObject($filePath, 'r');
@@ -355,33 +415,49 @@ class SalesEmployeeListImportService
             'unmatched' => 0,
             'failed' => 0,
             'skipped_blank' => 0,
+            'column_map' => $columns,
         ];
 
         $hasFingerprint = Schema::hasColumn('sales_import_rows', 'row_fingerprint');
         $hasFileHashCol = Schema::hasColumn('sales_import_rows', 'source_file_hash');
-        $hasReferenceCol = Schema::hasColumn('sales_import_rows', 'matched_reference_firm_id');
         $hasCandidatesCol = Schema::hasColumn('sales_import_rows', 'match_candidates');
+        $hasEmployeeIdCol = Schema::hasColumn('sales_import_rows', 'employee_id');
+        $hasExtraCol = Schema::hasColumn('sales_import_rows', 'extra_columns');
+        $hasConfidenceCol = Schema::hasColumn('sales_import_rows', 'confidence_tier');
+        $hasEmailCol = Schema::hasColumn('sales_import_rows', 'email');
+        $hasWebsiteCol = Schema::hasColumn('sales_import_rows', 'website');
+        $hasStateCol = Schema::hasColumn('sales_import_rows', 'state_name');
+        $hasAddressCol = Schema::hasColumn('sales_import_rows', 'address');
+        $hasPincodeCol = Schema::hasColumn('sales_import_rows', 'pincode');
+        $hasCallStatusCol = Schema::hasColumn('sales_import_rows', 'call_status');
+        $hasFollowUpCol = Schema::hasColumn('sales_import_rows', 'follow_up');
+        $hasSoftwareCol = Schema::hasColumn('sales_import_rows', 'software');
+        $hasSalesSourceCol = Schema::hasColumn('sales_import_rows', 'sales_source');
+        $hasNormMobileCol = Schema::hasColumn('sales_import_rows', 'normalized_mobile');
+        $hasNormEmailCol = Schema::hasColumn('sales_import_rows', 'normalized_email');
+        $hasDupOfCol = Schema::hasColumn('sales_import_rows', 'duplicate_of_row_id');
+        $hasReferenceCol = Schema::hasColumn('sales_import_rows', 'matched_reference_firm_id');
 
         $existingFingerprints = [];
+        $existingFingerprintToId = [];
         $existingRowNumbers = SalesImportRow::query()
             ->where('source_file_name', $fileName)
-            ->pluck('source_row_number', 'id')
-            ->filter()
-            ->flip()
+            ->pluck('id', 'source_row_number')
             ->all();
 
         if ($hasFingerprint) {
-            $existingFingerprints = SalesImportRow::query()
+            $existingFingerprintToId = SalesImportRow::query()
                 ->where('source_file_name', $fileName)
                 ->whereNotNull('row_fingerprint')
-                ->pluck('row_fingerprint')
-                ->flip()
+                ->pluck('id', 'row_fingerprint')
                 ->all();
+            $existingFingerprints = array_fill_keys(array_keys($existingFingerprintToId), true);
         }
 
         $insertBuffer = [];
         $sourceRowNumber = 1;
         $now = now()->format('Y-m-d H:i:s');
+        $chunkSize = max(100, min(2000, (int) config('sales_imports.import.chunk_size', 500)));
 
         while (! $csv->eof()) {
             $row = $csv->fgetcsv();
@@ -396,10 +472,21 @@ class SalesEmployeeListImportService
                 $rawCaName = $this->value($row, $columns, 'ca_name');
                 $rawFirmName = $this->value($row, $columns, 'firm_name');
                 $rawCity = $this->value($row, $columns, 'city');
-                $mobile = $this->cleanPhone($this->value($row, $columns, 'mobile_no'));
+                $mobile = $this->normalizer->phone($this->value($row, $columns, 'mobile_no'));
+                $email = $this->normalizer->email($this->value($row, $columns, 'email'));
                 $callDate = $this->parseDate($this->value($row, $columns, 'date'));
-                $mapping = $this->matcher->match($rawFirmName, $rawCity);
-                $normalizedCa = $this->normalizer->caName($rawCaName);
+
+                $mapping = $this->matcher->match([
+                    'ca_name' => $rawCaName,
+                    'firm_name' => $rawFirmName,
+                    'city_name' => $rawCity,
+                    'mobile_no' => $mobile,
+                    'email' => $email,
+                ]);
+                $normalizedCa = $mapping['normalized_ca_name']
+                    ?? ($this->normalizer->caName($rawCaName) !== null
+                        ? mb_strtoupper((string) $this->normalizer->caName($rawCaName))
+                        : null);
 
                 $fingerprint = $this->rowFingerprint(
                     $fileName,
@@ -412,6 +499,7 @@ class SalesEmployeeListImportService
                     $callDate,
                 );
 
+                $dupOfId = $existingFingerprintToId[$fingerprint] ?? ($existingRowNumbers[$sourceRowNumber] ?? null);
                 $already = isset($existingFingerprints[$fingerprint])
                     || isset($existingRowNumbers[$sourceRowNumber]);
 
@@ -424,16 +512,27 @@ class SalesEmployeeListImportService
                     continue;
                 }
 
+                $status = (string) ($mapping['status'] ?? 'unmatched');
+                if (! in_array($status, ['matched', 'needs_review', 'unmatched'], true)) {
+                    $status = 'unmatched';
+                }
+
                 $counts['imported']++;
-                $counts[$mapping['status']] = ($counts[$mapping['status']] ?? 0) + 1;
+                $counts[$status] = ($counts[$status] ?? 0) + 1;
 
                 $rawPayload = [];
+                $extraColumns = [];
+                $mappedIndexes = array_flip(array_values($columns));
                 foreach ($headers as $index => $header) {
                     $name = trim((string) $header);
                     if ($name === '') {
                         $name = 'column_'.$index;
                     }
-                    $rawPayload[$name] = isset($row[$index]) ? trim((string) $row[$index]) : null;
+                    $cell = isset($row[$index]) ? trim((string) $row[$index]) : null;
+                    $rawPayload[$name] = $cell !== '' ? $cell : null;
+                    if (! isset($mappedIndexes[(int) $index])) {
+                        $extraColumns[$name] = $cell !== '' ? $cell : null;
+                    }
                 }
 
                 $insert = [
@@ -446,7 +545,7 @@ class SalesEmployeeListImportService
                     'ca_name' => $rawCaName,
                     'firm_name' => $rawFirmName,
                     'mobile_no' => $mobile,
-                    'alternate_mobile_no' => $this->cleanPhone($this->value($row, $columns, 'alternate_mobile_no')),
+                    'alternate_mobile_no' => $this->normalizer->phone($this->value($row, $columns, 'alternate_mobile_no')),
                     'city_name' => $rawCity,
                     'remarks_1' => $this->value($row, $columns, 'remarks_1'),
                     'remarks_2' => $this->value($row, $columns, 'remarks_2'),
@@ -454,7 +553,7 @@ class SalesEmployeeListImportService
                     'normalized_firm_name' => $mapping['normalized_firm_name'],
                     'normalized_city' => $mapping['normalized_city'],
                     'matched_ca_id' => $mapping['ca_id'],
-                    'mapping_status' => $mapping['status'],
+                    'mapping_status' => $status,
                     'matched_on' => $mapping['matched_on'],
                     'match_score' => $mapping['score'],
                     'review_reason' => $mapping['reason'],
@@ -474,7 +573,7 @@ class SalesEmployeeListImportService
                 $existingRowNumbers[$sourceRowNumber] = true;
 
                 if ($hasReferenceCol) {
-                    $insert['matched_reference_firm_id'] = $mapping['matched_reference_firm_id'];
+                    $insert['matched_reference_firm_id'] = $mapping['matched_reference_firm_id'] ?? null;
                 }
                 if ($hasCandidatesCol) {
                     $insert['match_candidates'] = json_encode(
@@ -482,16 +581,60 @@ class SalesEmployeeListImportService
                         JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
                     );
                 }
+                if ($hasEmployeeIdCol) {
+                    $insert['employee_id'] = $employeeId;
+                }
+                if ($hasEmailCol) {
+                    $insert['email'] = $email;
+                }
+                if ($hasWebsiteCol) {
+                    $insert['website'] = $this->value($row, $columns, 'website');
+                }
+                if ($hasStateCol) {
+                    $insert['state_name'] = $this->value($row, $columns, 'state_name');
+                }
+                if ($hasAddressCol) {
+                    $insert['address'] = $this->value($row, $columns, 'address');
+                }
+                if ($hasPincodeCol) {
+                    $insert['pincode'] = $this->value($row, $columns, 'pincode');
+                }
+                if ($hasCallStatusCol) {
+                    $insert['call_status'] = $this->value($row, $columns, 'call_status');
+                }
+                if ($hasFollowUpCol) {
+                    $insert['follow_up'] = $this->value($row, $columns, 'follow_up');
+                }
+                if ($hasSoftwareCol) {
+                    $insert['software'] = $this->value($row, $columns, 'software');
+                }
+                if ($hasSalesSourceCol) {
+                    $insert['sales_source'] = $this->value($row, $columns, 'sales_source');
+                }
+                if ($hasNormMobileCol) {
+                    $insert['normalized_mobile'] = $mapping['normalized_mobile'] ?? $mobile;
+                }
+                if ($hasNormEmailCol) {
+                    $insert['normalized_email'] = $mapping['normalized_email'] ?? $email;
+                }
+                if ($hasExtraCol) {
+                    $insert['extra_columns'] = json_encode($extraColumns, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                }
+                if ($hasConfidenceCol) {
+                    $insert['confidence_tier'] = $mapping['confidence_tier'] ?? $mapping['match_tier'] ?? null;
+                }
+                if ($hasDupOfCol && $dupOfId) {
+                    $insert['duplicate_of_row_id'] = $dupOfId;
+                }
 
                 $insertBuffer[] = $insert;
-                if (count($insertBuffer) >= 500) {
+                if (count($insertBuffer) >= $chunkSize) {
                     DB::table('sales_import_rows')->insert($insertBuffer);
                     $insertBuffer = [];
                 }
             } catch (Throwable $rowError) {
                 $counts['failed']++;
                 $counts['total_rows']++;
-                // One bad row must not abort the file unless structure is unusable (already thrown above).
                 report($rowError);
             }
         }
@@ -500,7 +643,6 @@ class SalesEmployeeListImportService
             DB::table('sales_import_rows')->insert($insertBuffer);
         }
 
-        // Attach legacy rows (null batch) to this batch without changing mapping fields.
         if ($batchId !== null) {
             $attach = ['import_batch_id' => $batchId, 'updated_at' => $now];
             if ($hasFileHashCol && $fileHash) {
@@ -528,13 +670,22 @@ class SalesEmployeeListImportService
 
             $field = match ($normalized) {
                 'date', 'call_date' => 'date',
-                'ca_name', 'caname', 'name' => 'ca_name',
-                'firm_name', 'firmname' => 'firm_name',
-                'number', 'mobile', 'mobile_no', 'phone', 'phone_number' => 'mobile_no',
-                'alternate_mobile_no', 'alternate_number', 'alt_mobile', 'alternate_mobile' => 'alternate_mobile_no',
+                'ca_name', 'caname', 'name', 'ca' => 'ca_name',
+                'firm_name', 'firmname', 'firm' => 'firm_name',
+                'number', 'mobile', 'mobile_no', 'phone', 'phone_number', 'contact' => 'mobile_no',
+                'alternate_mobile_no', 'alternate_number', 'alt_mobile', 'alternate_mobile', 'alt_number' => 'alternate_mobile_no',
+                'email', 'email_id', 'email_address', 'mail' => 'email',
+                'website', 'web', 'url' => 'website',
                 'city', 'city_name' => 'city',
-                'remarks_1', 'remark_1', 'remarks1', 'remark1', 'remarks' => 'remarks_1',
+                'state', 'state_name' => 'state_name',
+                'address', 'full_address', 'addr' => 'address',
+                'pincode', 'pin', 'pin_code', 'postal_code', 'zip' => 'pincode',
+                'remarks_1', 'remark_1', 'remarks1', 'remark1', 'remarks', 'remark', 'notes', 'note' => 'remarks_1',
                 'remarks_2', 'remark_2', 'remarks2', 'remark2' => 'remarks_2',
+                'call_status', 'status', 'outcome' => 'call_status',
+                'follow_up', 'followup', 'follow_up_date', 'next_follow_up' => 'follow_up',
+                'software', 'existing_software', 'product' => 'software',
+                'sales_source', 'source', 'lead_source' => 'sales_source',
                 default => null,
             };
 
@@ -579,16 +730,6 @@ class SalesEmployeeListImportService
         }
 
         return true;
-    }
-
-    private function cleanPhone(?string $phone): ?string
-    {
-        if ($phone === null) {
-            return null;
-        }
-        $digits = preg_replace('/\D+/', '', $phone) ?? '';
-
-        return $digits !== '' ? $digits : null;
     }
 
     private function parseDate(?string $date): ?string

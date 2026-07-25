@@ -174,6 +174,51 @@ class CaMasterController extends Controller
         ], 'Employee calling history loaded');
     }
 
+    public function salesSummary(string $id): JsonResponse
+    {
+        $lead = $this->caMasterService->find($id);
+
+        return ApiResponse::success(
+            app(\App\Services\SalesMapping\SalesMasterPanelService::class)->summary($lead),
+            'Sales summary loaded'
+        );
+    }
+
+    public function salesContacts(string $id): JsonResponse
+    {
+        $lead = $this->caMasterService->find($id);
+        $limit = min(200, max(1, (int) request()->query('limit', 50)));
+
+        return ApiResponse::success([
+            'ca_id' => (int) $lead->ca_id,
+            'items' => app(\App\Services\SalesMapping\SalesMasterPanelService::class)->contacts($lead, $limit),
+        ], 'Sales contacts loaded');
+    }
+
+    public function salesHistory(string $id): JsonResponse
+    {
+        $lead = $this->caMasterService->find($id);
+        $limit = min(500, max(1, (int) request()->query('limit', 100)));
+
+        return ApiResponse::success([
+            'ca_id' => (int) $lead->ca_id,
+            'items' => app(\App\Services\SalesMapping\SalesMasterPanelService::class)->histories($lead, $limit),
+        ], 'Sales history loaded');
+    }
+
+    public function salesImportHistory(string $id): JsonResponse
+    {
+        $lead = $this->caMasterService->find($id);
+        $limit = min(200, max(1, (int) request()->query('limit', 50)));
+        $panel = app(\App\Services\SalesMapping\SalesMasterPanelService::class);
+
+        return ApiResponse::success([
+            'ca_id' => (int) $lead->ca_id,
+            'import_history' => $panel->importHistory($lead, $limit),
+            'reviews' => $panel->reviews($lead, $limit),
+        ], 'Sales import history loaded');
+    }
+
     public function edit(string $id)
     {
         return redirect('/');

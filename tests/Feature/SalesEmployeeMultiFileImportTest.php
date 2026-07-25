@@ -228,10 +228,10 @@ class SalesEmployeeMultiFileImportTest extends TestCase
         $this->assertCount(1, $other->json('data.data') ?? []);
     }
 
-    public function test_accept_all_matched_only_affects_selected_batch(): void
+    public function test_accept_all_matched_is_disabled_and_leaves_rows_unchanged(): void
     {
         $this->skipUnlessReady();
-        $admin = $this->actingAsAdmin();
+        $this->actingAsAdmin();
 
         $ca = CaMaster::query()->create([
             'firm_name' => 'Accept Scope Firm '.uniqid(),
@@ -269,26 +269,24 @@ class SalesEmployeeMultiFileImportTest extends TestCase
             'remarks_1' => 'keep-b',
         ]);
 
-        $response = $this->postJson('/employee-imports/accept-all-matched', [
+        $this->postJson('/employee-imports/accept-all-matched', [
             'import_batch_id' => 91001,
-        ]);
-        $response->assertOk();
-        $this->assertSame(1, (int) $response->json('data.accepted'));
+        ])->assertStatus(410);
 
         $batchA->refresh();
         $batchB->refresh();
-        $this->assertSame('accepted_matched', $batchA->matched_on);
+        $this->assertSame('exact_normalized_firm_city', $batchA->matched_on);
         $this->assertSame('exact_normalized_firm_city', $batchB->matched_on);
         $this->assertSame('keep-a', $batchA->remarks_1);
         $this->assertSame('keep-b', $batchB->remarks_1);
-        unset($admin);
     }
 
-    public function test_unauthorized_cannot_accept_all_matched(): void
+    public function test_accept_all_matched_returns_gone_when_authenticated(): void
     {
         $this->skipUnlessReady();
+        $this->actingAsAdmin();
         $this->postJson('/employee-imports/accept-all-matched', ['import_batch_id' => 1])
-            ->assertUnauthorized();
+            ->assertStatus(410);
     }
 
     public function test_import_all_command_discovers_directory(): void

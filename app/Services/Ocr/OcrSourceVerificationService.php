@@ -210,6 +210,25 @@ class OcrSourceVerificationService
 
         $sourceOk = $this->sourceMatchesParsed($firm);
         if (! $sourceOk) {
+            // Firm-derived CA intentionally has no raw person line — not a silent correction.
+            $firmDerived = ($firm['classification_reason'] ?? null) === 'firm_derived_missing_raw_ca'
+                || (($firm['field_meta']['ca_name']['evidence'] ?? null) === 'firm_derived_missing_raw_ca')
+                || (($firm['field_meta']['ca_name']['reason'] ?? null) === 'firm_derived_missing_raw_ca');
+            if ($firmDerived) {
+                $sourceOk = $this->sourceMatchesParsedIgnoringCa($firm);
+            }
+        }
+        if (! $sourceOk) {
+            // Address/noise in raw.ca with empty or person parsed is not a raw≠parsed identity conflict.
+            $raw = is_array($firm['raw'] ?? null) ? $firm['raw'] : [];
+            $parsed = is_array($firm['parsed'] ?? null) ? $firm['parsed'] : [];
+            $rawCa = trim((string) ($raw['ca_name'] ?? ''));
+            $parsedCa = trim((string) ($parsed['ca_name'] ?? ''));
+            if ($rawCa !== '' && $parsedCa !== '' && $this->rawCaIsAddressNoise($rawCa)) {
+                $sourceOk = $this->sourceMatchesParsedIgnoringCa($firm);
+            }
+        }
+        if (! $sourceOk) {
             $errors[] = 'Parsed value differs from preserved raw OCR value — silent correction blocked.';
         }
 
@@ -283,6 +302,31 @@ class OcrSourceVerificationService
         }
 
         return true;
+    }
+
+    /**
+     * @param  array<string, mixed>  $firm
+     */
+    private function sourceMatchesParsedIgnoringCa(array $firm): bool
+    {
+        $clone = $firm;
+        $raw = is_array($clone['raw'] ?? null) ? $clone['raw'] : [];
+        $parsed = is_array($clone['parsed'] ?? null) ? $clone['parsed'] : [];
+        unset($raw['ca_name'], $parsed['ca_name']);
+        $clone['raw'] = $raw;
+        $clone['parsed'] = $parsed;
+
+        return $this->sourceMatchesParsed($clone);
+    }
+
+    private function rawCaIsAddressNoise(string $rawCa): bool
+    {
+        if (preg_match('/\d/', $rawCa)) {
+            return true;
+        }
+        $entities = new OcrEntityClassificationService;
+
+        return $entities->isAddress($rawCa) || $entities->isAddressShape($rawCa);
     }
 
     /**

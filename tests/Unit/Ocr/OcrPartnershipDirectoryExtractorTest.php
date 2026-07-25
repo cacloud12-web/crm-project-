@@ -266,6 +266,35 @@ class OcrPartnershipDirectoryExtractorTest extends TestCase
         $this->assertSame(['PRADEEP KUMAR GUPTA', 'DHARAMVEER SHARMA'], $firm['partners']);
     }
 
+    public function test_firm_title_only_block_peels_ca_from_firm_name(): void
+    {
+        $extractor = new OcrPartnershipDirectoryExtractor;
+        $firm = $extractor->extract([
+            ['text' => 'VINEET RATHI & ASSOCIATES', 'page' => 1, 'column' => 1],
+            ['text' => '016227C', 'page' => 1, 'column' => 1],
+        ], ['section_city' => 'ALIRAJPUR']);
+
+        $this->assertNotNull($firm);
+        $this->assertSame('VINEET RATHI & ASSOCIATES', $firm['firm_name']);
+        $this->assertSame('ALIRAJPUR', $firm['city']);
+        $this->assertSame('VINEET RATHI', $firm['ca_name']);
+        $this->assertSame([], $firm['partners']);
+        $this->assertSame('firm_derived_missing_raw_ca', $firm['classification_reason']);
+        $this->assertNotContains('ca_name', $firm['missing_required_fields'] ?? []);
+    }
+
+    public function test_short_brand_firm_does_not_invent_ca(): void
+    {
+        $extractor = new OcrPartnershipDirectoryExtractor;
+        $firm = $extractor->extract([
+            ['text' => 'MSVP & COMPANY', 'page' => 1],
+        ], ['section_city' => 'NOIDA']);
+
+        $this->assertNotNull($firm);
+        $this->assertNull($firm['ca_name']);
+        $this->assertContains('ca_name', $firm['missing_required_fields'] ?? []);
+    }
+
     /** @return array<string, mixed> */
     private function para(string $text, float $x, float $y): array
     {

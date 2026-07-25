@@ -36,19 +36,27 @@ class SalesImportController extends Controller
         $status = trim((string) ($validated['status'] ?? ''));
         $perPage = (int) ($validated['per_page'] ?? 25);
 
+        $select = [
+            'source_file_name',
+            DB::raw('MAX(import_batch_id) as import_batch_id'),
+            DB::raw('MAX(employee_name) as employee_name'),
+            DB::raw('COUNT(*) as total_rows'),
+            DB::raw("SUM(CASE WHEN mapping_status = 'matched' THEN 1 ELSE 0 END) as matched_count"),
+            DB::raw("SUM(CASE WHEN mapping_status = 'needs_review' THEN 1 ELSE 0 END) as needs_review_count"),
+            DB::raw("SUM(CASE WHEN mapping_status = 'unmatched' THEN 1 ELSE 0 END) as unmatched_count"),
+            DB::raw("SUM(CASE WHEN mapping_status = 'ignored' THEN 1 ELSE 0 END) as ignored_count"),
+            DB::raw("SUM(CASE WHEN mapping_status = 'rejected' THEN 1 ELSE 0 END) as rejected_count"),
+            DB::raw("SUM(CASE WHEN mapping_status = 'pending' THEN 1 ELSE 0 END) as pending_count"),
+            DB::raw("SUM(CASE WHEN mapping_status = 'duplicate' THEN 1 ELSE 0 END) as duplicate_count"),
+            DB::raw("SUM(CASE WHEN mapping_status = 'skipped' THEN 1 ELSE 0 END) as skipped_count"),
+            DB::raw('MAX(created_at) as imported_at'),
+        ];
+        if (Schema::hasColumn('sales_import_rows', 'duplicate_of_row_id')) {
+            $select[] = DB::raw('SUM(CASE WHEN duplicate_of_row_id IS NOT NULL THEN 1 ELSE 0 END) as duplicate_of_count');
+        }
+
         $stats = SalesImportRow::query()
-            ->select([
-                'source_file_name',
-                DB::raw('MAX(import_batch_id) as import_batch_id'),
-                DB::raw('MAX(employee_name) as employee_name'),
-                DB::raw('COUNT(*) as total_rows'),
-                DB::raw("SUM(CASE WHEN mapping_status = 'matched' THEN 1 ELSE 0 END) as matched_count"),
-                DB::raw("SUM(CASE WHEN mapping_status = 'needs_review' THEN 1 ELSE 0 END) as needs_review_count"),
-                DB::raw("SUM(CASE WHEN mapping_status = 'unmatched' THEN 1 ELSE 0 END) as unmatched_count"),
-                DB::raw("SUM(CASE WHEN mapping_status = 'ignored' THEN 1 ELSE 0 END) as ignored_count"),
-                DB::raw("SUM(CASE WHEN mapping_status = 'pending' THEN 1 ELSE 0 END) as pending_count"),
-                DB::raw('MAX(created_at) as imported_at'),
-            ])
+            ->select($select)
             ->when($employee !== '', fn ($q) => $q->where('employee_name', $employee))
             ->when($search !== '', function ($q) use ($search) {
                 $q->where(function ($inner) use ($search) {
@@ -100,12 +108,16 @@ class SalesImportController extends Controller
                 'source_file_name' => $row->source_file_name,
                 'employee_name' => $row->employee_name ?: ($remarks['employee_name'] ?? null),
                 'total_rows' => (int) $row->total_rows,
-                'matched_count' => (int) $row->matched_count,
-                'needs_review_count' => (int) $row->needs_review_count,
-                'unmatched_count' => (int) $row->unmatched_count,
+                'matched_count' => (int) ($batch?->matched_count ?? $row->matched_count),
+                'needs_review_count' => (int) ($batch?->review_count ?? $row->needs_review_count),
+                'unmatched_count' => (int) ($batch?->unmatched_count ?? $row->unmatched_count),
                 'ignored_count' => (int) $row->ignored_count,
+                'rejected_count' => (int) ($batch?->rejected_count ?? $row->rejected_count),
+                'duplicate_count' => (int) ($batch?->duplicate_count ?? ((int) $row->duplicate_count + (int) ($row->duplicate_of_count ?? 0))),
+                'skipped_count' => (int) ($batch?->skipped_count ?? $row->skipped_count) + (int) $row->ignored_count,
                 'pending_count' => (int) $row->pending_count,
                 'failed_count' => $batch ? (int) $batch->failed_count : 0,
+                'processing_ms' => $batch && isset($batch->processing_ms) ? (int) $batch->processing_ms : null,
                 'imported_at' => $row->imported_at,
                 'batch_status' => $batch?->status ?? 'completed',
             ];
@@ -132,7 +144,10 @@ class SalesImportController extends Controller
                 'matched' => (int) ($statusCounts['matched'] ?? 0),
                 'needs_review' => (int) ($statusCounts['needs_review'] ?? 0),
                 'unmatched' => (int) ($statusCounts['unmatched'] ?? 0),
+                'duplicate' => (int) ($statusCounts['duplicate'] ?? 0),
+                'rejected' => (int) ($statusCounts['rejected'] ?? 0),
                 'ignored' => (int) ($statusCounts['ignored'] ?? 0),
+                'skipped' => (int) ($statusCounts['skipped'] ?? 0) + (int) ($statusCounts['ignored'] ?? 0),
             ],
             'employees' => SalesImportRow::query()
                 ->whereNotNull('employee_name')
@@ -147,7 +162,7 @@ class SalesImportController extends Controller
     public function index(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'status' => ['nullable', 'in:matched,needs_review,unmatched,pending,ignored'],
+            'status' => ['nullable', 'in:matched,needs_review,unmatched,pending,ignored,rejected,duplicate,skipped'],
             'employee' => ['nullable', 'string', 'max:255'],
             'search' => ['nullable', 'string', 'max:255'],
             'import_batch_id' => ['nullable', 'integer', 'min:1'],
@@ -165,10 +180,19 @@ class SalesImportController extends Controller
 
         $query = SalesImportRow::query()
             ->with([
-                'ca:ca_id,ca_name,firm_name,mobile_no,city_id',
+                'ca:ca_id,ca_name,firm_name,mobile_no,email_id,city_id,verification_status,is_verified',
                 'ca.city:city_id,city_name',
             ])
-            ->when($status !== null, fn ($builder) => $builder->where('mapping_status', $status))
+            ->when($status === 'duplicate', function ($builder) {
+                if (Schema::hasColumn('sales_import_rows', 'duplicate_of_row_id')) {
+                    $builder->where(function ($q) {
+                        $q->where('mapping_status', 'duplicate')->orWhereNotNull('duplicate_of_row_id');
+                    });
+                } else {
+                    $builder->where('mapping_status', 'duplicate');
+                }
+            })
+            ->when($status !== null && $status !== 'duplicate', fn ($builder) => $builder->where('mapping_status', $status))
             ->when($employee !== '', fn ($builder) => $builder->where('employee_name', $employee))
             ->when($importBatchId !== null, fn ($builder) => $builder->where('import_batch_id', $importBatchId))
             ->when($sourceFileName !== '', fn ($builder) => $builder->where('source_file_name', $sourceFileName))
@@ -241,6 +265,9 @@ class SalesImportController extends Controller
             'unmatched' => (int) ($counts['unmatched'] ?? 0),
             'pending' => (int) ($counts['pending'] ?? 0),
             'ignored' => (int) ($counts['ignored'] ?? 0),
+            'rejected' => (int) ($counts['rejected'] ?? 0),
+            'duplicate' => (int) ($counts['duplicate'] ?? 0),
+            'skipped' => (int) ($counts['skipped'] ?? 0) + (int) ($counts['ignored'] ?? 0),
             'selected_employee' => $employee !== '' ? $employee : null,
             'selected_file' => $fileMeta,
             'employees' => SalesImportRow::query()
@@ -296,6 +323,66 @@ class SalesImportController extends Controller
         return ApiResponse::success($result, 'CA Reference search loaded');
     }
 
+    public function searchMasters(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'firm' => ['nullable', 'string', 'max:255'],
+            'ca' => ['nullable', 'string', 'max:255'],
+            'city' => ['nullable', 'string', 'max:255'],
+            'mobile' => ['nullable', 'string', 'max:40'],
+            'email' => ['nullable', 'string', 'max:255'],
+            'ca_id' => ['nullable', 'integer', 'min:1'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:5', 'max:50'],
+        ]);
+
+        $result = $this->reviewService->searchMasters(
+            $validated['firm'] ?? null,
+            $validated['ca'] ?? null,
+            $validated['city'] ?? null,
+            $validated['mobile'] ?? null,
+            $validated['email'] ?? null,
+            isset($validated['ca_id']) ? (int) $validated['ca_id'] : null,
+            (int) ($validated['page'] ?? 1),
+            (int) ($validated['per_page'] ?? 20),
+        );
+
+        return ApiResponse::success($result, 'Master search loaded');
+    }
+
+    public function review(SalesImportRow $salesImportRow): JsonResponse
+    {
+        $salesImportRow->load([
+            'ca:ca_id,ca_name,firm_name,mobile_no,alternate_mobile_no,email_id,city_id,verification_status,is_verified',
+            'ca.city:city_id,city_name',
+            'salesMappingReview',
+            'salesMasterLink',
+            'salesHistory',
+            'salesContact',
+        ]);
+
+        $candidates = $this->reviewService->candidatesForRow($salesImportRow, 15);
+        // Prefer stored Sales Mapping candidates with ca_id when present.
+        $stored = is_array($salesImportRow->match_candidates) ? $salesImportRow->match_candidates : [];
+        $storedWithMaster = array_values(array_filter($stored, static fn ($c) => is_array($c) && ! empty($c['ca_id'])));
+        if ($storedWithMaster !== []) {
+            $candidates = array_values(array_merge($storedWithMaster, $candidates));
+        }
+
+        return ApiResponse::success([
+            'row' => $this->serializeRow($salesImportRow, true),
+            'candidates' => $candidates,
+            'candidate_count' => count($candidates),
+            'review' => $salesImportRow->salesMappingReview ? [
+                'id' => $salesImportRow->salesMappingReview->id,
+                'status' => $salesImportRow->salesMappingReview->status,
+                'reason' => $salesImportRow->salesMappingReview->reason,
+                'review_notes' => $salesImportRow->salesMappingReview->review_notes,
+                'reviewed_at' => $salesImportRow->salesMappingReview->reviewed_at?->toIso8601String(),
+            ] : null,
+        ], 'Review payload loaded');
+    }
+
     public function confirmMatch(Request $request, SalesImportRow $salesImportRow): JsonResponse
     {
         $validated = $request->validate([
@@ -319,18 +406,14 @@ class SalesImportController extends Controller
         return ApiResponse::success($this->serializeRow($row, true), 'Match confirmed');
     }
 
-    public function acceptBestCandidate(Request $request, SalesImportRow $salesImportRow): JsonResponse
+    public function reject(Request $request, SalesImportRow $salesImportRow): JsonResponse
     {
         $validated = $request->validate([
             'reason' => ['nullable', 'string', 'max:1000'],
         ]);
 
         try {
-            $row = $this->reviewService->acceptBestCandidate(
-                $salesImportRow,
-                $request->user(),
-                $validated['reason'] ?? null
-            );
+            $row = $this->reviewService->reject($salesImportRow, $request->user(), $validated);
         } catch (AccessDeniedHttpException $e) {
             return ApiResponse::error($e->getMessage(), 403);
         } catch (ValidationException $e) {
@@ -338,36 +421,26 @@ class SalesImportController extends Controller
         } catch (Throwable $e) {
             report($e);
 
-            return ApiResponse::error('Unable to accept candidate.', 500);
+            return ApiResponse::error('Unable to reject row.', 500);
         }
 
-        return ApiResponse::success($this->serializeRow($row, true), 'Top candidate accepted');
+        return ApiResponse::success($this->serializeRow($row, true), 'Review rejected');
+    }
+
+    public function acceptBestCandidate(Request $request, SalesImportRow $salesImportRow): JsonResponse
+    {
+        return ApiResponse::error(
+            'Auto Accept Top Candidate is disabled. Confirm a Master manually from search or candidates.',
+            410
+        );
     }
 
     public function acceptAllMatched(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'employee' => ['nullable', 'string', 'max:255'],
-            'import_batch_id' => ['nullable', 'integer', 'min:1'],
-            'source_file_name' => ['nullable', 'string', 'max:255'],
-        ]);
-
-        try {
-            $result = $this->reviewService->acceptAllMatched(
-                $request->user(),
-                $validated['employee'] ?? null,
-                isset($validated['import_batch_id']) ? (int) $validated['import_batch_id'] : null,
-                $validated['source_file_name'] ?? null,
-            );
-        } catch (AccessDeniedHttpException $e) {
-            return ApiResponse::error($e->getMessage(), 403);
-        } catch (Throwable $e) {
-            report($e);
-
-            return ApiResponse::error('Unable to accept matched rows.', 500);
-        }
-
-        return ApiResponse::success($result, 'Accepted '.$result['accepted'].' matched row(s)');
+        return ApiResponse::error(
+            'Bulk Accept Needs Review / Accept All Matched is disabled for Sales Mapping safety.',
+            410
+        );
     }
 
     public function markUnmatched(Request $request, SalesImportRow $salesImportRow): JsonResponse
@@ -421,14 +494,25 @@ class SalesImportController extends Controller
             'source_file_name' => $row->source_file_name,
             'source_sheet_name' => $row->source_sheet_name,
             'employee_name' => $row->employee_name,
+            'employee_id' => $row->employee_id ?? null,
             'call_date' => $row->call_date?->format('Y-m-d'),
             'ca_name' => $row->ca_name,
             'firm_name' => $row->firm_name,
             'city_name' => $row->city_name,
+            'state_name' => $row->state_name ?? null,
+            'address' => $row->address ?? null,
+            'pincode' => $row->pincode ?? null,
             'mobile_no' => $row->mobile_no,
             'alternate_mobile_no' => $row->alternate_mobile_no,
+            'email' => $row->email ?? null,
+            'website' => $row->website ?? null,
             'remarks_1' => $row->remarks_1,
             'remarks_2' => $row->remarks_2,
+            'call_status' => $row->call_status ?? null,
+            'follow_up' => $row->follow_up ?? null,
+            'software' => $row->software ?? null,
+            'sales_source' => $row->sales_source ?? null,
+            'extra_columns' => $row->extra_columns ?? null,
             'normalized_firm_name' => $row->normalized_firm_name,
             'normalized_city' => $row->normalized_city,
             'normalized_ca_name' => $row->normalized_ca_name,
@@ -436,7 +520,10 @@ class SalesImportController extends Controller
             'matched_ca_id' => $row->matched_ca_id,
             'matched_reference_firm_id' => $row->matched_reference_firm_id ?? null,
             'matched_on' => $row->matched_on,
+            'match_tier' => $row->confidence_tier ?? $row->matched_on,
+            'confidence_tier' => $row->confidence_tier ?? null,
             'match_score' => $row->match_score,
+            'confidence' => $row->match_score,
             'review_reason' => $row->review_reason,
             'candidate_count' => is_array($candidates) ? count($candidates) : 0,
             'match_candidates' => $candidates,
@@ -446,7 +533,10 @@ class SalesImportController extends Controller
                 'ca_name' => $row->ca->ca_name,
                 'firm_name' => $row->ca->firm_name,
                 'mobile_no' => $row->ca->mobile_no,
+                'email_id' => $row->ca->email_id ?? null,
                 'city_name' => $row->ca->city?->city_name,
+                'verification_status' => $row->ca->verification_status ?? null,
+                'is_verified' => (bool) ($row->ca->is_verified ?? false),
             ] : null,
             'mapped_to' => $row->matched_ca_id || ($row->matched_reference_firm_id ?? null) ? [
                 'ca_id' => $row->matched_ca_id,
@@ -454,20 +544,13 @@ class SalesImportController extends Controller
                 'ca_name' => $row->ca?->ca_name,
                 'firm_name' => $row->ca?->firm_name,
                 'city_name' => $row->ca?->city?->city_name,
+                'verification_status' => $row->ca?->verification_status,
+                'is_verified' => (bool) ($row->ca?->is_verified ?? false),
             ] : null,
         ];
 
         if ($detailed) {
             $payload['raw_payload'] = $row->raw_payload;
-            $payload['matched_ca'] = $row->ca ? [
-                'ca_id' => $row->ca->ca_id,
-                'ca_name' => $row->ca->ca_name,
-                'firm_name' => $row->ca->firm_name,
-                'mobile_no' => $row->ca->mobile_no,
-                'alternate_mobile_no' => $row->ca->alternate_mobile_no ?? null,
-                'email_id' => $row->ca->email_id ?? null,
-                'city_name' => $row->ca->city?->city_name,
-            ] : null;
         }
 
         return $payload;

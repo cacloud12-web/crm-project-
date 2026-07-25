@@ -13,7 +13,7 @@ class ImportSalesEmployeeList extends Command
                             {--force-reimport : Re-scan file but never duplicate rows or erase mapping decisions}
                             {--replace : Deprecated destructive wipe — refused; use --force-reimport}';
 
-    protected $description = 'Import an employee calling list and Auto Match against CA Reference (firm + city)';
+    protected $description = 'Import an employee calling list and Auto Match against ca_masters (Sales Mapping tiers)';
 
     public function __construct(
         private readonly SalesEmployeeListImportService $importer,
@@ -36,7 +36,8 @@ class ImportSalesEmployeeList extends Command
             return self::FAILURE;
         }
 
-        $this->info('Auto Match rule: exact normalized firm + city against CA Reference (exactly one hit).');
+        $this->info('Auto Match tiers: Firm+CA+City → Firm+Mobile → CA+Mobile → Normalized triple → Email.');
+        $this->info('Auto-match only when exactly one unique Master candidate is above confidence threshold.');
         $this->info('Reading CSV: '.basename($filePath));
 
         $result = $this->importer->importFile(
@@ -72,15 +73,16 @@ class ImportSalesEmployeeList extends Command
             [
                 ['Total rows', $result['total_rows']],
                 ['Imported', $result['imported']],
-                ['Already existing', $result['already_existing']],
+                ['Duplicate', $result['duplicate'] ?? $result['already_existing']],
                 ['Matched', $result['matched']],
                 ['Needs review', $result['needs_review']],
                 ['Unmatched', $result['unmatched']],
-                ['Failed', $result['failed']],
-                ['Skipped blank', $result['skipped_blank']],
+                ['Skipped', $result['skipped'] ?? $result['skipped_blank']],
+                ['Rejected', $result['rejected'] ?? $result['failed']],
+                ['Processing ms', $result['processing_ms'] ?? '—'],
             ]
         );
-        $this->warn('No CA master/reference record was created, updated, or deleted.');
+        $this->warn('No CA master identity/verification/OCR/Google fields were created, updated, or deleted.');
 
         return self::SUCCESS;
     }

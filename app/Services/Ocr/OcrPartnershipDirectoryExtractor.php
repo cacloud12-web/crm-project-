@@ -170,6 +170,26 @@ class OcrPartnershipDirectoryExtractor
             ];
         }
 
+        // When Document AI returns firm title without partner lines, peel a multi-word
+        // proprietor-style name from the firm title itself (deterministic; never invents).
+        if ($caName === null && $persons === []) {
+            $derived = (new OcrFirmCaCityExtractorService($entities))->suggestCaFromFirmName($firmName, $city);
+            if ($derived !== null && trim($derived) !== '') {
+                $caName = $derived;
+                $rawCaName = null; // not a separate OCR person line
+                $members[] = [
+                    'sequence_no' => 1,
+                    'ca_name' => $derived,
+                    'raw_ca_name' => null,
+                    'role' => 'Partner',
+                    'is_primary' => true,
+                    'overall_confidence' => 0.72,
+                    'page_number' => $firmToken['page'] ?? ($context['page'] ?? null),
+                    'source_fingerprint' => hash('sha256', mb_strtolower($firmName).'|'.mb_strtolower($derived).'|firm_title'),
+                ];
+            }
+        }
+
         $missing = [];
         if ($city === null || trim((string) $city) === '') {
             $missing[] = 'city';
@@ -214,6 +234,9 @@ class OcrPartnershipDirectoryExtractor
             'missing_required_fields' => $missing,
             'extraction_source' => 'partnership_directory',
             'directory_profile' => OcrDirectoryProfileDetector::PARTNERSHIP,
+            'classification_reason' => ($caName !== null && $persons === [] && $rawCaName === null)
+                ? 'firm_derived_missing_raw_ca'
+                : null,
             'source_fingerprint' => $sourceFingerprint,
             'row_merge_suspected' => (bool) ($context['row_merge_suspected'] ?? false),
             'row_merge_evidence' => $context['row_merge_evidence'] ?? [],

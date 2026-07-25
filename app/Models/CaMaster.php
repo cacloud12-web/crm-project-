@@ -219,4 +219,19 @@ class CaMaster extends Model
     {
         return $this->belongsTo(Employee::class, 'verified_by', 'employee_id');
     }
+
+    public function salesMasterLinks(): HasMany
+    {
+        return $this->hasMany(SalesMasterLink::class, 'ca_id', 'ca_id');
+    }
+
+    public function salesContacts(): HasMany
+    {
+        return $this->hasMany(SalesContact::class, 'ca_id', 'ca_id');
+    }
+
+    public function salesHistories(): HasMany
+    {
+        return $this->hasMany(SalesHistory::class, 'ca_id', 'ca_id');
+    }
 }

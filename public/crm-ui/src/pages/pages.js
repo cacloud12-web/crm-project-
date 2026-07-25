@@ -2220,9 +2220,6 @@ window.CAPages = (function () {
           '<button type="button" class="btn-secondary btn-sm hidden" id="employee-imports-back-files">' +
             '<i data-lucide="arrow-left" class="h-4 w-4"></i> Back to Files' +
           '</button>' +
-          '<button type="button" class="btn-secondary btn-sm hidden" id="employee-imports-accept-matched">' +
-            '<i data-lucide="check-check" class="h-4 w-4"></i> Accept All Matched' +
-          '</button>' +
           '<button type="button" class="btn-secondary btn-sm" id="employee-imports-refresh">' +
             '<i data-lucide="refresh-cw" class="h-4 w-4"></i> Refresh' +
           '</button>'
@@ -2231,16 +2228,17 @@ window.CAPages = (function () {
         '<div id="employee-imports-files-view">' +
           '<div class="card p-4 mb-4 border border-amber-200 bg-amber-50 text-amber-950" id="employee-imports-remap-hint">' +
             '<div class="font-semibold mb-1">Map / re-map files (CLI)</div>' +
-            '<div class="text-sm">Browser Map-All is disabled to avoid Hostinger timeouts. After CA Reference is reachable, run from the project root:</div>' +
+            '<div class="text-sm">Browser Map-All is disabled to avoid Hostinger timeouts. After import, run from the project root:</div>' +
             '<pre class="mt-2 text-xs whitespace-pre-wrap break-all">' +
               './php artisan sales-list:remap --all --dry-run\n' +
               './php artisan sales-list:remap --file=&quot;CA CloudDesk Leads - simran.csv&quot; --dry-run\n' +
-              './php artisan sales-list:remap --all' +
+              './php artisan sales-list:remap --all\n' +
+              './php artisan sales-list:reconcile-batches --all --apply' +
             '</pre>' +
-            '<div class="text-sm mt-2">ANKIT matched rows stay skipped unless you pass --include-auto-matched. Manual Confirm/Ignore/Reject are never overwritten. Use --include-manual-unmatched only for mark_unmatched rows.</div>' +
+            '<div class="text-sm mt-2">Manual Confirm / Reject / Ignore / Mark Unmatched are never overwritten by remap. Never auto-create Masters from unmatched Sales rows.</div>' +
           '</div>' +
 
-          '<div class="grid grid-cols-1 gap-4 mb-5 md:grid-cols-6">' +
+          '<div class="grid grid-cols-2 gap-3 mb-5 md:grid-cols-4 xl:grid-cols-8">' +
             '<div class="card p-4"><div class="text-caption text-slate-500">Total Files</div>' +
               '<div class="text-2xl font-semibold text-slate-900" id="employee-import-files-count">0</div></div>' +
             '<div class="card p-4"><div class="text-caption text-slate-500">Total Rows</div>' +
@@ -2251,7 +2249,11 @@ window.CAPages = (function () {
               '<div class="text-2xl font-semibold text-amber-700" id="employee-import-review-count">0</div></div>' +
             '<div class="card p-4"><div class="text-caption text-slate-500">Unmatched</div>' +
               '<div class="text-2xl font-semibold text-rose-700" id="employee-import-unmatched-count">0</div></div>' +
-            '<div class="card p-4"><div class="text-caption text-slate-500">Ignored</div>' +
+            '<div class="card p-4"><div class="text-caption text-slate-500">Duplicate</div>' +
+              '<div class="text-2xl font-semibold text-slate-700" id="employee-import-duplicate-count">0</div></div>' +
+            '<div class="card p-4"><div class="text-caption text-slate-500">Rejected</div>' +
+              '<div class="text-2xl font-semibold text-rose-800" id="employee-import-rejected-count">0</div></div>' +
+            '<div class="card p-4"><div class="text-caption text-slate-500">Ignored / Skipped</div>' +
               '<div class="text-2xl font-semibold text-slate-600" id="employee-import-ignored-count">0</div></div>' +
           '</div>' +
 
@@ -2273,11 +2275,11 @@ window.CAPages = (function () {
               '<table class="ca-table w-full" id="employee-imports-files-table">' +
                 '<thead><tr>' +
                   '<th>File Name</th><th>Employee</th><th>Total Rows</th><th>Matched</th>' +
-                  '<th>Needs Review</th><th>Unmatched</th><th>Ignored</th>' +
-                  '<th>Import Date</th><th>Status</th><th></th>' +
+                  '<th>Needs Review</th><th>Unmatched</th><th>Duplicate</th><th>Rejected</th><th>Skipped</th>' +
+                  '<th>Processing</th><th>Import Date</th><th>Status</th><th></th>' +
                 '</tr></thead>' +
                 '<tbody id="employee-imports-files-tbody">' +
-                  '<tr><td colspan="10" class="py-8 text-center text-slate-500">Loading imported files…</td></tr>' +
+                  '<tr><td colspan="13" class="py-8 text-center text-slate-500">Loading imported files…</td></tr>' +
                 '</tbody>' +
               '</table>' +
             '</div>' +
@@ -2292,7 +2294,7 @@ window.CAPages = (function () {
             '<div class="text-sm text-slate-600" id="employee-imports-selected-employee">Employee: —</div>' +
           '</div>' +
 
-          '<div class="grid grid-cols-1 gap-4 mb-5 md:grid-cols-5">' +
+          '<div class="grid grid-cols-2 gap-3 mb-5 md:grid-cols-4 xl:grid-cols-7">' +
             '<button type="button" class="card p-4 text-left employee-import-status-card is-active" ' +
               'data-employee-import-status="">' +
               '<div class="text-caption text-slate-500">Total</div>' +
@@ -2314,8 +2316,18 @@ window.CAPages = (function () {
               '<div class="text-2xl font-semibold text-rose-700" id="employee-import-map-unmatched-count">0</div>' +
             '</button>' +
             '<button type="button" class="card p-4 text-left employee-import-status-card" ' +
+              'data-employee-import-status="duplicate">' +
+              '<div class="text-caption text-slate-500">Duplicate</div>' +
+              '<div class="text-2xl font-semibold text-slate-700" id="employee-import-map-duplicate-count">0</div>' +
+            '</button>' +
+            '<button type="button" class="card p-4 text-left employee-import-status-card" ' +
+              'data-employee-import-status="rejected">' +
+              '<div class="text-caption text-slate-500">Rejected</div>' +
+              '<div class="text-2xl font-semibold text-rose-800" id="employee-import-map-rejected-count">0</div>' +
+            '</button>' +
+            '<button type="button" class="card p-4 text-left employee-import-status-card" ' +
               'data-employee-import-status="ignored">' +
-              '<div class="text-caption text-slate-500">Ignored</div>' +
+              '<div class="text-caption text-slate-500">Ignored / Skipped</div>' +
               '<div class="text-2xl font-semibold text-slate-600" id="employee-import-map-ignored-count">0</div>' +
             '</button>' +
           '</div>' +
@@ -2338,23 +2350,25 @@ window.CAPages = (function () {
               '<table class="ca-table w-full" id="employee-imports-table">' +
                 '<thead>' +
                   '<tr>' +
-                    '<th>Call Date</th>' +
+                    '<th>CSV Row</th>' +
                     '<th>Employee</th>' +
-                    '<th>CA Name</th>' +
-                    '<th>Firm Name</th>' +
+                    '<th>Firm (Sales)</th>' +
+                    '<th>CA (Sales)</th>' +
                     '<th>City</th>' +
                     '<th>Mobile</th>' +
+                    '<th>Email</th>' +
                     '<th>Remarks</th>' +
-                    '<th>Review Reason</th>' +
-                    '<th>Candidates</th>' +
                     '<th>Status</th>' +
-                    '<th>Mapped To</th>' +
+                    '<th>Match Tier</th>' +
+                    '<th>Confidence</th>' +
+                    '<th>Mapped Master</th>' +
+                    '<th>Review Reason</th>' +
                     '<th></th>' +
                   '</tr>' +
                 '</thead>' +
                 '<tbody id="employee-imports-data-table">' +
                   '<tr>' +
-                    '<td colspan="12" class="py-8 text-center text-slate-500">Select a file to load mapping rows…</td>' +
+                    '<td colspan="14" class="py-8 text-center text-slate-500">Select a file to load mapping rows…</td>' +
                   '</tr>' +
                 '</tbody>' +
               '</table>' +

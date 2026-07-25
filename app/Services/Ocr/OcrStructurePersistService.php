@@ -1061,6 +1061,27 @@ class OcrStructurePersistService
                             $validationErrors = $validation['errors'] ?? [];
                         }
                     }
+                    // Complete Firm+CA+City must not stay needs_review for firm-derived CA
+                    // (intentional null raw) or address-noise raw that was correctly cleared.
+                    if ($completeThree && $quarantine) {
+                        $staleSourceConflict = false;
+                        foreach ($validation['errors'] ?? [] as $err) {
+                            if (str_contains(mb_strtolower((string) $err), 'silent correction blocked')) {
+                                $staleSourceConflict = true;
+                            }
+                        }
+                        if ($staleSourceConflict && ($firmDerivedNoRaw || $this->rawCaLooksLikeAddressNoise((string) $rawCaName))) {
+                            $quarantine = false;
+                            $validationErrors = array_values(array_filter(
+                                $validationErrors,
+                                static fn ($m) => ! str_contains(mb_strtolower((string) $m), 'silent correction blocked'),
+                            ));
+                        }
+                    }
+                    // Already-complete three fields with no hard collision codes → verified.
+                    if ($completeThree && $scopedCodes === [] && ($validation['errors'] ?? []) === []) {
+                        $quarantine = false;
+                    }
                     $matchStatus = $quarantine
                         ? 'needs_review'
                         : ($hasFirm ? 'verified' : ($firmData['match_status'] ?? 'pending'));
@@ -1400,6 +1421,20 @@ class OcrStructurePersistService
             'duplicate_source_records' => max(0, $candidateBlocks - $persistedCount - $rejectedNoise),
             'final_unique_records' => $validFirmCount > 0 ? $validFirmCount : $persistedCount,
         ];
+    }
+
+    private function rawCaLooksLikeAddressNoise(string $rawCa): bool
+    {
+        $rawCa = trim($rawCa);
+        if ($rawCa === '') {
+            return false;
+        }
+        if (preg_match('/\d/', $rawCa)) {
+            return true;
+        }
+        $entities = new OcrEntityClassificationService;
+
+        return $entities->isAddress($rawCa) || $entities->isAddressShape($rawCa);
     }
 
     private function rawString(mixed $value): ?string

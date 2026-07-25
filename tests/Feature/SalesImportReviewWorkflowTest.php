@@ -203,7 +203,7 @@ class SalesImportReviewWorkflowTest extends TestCase
         $row->refresh();
         $this->assertSame('unmatched', $row->mapping_status);
         $this->assertNull($row->matched_ca_id);
-        $this->assertNull($row->matched_on);
+        $this->assertSame(SalesImportReviewService::ACTION_UNMATCHED, $row->matched_on);
         $this->assertNull($row->mapped_at);
         $this->assertSame('History stays', $row->remarks_1);
         $this->assertTrue(CaMaster::query()->where('ca_id', $ca->ca_id)->exists());
@@ -308,10 +308,10 @@ class SalesImportReviewWorkflowTest extends TestCase
         $this->assertGreaterThanOrEqual(3, $count);
     }
 
-    public function test_accept_all_matched_only_updates_matched_rows(): void
+    public function test_accept_all_matched_is_disabled_for_sales_mapping(): void
     {
         $this->skipUnlessReady();
-        $admin = $this->actingAsAdmin();
+        $this->actingAsAdmin();
         $ca = $this->makeCa('Accept All Firm '.uniqid(), 'Jaipur');
         $matched = $this->makeRow([
             'matched_ca_id' => $ca->ca_id,
@@ -320,33 +320,16 @@ class SalesImportReviewWorkflowTest extends TestCase
             'remarks_1' => 'Keep remarks',
             'employee_name' => 'ANKIT',
         ]);
-        $review = $this->makeRow([
-            'mapping_status' => 'needs_review',
-            'employee_name' => 'ANKIT',
-            'source_row_number' => 77,
-        ]);
-        $beforeMasters = CaMaster::query()->count();
+        $beforeOn = $matched->matched_on;
 
-        $response = $this->postJson('/employee-imports/accept-all-matched', [
+        $this->postJson('/employee-imports/accept-all-matched', [
             'employee' => 'ANKIT',
-        ]);
-        $response->assertOk()
-            ->assertJsonPath('data.accepted', 1);
+        ])->assertStatus(410);
 
         $matched->refresh();
-        $review->refresh();
         $this->assertSame('matched', $matched->mapping_status);
-        $this->assertSame(SalesImportReviewService::ACTION_ACCEPT_MATCHED, $matched->matched_on);
+        $this->assertSame($beforeOn, $matched->matched_on);
         $this->assertSame('Keep remarks', $matched->remarks_1);
-        $this->assertSame('needs_review', $review->mapping_status);
-        $this->assertSame($beforeMasters, CaMaster::query()->count());
-        $this->assertTrue(
-            MasterMappingDecision::query()
-                ->where('source_type', SalesImportReviewService::SOURCE_TYPE)
-                ->where('source_ref', (string) $matched->id)
-                ->where('actor_id', $admin->id)
-                ->exists()
-        );
     }
 
     public function test_summary_respects_employee_filter(): void

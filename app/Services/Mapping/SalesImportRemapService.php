@@ -4,6 +4,8 @@ namespace App\Services\Mapping;
 
 use App\Models\MasterMappingDecision;
 use App\Models\SalesImportRow;
+use App\Services\SalesMapping\SalesEnrichmentWriter;
+use App\Services\SalesMapping\SalesMasterMatcher;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -12,7 +14,7 @@ use RuntimeException;
 use Throwable;
 
 /**
- * Remap existing sales_import_rows against CA Reference.
+ * Remap existing sales_import_rows against ca_masters (Sales Mapping tiers).
  * Never re-imports CSV, never creates/updates/deletes CA Master or CA Reference.
  */
 class SalesImportRemapService
@@ -22,8 +24,9 @@ class SalesImportRemapService
     public const ACTION_AUTO_REMAP = 'automatic_remap';
 
     public function __construct(
-        private readonly SalesImportMatchingService $matcher,
+        private readonly SalesMasterMatcher $matcher,
         private readonly SalesImportRemapProtection $protection,
+        private readonly SalesEnrichmentWriter $enrichment,
     ) {}
 
     /**
@@ -50,7 +53,7 @@ class SalesImportRemapService
         $progress = $options['progress'] ?? null;
 
         $scope = $this->resolveScope($options);
-        $preflight = $this->matcher->preflightCaReference();
+        $preflight = $this->preflightMasters();
 
         if (! $preflight['ok']) {
             return [
@@ -58,7 +61,7 @@ class SalesImportRemapService
                 'dry_run' => $dryRun,
                 'mapping_run_id' => null,
                 'preflight' => $preflight,
-                'error' => $preflight['error'] ?? 'CA Reference preflight failed',
+                'error' => $preflight['error'] ?? 'ca_masters preflight failed',
                 'scope' => $scope,
                 'files' => [],
                 'status_transitions' => [],
@@ -84,7 +87,6 @@ class SalesImportRemapService
         $candidateQuery = $this->applyEligibility(clone $baseQuery, $includeAutoMatched, $includeManualUnmatched);
         $candidateCount = (clone $candidateQuery)->count();
         $totals['candidates'] = $candidateCount;
-        // Rows outside the candidate status set (e.g. matched/ignored) are protected by default.
         $totals['skipped_protected'] = max(0, $scopedCount - $candidateCount);
 
         $candidateQuery->orderBy('id')->chunkById($chunk, function ($rows) use (
@@ -130,7 +132,13 @@ class SalesImportRemapService
 
                 try {
                     $beforeStatus = (string) ($row->mapping_status ?: '(empty)');
-                    $proposal = $this->matcher->match($row->firm_name, $row->city_name);
+                    $proposal = $this->matcher->match([
+                        'ca_name' => $row->ca_name,
+                        'firm_name' => $row->firm_name,
+                        'city_name' => $row->city_name,
+                        'mobile_no' => $row->mobile_no,
+                        'email' => Schema::hasColumn('sales_import_rows', 'email') ? $row->email : null,
+                    ]);
                     $proposedStatus = (string) ($proposal['status'] ?? 'unmatched');
 
                     $transitionKey = $beforeStatus.' → '.$proposedStatus;
@@ -219,6 +227,7 @@ class SalesImportRemapService
                         }
 
                         $this->applyProposal($fresh, $proposal);
+                        $this->enrichment->applyForRow($fresh->fresh());
                         $this->writeAudit($fresh, $before, $this->snapshot($fresh), $proposal, $mappingRunId);
                         $auditCreated++;
                         $updated++;
@@ -260,8 +269,20 @@ class SalesImportRemapService
     }
 
     /**
-     * Public for tests / callers.
-     *
+     * @return array{ok: bool, error: string|null, has_ca_masters: bool}
+     */
+    public function preflightMasters(): array
+    {
+        $ok = Schema::hasTable('ca_masters');
+
+        return [
+            'ok' => $ok,
+            'error' => $ok ? null : 'ca_masters table is unavailable',
+            'has_ca_masters' => $ok,
+        ];
+    }
+
+    /**
      * @return array{protected: bool, reason: string|null}
      */
     public function protectionFor(
@@ -313,7 +334,6 @@ class SalesImportRemapService
 
     private function applyEligibility(Builder $query, bool $includeAutoMatched, bool $includeManualUnmatched): Builder
     {
-        // Status-based candidate set; fine-grained protection is enforced by SalesImportRemapProtection.
         return $query
             ->where(function ($q) use ($includeAutoMatched) {
                 $q->whereIn('mapping_status', ['unmatched', 'needs_review', 'pending'])
@@ -347,6 +367,11 @@ class SalesImportRemapService
         }
         if (Schema::hasColumn('sales_import_rows', 'match_candidates')) {
             $payload['match_candidates'] = $proposal['candidates'] ?? [];
+        }
+        if (Schema::hasColumn('sales_import_rows', 'confidence_tier')) {
+            $row->forceFill([
+                'confidence_tier' => $proposal['confidence_tier'] ?? $proposal['match_tier'] ?? null,
+            ]);
         }
 
         $row->fill($payload);
@@ -415,14 +440,18 @@ class SalesImportRemapService
      */
     private function snapshot(SalesImportRow $row): array
     {
-        return [
+        $data = [
             'mapping_status' => $row->mapping_status,
             'matched_ca_id' => $row->matched_ca_id,
-            'matched_reference_firm_id' => $row->matched_reference_firm_id ?? null,
             'matched_on' => $row->matched_on,
             'match_score' => $row->match_score,
             'review_reason' => $row->review_reason,
         ];
+        if (Schema::hasColumn('sales_import_rows', 'matched_reference_firm_id')) {
+            $data['matched_reference_firm_id'] = $row->matched_reference_firm_id;
+        }
+
+        return $data;
     }
 
     /**
@@ -431,10 +460,26 @@ class SalesImportRemapService
      */
     private function mappingChanged(array $before, array $proposal): bool
     {
-        return (string) ($before['mapping_status'] ?? '') !== (string) ($proposal['status'] ?? '')
-            || (int) ($before['matched_ca_id'] ?? 0) !== (int) ($proposal['ca_id'] ?? 0)
-            || (int) ($before['matched_reference_firm_id'] ?? 0) !== (int) ($proposal['matched_reference_firm_id'] ?? 0)
-            || (string) ($before['matched_on'] ?? '') !== (string) ($proposal['matched_on'] ?? '');
+        $status = (string) ($proposal['status'] ?? 'unmatched');
+        $caId = $proposal['ca_id'] ?? null;
+        $matchedOn = $proposal['matched_on'] ?? null;
+        $refId = $proposal['matched_reference_firm_id'] ?? null;
+
+        if ((string) ($before['mapping_status'] ?? '') !== $status) {
+            return true;
+        }
+        if ((int) ($before['matched_ca_id'] ?? 0) !== (int) ($caId ?? 0)) {
+            return true;
+        }
+        if ((string) ($before['matched_on'] ?? '') !== (string) ($matchedOn ?? '')) {
+            return true;
+        }
+        if (array_key_exists('matched_reference_firm_id', $before)
+            && (int) ($before['matched_reference_firm_id'] ?? 0) !== (int) ($refId ?? 0)) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -443,10 +488,10 @@ class SalesImportRemapService
     private function emptyTotals(): array
     {
         return [
-            'eligible' => 0,
             'candidates' => 0,
-            'skipped_protected' => 0,
             'processed' => 0,
+            'eligible' => 0,
+            'skipped_protected' => 0,
             'would_match' => 0,
             'would_need_review' => 0,
             'would_stay_unmatched' => 0,
@@ -456,8 +501,8 @@ class SalesImportRemapService
             'unchanged' => 0,
             'changed' => 0,
             'updated' => 0,
-            'audit_rows_created' => 0,
             'errors' => 0,
+            'audit_rows_created' => 0,
         ];
     }
 
@@ -467,9 +512,8 @@ class SalesImportRemapService
     private function emptyFileBucket(SalesImportRow $row): array
     {
         return [
-            'file' => $row->source_file_name,
-            'employee' => $row->employee_name,
-            'import_batch_id' => $row->import_batch_id,
+            'source_file_name' => $row->source_file_name,
+            'employee_name' => $row->employee_name,
             'eligible' => 0,
             'skipped_protected' => 0,
             'would_match' => 0,

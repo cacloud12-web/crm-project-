@@ -5,10 +5,11 @@ namespace Tests\Feature;
 use App\Models\CaMaster;
 use App\Models\MasterMappingDecision;
 use App\Models\SalesImportRow;
-use App\Services\Mapping\SalesImportMatchingService;
 use App\Services\Mapping\SalesImportRemapProtection;
 use App\Services\Mapping\SalesImportRemapService;
 use App\Services\Mapping\SalesImportReviewService;
+use App\Services\SalesMapping\SalesEnrichmentWriter;
+use App\Services\SalesMapping\SalesMasterMatcher;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schema;
@@ -54,46 +55,42 @@ class SalesImportRemapTest extends TestCase
         ], $overrides));
     }
 
-    private function okPreflight(): array
-    {
-        return [
-            'ok' => true,
-            'error' => null,
-            'has_ca_firms' => true,
-            'has_ca_addresses' => true,
-            'has_ca_partners' => true,
-            'firm_count' => 10,
-            'has_normalized_firm' => true,
-            'has_normalized_city' => true,
-        ];
-    }
-
-    private function matchResult(string $status, ?int $caId = null, ?int $refId = null): array
+    private function matchResult(string $status, ?int $caId = null): array
     {
         return [
             'status' => $status,
             'ca_id' => $caId,
-            'matched_reference_firm_id' => $refId,
-            'matched_on' => $status === 'matched' ? SalesImportMatchingService::MATCHED_ON : ($status === 'needs_review' ? 'multiple_exact_normalized_firm_city' : null),
-            'score' => $status === 'unmatched' ? null : 1.0,
+            'matched_reference_firm_id' => null,
+            'matched_on' => $status === 'matched' ? SalesMasterMatcher::TIER_FIRM_CA_CITY : ($status === 'needs_review' ? 'multiple_firm_ca_city' : null),
+            'match_tier' => $status === 'unmatched' ? null : SalesMasterMatcher::TIER_FIRM_CA_CITY,
+            'confidence_tier' => $status === 'unmatched' ? null : SalesMasterMatcher::TIER_FIRM_CA_CITY,
+            'score' => $status === 'unmatched' ? null : 0.98,
             'reason' => $status === 'unmatched' ? 'No candidate' : null,
-            'candidates' => $refId ? [['reference_firm_id' => $refId, 'ca_id' => $caId]] : [],
+            'candidates' => $caId ? [['ca_id' => $caId, 'match_tier' => SalesMasterMatcher::TIER_FIRM_CA_CITY, 'score' => 0.98]] : [],
             'normalized_firm_name' => 'FIRM',
             'normalized_city' => 'JAIPUR',
+            'normalized_ca_name' => 'TEST CA',
+            'normalized_mobile' => '9000001111',
+            'normalized_email' => null,
         ];
     }
 
-    private function service(SalesImportMatchingService $matcher): SalesImportRemapService
+    private function service(SalesMasterMatcher $matcher): SalesImportRemapService
     {
-        return new SalesImportRemapService($matcher, new SalesImportRemapProtection);
+        return new SalesImportRemapService(
+            $matcher,
+            new SalesImportRemapProtection,
+            app(SalesEnrichmentWriter::class),
+        );
     }
 
-    private function fakeMatcher(array $preflight, ?array $matchResult = null): SalesImportMatchingService
+    private function fakeMatcher(?array $matchResult = null, bool $allowMatch = true): SalesMasterMatcher
     {
-        $matcher = Mockery::mock(SalesImportMatchingService::class);
-        $matcher->shouldReceive('preflightCaReference')->andReturn($preflight);
+        $matcher = Mockery::mock(SalesMasterMatcher::class);
         if ($matchResult !== null) {
             $matcher->shouldReceive('match')->andReturn($matchResult);
+        } elseif (! $allowMatch) {
+            $matcher->shouldReceive('match')->never();
         }
 
         return $matcher;
@@ -104,19 +101,21 @@ class SalesImportRemapTest extends TestCase
         $this->skipUnlessReady();
         $row = $this->makeRow();
         $beforeAudit = Schema::hasTable('master_mapping_decisions') ? MasterMappingDecision::query()->count() : 0;
-        $matcher = $this->fakeMatcher([
+
+        $matcher = $this->fakeMatcher(null, false);
+        $service = Mockery::mock(SalesImportRemapService::class, [
+            $matcher,
+            new SalesImportRemapProtection,
+            app(SalesEnrichmentWriter::class),
+        ])->makePartial();
+        $service->shouldAllowMockingProtectedMethods();
+        $service->shouldReceive('preflightMasters')->andReturn([
             'ok' => false,
             'error' => 'offline',
-            'has_ca_firms' => false,
-            'has_ca_addresses' => false,
-            'has_ca_partners' => false,
-            'firm_count' => 0,
-            'has_normalized_firm' => false,
-            'has_normalized_city' => false,
+            'has_ca_masters' => false,
         ]);
-        $matcher->shouldReceive('match')->never();
 
-        $result = $this->service($matcher)->run(['all' => true]);
+        $result = $service->run(['all' => true]);
         $this->assertFalse($result['ok']);
         $this->assertSame(0, $result['updated']);
         $row->refresh();
@@ -133,7 +132,7 @@ class SalesImportRemapTest extends TestCase
         $beforeAudit = Schema::hasTable('master_mapping_decisions') ? MasterMappingDecision::query()->count() : 0;
         $beforeCa = CaMaster::query()->count();
 
-        $result = $this->service($this->fakeMatcher($this->okPreflight(), $this->matchResult('matched', 11, 22)))
+        $result = $this->service($this->fakeMatcher($this->matchResult('matched', 11)))
             ->run(['file' => $row->source_file_name, 'dry_run' => true]);
 
         $this->assertTrue($result['ok']);
@@ -160,7 +159,7 @@ class SalesImportRemapTest extends TestCase
             ? MasterMappingDecision::query()->where('source_type', SalesImportRemapService::SOURCE_TYPE)->count()
             : 0;
 
-        $result = $this->service($this->fakeMatcher($this->okPreflight(), $this->matchResult('matched', (int) $ca->ca_id, 77)))
+        $result = $this->service($this->fakeMatcher($this->matchResult('matched', (int) $ca->ca_id)))
             ->run(['file' => $row->source_file_name]);
 
         $this->assertTrue($result['ok']);
@@ -187,8 +186,7 @@ class SalesImportRemapTest extends TestCase
             $this->makeRow(['mapping_status' => 'unmatched', 'matched_on' => SalesImportReviewService::ACTION_UNMATCHED, 'source_row_number' => 14, 'source_file_name' => 'u.csv']),
         ];
 
-        $matcher = $this->fakeMatcher($this->okPreflight());
-        $matcher->shouldReceive('match')->never();
+        $matcher = $this->fakeMatcher(null, false);
         $service = $this->service($matcher);
 
         foreach ($rows as $row) {
@@ -220,7 +218,7 @@ class SalesImportRemapTest extends TestCase
             'source_file_name' => 'manual-unmatched.csv',
         ]);
 
-        $matcher = $this->fakeMatcher($this->okPreflight(), $this->matchResult('needs_review', null, 5));
+        $matcher = $this->fakeMatcher($this->matchResult('needs_review'));
         $service = $this->service($matcher);
         $service->run([
             'file' => $unmatchedManual->source_file_name,
@@ -238,17 +236,16 @@ class SalesImportRemapTest extends TestCase
         $this->skipUnlessReady();
         $row = $this->makeRow([
             'mapping_status' => 'matched',
-            'matched_on' => SalesImportMatchingService::MATCHED_ON,
+            'matched_on' => SalesMasterMatcher::TIER_FIRM_CA_CITY,
             'matched_ca_id' => 44,
         ]);
 
-        $matcher = $this->fakeMatcher($this->okPreflight());
-        $matcher->shouldReceive('match')->never();
+        $matcher = $this->fakeMatcher(null, false);
         $this->service($matcher)->run(['file' => $row->source_file_name]);
         $row->refresh();
         $this->assertSame(44, (int) $row->matched_ca_id);
 
-        $matcher2 = $this->fakeMatcher($this->okPreflight(), $this->matchResult('unmatched'));
+        $matcher2 = $this->fakeMatcher($this->matchResult('unmatched'));
         $this->service($matcher2)->run([
             'file' => $row->source_file_name,
             'include_auto_matched' => true,
@@ -263,7 +260,7 @@ class SalesImportRemapTest extends TestCase
         $a = $this->makeRow(['import_batch_id' => 901, 'source_file_name' => 'a.csv', 'employee_name' => 'A', 'source_row_number' => 30]);
         $b = $this->makeRow(['import_batch_id' => 902, 'source_file_name' => 'b.csv', 'employee_name' => 'B', 'source_row_number' => 31]);
 
-        $service = $this->service($this->fakeMatcher($this->okPreflight(), $this->matchResult('needs_review', null, 1)));
+        $service = $this->service($this->fakeMatcher($this->matchResult('needs_review')));
         $service->run(['batch' => 901]);
         $a->refresh();
         $b->refresh();
@@ -271,7 +268,7 @@ class SalesImportRemapTest extends TestCase
         $this->assertSame('unmatched', $b->mapping_status);
 
         $this->expectException(RuntimeException::class);
-        $this->service($this->fakeMatcher($this->okPreflight()))->run([]);
+        $this->service($this->fakeMatcher(null, false))->run([]);
     }
 
     public function test_unchanged_result_writes_no_audit(): void
@@ -284,7 +281,7 @@ class SalesImportRemapTest extends TestCase
         ]);
         $beforeAudit = Schema::hasTable('master_mapping_decisions') ? MasterMappingDecision::query()->count() : 0;
 
-        $this->service($this->fakeMatcher($this->okPreflight(), $this->matchResult('unmatched')))
+        $this->service($this->fakeMatcher($this->matchResult('unmatched')))
             ->run(['file' => $row->source_file_name]);
 
         if (Schema::hasTable('master_mapping_decisions')) {

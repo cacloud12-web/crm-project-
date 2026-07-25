@@ -32,6 +32,14 @@ Route::middleware(['auth', 'rbac'])->group(function () {
         ->middleware('spa.browser:ca-master');
     Route::get('ca-masters/{ca_master}/employee-call-history', [CaMasterController::class, 'employeeCallHistory'])
         ->middleware('spa.browser:ca-master');
+    Route::get('ca-masters/{ca_master}/sales-summary', [CaMasterController::class, 'salesSummary'])
+        ->middleware('spa.browser:ca-master');
+    Route::get('ca-masters/{ca_master}/sales-contacts', [CaMasterController::class, 'salesContacts'])
+        ->middleware('spa.browser:ca-master');
+    Route::get('ca-masters/{ca_master}/sales-history', [CaMasterController::class, 'salesHistory'])
+        ->middleware('spa.browser:ca-master');
+    Route::get('ca-masters/{ca_master}/sales-import-history', [CaMasterController::class, 'salesImportHistory'])
+        ->middleware('spa.browser:ca-master');
     Route::get('ca-masters/{lead}/demo-confirmation', [DemoConfirmationController::class, 'showForLead'])
         ->middleware('spa.browser:leads');
     Route::get('ca-masters/{caId}/email-communications', [LeadEmailCommunicationController::class, 'index'])

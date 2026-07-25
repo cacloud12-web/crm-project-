@@ -8,7 +8,10 @@ use App\Models\CaMaster;
 use App\Models\CaPartner;
 use App\Models\MasterMappingDecision;
 use App\Models\SalesImportRow;
+use App\Models\SalesMappingReview;
 use App\Models\User;
+use App\Services\SalesMapping\SalesBatchCounterService;
+use App\Services\SalesMapping\SalesEnrichmentWriter;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
@@ -28,6 +31,8 @@ class SalesImportReviewService
 
     public const ACTION_IGNORE = 'ignore';
 
+    public const ACTION_REJECT = 'rejected';
+
     public const ACTION_ACCEPT_MATCHED = 'accepted_matched';
 
     public const ACTION_ACCEPT_TOP = 'accepted_top_candidate';
@@ -35,6 +40,8 @@ class SalesImportReviewService
     public function __construct(
         private readonly DataNormalizationService $normalizer,
         private readonly SalesImportMatchingService $matcher,
+        private readonly SalesEnrichmentWriter $enrichment,
+        private readonly SalesBatchCounterService $batchCounters,
     ) {}
 
     /**
@@ -413,7 +420,48 @@ class SalesImportReviewService
             $fresh->fill($updates);
             $fresh->save();
 
+            if ($caId) {
+                $this->enrichment->applyForRow($fresh->fresh());
+                $this->enrichment->approveReviewForRow($fresh->fresh(), (int) $actor->id);
+            }
+
             $this->audit($actor, $fresh, self::ACTION_CONFIRM, $before, $this->snapshot($fresh), $reason);
+            $this->batchCounters->reconcileForRow($fresh->import_batch_id ? (int) $fresh->import_batch_id : null);
+
+            return $fresh->fresh(['ca.city']);
+        });
+    }
+
+    /**
+     * @param  array{reason?: string|null}  $payload
+     */
+    public function reject(SalesImportRow $row, User $actor, array $payload): SalesImportRow
+    {
+        $this->assertCanDecide($actor);
+        $reason = trim((string) ($payload['reason'] ?? 'Rejected during manual review'));
+
+        return DB::transaction(function () use ($row, $actor, $reason) {
+            $fresh = SalesImportRow::query()->lockForUpdate()->findOrFail($row->id);
+            $before = $this->snapshot($fresh);
+
+            $updates = [
+                'matched_ca_id' => null,
+                'mapping_status' => 'rejected',
+                'matched_on' => self::ACTION_REJECT,
+                'match_score' => null,
+                'review_reason' => $reason !== '' ? $reason : 'Rejected during manual review',
+                'mapped_at' => null,
+            ];
+            if (Schema::hasColumn('sales_import_rows', 'matched_reference_firm_id')) {
+                $updates['matched_reference_firm_id'] = null;
+            }
+
+            $fresh->fill($updates);
+            $fresh->save();
+
+            $this->resolveReview($fresh, SalesMappingReview::STATUS_REJECTED, $actor, $reason, null);
+            $this->audit($actor, $fresh, self::ACTION_REJECT, $before, $this->snapshot($fresh), $reason);
+            $this->batchCounters->reconcileForRow($fresh->import_batch_id ? (int) $fresh->import_batch_id : null);
 
             return $fresh->fresh(['ca.city']);
         });
@@ -434,7 +482,7 @@ class SalesImportReviewService
             $updates = [
                 'matched_ca_id' => null,
                 'mapping_status' => 'unmatched',
-                'matched_on' => null,
+                'matched_on' => self::ACTION_UNMATCHED,
                 'match_score' => null,
                 'review_reason' => $reason !== '' ? $reason : 'No correct CA found in reference data',
                 'mapped_at' => null,
@@ -446,7 +494,9 @@ class SalesImportReviewService
             $fresh->fill($updates);
             $fresh->save();
 
+            $this->resolveReview($fresh, SalesMappingReview::STATUS_REJECTED, $actor, $reason, null);
             $this->audit($actor, $fresh, self::ACTION_UNMATCHED, $before, $this->snapshot($fresh), $reason);
+            $this->batchCounters->reconcileForRow($fresh->import_batch_id ? (int) $fresh->import_batch_id : null);
 
             return $fresh->fresh(['ca.city']);
         });
@@ -467,7 +517,7 @@ class SalesImportReviewService
             $updates = [
                 'matched_ca_id' => null,
                 'mapping_status' => 'ignored',
-                'matched_on' => null,
+                'matched_on' => self::ACTION_IGNORE,
                 'match_score' => null,
                 'review_reason' => $reason !== '' ? $reason : 'Ignored during manual review',
                 'mapped_at' => null,
@@ -479,10 +529,160 @@ class SalesImportReviewService
             $fresh->fill($updates);
             $fresh->save();
 
+            $this->resolveReview($fresh, SalesMappingReview::STATUS_IGNORED, $actor, $reason, null);
             $this->audit($actor, $fresh, self::ACTION_IGNORE, $before, $this->snapshot($fresh), $reason);
+            $this->batchCounters->reconcileForRow($fresh->import_batch_id ? (int) $fresh->import_batch_id : null);
 
             return $fresh->fresh(['ca.city']);
         });
+    }
+
+    /**
+     * Search existing ca_masters only. Never creates Masters.
+     *
+     * @return array{items: list<array<string, mixed>>, pagination: array<string, int>}
+     */
+    public function searchMasters(
+        ?string $firm = null,
+        ?string $ca = null,
+        ?string $city = null,
+        ?string $mobile = null,
+        ?string $email = null,
+        ?int $caId = null,
+        int $page = 1,
+        int $perPage = 20,
+    ): array {
+        $page = max(1, $page);
+        $perPage = max(5, min(50, $perPage));
+
+        if (! Schema::hasTable('ca_masters')) {
+            return [
+                'items' => [],
+                'pagination' => [
+                    'current_page' => $page,
+                    'last_page' => 1,
+                    'per_page' => $perPage,
+                    'total' => 0,
+                ],
+            ];
+        }
+
+        $firm = trim((string) $firm);
+        $ca = trim((string) $ca);
+        $city = trim((string) $city);
+        $mobileDigits = preg_replace('/\D+/', '', (string) $mobile) ?: '';
+        $email = strtolower(trim((string) $email));
+
+        $query = CaMaster::query()
+            ->with('city:city_id,city_name')
+            ->select([
+                'ca_id', 'ca_name', 'firm_name', 'mobile_no', 'email_id', 'city_id',
+                'verification_status', 'is_verified',
+            ]);
+
+        if ($caId !== null && $caId > 0) {
+            $query->where('ca_id', $caId);
+        }
+        if ($firm !== '') {
+            $query->where(function ($q) use ($firm) {
+                $q->where('firm_name', 'like', '%'.addcslashes($firm, '%_').'%');
+                if (Schema::hasColumn('ca_masters', 'normalized_firm_name')) {
+                    $q->orWhere('normalized_firm_name', 'like', '%'.mb_strtoupper($firm).'%');
+                }
+            });
+        }
+        if ($ca !== '') {
+            $query->where(function ($q) use ($ca) {
+                $q->where('ca_name', 'like', '%'.addcslashes($ca, '%_').'%');
+                if (Schema::hasColumn('ca_masters', 'normalized_ca_name')) {
+                    $q->orWhere('normalized_ca_name', 'like', '%'.mb_strtoupper($ca).'%');
+                }
+            });
+        }
+        if ($city !== '') {
+            $query->whereHas('city', function ($q) use ($city) {
+                $q->where('city_name', 'like', '%'.addcslashes($city, '%_').'%');
+            });
+        }
+        if ($mobileDigits !== '') {
+            $query->where(function ($q) use ($mobileDigits) {
+                $q->where('mobile_no', 'like', '%'.$mobileDigits.'%')
+                    ->orWhere('alternate_mobile_no', 'like', '%'.$mobileDigits.'%');
+                if (Schema::hasColumn('ca_masters', 'normalized_mobile')) {
+                    $q->orWhere('normalized_mobile', 'like', '%'.$mobileDigits.'%');
+                }
+            });
+        }
+        if ($email !== '') {
+            $query->where(function ($q) use ($email) {
+                $q->whereRaw('LOWER(email_id) like ?', ['%'.$email.'%']);
+                if (Schema::hasColumn('ca_masters', 'normalized_email')) {
+                    $q->orWhere('normalized_email', 'like', '%'.$email.'%');
+                }
+            });
+        }
+
+        $paginator = $query->orderBy('ca_id')->paginate($perPage, ['*'], 'page', $page);
+        $items = collect($paginator->items())->map(static function (CaMaster $m) {
+            return [
+                'ca_id' => (int) $m->ca_id,
+                'ca_name' => $m->ca_name,
+                'firm_name' => $m->firm_name,
+                'city' => $m->city?->city_name,
+                'mobile' => $m->mobile_no,
+                'email' => $m->email_id,
+                'verification_status' => $m->verification_status,
+                'is_verified' => (bool) $m->is_verified,
+                'match_score' => null,
+                'match_tier' => 'manual_search',
+                'candidate_reason' => 'manual_master_search',
+            ];
+        })->values()->all();
+
+        return [
+            'items' => $items,
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
+        ];
+    }
+
+    private function resolveReview(
+        SalesImportRow $row,
+        string $status,
+        User $actor,
+        string $reason,
+        ?int $approvedCaId,
+    ): void {
+        if (! Schema::hasTable('sales_mapping_reviews')) {
+            return;
+        }
+
+        $review = SalesMappingReview::query()
+            ->where('sales_import_row_id', $row->id)
+            ->first();
+
+        if (! $review) {
+            if (! $row->import_batch_id) {
+                return;
+            }
+            $review = new SalesMappingReview([
+                'import_batch_id' => $row->import_batch_id,
+                'sales_import_row_id' => $row->id,
+                'status' => SalesMappingReview::STATUS_PENDING,
+            ]);
+        }
+
+        $review->fill([
+            'status' => $status,
+            'approved_ca_id' => $approvedCaId,
+            'reviewed_by' => $actor->id,
+            'reviewed_at' => now(),
+            'review_notes' => $reason,
+        ])->save();
     }
 
     private function assertCanDecide(User $actor): void
@@ -536,7 +736,7 @@ class SalesImportReviewService
 
         $decision = match ($action) {
             self::ACTION_CONFIRM, self::ACTION_ACCEPT_TOP, self::ACTION_ACCEPT_MATCHED => 'manual_confirm',
-            self::ACTION_UNMATCHED => MasterMappingDecision::DECISION_REJECTED,
+            self::ACTION_UNMATCHED, self::ACTION_REJECT => MasterMappingDecision::DECISION_REJECTED,
             self::ACTION_IGNORE => MasterMappingDecision::DECISION_SKIPPED,
             default => MasterMappingDecision::DECISION_NEEDS_REVIEW,
         };

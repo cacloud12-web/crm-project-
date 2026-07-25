@@ -192,22 +192,17 @@ class OcrFirmCaCityExtractorService
         // Peel person characters that appear inside the firm title token itself
         // (proprietorship "LOVISH GARG AND ASSOCIATES") — only multi-word, never single-token invent.
         // Does not invent CA when the firm title has no person-shaped prefix.
+        // Applied even when city is still missing — city and CA are independent required fields.
         $suggestedCa = null;
         $suggestedCaAnalysis = null;
         if ($caName === null && $firmName !== null) {
             $derived = $this->deriveCaFromFirmName($firmName, $entities, $city);
             if ($derived !== null) {
-                if ($city !== null && trim((string) $city) !== '') {
-                    // Staging fill only — never invent raw OCR to bypass source verification.
-                    $caName = $derived;
-                    // Leave $rawCaName null/empty so raw ≠ fabricated.
-                    $caClassificationReason = 'firm_derived_missing_raw_ca';
-                    $suggestedCa = $derived;
-                    $suggestedCaAnalysis = $this->analyzeCaDerivation('', $derived, $firmName);
-                } else {
-                    $suggestedCa = $derived;
-                    $suggestedCaAnalysis = $this->analyzeCaDerivation('', $derived, $firmName);
-                }
+                $caName = $derived;
+                // Leave $rawCaName null/empty so raw ≠ fabricated OCR line.
+                $caClassificationReason = 'firm_derived_missing_raw_ca';
+                $suggestedCa = $derived;
+                $suggestedCaAnalysis = $this->analyzeCaDerivation('', $derived, $firmName);
             }
         } elseif ($caName !== null && $firmName !== null) {
             $derived = $this->deriveCaFromFirmName($firmName, $entities, $city);
@@ -298,9 +293,8 @@ class OcrFirmCaCityExtractorService
                     ? 'firm_derived_missing_raw_ca'
                     : 'firm_derived_suggestion',
                 'analysis' => $suggestedCaAnalysis,
-                'safe_repair_candidate' => $caClassificationReason === 'firm_derived_missing_raw_ca'
-                    && $city !== null
-                    && trim((string) $city) !== '',
+                // CA derivation does not depend on city; both remain independently required.
+                'safe_repair_candidate' => $caClassificationReason === 'firm_derived_missing_raw_ca',
                 'manual_review_required' => $caClassificationReason !== 'firm_derived_missing_raw_ca',
             ];
         }

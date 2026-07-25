@@ -22,6 +22,7 @@ class SalesImportRemapProtection
         SalesImportReviewService::ACTION_ACCEPT_MATCHED,
         SalesImportReviewService::ACTION_UNMATCHED, // mark_unmatched
         SalesImportReviewService::ACTION_IGNORE,
+        SalesImportReviewService::ACTION_REJECT,
         'rejected',
     ];
 
@@ -48,8 +49,8 @@ class SalesImportRemapProtection
         $status = strtolower(trim((string) ($row->mapping_status ?? '')));
         $matchedOn = strtolower(trim((string) ($row->matched_on ?? '')));
 
-        if ($status === 'ignored') {
-            return ['protected' => true, 'reason' => 'mapping_status=ignored'];
+        if ($status === 'ignored' || $status === 'rejected') {
+            return ['protected' => true, 'reason' => 'mapping_status='.$status];
         }
 
         if (in_array($matchedOn, ['manual_confirmed', 'manual_confirm'], true)) {

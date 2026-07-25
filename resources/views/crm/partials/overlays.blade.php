@@ -1691,7 +1691,7 @@
             </section>
             <section class="ei-compare-card ei-compare-card--reference">
               <div class="flex items-start justify-between gap-3 mb-3">
-                <h4 class="text-card-heading">Matched CA Reference Candidate</h4>
+                <h4 class="text-card-heading">Matched Master Candidate</h4>
                 <div id="ei-confidence-badge" class="ei-confidence-badge" hidden>—</div>
               </div>
               <dl class="ei-field-list" id="ei-review-right">
@@ -1719,13 +1719,16 @@
         </section>
 
         <section class="rounded-xl border border-slate-200 p-4">
-          <h4 class="text-card-heading mb-2">Search Another CA</h4>
-          <div class="grid md:grid-cols-4 gap-2 mb-3">
+          <h4 class="text-card-heading mb-2">Search Existing Master</h4>
+          <div class="grid md:grid-cols-3 gap-2 mb-3">
             <input type="search" id="ei-search-firm" class="input-field" placeholder="Firm name" autocomplete="off" />
             <input type="search" id="ei-search-ca" class="input-field" placeholder="CA name" autocomplete="off" />
             <input type="search" id="ei-search-city" class="input-field" placeholder="City" autocomplete="off" />
-            <button type="button" class="btn-secondary btn-sm" id="ei-search-btn">Search Reference</button>
+            <input type="search" id="ei-search-mobile" class="input-field" placeholder="Mobile" autocomplete="off" />
+            <input type="search" id="ei-search-email" class="input-field" placeholder="Email" autocomplete="off" />
+            <input type="search" id="ei-search-ca-id" class="input-field" placeholder="CA ID" autocomplete="off" />
           </div>
+          <button type="button" class="btn-secondary btn-sm mb-3" id="ei-search-btn">Search Masters</button>
           <div id="ei-search-results" class="space-y-2 max-h-48 overflow-y-auto"></div>
           <div id="ei-search-pagination" class="mt-2 text-caption text-slate-500"></div>
         </section>
@@ -1736,10 +1739,11 @@
       </div>
       <div class="ca-modal-footer">
         <div class="ca-modal-footer-buttons flex flex-wrap gap-2">
-          <button type="button" class="btn-secondary btn-sm" data-close-overlay>Cancel</button>
+          <button type="button" class="btn-secondary btn-sm" data-close-overlay>Close</button>
           <button type="button" class="btn-secondary btn-sm" id="ei-btn-ignore">Ignore</button>
+          <button type="button" class="btn-secondary btn-sm text-rose-700" id="ei-btn-reject">Reject</button>
           <button type="button" class="btn-secondary btn-sm text-rose-700" id="ei-btn-unmatched">Mark Unmatched</button>
-          <button type="button" class="btn-primary btn-sm" id="ei-btn-confirm">Confirm Match</button>
+          <button type="button" class="btn-primary btn-sm" id="ei-btn-confirm">Confirm Selected Master</button>
         </div>
       </div>
     </div>

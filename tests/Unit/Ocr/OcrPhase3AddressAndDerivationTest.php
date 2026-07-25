@@ -107,6 +107,28 @@ class OcrPhase3AddressAndDerivationTest extends TestCase
         $this->assertTrue($row['field_meta']['suggested_ca_name']['safe_repair_candidate'] ?? false);
     }
 
+    public function test_firm_derived_ca_fills_even_when_city_missing(): void
+    {
+        $extractor = new OcrFirmCaCityExtractorService(new OcrEntityClassificationService);
+        $row = $extractor->extract([
+            [
+                'text' => 'SHASHI VERMA & COMPANY',
+                'page' => 1,
+                'column' => 1,
+                'ocr_confidence' => 0.9,
+                'x_min' => 0.1, 'x_max' => 0.5, 'y_min' => 0.1, 'y_max' => 0.12,
+                'x_center' => 0.3, 'y_center' => 0.11,
+            ],
+        ], ['sequence_no' => 1]);
+
+        $this->assertNotNull($row);
+        $this->assertSame('SHASHI VERMA', $row['ca_name']);
+        $this->assertNull($row['city']);
+        $this->assertContains('city', $row['missing_required_fields']);
+        $this->assertNotContains('ca_name', $row['missing_required_fields']);
+        $this->assertTrue($row['field_meta']['suggested_ca_name']['safe_repair_candidate'] ?? false);
+    }
+
     public function test_brand_entity_firm_does_not_derive_person(): void
     {
         $extractor = new OcrFirmCaCityExtractorService;
