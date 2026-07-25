@@ -163,6 +163,7 @@ class CaMasterResource extends JsonResource
             'mobile_no' => $this->mobile_no,
             'alternate_mobile_no' => $this->alternate_mobile_no,
             'email_id' => $this->email_id,
+            'sales_remarks' => $this->sales_remarks,
             'city_id' => $this->city_id,
             'state_id' => $this->state_id,
             'source_id' => $this->source_id,

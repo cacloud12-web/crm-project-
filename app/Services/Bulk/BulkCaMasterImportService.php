@@ -25,6 +25,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Request;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Validator as ValidationValidator;
@@ -125,7 +126,7 @@ class BulkCaMasterImportService
     {
         $session = $this->getSession($sessionId);
         $this->assertRequiredMappings($session['headers'] ?? [], $mapping);
-        $mappedRows = $this->mappingService->applyMapping($session['rows'], $mapping);
+        $mappedRows = $this->mappingService->applyMapping($session['rows'], $mapping, $session['headers'] ?? []);
         $validateMobile = $this->mappingService->mobileMappingIsActive($session['headers'] ?? [], $mapping);
         $validateAlternateMobile = $this->mappingService->alternateMobileMappingIsActive($session['headers'] ?? [], $mapping);
         $results = $this->evaluateRows(
@@ -241,7 +242,7 @@ class BulkCaMasterImportService
 
         if (! $validation) {
             $mapping = $session['mapping'] ?? $this->mappingService->suggestMapping($session['headers'] ?? []);
-            $mappedRows = $this->mappingService->applyMapping($session['rows'], $mapping);
+            $mappedRows = $this->mappingService->applyMapping($session['rows'], $mapping, $session['headers'] ?? []);
             $validateMobile = $session['validate_mobile']
                 ?? $this->mappingService->mobileMappingIsActive($session['headers'] ?? [], $mapping);
             $validateAlternateMobile = $session['validate_alternate_mobile']
@@ -301,7 +302,7 @@ class BulkCaMasterImportService
             );
             $evaluation = $this->recountEvaluation($evaluation);
         } else {
-            $mappedRows = $this->mappingService->applyMapping($session['rows'], $mapping);
+            $mappedRows = $this->mappingService->applyMapping($session['rows'], $mapping, $session['headers'] ?? []);
             $validateMobile = $this->mappingService->mobileMappingIsActive($session['headers'] ?? [], $mapping);
             $validateAlternateMobile = $this->mappingService->alternateMobileMappingIsActive($session['headers'] ?? [], $mapping);
             $evaluation = $this->evaluateRows(
@@ -514,6 +515,11 @@ class BulkCaMasterImportService
                             $uploadedBy,
                         );
                         if (in_array($engineResult['status'], ['inserted', 'updated'], true)) {
+                            $this->applyPostImportSalesFields(
+                                isset($engineResult['ca_id']) ? (int) $engineResult['ca_id'] : null,
+                                $result['data'] ?? [],
+                                $engineResult['status'] === 'inserted'
+                            );
                             $inserted++;
                             if ($status === 'landline' || ($result['phone_category'] ?? '') === 'landline') {
                                 $landlineImported++;
@@ -980,6 +986,9 @@ class BulkCaMasterImportService
                 $payload = $this->withPhoneTypes($resolved['payload']);
                 if ($bulkActionId) {
                     $payload['bulk_action_id'] = $bulkActionId;
+                }
+                if (! Schema::hasColumn('ca_masters', 'sales_remarks')) {
+                    unset($payload['sales_remarks']);
                 }
                 $payload['created_by_employee_id'] = $this->employeeDataScope->resolveEmployeeId(Auth::user());
                 $payload['normalized_mobile'] = $this->phoneNormalization->normalize($payload['mobile_no'] ?? null);
@@ -1572,6 +1581,7 @@ class BulkCaMasterImportService
             'address' => 'nullable|string|max:2000',
             'pincode' => 'nullable|string|max:12',
             'email_id' => 'nullable|string|max:255',
+            'sales_remarks' => 'nullable|string|max:20000',
             'gst_no' => 'nullable|string|max:50',
             'team_size' => 'nullable|integer|min:1',
             'team_size_id' => 'nullable|integer',
@@ -1629,6 +1639,7 @@ class BulkCaMasterImportService
                 'mobile_no' => $this->storeablePhone($data['mobile_no'] ?? null),
                 'alternate_mobile_no' => $this->storeablePhone($data['alternate_mobile_no'] ?? null),
                 'email_id' => $this->normalizeEmail($data['email_id'] ?? null),
+                'sales_remarks' => $this->normalizeSalesRemarks($data['sales_remarks'] ?? null),
                 'gst_no' => $this->normalizeGst($data['gst_no'] ?? null),
                 'team_size' => $data['team_size'] ?? null,
                 'team_size_id' => $teamSizeId,
@@ -2033,6 +2044,85 @@ class BulkCaMasterImportService
         return strtolower($normalized);
     }
 
+    private function normalizeSalesRemarks(mixed $value): ?string
+    {
+        if (! $this->hasValue($value)) {
+            return null;
+        }
+
+        $text = str_replace(["\r\n", "\r"], "\n", trim((string) $value));
+
+        return $text !== '' ? $text : null;
+    }
+
+    private function mergeSalesRemarksText(?string $existing, string $incoming): string
+    {
+        $incoming = $this->normalizeSalesRemarks($incoming) ?? '';
+        $existing = $this->normalizeSalesRemarks($existing);
+        if ($incoming === '') {
+            return (string) ($existing ?? '');
+        }
+        if ($existing === null || $existing === '') {
+            return $incoming;
+        }
+        if (str_contains($existing, $incoming)) {
+            return $existing;
+        }
+
+        return $existing."\n\n".$incoming;
+    }
+
+    /**
+     * Mapping engine does not persist sales_remarks; apply Email ID (empty-only) + Sales Remarks after create/update.
+     *
+     * @param  array<string, mixed>  $row
+     */
+    private function applyPostImportSalesFields(?int $caId, array $row, bool $isInsert): void
+    {
+        if ($caId === null || $caId <= 0 || ! Schema::hasTable('ca_masters')) {
+            return;
+        }
+
+        $email = $this->normalizeEmail($row['email_id'] ?? null);
+        $remarks = $this->normalizeSalesRemarks($row['sales_remarks'] ?? null);
+        if ($email === null && $remarks === null) {
+            return;
+        }
+
+        DB::transaction(function () use ($caId, $email, $remarks, $isInsert) {
+            $lead = CaMaster::query()->where('ca_id', $caId)->lockForUpdate()->first();
+            if (! $lead) {
+                return;
+            }
+
+            $dirty = false;
+            if ($email !== null && ($lead->email_id === null || trim((string) $lead->email_id) === '')) {
+                $lead->email_id = $email;
+                if (Schema::hasColumn('ca_masters', 'normalized_email')) {
+                    $lead->normalized_email = $email;
+                }
+                $dirty = true;
+            }
+
+            if ($remarks !== null && Schema::hasColumn('ca_masters', 'sales_remarks')) {
+                if ($isInsert || $lead->sales_remarks === null || trim((string) $lead->sales_remarks) === '') {
+                    $lead->sales_remarks = $remarks;
+                    $dirty = true;
+                } else {
+                    $merged = $this->mergeSalesRemarksText($lead->sales_remarks, $remarks);
+                    if ($merged !== (string) $lead->sales_remarks) {
+                        $lead->sales_remarks = $merged;
+                        $dirty = true;
+                    }
+                }
+            }
+
+            if ($dirty) {
+                $lead->saveQuietly();
+            }
+        });
+    }
+
     private function normalizeGst(?string $value): ?string
     {
         $normalized = $this->normalizeOptionalCode($value);
@@ -2116,11 +2206,28 @@ class BulkCaMasterImportService
                     if ($value === null || $value === '') {
                         continue;
                     }
+                    if ($key === 'email_id') {
+                        // Fill empty email only — overwrite requires Replace action.
+                        if ($lead->email_id === null || trim((string) $lead->email_id) === '') {
+                            $lead->email_id = $value;
+                            $lead->normalized_email = $this->normalizeEmail((string) $value);
+                        }
+                        continue;
+                    }
+                    if ($key === 'sales_remarks' && Schema::hasColumn('ca_masters', 'sales_remarks')) {
+                        $lead->sales_remarks = $this->mergeSalesRemarksText(
+                            $lead->sales_remarks ?? null,
+                            (string) $value
+                        );
+                        continue;
+                    }
                     if ($lead->{$key} === null || $lead->{$key} === '') {
                         $lead->{$key} = $value;
                     }
                 }
-                $lead->bulk_action_id = $bulkActionId;
+                if ($bulkActionId > 0) {
+                    $lead->bulk_action_id = $bulkActionId;
+                }
                 $lead->normalized_mobile = $this->phoneNormalization->normalize($lead->mobile_no);
                 $lead->normalized_alternate_mobile = $this->phoneNormalization->normalize($lead->alternate_mobile_no);
                 $lead->mobile_no_type = $this->phoneClassification->classify($lead->mobile_no);
@@ -2159,9 +2266,15 @@ class BulkCaMasterImportService
         try {
             DB::transaction(function () use ($lead, $resolved, $bulkActionId) {
                 $payload = $this->withPhoneTypes($resolved['payload']);
-                $payload['bulk_action_id'] = $bulkActionId;
+                if ($bulkActionId > 0) {
+                    $payload['bulk_action_id'] = $bulkActionId;
+                }
                 $payload['normalized_mobile'] = $this->phoneNormalization->normalize($payload['mobile_no'] ?? null);
                 $payload['normalized_alternate_mobile'] = $this->phoneNormalization->normalize($payload['alternate_mobile_no'] ?? null);
+                $payload['normalized_email'] = $this->normalizeEmail($payload['email_id'] ?? null);
+                if (! Schema::hasColumn('ca_masters', 'sales_remarks')) {
+                    unset($payload['sales_remarks']);
+                }
                 $lead->fill($payload);
                 $lead->save();
                 $this->duplicateLeadDetection->syncLeadPhones($lead);

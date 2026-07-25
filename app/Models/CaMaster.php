@@ -27,6 +27,7 @@ class CaMaster extends Model
         'normalized_alternate_mobile',
         'alternate_mobile_no_type',
         'email_id',
+        'sales_remarks',
         'normalized_email',
         'city_id',
         'state_id',

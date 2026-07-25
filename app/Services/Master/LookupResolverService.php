@@ -79,7 +79,19 @@ class LookupResolverService
         });
 
         if ($stateId) {
-            $query->where('state_id', $stateId);
+            $scoped = (clone $query)->where('state_id', $stateId)->value('city_id');
+            if ($scoped !== null) {
+                return $this->cityCache[$cacheKey] = (int) $scoped;
+            }
+
+            // State filter missed (wrong/missing state on OCR row). Fall back only when
+            // the city name uniquely matches exactly one cities row globally — never guess.
+            $ids = (clone $query)->orderBy('city_id')->limit(3)->pluck('city_id');
+            if ($ids->count() === 1) {
+                return $this->cityCache[$cacheKey] = (int) $ids->first();
+            }
+
+            return $this->cityCache[$cacheKey] = null;
         }
 
         return $this->cityCache[$cacheKey] = $query->value('city_id');

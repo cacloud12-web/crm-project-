@@ -87,6 +87,14 @@ class OcrPartnershipDirectoryExtractor
 
             if ($entities->isAddressShape($text) || $this->looksLikeAddressTransition($text)) {
                 $inAddress = true;
+                // City-only: try to recover city from address line when section city missing.
+                if (($city === null || trim((string) $city) === '')) {
+                    $fromAddr = (new OcrCityResolverService)->extractCityFromAddressLine($text);
+                    if ($fromAddr !== null) {
+                        $city = $fromAddr['canonical_city'];
+                        $rawCity = $text;
+                    }
+                }
                 continue;
             }
 

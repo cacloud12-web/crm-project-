@@ -179,6 +179,27 @@ class OcrFirmCaCityExtractorService
             $classifications[] = $classified;
         }
 
+        // City-only: recover from address lines (CITY-PIN) when section city missing.
+        // Does not alter firm/CA extraction.
+        if (($city === null || trim((string) $city) === '') && ! $cityFromSection) {
+            $resolver = new OcrCityResolverService;
+            foreach ($tokens as $token) {
+                $raw = trim((string) ($token['text'] ?? ''));
+                if ($raw === '') {
+                    continue;
+                }
+                $fromAddr = $resolver->extractCityFromAddressLine($raw);
+                if ($fromAddr === null) {
+                    continue;
+                }
+                $city = $fromAddr['canonical_city'];
+                $rawCity = $raw;
+                $cityToken = $token;
+                $cityFromSection = false;
+                break;
+            }
+        }
+
         // Peel person line that Document AI glued into the firm paragraph.
         [$firmName, $rawFirmName, $caName, $rawCaName, $caClassificationReason] = $this->peelEmbeddedCaFromFirm(
             $firmName,
@@ -730,7 +751,12 @@ class OcrFirmCaCityExtractorService
         if ($resolved === null) {
             return null;
         }
-        // Body fallback must still be resolvable; street ROAD rejected by resolver.
+        // Body fallback must be resolvable; reject weak place_suffix localities
+        // (MEHERABAD) so they do not overwrite real section cities later.
+        if (($resolved['city_match_type'] ?? '') === 'place_suffix') {
+            return null;
+        }
+
         return $resolved['canonical_city'];
     }
 

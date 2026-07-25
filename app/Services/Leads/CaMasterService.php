@@ -776,6 +776,9 @@ class CaMasterService
                 : ($existing?->alternate_mobile_no_type ?? $this->phoneClassification->classify($existing?->alternate_mobile_no)),
             'email_id' => $data['email_id'] ?? $existing?->email_id,
             'normalized_email' => $data['normalized_email'] ?? $existing?->normalized_email,
+            'sales_remarks' => array_key_exists('sales_remarks', $data)
+                ? $data['sales_remarks']
+                : $existing?->sales_remarks,
             'gst_no' => $data['gst_no'] ?? $existing?->gst_no,
             'pan_no' => $data['pan_no'] ?? $existing?->pan_no,
             'city_id' => $cityId,

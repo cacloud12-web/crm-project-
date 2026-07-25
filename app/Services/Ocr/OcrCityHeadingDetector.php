@@ -51,6 +51,13 @@ class OcrCityHeadingDetector
             return null;
         }
 
+        // Section headings must be directory/master cities — not weak locality suffixes
+        // (MEHERABAD / VASTRAPUR via place_suffix). Those are localities, not cities.
+        $type = (string) ($resolved['city_match_type'] ?? '');
+        if ($type === 'place_suffix') {
+            return null;
+        }
+
         // Multi-word * ROAD only when approved (ABU ROAD), never street lines.
         $words = preg_split('/\s+/u', $resolved['canonical_city']) ?: [];
         if (count($words) >= 2 && preg_match('/\broad\b/iu', $resolved['canonical_city'])

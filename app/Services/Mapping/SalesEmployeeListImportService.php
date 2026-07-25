@@ -522,7 +522,18 @@ class SalesEmployeeListImportService
 
                 $rawPayload = [];
                 $extraColumns = [];
-                $mappedIndexes = array_flip(array_values($columns));
+                $mappedIndexes = [];
+                foreach ($columns as $fieldKey => $columnIndex) {
+                    if ($fieldKey === '_remark_indexes' && is_array($columnIndex)) {
+                        foreach ($columnIndex as $remarkIndex) {
+                            $mappedIndexes[(int) $remarkIndex] = true;
+                        }
+                        continue;
+                    }
+                    if (is_int($columnIndex) || ctype_digit((string) $columnIndex)) {
+                        $mappedIndexes[(int) $columnIndex] = true;
+                    }
+                }
                 foreach ($headers as $index => $header) {
                     $name = trim((string) $header);
                     if ($name === '') {
@@ -533,6 +544,11 @@ class SalesEmployeeListImportService
                     if (! isset($mappedIndexes[(int) $index])) {
                         $extraColumns[$name] = $cell !== '' ? $cell : null;
                     }
+                }
+
+                $mergedRemarks = $this->mergeRowRemarks($row, $columns);
+                if ($mergedRemarks !== null) {
+                    $extraColumns['_sales_remarks'] = $mergedRemarks;
                 }
 
                 $insert = [
@@ -664,9 +680,11 @@ class SalesEmployeeListImportService
     public function buildColumnMap(array $headers): array
     {
         $map = [];
+        $remarkIndexes = [];
 
         foreach ($headers as $index => $header) {
             $normalized = $this->normalizeHeader((string) $header);
+            $original = trim((string) $header);
 
             $field = match ($normalized) {
                 'date', 'call_date' => 'date',
@@ -674,14 +692,12 @@ class SalesEmployeeListImportService
                 'firm_name', 'firmname', 'firm' => 'firm_name',
                 'number', 'mobile', 'mobile_no', 'phone', 'phone_number', 'contact' => 'mobile_no',
                 'alternate_mobile_no', 'alternate_number', 'alt_mobile', 'alternate_mobile', 'alt_number' => 'alternate_mobile_no',
-                'email', 'email_id', 'email_address', 'mail' => 'email',
+                'email', 'email_id', 'email_address', 'mail', 'mail_id', 'e_mail' => 'email',
                 'website', 'web', 'url' => 'website',
                 'city', 'city_name' => 'city',
                 'state', 'state_name' => 'state_name',
                 'address', 'full_address', 'addr' => 'address',
                 'pincode', 'pin', 'pin_code', 'postal_code', 'zip' => 'pincode',
-                'remarks_1', 'remark_1', 'remarks1', 'remark1', 'remarks', 'remark', 'notes', 'note' => 'remarks_1',
-                'remarks_2', 'remark_2', 'remarks2', 'remark2' => 'remarks_2',
                 'call_status', 'status', 'outcome' => 'call_status',
                 'follow_up', 'followup', 'follow_up_date', 'next_follow_up' => 'follow_up',
                 'software', 'existing_software', 'product' => 'software',
@@ -689,12 +705,102 @@ class SalesEmployeeListImportService
                 default => null,
             };
 
+            if ($field === null && $this->isSalesRemarkHeader($original, $normalized)) {
+                $remarkIndexes[] = [
+                    'index' => (int) $index,
+                    'number' => $this->salesRemarkNumber($normalized),
+                    'order' => count($remarkIndexes),
+                ];
+                continue;
+            }
+
             if ($field !== null && ! isset($map[$field])) {
                 $map[$field] = (int) $index;
             }
         }
 
+        usort($remarkIndexes, static function (array $a, array $b): int {
+            $an = $a['number'];
+            $bn = $b['number'];
+            if ($an === null && $bn === null) {
+                return $a['order'] <=> $b['order'];
+            }
+            if ($an === null) {
+                return -1;
+            }
+            if ($bn === null) {
+                return 1;
+            }
+            if ($an === $bn) {
+                return $a['order'] <=> $b['order'];
+            }
+
+            return $an <=> $bn;
+        });
+
+        $map['_remark_indexes'] = array_values(array_map(static fn (array $r) => $r['index'], $remarkIndexes));
+
+        // Backward compatible: first two remark columns still feed remarks_1 / remarks_2.
+        if (isset($map['_remark_indexes'][0])) {
+            $map['remarks_1'] = $map['_remark_indexes'][0];
+        }
+        if (isset($map['_remark_indexes'][1])) {
+            $map['remarks_2'] = $map['_remark_indexes'][1];
+        }
+
         return $map;
+    }
+
+    /**
+     * @param  list<mixed>  $row
+     * @param  array<string, int|list<int>>  $columns
+     */
+    public function mergeRowRemarks(array $row, array $columns): ?string
+    {
+        $indexes = $columns['_remark_indexes'] ?? [];
+        if (! is_array($indexes) || $indexes === []) {
+            $parts = [];
+            foreach (['remarks_1', 'remarks_2'] as $field) {
+                $value = $this->value($row, $columns, $field);
+                if ($value !== null) {
+                    $parts[] = $value;
+                }
+            }
+
+            return $parts === [] ? null : implode("\n\n", $parts);
+        }
+
+        $parts = [];
+        foreach ($indexes as $index) {
+            $value = trim((string) ($row[(int) $index] ?? ''));
+            if ($value !== '') {
+                $parts[] = $value;
+            }
+        }
+
+        return $parts === [] ? null : implode("\n\n", $parts);
+    }
+
+    private function isSalesRemarkHeader(string $original, string $normalized): bool
+    {
+        if (in_array($normalized, ['notes', 'note', 'sales_remarks', 'sales_remark', 'sales_notes'], true)) {
+            return true;
+        }
+
+        return (bool) preg_match('/^remarks?_?\d*$/', $normalized)
+            || (bool) preg_match('/^remarks?\d+$/', $normalized);
+    }
+
+    private function salesRemarkNumber(string $normalized): ?int
+    {
+        if (preg_match('/^remarks?_?(\d+)$/', $normalized, $m) === 1) {
+            return (int) $m[1];
+        }
+        if (preg_match('/^remarks?(\d+)$/', $normalized, $m) === 1) {
+            return (int) $m[1];
+        }
+
+        return null;
     }
 
     private function normalizeHeader(string $header): string
@@ -708,11 +814,11 @@ class SalesEmployeeListImportService
 
     /**
      * @param  list<mixed>  $row
-     * @param  array<string, int>  $columns
+     * @param  array<string, int|list<int>>  $columns
      */
     private function value(array $row, array $columns, string $field): ?string
     {
-        if (! isset($columns[$field])) {
+        if (! isset($columns[$field]) || is_array($columns[$field])) {
             return null;
         }
         $value = trim((string) ($row[$columns[$field]] ?? ''));

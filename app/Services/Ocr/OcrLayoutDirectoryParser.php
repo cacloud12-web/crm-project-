@@ -200,14 +200,23 @@ class OcrLayoutDirectoryParser
      */
     private function forwardFillSectionCities(array $firms): array
     {
+        $resolver = new OcrCityResolverService;
         $lastByBucket = [];
         foreach ($firms as $i => $firm) {
             $page = (int) ($firm['page_number'] ?? 0);
             $col = (int) ($firm['column_number'] ?? -1);
             $bucket = $page.'|'.$col;
             $city = trim((string) ($firm['city'] ?? ''));
-            if ($city !== '') {
+            if ($city !== '' && $this->isForwardFillAnchorCity($city, $resolver)) {
                 $lastByBucket[$bucket] = $city;
+                continue;
+            }
+            // Locality / place_suffix must not poison forward-fill; replace with prior section city.
+            if ($city !== '' && ! $this->isForwardFillAnchorCity($city, $resolver)) {
+                if (! isset($lastByBucket[$bucket])) {
+                    continue;
+                }
+            } elseif ($city !== '') {
                 continue;
             }
             if (! isset($lastByBucket[$bucket])) {
@@ -225,6 +234,27 @@ class OcrLayoutDirectoryParser
         }
 
         return $firms;
+    }
+
+    private function isForwardFillAnchorCity(string $city, OcrCityResolverService $resolver): bool
+    {
+        if ($resolver->isForbiddenLocalityShape($city)) {
+            return false;
+        }
+        $hit = $resolver->resolve($city);
+        if ($hit === null) {
+            return false;
+        }
+        $type = (string) ($hit['city_match_type'] ?? '');
+
+        // Only strong city evidence may anchor / propagate a section city.
+        return in_array($type, [
+            'city_master',
+            'directory_list',
+            'alias',
+            'alias_joined',
+            'approved_road_city',
+        ], true);
     }
 
     /**

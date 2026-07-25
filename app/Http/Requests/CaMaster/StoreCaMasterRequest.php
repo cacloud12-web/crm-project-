@@ -36,6 +36,7 @@ class StoreCaMasterRequest extends FormRequest
             'mobile_no' => ['nullable', 'string', 'max:20', new ValidPhoneNumber],
             'alternate_mobile_no' => ['nullable', 'string', 'max:20', new ValidPhoneNumber],
             'email_id' => 'nullable|string|max:255|email',
+            'sales_remarks' => 'nullable|string|max:20000',
             'pan_no' => 'nullable|string|max:20',
             'google_place_id' => 'nullable|string|max:128',
             'state_id' => 'required|integer|exists:states,state_id',

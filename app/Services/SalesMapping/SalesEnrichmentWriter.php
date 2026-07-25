@@ -11,6 +11,7 @@ use App\Models\SalesMappingReview;
 use App\Models\SalesMasterLink;
 use App\Services\Mapping\DataNormalizationService;
 use App\Services\Mapping\SalesEmployeeListImportService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -70,14 +71,19 @@ class SalesEnrichmentWriter
 
     private function writeMatchedEnrichment(SalesImportRow $row, int $caId): void
     {
-        // Snapshot verification fields — Sales Mapping must never change them.
+        // Snapshot verification / OCR / identity fields — Sales Mapping must never change them.
+        // email_id / sales_remarks may be filled only when currently empty (never overwrite).
         $before = null;
         if (Schema::hasTable('ca_masters')) {
-            $before = CaMaster::query()->where('ca_id', $caId)->first([
+            $cols = [
                 'ca_id', 'ca_name', 'firm_name', 'mobile_no', 'email_id',
                 'is_verified', 'verification_status', 'google_place_id',
                 'source_ocr_document_id', 'source_ocr_row_id', 'ocr_match_status',
-            ]);
+            ];
+            if (Schema::hasColumn('ca_masters', 'sales_remarks')) {
+                $cols[] = 'sales_remarks';
+            }
+            $before = CaMaster::query()->where('ca_id', $caId)->first($cols);
         }
 
         if (Schema::hasTable('sales_master_links')) {
@@ -105,11 +111,13 @@ class SalesEnrichmentWriter
             $this->appendHistory($row, $caId);
         }
 
+        $this->fillEmptyMasterEmailAndRemarks($row, $caId);
+
         if ($before) {
             $cols = array_keys($before->getAttributes());
             $after = CaMaster::query()->where('ca_id', $caId)->first($cols);
             foreach ([
-                'ca_name', 'firm_name', 'mobile_no', 'email_id',
+                'ca_name', 'firm_name', 'mobile_no',
                 'is_verified', 'verification_status', 'google_place_id',
                 'source_ocr_document_id', 'source_ocr_row_id', 'ocr_match_status',
             ] as $col) {
@@ -124,7 +132,93 @@ class SalesEnrichmentWriter
                     ));
                 }
             }
+            // email_id / sales_remarks: only empty→value is allowed.
+            foreach (['email_id', 'sales_remarks'] as $col) {
+                if (! array_key_exists($col, $before->getAttributes())) {
+                    continue;
+                }
+                $beforeVal = $before->getAttributes()[$col] ?? null;
+                $afterVal = $after?->getAttributes()[$col] ?? null;
+                $beforeEmpty = $beforeVal === null || trim((string) $beforeVal) === '';
+                if (! $beforeEmpty && $beforeVal != $afterVal) {
+                    report(new \RuntimeException(
+                        "Sales enrichment overwrote ca_masters.{$col} for ca_id={$caId}"
+                    ));
+                }
+            }
         }
+    }
+
+    /**
+     * Populate Master email_id / sales_remarks only when currently empty.
+     */
+    private function fillEmptyMasterEmailAndRemarks(SalesImportRow $row, int $caId): void
+    {
+        if (! Schema::hasTable('ca_masters')) {
+            return;
+        }
+
+        DB::transaction(function () use ($row, $caId) {
+            $lead = CaMaster::query()->where('ca_id', $caId)->lockForUpdate()->first();
+            if (! $lead) {
+                return;
+            }
+
+            $dirty = false;
+            $email = Schema::hasColumn('sales_import_rows', 'email') ? $row->email : null;
+            if ($email && trim((string) $email) !== ''
+                && ($lead->email_id === null || trim((string) $lead->email_id) === '')) {
+                $lead->email_id = trim((string) $email);
+                if (Schema::hasColumn('ca_masters', 'normalized_email')) {
+                    $lead->normalized_email = $this->normalizer->email($lead->email_id);
+                }
+                $dirty = true;
+            }
+
+            if (Schema::hasColumn('ca_masters', 'sales_remarks')) {
+                $merged = $this->mergedSalesRemarksFromRow($row);
+                if ($merged !== null
+                    && ($lead->sales_remarks === null || trim((string) $lead->sales_remarks) === '')) {
+                    $lead->sales_remarks = $merged;
+                    $dirty = true;
+                }
+            }
+
+            if ($dirty) {
+                $lead->saveQuietly();
+            }
+        });
+    }
+
+    private function mergedSalesRemarksFromRow(SalesImportRow $row): ?string
+    {
+        $parts = [];
+        if (is_string($row->remarks_1) && trim($row->remarks_1) !== '') {
+            $parts[] = trim($row->remarks_1);
+        }
+        if (is_string($row->remarks_2) && trim($row->remarks_2) !== '') {
+            $parts[] = trim($row->remarks_2);
+        }
+
+        $extra = Schema::hasColumn('sales_import_rows', 'extra_columns') ? $row->extra_columns : null;
+        if (is_array($extra)) {
+            if (! empty($extra['_sales_remarks']) && is_string($extra['_sales_remarks'])) {
+                return trim($extra['_sales_remarks']) !== '' ? trim($extra['_sales_remarks']) : null;
+            }
+            foreach ($extra as $key => $value) {
+                if ($key === '_sales_remarks' || $value === null) {
+                    continue;
+                }
+                if (is_string($key) && preg_match('/^remarks?\s*\d*$/i', $key)) {
+                    $text = trim((string) $value);
+                    if ($text !== '') {
+                        $parts[] = $text;
+                    }
+                }
+            }
+        }
+
+        return $parts === [] ? null : implode("\n\n", $parts);
     }
 
     private function appendContact(SalesImportRow $row, int $caId): void
@@ -179,6 +273,8 @@ class SalesEnrichmentWriter
             $extra = $row->extra_columns;
         }
 
+        $merged = $this->mergedSalesRemarksFromRow($row);
+
         SalesHistory::query()->create([
             'ca_id' => $caId,
             'import_batch_id' => $this->resolveBatchId($row),
@@ -187,7 +283,7 @@ class SalesEnrichmentWriter
             'employee_name' => $row->employee_name,
             'remarks' => $row->remarks_1,
             'remarks_2' => $row->remarks_2,
-            'employee_notes' => null,
+            'employee_notes' => $merged,
             'call_status' => Schema::hasColumn('sales_import_rows', 'call_status') ? $row->call_status : null,
             'follow_up' => Schema::hasColumn('sales_import_rows', 'follow_up') ? $row->follow_up : null,
             'software' => Schema::hasColumn('sales_import_rows', 'software') ? $row->software : null,

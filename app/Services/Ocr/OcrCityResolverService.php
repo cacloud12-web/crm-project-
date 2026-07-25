@@ -152,6 +152,21 @@ class OcrCityResolverService
             return true;
         }
 
+        // Neighbourhood labels (VASTRAPUR, KRISHNA NAGAR) are localities unless
+        // they resolve as city_master / directory / alias.
+        if (preg_match('/\b(?:nagar|colony|vihar|enclave|mohalla|chowk)\b/u', $lower)
+            || str_ends_with($compact, 'nagar')
+            || str_ends_with($compact, 'colony')
+            || str_ends_with($compact, 'vihar')) {
+            if ($this->inMaster($lower) || $this->inMaster($compact)
+                || $this->inDirectoryList($lower) || $this->inDirectoryList($compact)
+                || isset($this->aliases()[$lower]) || isset($this->aliases()[$compact])) {
+                return false;
+            }
+
+            return true;
+        }
+
         return false;
     }
 
@@ -168,6 +183,53 @@ class OcrCityResolverService
     public function isResolvableCity(?string $raw): bool
     {
         return $this->canonical($raw) !== null;
+    }
+
+    /**
+     * Extract a directory/master city from an address line (CITY-PIN or trailing city).
+     * Never invents. Returns null unless resolve() accepts the candidate.
+     *
+     * @return array{canonical_city: string, city_match_type: string, city_confidence: float}|null
+     */
+    public function extractCityFromAddressLine(string $line): ?array
+    {
+        $line = trim($line);
+        if ($line === '') {
+            return null;
+        }
+
+        $candidates = [];
+        // "... AHMEDABAD-380001" / "AMBALA CITY-134003"
+        if (preg_match('/\b([A-Za-z][A-Za-z .]{2,40}?)\s*[-–]\s*\d{5,6}[A-Z]?\b/u', $line, $m)) {
+            $candidates[] = trim($m[1]);
+        }
+        // Trailing ", CITY" or last comma segment without digits
+        if (preg_match('/,\s*([A-Za-z][A-Za-z .]{2,40})\s*$/u', $line, $m)) {
+            $candidates[] = trim($m[1]);
+        }
+
+        foreach ($candidates as $candidate) {
+            if ($this->isForbiddenLocalityShape($candidate)) {
+                continue;
+            }
+            $hit = $this->resolve($candidate);
+            if ($hit === null) {
+                continue;
+            }
+            $type = (string) ($hit['city_match_type'] ?? '');
+            // Prefer master/alias/directory — skip weak place_suffix localities in addresses.
+            if ($type === 'place_suffix') {
+                continue;
+            }
+
+            return [
+                'canonical_city' => $hit['canonical_city'],
+                'city_match_type' => $type,
+                'city_confidence' => (float) ($hit['city_confidence'] ?? 0.8),
+            ];
+        }
+
+        return null;
     }
 
     private function stripDecorations(string $raw): ?string

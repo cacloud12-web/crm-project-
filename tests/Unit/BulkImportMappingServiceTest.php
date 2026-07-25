@@ -93,8 +93,22 @@ class BulkImportMappingServiceTest extends TestCase
         $mapped = $this->service->applyMapping($rows, array_merge(
             array_fill_keys(array_column(BulkImportMappingService::CRM_FIELDS, 'key'), null),
             $mapping,
-        ));
+        ), ['number']);
 
         $this->assertSame('9876543210', $mapped[0]['mobile_no']);
+    }
+
+    #[Test]
+    public function test_email_id_label_and_alias_detection(): void
+    {
+        $headers = ['Firm Name', 'Email ID', 'Remarks 1', 'Remarks 4'];
+        $fields = $this->service->crmFieldsForHeaders($headers);
+        $this->assertSame('Email ID', collect($fields)->firstWhere('key', 'email_id')['label']);
+        $this->assertTrue($this->service->fileHasEmailColumn($headers));
+
+        $mapping = $this->service->suggestMapping($headers);
+        $this->assertSame('Email ID', $mapping['email_id']);
+        $this->assertSame('Remarks 1', $mapping['sales_remark_1']);
+        $this->assertSame('Remarks 4', $mapping['sales_remark_2']);
     }
 }

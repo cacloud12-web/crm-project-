@@ -231,12 +231,20 @@ class OcrStructureParserService
      */
     private function forwardFillSectionCities(array $firms): array
     {
+        $resolver = new OcrCityResolverService;
         $lastByPage = [];
         foreach ($firms as $i => $firm) {
             $page = (int) ($firm['page_number'] ?? 0);
             $city = trim((string) ($firm['city'] ?? ''));
-            if ($city !== '') {
+            if ($city !== '' && $this->isForwardFillAnchorCity($city, $resolver)) {
                 $lastByPage[$page] = $city;
+                continue;
+            }
+            if ($city !== '' && ! $this->isForwardFillAnchorCity($city, $resolver)) {
+                if (! isset($lastByPage[$page])) {
+                    continue;
+                }
+            } elseif ($city !== '') {
                 continue;
             }
             if (! isset($lastByPage[$page])) {
@@ -253,6 +261,26 @@ class OcrStructureParserService
         }
 
         return $firms;
+    }
+
+    private function isForwardFillAnchorCity(string $city, OcrCityResolverService $resolver): bool
+    {
+        if ($resolver->isForbiddenLocalityShape($city)) {
+            return false;
+        }
+        $hit = $resolver->resolve($city);
+        if ($hit === null) {
+            return false;
+        }
+        $type = (string) ($hit['city_match_type'] ?? '');
+
+        return in_array($type, [
+            'city_master',
+            'directory_list',
+            'alias',
+            'alias_joined',
+            'approved_road_city',
+        ], true);
     }
 
     /**
