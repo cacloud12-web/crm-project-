@@ -28,6 +28,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Request;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Validator as ValidationValidator;
@@ -347,6 +348,7 @@ class BulkCaMasterImportService
             Cache::put($this->queuedImportKey($bulkAction->bulk_action_id), [
                 'session_id' => $sessionId,
             ], now()->addMinutes(self::SESSION_TTL_MINUTES));
+            $this->persistImportJobState((int) $bulkAction->bulk_action_id, $sessionId, $session);
 
             // Mark as started so the UI leaves "Preparing file..." immediately.
             $this->touchProgress($bulkAction, 0, 0, 0, 0, 0);
@@ -414,6 +416,14 @@ class BulkCaMasterImportService
 
         $payload = Cache::get($this->queuedImportKey($bulkActionId));
 
+        // Survive artisan cache:clear / Redis flushes — restore from durable disk snapshot.
+        if ((! $payload || empty($payload['session_id'])) || ! Cache::has($this->sessionKey((string) ($payload['session_id'] ?? '')))) {
+            $restored = $this->restoreImportJobStateFromDisk($bulkActionId);
+            if ($restored !== null) {
+                $payload = ['session_id' => $restored['session_id']];
+            }
+        }
+
         if (! $payload || empty($payload['session_id'])) {
             BulkAction::query()
                 ->where('bulk_action_id', $bulkActionId)
@@ -423,7 +433,10 @@ class BulkCaMasterImportService
                     'completed_at' => now(),
                 ]);
 
-            throw new RuntimeException('Queued import payload expired or was not found. Partial progress was preserved.');
+            throw new RuntimeException(
+                'Queued import payload expired or was not found (cache was cleared and no disk snapshot exists). '
+                .'Partial progress was preserved — re-upload the same file; already-inserted rows are skipped as duplicates.'
+            );
         }
         $sessionId = (string) $payload['session_id'];
         $session = $this->getSession($sessionId);
@@ -476,6 +489,7 @@ class BulkCaMasterImportService
             }
         } else {
             Cache::forget($this->queuedImportKey($bulkActionId));
+            $this->forgetImportJobState($bulkActionId);
         }
 
         return array_merge($result, [
@@ -830,6 +844,7 @@ class BulkCaMasterImportService
                         $existing,
                         now()->addMinutes(self::SESSION_TTL_MINUTES),
                     );
+                    $this->persistImportJobState((int) $bulkAction->bulk_action_id, $sessionId, $existing);
                 }
             }
             Cache::put(
@@ -901,6 +916,7 @@ class BulkCaMasterImportService
             Cache::forget($this->sessionKey($sessionId));
         }
         Cache::forget($this->importStageKey((int) $bulkAction->bulk_action_id));
+        $this->forgetImportJobState((int) $bulkAction->bulk_action_id);
 
         if ($madeWrites || $inserted > 0) {
             $this->invalidateCachesAfterImport();
@@ -2329,6 +2345,85 @@ class BulkCaMasterImportService
     private function queuedImportKey(int $bulkActionId): string
     {
         return 'bulk_import_job:'.$bulkActionId;
+    }
+
+    private function importJobStatePath(int $bulkActionId): string
+    {
+        return 'bulk-import-jobs/'.$bulkActionId.'.json';
+    }
+
+    /**
+     * Durable snapshot so multi-batch imports survive cache:clear / Redis flushes.
+     *
+     * @param  array<string, mixed>  $session
+     */
+    private function persistImportJobState(int $bulkActionId, string $sessionId, array $session): void
+    {
+        try {
+            Storage::disk('local')->put($this->importJobStatePath($bulkActionId), json_encode([
+                'session_id' => $sessionId,
+                'session' => $session,
+                'saved_at' => now()->toIso8601String(),
+            ], JSON_THROW_ON_ERROR));
+        } catch (\Throwable $e) {
+            Log::warning('bulk_import.persist_job_state_failed', [
+                'bulk_action_id' => $bulkActionId,
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * @return array{session_id: string, session: array<string, mixed>}|null
+     */
+    private function restoreImportJobStateFromDisk(int $bulkActionId): ?array
+    {
+        $path = $this->importJobStatePath($bulkActionId);
+        if (! Storage::disk('local')->exists($path)) {
+            return null;
+        }
+
+        try {
+            $decoded = json_decode((string) Storage::disk('local')->get($path), true, 512, JSON_THROW_ON_ERROR);
+        } catch (\Throwable $e) {
+            Log::warning('bulk_import.restore_job_state_failed', [
+                'bulk_action_id' => $bulkActionId,
+                'message' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        $sessionId = (string) ($decoded['session_id'] ?? '');
+        $session = $decoded['session'] ?? null;
+        if ($sessionId === '' || ! is_array($session) || empty($session['validation']['rows'])) {
+            return null;
+        }
+
+        Cache::put($this->sessionKey($sessionId), $session, now()->addMinutes(self::SESSION_TTL_MINUTES));
+        Cache::put($this->queuedImportKey($bulkActionId), [
+            'session_id' => $sessionId,
+        ], now()->addMinutes(self::SESSION_TTL_MINUTES));
+
+        Log::info('bulk_import.restored_job_state_from_disk', [
+            'bulk_action_id' => $bulkActionId,
+            'session_id' => $sessionId,
+            'rows' => count($session['validation']['rows'] ?? []),
+        ]);
+
+        return [
+            'session_id' => $sessionId,
+            'session' => $session,
+        ];
+    }
+
+    private function forgetImportJobState(int $bulkActionId): void
+    {
+        try {
+            Storage::disk('local')->delete($this->importJobStatePath($bulkActionId));
+        } catch (\Throwable) {
+            // ignore
+        }
     }
 
     private function formatFileSize(int $bytes): string

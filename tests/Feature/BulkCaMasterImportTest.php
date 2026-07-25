@@ -615,6 +615,60 @@ class BulkCaMasterImportTest extends TestCase
         );
     }
 
+    public function test_queued_import_survives_cache_clear_via_disk_snapshot(): void
+    {
+        $this->actingAsAdmin();
+        config([
+            'crm_queue.import_sync_row_limit' => 20,
+            'crm_queue.import_batch_rows' => 40,
+            'crm_queue.import_process_inline' => false,
+        ]);
+        \Illuminate\Support\Facades\Queue::fake();
+
+        $suffix = str_replace('.', '', (string) microtime(true));
+        $total = 90;
+        $csv = "CA Name,Firm Name,Email\n";
+        for ($i = 0; $i < $total; $i++) {
+            $csv .= '"Disk CA '.$suffix.' '.$i.'","Disk Firm '.$suffix.' '.$i.'","disk.'.$suffix.'.'.$i.'@test.local"'."\n";
+        }
+
+        $parse = $this->post('/ca-masters/bulk-import/parse', [
+            'file' => UploadedFile::fake()->createWithContent('disk-resume.csv', $csv),
+        ], ['Accept' => 'application/json'])->assertOk();
+
+        $sessionId = $parse->json('data.session_id');
+        $mapping = [
+            'ca_name' => 'CA Name',
+            'firm_name' => 'Firm Name',
+            'email_id' => 'Email',
+        ];
+        $this->postJson('/ca-masters/bulk-import/validate', [
+            'session_id' => $sessionId,
+            'mapping' => $mapping,
+        ])->assertOk();
+
+        $bulkActionId = (int) $this->postJson('/ca-masters/bulk-import', [
+            'session_id' => $sessionId,
+            'mapping' => $mapping,
+        ])->assertOk()->json('data.bulk_action_id');
+
+        $service = app(BulkCaMasterImportService::class);
+        $service->processQueuedImport($bulkActionId, 40, false);
+
+        // Simulate ops running cache:clear mid-import.
+        \Illuminate\Support\Facades\Cache::flush();
+
+        $second = $service->processQueuedImport($bulkActionId, 40, false);
+        $this->assertTrue($second['continued'] ?? false);
+
+        $third = $service->processQueuedImport($bulkActionId, 40, false);
+        $this->assertFalse($third['continued'] ?? true);
+
+        $final = DB::table('bulk_actions')->where('bulk_action_id', $bulkActionId)->first();
+        $this->assertSame($total, (int) $final->processed_records);
+        $this->assertContains($final->status, ['Completed', 'Completed with errors']);
+    }
+
     public function test_admin_can_persistently_delete_import_history_without_removing_leads(): void
     {
         $this->actingAsAdmin();

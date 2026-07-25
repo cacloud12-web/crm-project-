@@ -45,8 +45,19 @@ class ResumeBulkCaMasterImport extends Command
 
         $cacheKey = 'bulk_import_job:'.$bulkAction->bulk_action_id;
         if (! Cache::has($cacheKey)) {
-            $this->warn('Queued import cache payload is missing — session may have expired.');
-            $this->warn('If processQueuedImport fails, mark Completed with errors and re-import remaining rows only.');
+            $diskPath = storage_path('app/bulk-import-jobs/'.$bulkAction->bulk_action_id.'.json');
+            if (is_file($diskPath)) {
+                $this->warn('Cache payload missing, but disk snapshot exists — attempting restore via processQueuedImport.');
+            } else {
+                $this->error('Session expired and no disk snapshot was found.');
+                $this->line('Import #'.$bulkAction->bulk_action_id.' cannot be resumed in-place.');
+                $this->line('Recovery: re-upload the SAME CSV in Bulk Import Wizard.');
+                $this->line('Already-inserted leads ('.$bulkAction->success_records.') will be detected as duplicates and skipped.');
+                $this->line('Remaining unprocessed rows will import normally.');
+                $this->warn('Do not run cache:clear while an import is Processing.');
+
+                return self::FAILURE;
+            }
         }
 
         if (! $this->option('sync') && ! $this->option('all')) {
