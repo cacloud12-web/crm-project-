@@ -33,7 +33,23 @@ class ProcessBulkCaMasterImportJob implements ShouldQueue
 
     public function handle(BulkCaMasterImportService $importService): void
     {
-        $importService->processQueuedImport($this->bulkActionId);
+        // Process as many bounded batches as fit in this worker window so Hostinger
+        // inline/after-response imports do not stall after the first chunk.
+        $deadline = microtime(true) + 220;
+        $continued = false;
+
+        do {
+            $result = $importService->processQueuedImport(
+                $this->bulkActionId,
+                null,
+                false,
+            );
+            $continued = (bool) ($result['continued'] ?? false);
+        } while ($continued && microtime(true) < $deadline);
+
+        if ($continued) {
+            $importService->dispatchImportContinuation($this->bulkActionId);
+        }
     }
 
     public function failed(Throwable $exception): void

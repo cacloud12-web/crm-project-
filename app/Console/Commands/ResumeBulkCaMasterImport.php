@@ -61,7 +61,7 @@ class ResumeBulkCaMasterImport extends Command
 
         do {
             $loops++;
-            $result = $importService->processQueuedImport((int) $bulkAction->bulk_action_id);
+            $result = $importService->processQueuedImport((int) $bulkAction->bulk_action_id, null, false);
             $fresh = $bulkAction->fresh();
             $this->line(sprintf(
                 'Batch %d → status=%s processed=%d/%d inserted=%d',
@@ -76,6 +76,11 @@ class ResumeBulkCaMasterImport extends Command
                 break;
             }
         } while ($loops < $maxLoops && $fresh->status === 'Processing');
+
+        if (($result['continued'] ?? false) && $fresh->status === 'Processing') {
+            $importService->dispatchImportContinuation((int) $bulkAction->bulk_action_id);
+            $this->info('More rows remain — continuation job dispatched.');
+        }
 
         $this->info('Done. Final status: '.($bulkAction->fresh()->status ?? 'unknown'));
 

@@ -546,20 +546,19 @@ class BulkCaMasterImportTest extends TestCase
         $bulkActionId = (int) $import->json('data.bulk_action_id');
         $service = app(BulkCaMasterImportService::class);
 
-        $first = $service->processQueuedImport($bulkActionId, 40);
+        $first = $service->processQueuedImport($bulkActionId, 40, false);
         $this->assertTrue($first['continued'] ?? false);
         $this->assertSame('Processing', $first['status'] ?? null);
-        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\Bulk\ProcessBulkCaMasterImportJob::class);
 
         $mid = DB::table('bulk_actions')->where('bulk_action_id', $bulkActionId)->first();
         $this->assertSame(40, (int) $mid->processed_records);
         $insertedAfterFirst = (int) $mid->success_records;
         $this->assertGreaterThan(0, $insertedAfterFirst);
 
-        $second = $service->processQueuedImport($bulkActionId, 40);
+        $second = $service->processQueuedImport($bulkActionId, 40, false);
         $this->assertTrue($second['continued'] ?? false);
 
-        $third = $service->processQueuedImport($bulkActionId, 40);
+        $third = $service->processQueuedImport($bulkActionId, 40, false);
         $this->assertFalse($third['continued'] ?? true);
 
         $final = DB::table('bulk_actions')->where('bulk_action_id', $bulkActionId)->first();
@@ -570,6 +569,50 @@ class BulkCaMasterImportTest extends TestCase
             ->where('email_id', 'like', 'resume.'.$suffix.'.%@test.local')
             ->count();
         $this->assertSame((int) $final->success_records, $leadCount);
+    }
+
+    public function test_inline_continuation_uses_dispatch_after_response(): void
+    {
+        $this->actingAsAdmin();
+        config([
+            'crm_queue.import_sync_row_limit' => 20,
+            'crm_queue.import_batch_rows' => 40,
+            'crm_queue.import_process_inline' => true,
+        ]);
+        \Illuminate\Support\Facades\Bus::fake();
+
+        $suffix = str_replace('.', '', (string) microtime(true));
+        $csv = "CA Name,Firm Name,Email\n";
+        for ($i = 0; $i < 50; $i++) {
+            $csv .= '"Inline CA '.$suffix.' '.$i.'","Inline Firm '.$suffix.' '.$i.'","inline.'.$suffix.'.'.$i.'@test.local"'."\n";
+        }
+
+        $parse = $this->post('/ca-masters/bulk-import/parse', [
+            'file' => UploadedFile::fake()->createWithContent('inline-continue.csv', $csv),
+        ], ['Accept' => 'application/json'])->assertOk();
+
+        $sessionId = $parse->json('data.session_id');
+        $mapping = [
+            'ca_name' => 'CA Name',
+            'firm_name' => 'Firm Name',
+            'email_id' => 'Email',
+        ];
+        $this->postJson('/ca-masters/bulk-import/validate', [
+            'session_id' => $sessionId,
+            'mapping' => $mapping,
+        ])->assertOk();
+
+        $import = $this->postJson('/ca-masters/bulk-import', [
+            'session_id' => $sessionId,
+            'mapping' => $mapping,
+        ])->assertOk();
+
+        $bulkActionId = (int) $import->json('data.bulk_action_id');
+        app(BulkCaMasterImportService::class)->processQueuedImport($bulkActionId, 40, true);
+
+        \Illuminate\Support\Facades\Bus::assertDispatchedAfterResponse(
+            \App\Jobs\Bulk\ProcessBulkCaMasterImportJob::class
+        );
     }
 
     public function test_admin_can_persistently_delete_import_history_without_removing_leads(): void
@@ -655,6 +698,80 @@ class BulkCaMasterImportTest extends TestCase
 
         $this->deleteJson('/ca-masters/bulk-import/history/'.$bulkActionId)
             ->assertNotFound();
+    }
+
+    public function test_delete_import_history_is_hard_delete_and_survives_reload(): void
+    {
+        $this->actingAsAdmin();
+
+        $bulkActionId = DB::table('bulk_actions')->insertGetId([
+            'action_type' => 'ca_master_import',
+            'file_name' => 'hard-delete-'.microtime(true).'.csv',
+            'total_records' => 2,
+            'processed_records' => 2,
+            'success_records' => 1,
+            'duplicate_records' => 0,
+            'skipped_records' => 0,
+            'failed_records' => 1,
+            'initiated_by' => null,
+            'imported_by' => CrmTestAccounts::admin()->email,
+            'status' => 'Completed with errors',
+            'started_at' => now(),
+            'completed_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ], 'bulk_action_id');
+
+        DB::table('bulk_action_logs')->insert([
+            'bulk_action_id' => $bulkActionId,
+            'row_number' => 1,
+            'status' => 'Failed',
+            'error_message' => 'bad row',
+            'original_data' => json_encode(['firm_name' => 'X']),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->deleteJson('/ca-masters/bulk-import/history/'.$bulkActionId)
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        // Hard delete — no soft-deleted row left behind.
+        $this->assertSame(
+            0,
+            (int) DB::table('bulk_actions')->where('bulk_action_id', $bulkActionId)->count()
+        );
+        $this->assertSame(
+            0,
+            (int) DB::table('bulk_action_logs')->where('bulk_action_id', $bulkActionId)->count()
+        );
+
+        // Listing after "page refresh" must not resurrect the row.
+        $history = $this->getJson('/ca-masters/bulk-import/history')->assertOk();
+        $ids = collect($history->json('data'))->pluck('bulk_action_id')->map(fn ($id) => (int) $id);
+        $this->assertFalse($ids->contains($bulkActionId));
+
+        $ops = $this->getJson('/ca-masters/bulk-operations/history')->assertOk();
+        $opIds = collect($ops->json('data.items') ?? $ops->json('data') ?? [])
+            ->pluck('bulk_action_id')
+            ->map(fn ($id) => (int) $id);
+        $this->assertFalse($opIds->contains($bulkActionId));
+    }
+
+    public function test_frontend_delete_handler_calls_delete_api(): void
+    {
+        $js = file_get_contents(base_path('public/crm-ui/src/api/crm.js'));
+
+        $this->assertStringContainsString('function confirmDeleteBulkImportHistory', $js);
+        $this->assertMatchesRegularExpression(
+            "/function confirmDeleteBulkImportHistory\([\s\S]*?apiFetch\(\s*'\/ca-masters\/bulk-import\/history\/'\s*\+\s*encodeURIComponent\(id\)[\s\S]*?method:\s*'DELETE'/",
+            $js
+        );
+        // Guard against regressing to local-only optimistic delete without an API call.
+        $this->assertDoesNotMatchRegularExpression(
+            "/function confirmDeleteBulkImportHistory\([^)]*\)\s*\{(?:(?!apiFetch)[\s\S])*toast\('Import history record deleted\.'/s",
+            $js
+        );
     }
 
     public function test_employee_cannot_delete_import_history(): void

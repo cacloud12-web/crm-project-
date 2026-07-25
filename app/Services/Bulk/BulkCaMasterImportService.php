@@ -396,7 +396,11 @@ class BulkCaMasterImportService
         return $this->completeImport($bulkAction, $session, $evaluation, $sessionId);
     }
 
-    public function processQueuedImport(int $bulkActionId, ?int $maxRowsThisRun = null): array
+    public function processQueuedImport(
+        int $bulkActionId,
+        ?int $maxRowsThisRun = null,
+        bool $dispatchContinuation = true,
+    ): array
     {
         $bulkAction = BulkAction::query()->findOrFail($bulkActionId);
 
@@ -404,6 +408,7 @@ class BulkCaMasterImportService
             return array_merge($this->importSummaryFromBulkAction($bulkAction), [
                 'uses_background' => false,
                 'status' => $bulkAction->status,
+                'continued' => false,
             ]);
         }
 
@@ -466,8 +471,9 @@ class BulkCaMasterImportService
             && (int) $fresh->processed_records < (int) $fresh->total_records;
 
         if ($stillProcessing) {
-            ProcessBulkCaMasterImportJob::dispatch($bulkActionId);
-            $this->kickBulkImportQueueWorker();
+            if ($dispatchContinuation) {
+                $this->dispatchImportContinuation($bulkActionId);
+            }
         } else {
             Cache::forget($this->queuedImportKey($bulkActionId));
         }
@@ -477,6 +483,25 @@ class BulkCaMasterImportService
             'status' => $fresh->status ?? 'Completed',
             'continued' => (bool) $stillProcessing,
         ]);
+    }
+
+    /**
+     * Continue a multi-batch import using the same strategy as the initial dispatch
+     * (inline after-response on Hostinger, or queued + worker kick otherwise).
+     */
+    public function dispatchImportContinuation(int $bulkActionId): void
+    {
+        $processInline = (bool) config('crm_queue.import_process_inline', true)
+            || config('queue.default') === 'sync';
+
+        if ($processInline) {
+            ProcessBulkCaMasterImportJob::dispatchAfterResponse($bulkActionId);
+
+            return;
+        }
+
+        ProcessBulkCaMasterImportJob::dispatch($bulkActionId);
+        $this->kickBulkImportQueueWorker();
     }
 
     private function completeImport(
@@ -1205,10 +1230,22 @@ class BulkCaMasterImportService
                 'frn' => $row['frn'] ?? null,
                 'membership_no' => $row['membership_no'] ?? null,
                 'address' => $row['address'] ?? null,
-                'city' => $row['city'] ?? ($row['city_name'] ?? null),
-                'state' => $row['state'] ?? ($row['state_name'] ?? null),
-                'city_id' => $row['city_id'] ?? null,
-                'state_id' => $row['state_id'] ?? null,
+                'city' => $row['city']
+                    ?? ($row['city_name'] ?? null)
+                    ?? (
+                        isset($row['city_id']) && $row['city_id'] !== '' && $row['city_id'] !== null && ! is_numeric($row['city_id'])
+                            ? $row['city_id']
+                            : null
+                    ),
+                'state' => $row['state']
+                    ?? ($row['state_name'] ?? null)
+                    ?? (
+                        isset($row['state_id']) && $row['state_id'] !== '' && $row['state_id'] !== null && ! is_numeric($row['state_id'])
+                            ? $row['state_id']
+                            : null
+                    ),
+                'city_id' => isset($row['city_id']) && is_numeric($row['city_id']) ? (int) $row['city_id'] : null,
+                'state_id' => isset($row['state_id']) && is_numeric($row['state_id']) ? (int) $row['state_id'] : null,
                 'pincode' => $row['pincode'] ?? null,
                 'website' => $row['website'] ?? null,
                 'team_size' => $row['team_size'] ?? null,
