@@ -97,6 +97,9 @@ class MasterDataMatchingService
             'overall_confidence' => isset($raw['overall_confidence']) ? (float) $raw['overall_confidence'] : null,
             'field_meta' => is_array($raw['field_meta'] ?? null) ? $raw['field_meta'] : null,
             'members' => is_array($raw['members'] ?? null) ? $raw['members'] : [],
+            'bulk_action_id' => isset($raw['bulk_action_id']) && (int) $raw['bulk_action_id'] > 0
+                ? (int) $raw['bulk_action_id']
+                : null,
         ];
     }
 

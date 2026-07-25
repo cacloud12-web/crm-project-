@@ -19,15 +19,53 @@ return [
     | Inline large imports
     |--------------------------------------------------------------------------
     |
-    | When true, imports above import_sync_row_limit run in the HTTP request
-    | instead of waiting for a queue worker. Keep this false for responsive UI.
+    | When true (default), imports above import_sync_row_limit run via
+    | dispatchAfterResponse (sync after the HTTP response) so Hostinger /
+    | shared hosts without a dedicated queue worker still process imports.
+    | Set false only when a long-running `queue:work` / Supervisor is running.
     |
     */
 
     'import_process_inline' => filter_var(
-        env('CRM_IMPORT_PROCESS_INLINE', false),
+        env('CRM_IMPORT_PROCESS_INLINE', true),
         FILTER_VALIDATE_BOOL,
     ),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Rows per queued import job run
+    |--------------------------------------------------------------------------
+    |
+    | Large CA Master imports are processed in bounded batches so Hostinger
+    | cron drains (--max-time=55) can finish a chunk and dispatch the next.
+    |
+    */
+
+    'import_batch_rows' => (int) env('CRM_IMPORT_BATCH_ROWS', 800),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Mapping-engine batch size (rows per processBatch call)
+    |--------------------------------------------------------------------------
+    |
+    | Bulk CA Master import buffers this many importable rows before calling
+    | MasterDataMappingService::processBatch once (shared index + batch row).
+    |
+    */
+
+    'import_engine_batch_rows' => (int) env('CRM_IMPORT_ENGINE_BATCH_ROWS', 250),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Queue large imports earlier
+    |--------------------------------------------------------------------------
+    |
+    | Files above this size always use the background job path (still may run
+    | inline via dispatchAfterResponse when import_process_inline=true).
+    |
+    */
+
+    'import_queue_row_threshold' => (int) env('CRM_IMPORT_QUEUE_ROW_THRESHOLD', 5000),
 
     'campaign_log_sync_limit' => (int) env('CRM_CAMPAIGN_LOG_SYNC_LIMIT', 50),
 

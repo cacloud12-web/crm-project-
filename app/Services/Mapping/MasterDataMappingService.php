@@ -179,7 +179,7 @@ class MasterDataMappingService
                 $updatedSnapshots[] = $result['snapshot'];
             }
 
-            if ($batch && $stats['processed'] % 25 === 0) {
+            if ($batch && $stats['processed'] % max(25, (int) ceil(count($payloads) / 4)) === 0) {
                 $done = $baseProcessed + $stats['processed'];
                 $target = max(1, (int) ($meta['expected_total'] ?? ($baseProcessed + count($payloads))));
                 $pct = min(90, 20 + (int) round(($done / $target) * 70));
@@ -214,7 +214,7 @@ class MasterDataMappingService
             ]);
         }
 
-        if ($stats['auto_updated'] > 0 || $stats['auto_created'] > 0) {
+        if (($stats['auto_updated'] > 0 || $stats['auto_created'] > 0) && empty($meta['defer_cache_bust'])) {
             $this->cacheService->forgetMasterListings();
             $this->cacheService->forgetDashboardMetrics();
             $this->cacheService->forgetLeadSegmentCounts();
@@ -1042,7 +1042,12 @@ class MasterDataMappingService
             'normalized_state' => $payload['normalized_state'] ?? $this->normalizer->state($payload['state'] ?? null),
             'mobile_no' => ($payload['mobile_no'] ?? null) ?: $phone,
             'alternate_mobile_no' => $payload['alternate_mobile_no'] ?? null,
-            'email_id' => $payload['email_id'] ?? null,
+            'email_id' => (($payload['email_id'] ?? null) !== null && trim((string) $payload['email_id']) !== '')
+                ? $payload['email_id']
+                : null,
+            'bulk_action_id' => isset($payload['bulk_action_id']) && (int) $payload['bulk_action_id'] > 0
+                ? (int) $payload['bulk_action_id']
+                : null,
             'gst_no' => $payload['gst_no'] ?? null,
             'pan_no' => $payload['pan_no'] ?? null,
             'frn' => $payload['frn'] ?? null,
@@ -1081,6 +1086,9 @@ class MasterDataMappingService
         }
         if (! Schema::hasColumn('ca_masters', 'normalized_state')) {
             unset($data['normalized_state']);
+        }
+        if (! Schema::hasColumn('ca_masters', 'bulk_action_id')) {
+            unset($data['bulk_action_id']);
         }
 
         return $data;

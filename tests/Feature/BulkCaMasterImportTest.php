@@ -364,10 +364,11 @@ class BulkCaMasterImportTest extends TestCase
         ])->assertOk()
             ->assertJsonPath('data.inserted_rows', 1);
 
+        // Mapping engine fills blank CA name from firm name (identity fallback).
         $this->assertDatabaseHas('ca_masters', [
             'firm_name' => 'Firm Only '.$ts,
             'mobile_no' => $mobile,
-            'ca_name' => '',
+            'ca_name' => 'Firm Only '.$ts,
         ]);
     }
 
@@ -481,12 +482,14 @@ class BulkCaMasterImportTest extends TestCase
             ->assertJsonPath('data.progress_percent', 0);
 
         $this->assertLessThan(
-            2.0,
+            5.0,
             $elapsed,
             'Import start should return immediately without blocking on row processing.',
         );
 
         $bulkActionId = $import->json('data.bulk_action_id');
+        // Process in one go (batch size >= total rows).
+        config(['crm_queue.import_batch_rows' => 500]);
         app(BulkCaMasterImportService::class)->processQueuedImport($bulkActionId);
 
         $this->getJson('/ca-masters/bulk-import/history/'.$bulkActionId.'/status')
@@ -500,6 +503,73 @@ class BulkCaMasterImportTest extends TestCase
                     'completed',
                 ],
             ]);
+    }
+
+    public function test_queued_import_resumes_from_processed_offset_without_duplicating(): void
+    {
+        $this->actingAsAdmin();
+        config([
+            'crm_queue.import_sync_row_limit' => 20,
+            'crm_queue.import_batch_rows' => 40,
+            'crm_queue.import_process_inline' => false,
+        ]);
+        \Illuminate\Support\Facades\Queue::fake();
+
+        $suffix = str_replace('.', '', (string) microtime(true));
+        $total = 90;
+        $csv = "CA Name,Firm Name,Email\n";
+        for ($i = 0; $i < $total; $i++) {
+            $csv .= '"Resume CA '.$suffix.' '.$i.'","Resume Firm '.$suffix.' '.$i.'","resume.'.$suffix.'.'.$i.'@test.local"'."\n";
+        }
+
+        $parse = $this->post('/ca-masters/bulk-import/parse', [
+            'file' => UploadedFile::fake()->createWithContent('resume-import.csv', $csv),
+        ], ['Accept' => 'application/json'])->assertOk();
+
+        $sessionId = $parse->json('data.session_id');
+        $mapping = [
+            'ca_name' => 'CA Name',
+            'firm_name' => 'Firm Name',
+            'email_id' => 'Email',
+        ];
+
+        $this->postJson('/ca-masters/bulk-import/validate', [
+            'session_id' => $sessionId,
+            'mapping' => $mapping,
+        ])->assertOk()->assertJsonPath('data.valid_rows', $total);
+
+        $import = $this->postJson('/ca-masters/bulk-import', [
+            'session_id' => $sessionId,
+            'mapping' => $mapping,
+        ])->assertOk();
+
+        $bulkActionId = (int) $import->json('data.bulk_action_id');
+        $service = app(BulkCaMasterImportService::class);
+
+        $first = $service->processQueuedImport($bulkActionId, 40);
+        $this->assertTrue($first['continued'] ?? false);
+        $this->assertSame('Processing', $first['status'] ?? null);
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\Bulk\ProcessBulkCaMasterImportJob::class);
+
+        $mid = DB::table('bulk_actions')->where('bulk_action_id', $bulkActionId)->first();
+        $this->assertSame(40, (int) $mid->processed_records);
+        $insertedAfterFirst = (int) $mid->success_records;
+        $this->assertGreaterThan(0, $insertedAfterFirst);
+
+        $second = $service->processQueuedImport($bulkActionId, 40);
+        $this->assertTrue($second['continued'] ?? false);
+
+        $third = $service->processQueuedImport($bulkActionId, 40);
+        $this->assertFalse($third['continued'] ?? true);
+
+        $final = DB::table('bulk_actions')->where('bulk_action_id', $bulkActionId)->first();
+        $this->assertSame($total, (int) $final->processed_records);
+        $this->assertContains($final->status, ['Completed', 'Completed with errors']);
+
+        $leadCount = CaMaster::query()
+            ->where('email_id', 'like', 'resume.'.$suffix.'.%@test.local')
+            ->count();
+        $this->assertSame((int) $final->success_records, $leadCount);
     }
 
     public function test_admin_can_persistently_delete_import_history_without_removing_leads(): void

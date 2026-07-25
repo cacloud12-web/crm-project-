@@ -10,6 +10,7 @@ use App\Models\CaMaster;
 use App\Models\DuplicateAttempt;
 use App\Models\DuplicateAttemptLog;
 use App\Models\ImportDuplicateLog;
+use App\Models\MasterMappingDecision;
 use App\Models\TeamSizeMaster;
 use App\Services\Activity\ActivityLogService;
 use App\Services\Cache\CrmCacheService;
@@ -24,6 +25,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Request;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
@@ -37,13 +39,16 @@ class BulkCaMasterImportService
 
     private const CHUNK_SIZE = 500;
 
-    private const SESSION_TTL_MINUTES = 120;
+    private const SESSION_TTL_MINUTES = 720;
 
     private const REQUIRED_FIELDS = ['firm_name'];
 
     private const IMPORTABLE_STATUSES = ['valid', 'landline', 'missing_mobile'];
 
     private const FORCE_ACTIONS = ['import_anyway', 'merge', 'replace'];
+
+    /** Shared MasterImportBatch id reused across engine flushes in one import run. */
+    private ?int $sharedMappingImportBatchId = null;
 
     /**
      * Request-scoped duplicate lookup built once for validation. Keeping this
@@ -337,15 +342,25 @@ class BulkCaMasterImportService
         ]);
 
         $syncLimit = (int) config('crm_queue.import_sync_row_limit', 100);
-        if ($rowsToProcess > $syncLimit) {
+        $queueThreshold = (int) config('crm_queue.import_queue_row_threshold', 5000);
+        if ($rowsToProcess > $syncLimit || $rowsToProcess >= $queueThreshold) {
             Cache::put($this->queuedImportKey($bulkAction->bulk_action_id), [
                 'session_id' => $sessionId,
             ], now()->addMinutes(self::SESSION_TTL_MINUTES));
 
-            if (config('queue.default') === 'sync') {
+            // Mark as started so the UI leaves "Preparing file..." immediately.
+            $this->touchProgress($bulkAction, 0, 0, 0, 0, 0);
+            $bulkAction->update(['status' => 'Processing']);
+
+            $processInline = (bool) config('crm_queue.import_process_inline', true)
+                || config('queue.default') === 'sync';
+
+            if ($processInline) {
+                // Runs after the HTTP response — works without queue:work.
                 ProcessBulkCaMasterImportJob::dispatchAfterResponse($bulkAction->bulk_action_id);
             } else {
                 ProcessBulkCaMasterImportJob::dispatch($bulkAction->bulk_action_id);
+                $this->kickBulkImportQueueWorker();
             }
 
             return [
@@ -364,19 +379,24 @@ class BulkCaMasterImportService
                 'failed_rows' => 0,
                 'skipped_rows' => 0,
                 'progress_percent' => 0,
+                'progress_message' => $processInline
+                    ? 'Reading import session — starting shortly...'
+                    : 'Import queued — starting shortly...',
                 'imported_by' => $bulkAction->imported_by,
                 'error_row_count' => $evaluation['invalid_rows'] + $evaluation['duplicate_rows'],
                 'errors' => [],
-                'queue_notice' => config('queue.default') === 'sync'
+                'queue_notice' => $processInline
                     ? 'Import started in the background.'
                     : 'Import queued for background processing.',
             ];
         }
 
+        $this->setImportStage($bulkAction, 'Importing rows', 0, $rowsToProcess);
+
         return $this->completeImport($bulkAction, $session, $evaluation, $sessionId);
     }
 
-    public function processQueuedImport(int $bulkActionId): array
+    public function processQueuedImport(int $bulkActionId, ?int $maxRowsThisRun = null): array
     {
         $bulkAction = BulkAction::query()->findOrFail($bulkActionId);
 
@@ -392,9 +412,13 @@ class BulkCaMasterImportService
         if (! $payload || empty($payload['session_id'])) {
             BulkAction::query()
                 ->where('bulk_action_id', $bulkActionId)
-                ->update(['status' => 'Failed', 'completed_at' => now()]);
+                ->where('status', 'Processing')
+                ->update([
+                    'status' => ((int) $bulkAction->success_records > 0) ? 'Completed with errors' : 'Failed',
+                    'completed_at' => now(),
+                ]);
 
-            throw new RuntimeException('Queued import payload expired or was not found.');
+            throw new RuntimeException('Queued import payload expired or was not found. Partial progress was preserved.');
         }
         $sessionId = (string) $payload['session_id'];
         $session = $this->getSession($sessionId);
@@ -403,9 +427,13 @@ class BulkCaMasterImportService
         if (! $evaluation || empty($evaluation['rows'])) {
             BulkAction::query()
                 ->where('bulk_action_id', $bulkActionId)
-                ->update(['status' => 'Failed', 'completed_at' => now()]);
+                ->where('status', 'Processing')
+                ->update([
+                    'status' => ((int) $bulkAction->success_records > 0) ? 'Completed with errors' : 'Failed',
+                    'completed_at' => now(),
+                ]);
 
-            throw new RuntimeException('Import session validation data is missing or expired.');
+            throw new RuntimeException('Import session validation data is missing or expired. Partial progress was preserved.');
         }
 
         $session = array_merge($session, [
@@ -421,36 +449,212 @@ class BulkCaMasterImportService
         );
         $evaluation = $this->recountEvaluation($evaluation);
 
-        $result = $this->completeImport($bulkAction, $session, $evaluation, $sessionId);
-        Cache::forget($this->queuedImportKey($bulkActionId));
+        // Bounded batches so shared-hosting 55s queue drains can finish and continue.
+        $maxRowsThisRun = $maxRowsThisRun ?? (int) config('crm_queue.import_batch_rows', 400);
+
+        $result = $this->completeImport(
+            $bulkAction,
+            $session,
+            $evaluation,
+            $sessionId,
+            max(1, $maxRowsThisRun),
+        );
+
+        $fresh = $bulkAction->fresh();
+        $stillProcessing = $fresh
+            && $fresh->status === 'Processing'
+            && (int) $fresh->processed_records < (int) $fresh->total_records;
+
+        if ($stillProcessing) {
+            ProcessBulkCaMasterImportJob::dispatch($bulkActionId);
+            $this->kickBulkImportQueueWorker();
+        } else {
+            Cache::forget($this->queuedImportKey($bulkActionId));
+        }
 
         return array_merge($result, [
-            'uses_background' => false,
-            'status' => $bulkAction->fresh()->status ?? 'Completed',
+            'uses_background' => (bool) $stillProcessing,
+            'status' => $fresh->status ?? 'Completed',
+            'continued' => (bool) $stillProcessing,
         ]);
     }
 
-    private function completeImport(BulkAction $bulkAction, array $session, array $evaluation, ?string $sessionId = null): array
-    {
-        $inserted = 0;
-        $duplicate = 0;
-        $failed = 0;
-        $skipped = 0;
+    private function completeImport(
+        BulkAction $bulkAction,
+        array $session,
+        array $evaluation,
+        ?string $sessionId = null,
+        ?int $maxRowsThisRun = null,
+    ): array {
+        $importStartedAt = microtime(true);
+        $totalRows = count($evaluation['rows']);
+        $alreadyProcessed = max(0, min($totalRows, (int) $bulkAction->processed_records));
+        $inserted = (int) $bulkAction->success_records;
+        $duplicate = (int) $bulkAction->duplicate_records;
+        $failed = (int) $bulkAction->failed_records;
+        $skipped = (int) $bulkAction->skipped_records;
         $landlineImported = 0;
         $errors = [];
-        $totalRows = count($evaluation['rows']);
-        $processed = 0;
+        $processed = $alreadyProcessed;
         $isSuperAdmin = $this->actorIsSuperAdmin();
         $uploadedBy = (int) ($session['uploaded_by'] ?? Auth::id());
+        $rowsThisRun = 0;
+        $rowIndex = 0;
+        $useEngine = filter_var(config('crm_mapping.use_engine_for_bulk', true), FILTER_VALIDATE_BOOLEAN);
+        $engineBatchSize = max(25, (int) config('crm_queue.import_engine_batch_rows', 250));
+        $engineBuffer = [];
+        $dbWriteStartedAt = null;
+        $madeWrites = false;
 
-        $this->touchProgress($bulkAction, 0, 0, 0, 0, 0);
+        if ($alreadyProcessed === 0) {
+            $this->touchProgress($bulkAction, 0, 0, 0, 0, 0);
+        }
+
+        $this->setImportStage($bulkAction, 'Warming lookups', $processed, $totalRows);
+        $prefetchStarted = microtime(true);
+        $this->prefetchLookupsFromEvaluation($evaluation['rows']);
+        $prefetchMs = (int) round((microtime(true) - $prefetchStarted) * 1000);
+
+        $this->setImportStage(
+            $bulkAction,
+            $alreadyProcessed > 0 ? 'Resuming import' : 'Importing rows',
+            $processed,
+            $totalRows,
+        );
+
+        $progressEvery = 100;
+        $sinceProgress = 0;
+        $flushProgress = function () use (
+            $bulkAction,
+            &$processed,
+            &$inserted,
+            &$duplicate,
+            &$failed,
+            &$skipped,
+            &$sinceProgress,
+            $progressEvery,
+            $totalRows,
+        ): void {
+            if ($sinceProgress < $progressEvery) {
+                return;
+            }
+            $this->flushBulkActionLogs();
+            $this->flushDuplicateDetectionLogs();
+            $this->touchProgress($bulkAction, $processed, $inserted, $duplicate, $failed, $skipped);
+            $this->setImportStage($bulkAction, 'Importing rows', $processed, $totalRows);
+            $sinceProgress = 0;
+        };
+
+        $applyEngineOutcomes = function (array $outcomes) use (
+            $bulkAction,
+            &$inserted,
+            &$duplicate,
+            &$failed,
+            &$skipped,
+            &$landlineImported,
+            &$errors,
+            &$sinceProgress,
+            $flushProgress,
+            &$madeWrites,
+        ): void {
+            foreach ($outcomes as $outcome) {
+                $rowNumber = (int) ($outcome['row_number'] ?? 0);
+                $status = (string) ($outcome['status'] ?? 'failed');
+                $phoneCategory = (string) ($outcome['phone_category'] ?? '');
+                $sourceStatus = (string) ($outcome['source_status'] ?? '');
+
+                if (in_array($status, ['inserted', 'updated'], true)) {
+                    $madeWrites = true;
+                    $inserted++;
+                    if ($sourceStatus === 'landline' || $phoneCategory === 'landline') {
+                        $landlineImported++;
+                    }
+                    $this->logRow(
+                        $bulkAction->bulk_action_id,
+                        $rowNumber,
+                        'Success',
+                        $status === 'updated' ? 'Mapped update' : 'Mapped create',
+                    );
+                    $sinceProgress++;
+                    $flushProgress();
+                    continue;
+                }
+
+                match ($status) {
+                    'duplicate' => $duplicate++,
+                    'invalid', 'failed' => $failed++,
+                    default => $skipped++,
+                };
+
+                $message = (string) ($outcome['message'] ?? '');
+                $errors[] = [
+                    'row' => $rowNumber,
+                    'status' => $status,
+                    'code' => $outcome['code'] ?? $status,
+                    'message' => $message,
+                ];
+                $this->logRow(
+                    $bulkAction->bulk_action_id,
+                    $rowNumber,
+                    $this->logStatusLabel($status === 'duplicate' ? 'duplicate' : 'failed'),
+                    $message !== '' ? $message : null,
+                    $outcome['data'] ?? null,
+                );
+                $sinceProgress++;
+                $flushProgress();
+            }
+        };
+
+        $flushEngineBuffer = function (bool $finalize) use (
+            &$engineBuffer,
+            &$dbWriteStartedAt,
+            $bulkAction,
+            $session,
+            $uploadedBy,
+            $totalRows,
+            $applyEngineOutcomes,
+        ): void {
+            if ($engineBuffer === []) {
+                return;
+            }
+            if ($dbWriteStartedAt === null) {
+                $dbWriteStartedAt = microtime(true);
+            }
+            $this->setImportStage(
+                $bulkAction,
+                sprintf('Importing chunk (%d rows)', count($engineBuffer)),
+                (int) $bulkAction->processed_records,
+                $totalRows,
+            );
+            $outcomes = $this->importRowsViaMappingEngineBatch(
+                $engineBuffer,
+                (string) $bulkAction->bulk_action_id,
+                $session['file_name'] ?? null,
+                $session['file_hash'] ?? null,
+                $uploadedBy,
+                $finalize,
+                $totalRows,
+            );
+            $applyEngineOutcomes($outcomes);
+            $engineBuffer = [];
+        };
 
         foreach (array_chunk($evaluation['rows'], self::CHUNK_SIZE) as $chunk) {
             foreach ($chunk as $result) {
+                $rowIndex++;
+                if ($rowIndex <= $alreadyProcessed) {
+                    continue;
+                }
+                if ($maxRowsThisRun !== null && $rowsThisRun >= $maxRowsThisRun) {
+                    break 2;
+                }
+
                 $rowNumber = $result['row_number'];
                 $status = $result['status'];
                 $action = strtolower((string) ($result['action'] ?? 'skip'));
                 $processed++;
+                $sinceProgress++;
+                $rowsThisRun++;
 
                 if ($status === 'duplicate') {
                     $this->finalizeDuplicateLog(
@@ -471,6 +675,7 @@ class BulkCaMasterImportService
                             'message' => $message,
                         ];
                         $this->logRow($bulkAction->bulk_action_id, $rowNumber, 'Duplicate', $message, $result['data'] ?? null);
+                        $flushProgress();
 
                         continue;
                     }
@@ -485,6 +690,7 @@ class BulkCaMasterImportService
                             'message' => $message,
                         ];
                         $this->logRow($bulkAction->bulk_action_id, $rowNumber, 'Duplicate', $message, $result['data'] ?? null);
+                        $flushProgress();
 
                         continue;
                     }
@@ -496,6 +702,7 @@ class BulkCaMasterImportService
                             $landlineImported++;
                         }
                         $this->logRow($bulkAction->bulk_action_id, $rowNumber, 'Success', 'Duplicate '.$action);
+                        $flushProgress();
 
                         continue;
                     }
@@ -506,52 +713,40 @@ class BulkCaMasterImportService
                 }
 
                 if (in_array($status, self::IMPORTABLE_STATUSES, true)) {
-                    if (filter_var(config('crm_mapping.use_engine_for_bulk', true), FILTER_VALIDATE_BOOLEAN)) {
-                        $engineResult = $this->importRowViaMappingEngine(
-                            $result['data'] ?? [],
-                            (string) $bulkAction->bulk_action_id,
-                            $session['file_name'] ?? null,
-                            $session['file_hash'] ?? null,
-                            $uploadedBy,
-                        );
-                        if (in_array($engineResult['status'], ['inserted', 'updated'], true)) {
-                            $this->applyPostImportSalesFields(
-                                isset($engineResult['ca_id']) ? (int) $engineResult['ca_id'] : null,
-                                $result['data'] ?? [],
-                                $engineResult['status'] === 'inserted'
-                            );
-                            $inserted++;
-                            if ($status === 'landline' || ($result['phone_category'] ?? '') === 'landline') {
-                                $landlineImported++;
-                            }
-                            $this->logRow(
-                                $bulkAction->bulk_action_id,
-                                $rowNumber,
-                                'Success',
-                                $engineResult['status'] === 'updated' ? 'Mapped update' : 'Mapped create',
-                            );
-
-                            continue;
+                    if ($useEngine) {
+                        $engineBuffer[] = [
+                            'row_number' => $rowNumber,
+                            'data' => $result['data'] ?? [],
+                            'source_status' => $status,
+                            'phone_category' => $result['phone_category'] ?? '',
+                        ];
+                        if (count($engineBuffer) >= $engineBatchSize) {
+                            $flushEngineBuffer(false);
                         }
-                        $status = $engineResult['status'];
-                        $result['errors'] = [$engineResult['message']];
-                        $result['error_codes'] = [$engineResult['code']];
-                    } else {
-                        $insertResult = $this->insertValidatedRow($result['data'], $bulkAction->bulk_action_id, true);
-                        if ($insertResult['status'] === 'inserted') {
-                            $inserted++;
-                            if ($status === 'landline' || ($result['phone_category'] ?? '') === 'landline') {
-                                $landlineImported++;
-                            }
-                            $this->logRow($bulkAction->bulk_action_id, $rowNumber, 'Success', null);
+                        $flushProgress();
 
-                            continue;
-                        }
-
-                        $status = $insertResult['status'];
-                        $result['errors'] = [$insertResult['message']];
-                        $result['error_codes'] = [$insertResult['code']];
+                        continue;
                     }
+
+                    if ($dbWriteStartedAt === null) {
+                        $dbWriteStartedAt = microtime(true);
+                    }
+                    $insertResult = $this->insertValidatedRow($result['data'], $bulkAction->bulk_action_id, true);
+                    if ($insertResult['status'] === 'inserted') {
+                        $madeWrites = true;
+                        $inserted++;
+                        if ($status === 'landline' || ($result['phone_category'] ?? '') === 'landline') {
+                            $landlineImported++;
+                        }
+                        $this->logRow($bulkAction->bulk_action_id, $rowNumber, 'Success', null);
+                        $flushProgress();
+
+                        continue;
+                    }
+
+                    $status = $insertResult['status'];
+                    $result['errors'] = [$insertResult['message']];
+                    $result['error_codes'] = [$insertResult['code']];
                 }
 
                 match ($status) {
@@ -575,21 +770,72 @@ class BulkCaMasterImportService
                     $message ?: null,
                     $result['data'] ?? null,
                 );
+                $flushProgress();
             }
             $this->flushBulkActionLogs();
             $this->flushDuplicateDetectionLogs();
             $this->touchProgress($bulkAction, $processed, $inserted, $duplicate, $failed, $skipped);
+            $sinceProgress = 0;
         }
 
+        $batchIncomplete = $maxRowsThisRun !== null && $processed < $totalRows;
+        // Flush remaining mapping-engine rows; finalize shared batch only when import finishes.
+        $flushEngineBuffer(! $batchIncomplete);
         $bulkAction->update([
             'processed_records' => $processed,
             'success_records' => $inserted,
             'duplicate_records' => $duplicate,
             'skipped_records' => $skipped,
             'failed_records' => $failed,
-            'status' => ($failed > 0 || $duplicate > 0 || $skipped > 0) ? 'Completed with errors' : 'Completed',
-            'completed_at' => now(),
+            'status' => $batchIncomplete
+                ? 'Processing'
+                : (($failed > 0 || $duplicate > 0 || $skipped > 0) ? 'Completed with errors' : 'Completed'),
+            'completed_at' => $batchIncomplete ? null : now(),
         ]);
+
+        if ($batchIncomplete) {
+            $this->setImportStage($bulkAction, 'Queued next chunk', $processed, $totalRows);
+            $this->logImportTimings($bulkAction, $importStartedAt, $prefetchMs, $dbWriteStartedAt, $processed, $totalRows, true);
+            // Keep session + queue payload alive across cron drains / follow-up jobs.
+            if ($sessionId) {
+                $existing = Cache::get($this->sessionKey($sessionId));
+                if (is_array($existing)) {
+                    Cache::put(
+                        $this->sessionKey($sessionId),
+                        $existing,
+                        now()->addMinutes(self::SESSION_TTL_MINUTES),
+                    );
+                }
+            }
+            Cache::put(
+                $this->queuedImportKey((int) $bulkAction->bulk_action_id),
+                ['session_id' => $sessionId],
+                now()->addMinutes(self::SESSION_TTL_MINUTES),
+            );
+
+            $percent = $totalRows > 0 ? (int) floor(($processed / $totalRows) * 100) : 0;
+
+            return [
+                'bulk_action_id' => $bulkAction->bulk_action_id,
+                'file_name' => $bulkAction->file_name,
+                'total_rows' => $session['total_rows'],
+                'valid_rows' => $evaluation['valid_rows'],
+                'invalid_rows' => $evaluation['invalid_rows'],
+                'missing_mobile_rows' => $evaluation['missing_mobile_rows'] ?? 0,
+                'missing_email_rows' => $evaluation['missing_email_rows'] ?? 0,
+                'landline_rows' => $landlineImported ?: ($evaluation['landline_rows'] ?? 0),
+                'ready_to_import_rows' => $evaluation['ready_to_import_rows'] ?? 0,
+                'inserted_rows' => $inserted,
+                'duplicate_rows' => $duplicate,
+                'failed_rows' => $failed,
+                'skipped_rows' => $skipped,
+                'progress_percent' => $percent,
+                'imported_by' => $bulkAction->imported_by,
+                'error_row_count' => $failed + $duplicate,
+                'errors' => $errors,
+                'batch_incomplete' => true,
+            ];
+        }
 
         if (! empty($session['file_hash'])) {
             Cache::put(
@@ -629,10 +875,14 @@ class BulkCaMasterImportService
         if ($sessionId) {
             Cache::forget($this->sessionKey($sessionId));
         }
+        Cache::forget($this->importStageKey((int) $bulkAction->bulk_action_id));
 
-        if ($inserted > 0) {
+        if ($madeWrites || $inserted > 0) {
             $this->invalidateCachesAfterImport();
         }
+
+        $this->setImportStage($bulkAction, 'Finalizing import', $processed, $totalRows);
+        $this->logImportTimings($bulkAction, $importStartedAt, $prefetchMs, $dbWriteStartedAt, $processed, $totalRows, false);
 
         return [
             'bulk_action_id' => $bulkAction->bulk_action_id,
@@ -652,6 +902,7 @@ class BulkCaMasterImportService
             'imported_by' => $bulkAction->imported_by,
             'error_row_count' => $failed + $duplicate,
             'errors' => $errors,
+            'batch_incomplete' => false,
         ];
     }
 
@@ -688,13 +939,16 @@ class BulkCaMasterImportService
         ?string $fileName = null,
         ?int $uploadedBy = null,
     ): array {
+        $startedAt = microtime(true);
         $seenMobiles = [];
         $seenEmails = [];
         $seenGst = [];
         $seenPrimaryKeys = [];
         $rows = [];
 
+        $indexStarted = microtime(true);
         $this->validationDuplicateIndex = $this->buildValidationDuplicateIndex($mappedRows);
+        $indexMs = (int) round((microtime(true) - $indexStarted) * 1000);
 
         try {
             foreach (array_chunk($mappedRows, self::CHUNK_SIZE, true) as $chunk) {
@@ -731,7 +985,18 @@ class BulkCaMasterImportService
             $this->validationDuplicateIndex = null;
         }
 
-        return $this->recountEvaluation(['rows' => $rows]);
+        $evaluation = $this->recountEvaluation(['rows' => $rows]);
+        Log::info('bulk_import.validation_timings', [
+            'file_name' => $fileName,
+            'row_count' => count($mappedRows),
+            'duplicate_index_ms' => $indexMs,
+            'total_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            'valid_rows' => $evaluation['valid_rows'] ?? 0,
+            'duplicate_rows' => $evaluation['duplicate_rows'] ?? 0,
+            'invalid_rows' => $evaluation['invalid_rows'] ?? 0,
+        ]);
+
+        return $evaluation;
     }
 
     private function validateMappedRow(
@@ -889,55 +1154,296 @@ class BulkCaMasterImportService
         ?string $fileHash,
         int $actorId,
     ): array {
+        $outcomes = $this->importRowsViaMappingEngineBatch(
+            [[
+                'row_number' => 0,
+                'data' => $row,
+                'source_status' => 'valid',
+                'phone_category' => '',
+            ]],
+            $sourceRef,
+            $fileName,
+            $fileHash,
+            $actorId,
+            true,
+            1,
+        );
+
+        return $outcomes[0] ?? ['status' => 'failed', 'code' => 'mapping_skipped', 'message' => 'Mapping engine skipped row'];
+    }
+
+    /**
+     * Process many importable rows in one mapping-engine batch (one index build, one MasterImportBatch).
+     *
+     * @param  list<array{row_number:int, data:array<string,mixed>, source_status?:string, phone_category?:string}>  $items
+     * @return list<array<string, mixed>>
+     */
+    private function importRowsViaMappingEngineBatch(
+        array $items,
+        string $sourceRef,
+        ?string $fileName,
+        ?string $fileHash,
+        int $actorId,
+        bool $finalize,
+        int $expectedTotal,
+    ): array {
+        if ($items === []) {
+            return [];
+        }
+
+        $payloads = [];
+        foreach ($items as $item) {
+            $row = $item['data'] ?? [];
+            $payloads[] = [
+                'firm_name' => $row['firm_name'] ?? null,
+                'ca_name' => $row['ca_name'] ?? null,
+                'phone' => $row['mobile_no'] ?? null,
+                'alternate_mobile_no' => $row['alternate_mobile_no'] ?? null,
+                'email' => $this->normalizeEmail($row['email_id'] ?? null),
+                'gst_no' => $row['gst_no'] ?? null,
+                'pan_no' => $row['pan_no'] ?? null,
+                'frn' => $row['frn'] ?? null,
+                'membership_no' => $row['membership_no'] ?? null,
+                'address' => $row['address'] ?? null,
+                'city' => $row['city'] ?? ($row['city_name'] ?? null),
+                'state' => $row['state'] ?? ($row['state_name'] ?? null),
+                'city_id' => $row['city_id'] ?? null,
+                'state_id' => $row['state_id'] ?? null,
+                'pincode' => $row['pincode'] ?? null,
+                'website' => $row['website'] ?? null,
+                'team_size' => $row['team_size'] ?? null,
+                'source_name' => 'Excel/CSV Import',
+                'overall_confidence' => 1.0,
+                'bulk_action_id' => is_numeric($sourceRef) ? (int) $sourceRef : null,
+            ];
+        }
+
         try {
             $stats = $this->masterDataMappingService->processBatch(
                 str_contains(strtolower((string) $fileName), '.csv') ? 'csv' : 'excel',
                 $sourceRef,
-                [[
-                    'firm_name' => $row['firm_name'] ?? null,
-                    'ca_name' => $row['ca_name'] ?? null,
-                    'phone' => $row['mobile_no'] ?? null,
-                    'alternate_mobile_no' => $row['alternate_mobile_no'] ?? null,
-                    'email' => $row['email_id'] ?? null,
-                    'gst_no' => $row['gst_no'] ?? null,
-                    'pan_no' => $row['pan_no'] ?? null,
-                    'frn' => $row['frn'] ?? null,
-                    'membership_no' => $row['membership_no'] ?? null,
-                    'address' => $row['address'] ?? null,
-                    'city' => $row['city'] ?? ($row['city_name'] ?? null),
-                    'state' => $row['state'] ?? ($row['state_name'] ?? null),
-                    'city_id' => $row['city_id'] ?? null,
-                    'state_id' => $row['state_id'] ?? null,
-                    'pincode' => $row['pincode'] ?? null,
-                    'website' => $row['website'] ?? null,
-                    'team_size' => $row['team_size'] ?? null,
-                    'source_name' => 'Excel/CSV Import',
-                    'overall_confidence' => 1.0,
-                ]],
+                $payloads,
                 $actorId > 0 ? $actorId : null,
                 [
                     'file_name' => $fileName,
                     'file_hash' => $fileHash,
+                    'import_batch_id' => $this->sharedMappingImportBatchId,
+                    'finalize' => $finalize,
+                    'defer_cache_bust' => true,
+                    'expected_total' => max($expectedTotal, count($payloads)),
                 ],
             );
         } catch (\Throwable $e) {
-            return ['status' => 'failed', 'code' => 'mapping_engine_error', 'message' => $e->getMessage()];
+            $failed = [];
+            foreach ($items as $item) {
+                $failed[] = [
+                    'row_number' => $item['row_number'],
+                    'status' => 'failed',
+                    'code' => 'mapping_engine_error',
+                    'message' => $e->getMessage(),
+                    'data' => $item['data'] ?? null,
+                    'source_status' => $item['source_status'] ?? '',
+                    'phone_category' => $item['phone_category'] ?? '',
+                ];
+            }
+
+            return $failed;
         }
 
-        if (($stats['auto_created'] ?? 0) > 0) {
-            return ['status' => 'inserted', 'ca_id' => $stats['decisions'][0]['ca_id'] ?? null];
-        }
-        if (($stats['auto_updated'] ?? 0) > 0) {
-            return ['status' => 'updated', 'ca_id' => $stats['decisions'][0]['ca_id'] ?? null];
-        }
-        if (($stats['conflicts'] ?? 0) > 0) {
-            return ['status' => 'duplicate', 'code' => 'mapping_conflict', 'message' => 'Mapping conflict — needs review'];
-        }
-        if (($stats['needs_review'] ?? 0) > 0) {
-            return ['status' => 'failed', 'code' => 'needs_review', 'message' => 'Row parked for mapping review'];
+        if (! empty($stats['import_batch_id'])) {
+            $this->sharedMappingImportBatchId = (int) $stats['import_batch_id'];
         }
 
-        return ['status' => 'failed', 'code' => 'mapping_skipped', 'message' => 'Mapping engine skipped row'];
+        $outcomes = [];
+        $decisions = $stats['decisions'] ?? [];
+        foreach ($items as $i => $item) {
+            $decision = $decisions[$i] ?? null;
+            $row = $item['data'] ?? [];
+            if (! is_array($decision)) {
+                $outcomes[] = [
+                    'row_number' => $item['row_number'],
+                    'status' => 'failed',
+                    'code' => 'mapping_skipped',
+                    'message' => 'Mapping engine skipped row',
+                    'data' => $row,
+                    'source_status' => $item['source_status'] ?? '',
+                    'phone_category' => $item['phone_category'] ?? '',
+                ];
+
+                continue;
+            }
+
+            $decisionType = (string) ($decision['decision'] ?? '');
+            $caId = isset($decision['ca_id']) ? (int) $decision['ca_id'] : null;
+
+            if ($decisionType === MasterMappingDecision::DECISION_AUTO_CREATE) {
+                $this->applyPostImportSalesFields($caId, $row, true);
+                $outcomes[] = [
+                    'row_number' => $item['row_number'],
+                    'status' => 'inserted',
+                    'ca_id' => $caId,
+                    'source_status' => $item['source_status'] ?? '',
+                    'phone_category' => $item['phone_category'] ?? '',
+                ];
+
+                continue;
+            }
+
+            if ($decisionType === MasterMappingDecision::DECISION_AUTO_UPDATE) {
+                $this->applyPostImportSalesFields($caId, $row, false);
+                $outcomes[] = [
+                    'row_number' => $item['row_number'],
+                    'status' => 'updated',
+                    'ca_id' => $caId,
+                    'source_status' => $item['source_status'] ?? '',
+                    'phone_category' => $item['phone_category'] ?? '',
+                ];
+
+                continue;
+            }
+
+            if ($decisionType === MasterMappingDecision::DECISION_CONFLICT) {
+                $outcomes[] = [
+                    'row_number' => $item['row_number'],
+                    'status' => 'duplicate',
+                    'code' => 'mapping_conflict',
+                    'message' => 'Mapping conflict — needs review',
+                    'data' => $row,
+                    'source_status' => $item['source_status'] ?? '',
+                    'phone_category' => $item['phone_category'] ?? '',
+                ];
+
+                continue;
+            }
+
+            if ($decisionType === MasterMappingDecision::DECISION_NEEDS_REVIEW) {
+                $outcomes[] = [
+                    'row_number' => $item['row_number'],
+                    'status' => 'failed',
+                    'code' => 'needs_review',
+                    'message' => 'Row parked for mapping review',
+                    'data' => $row,
+                    'source_status' => $item['source_status'] ?? '',
+                    'phone_category' => $item['phone_category'] ?? '',
+                ];
+
+                continue;
+            }
+
+            $outcomes[] = [
+                'row_number' => $item['row_number'],
+                'status' => 'failed',
+                'code' => 'mapping_skipped',
+                'message' => 'Mapping engine skipped row',
+                'data' => $row,
+                'source_status' => $item['source_status'] ?? '',
+                'phone_category' => $item['phone_category'] ?? '',
+            ];
+        }
+
+        return $outcomes;
+    }
+
+    /**
+     * Warm LookupResolver caches for distinct state/city/source values in this evaluation.
+     *
+     * @param  list<array<string, mixed>>  $rows
+     */
+    private function prefetchLookupsFromEvaluation(array $rows): void
+    {
+        $states = [];
+        $cities = [];
+        $sources = [];
+
+        foreach ($rows as $result) {
+            $data = $result['data'] ?? [];
+            if (! is_array($data)) {
+                continue;
+            }
+            foreach (['state_id', 'state', 'state_name'] as $key) {
+                $value = trim((string) ($data[$key] ?? ''));
+                if ($value !== '') {
+                    $states[$value] = true;
+                }
+            }
+            foreach (['city_id', 'city', 'city_name'] as $key) {
+                $value = trim((string) ($data[$key] ?? ''));
+                if ($value !== '' && ! is_numeric($value)) {
+                    $cities[$value] = true;
+                } elseif ($value !== '' && is_numeric($value)) {
+                    $cities[$value] = true;
+                }
+            }
+            foreach (['source_id', 'source', 'source_name'] as $key) {
+                $value = trim((string) ($data[$key] ?? ''));
+                if ($value !== '') {
+                    $sources[$value] = true;
+                }
+            }
+        }
+
+        foreach (array_keys($states) as $state) {
+            $this->lookupResolver->resolveStateId($state);
+        }
+        foreach (array_keys($cities) as $city) {
+            $resolved = $this->lookupResolver->resolveCityId($city, null);
+            if ($resolved === null && ! is_numeric($city)) {
+                $this->lookupResolver->ensureCityId($city, null);
+            }
+        }
+        foreach (array_keys($sources) as $source) {
+            $this->lookupResolver->resolveSourceId($source);
+        }
+
+        // Warm team-size id set once.
+        if ($this->teamSizeIds === null && Schema::hasTable('team_size_masters')) {
+            $this->teamSizeIds = TeamSizeMaster::query()
+                ->pluck('id')
+                ->mapWithKeys(fn ($id) => [(int) $id => true])
+                ->all();
+        }
+    }
+
+    private function setImportStage(BulkAction $bulkAction, string $stage, int $processed, int $total): void
+    {
+        Cache::put($this->importStageKey((int) $bulkAction->bulk_action_id), [
+            'stage' => $stage,
+            'processed' => $processed,
+            'total' => $total,
+            'updated_at' => now()->toIso8601String(),
+        ], now()->addHours(12));
+    }
+
+    private function importStageKey(int $bulkActionId): string
+    {
+        return 'bulk_import_stage:'.$bulkActionId;
+    }
+
+    private function logImportTimings(
+        BulkAction $bulkAction,
+        float $importStartedAt,
+        int $prefetchMs,
+        ?float $dbWriteStartedAt,
+        int $processed,
+        int $total,
+        bool $continued,
+    ): void {
+        $totalMs = (int) round((microtime(true) - $importStartedAt) * 1000);
+        $writeMs = $dbWriteStartedAt !== null
+            ? (int) round((microtime(true) - $dbWriteStartedAt) * 1000)
+            : 0;
+
+        Log::info('bulk_import.timings', [
+            'bulk_action_id' => $bulkAction->bulk_action_id,
+            'file_name' => $bulkAction->file_name,
+            'processed' => $processed,
+            'total' => $total,
+            'prefetch_ms' => $prefetchMs,
+            'db_write_ms' => $writeMs,
+            'total_ms' => $totalMs,
+            'continued' => $continued,
+            'engine_batch_rows' => (int) config('crm_queue.import_engine_batch_rows', 250),
+        ]);
     }
 
     private function insertValidatedRow(array $row, ?int $bulkActionId = null, bool $skipDuplicateCheck = false): array
@@ -1604,12 +2110,23 @@ class BulkCaMasterImportService
         $sourceRaw = $data['source_id'] ?? null;
 
         $stateId = $this->hasValue($stateRaw) ? $this->lookupResolver->resolveStateId($stateRaw) : null;
-        $cityId = $this->hasValue($cityRaw)
-            ? $this->lookupResolver->resolveCityId($cityRaw, $stateId)
-            : null;
+        $cityId = null;
+        if ($this->hasValue($cityRaw)) {
+            $cityId = $this->lookupResolver->resolveCityId($cityRaw, $stateId)
+                ?? $this->lookupResolver->ensureCityId($cityRaw, $stateId);
+        }
 
         if ($cityId && $stateId && ! $this->lookupResolver->cityBelongsToState($cityId, $stateId)) {
-            $cityId = null;
+            // Keep the resolved city; align state to the city's real state instead of dropping city.
+            $cityStateId = \App\Models\City::query()->where('city_id', $cityId)->value('state_id');
+            $stateId = $cityStateId ? (int) $cityStateId : $stateId;
+        }
+
+        if ($cityId && ! $stateId) {
+            $cityStateId = \App\Models\City::query()->where('city_id', $cityId)->value('state_id');
+            if ($cityStateId) {
+                $stateId = (int) $cityStateId;
+            }
         }
 
         $sourceId = $this->hasValue($sourceRaw) ? $this->lookupResolver->resolveSourceId($sourceRaw) : null;
@@ -1626,31 +2143,37 @@ class BulkCaMasterImportService
                 : null;
         }
 
+        $payload = [
+            'ca_name' => $this->hasValue($data['ca_name'] ?? null) ? trim((string) $data['ca_name']) : '',
+            'firm_name' => trim($data['firm_name']),
+            'membership_no' => $this->normalizeOptionalCode($data['membership_no'] ?? null),
+            'frn' => $this->normalizeOptionalCode($data['frn'] ?? null),
+            'address' => $this->normalizeOptionalCode($data['address'] ?? null),
+            'pincode' => $this->normalizeOptionalCode($data['pincode'] ?? null),
+            'mobile_no' => $this->storeablePhone($data['mobile_no'] ?? null),
+            'alternate_mobile_no' => $this->storeablePhone($data['alternate_mobile_no'] ?? null),
+            'email_id' => $this->normalizeEmail($data['email_id'] ?? null),
+            'sales_remarks' => $this->normalizeSalesRemarks($data['sales_remarks'] ?? null),
+            'gst_no' => $this->normalizeGst($data['gst_no'] ?? null),
+            'team_size' => $data['team_size'] ?? null,
+            'team_size_id' => $teamSizeId,
+            'existing_software' => $data['existing_software'] ?? null,
+            'website' => $data['website'] ?? null,
+            'rating' => $data['rating'] ?? 1,
+            'status' => $data['status'] ?? 'New',
+            'state_id' => $stateId,
+            'city_id' => $cityId,
+            'source_id' => $sourceId,
+        ];
+
+        if ($this->hasValue($cityRaw) && Schema::hasColumn('ca_masters', 'ocr_city_text')) {
+            $payload['ocr_city_text'] = trim((string) $cityRaw);
+        }
+
         return [
             'code' => null,
             'message' => null,
-            'payload' => [
-                'ca_name' => $this->hasValue($data['ca_name'] ?? null) ? trim((string) $data['ca_name']) : '',
-                'firm_name' => trim($data['firm_name']),
-                'membership_no' => $this->normalizeOptionalCode($data['membership_no'] ?? null),
-                'frn' => $this->normalizeOptionalCode($data['frn'] ?? null),
-                'address' => $this->normalizeOptionalCode($data['address'] ?? null),
-                'pincode' => $this->normalizeOptionalCode($data['pincode'] ?? null),
-                'mobile_no' => $this->storeablePhone($data['mobile_no'] ?? null),
-                'alternate_mobile_no' => $this->storeablePhone($data['alternate_mobile_no'] ?? null),
-                'email_id' => $this->normalizeEmail($data['email_id'] ?? null),
-                'sales_remarks' => $this->normalizeSalesRemarks($data['sales_remarks'] ?? null),
-                'gst_no' => $this->normalizeGst($data['gst_no'] ?? null),
-                'team_size' => $data['team_size'] ?? null,
-                'team_size_id' => $teamSizeId,
-                'existing_software' => $data['existing_software'] ?? null,
-                'website' => $data['website'] ?? null,
-                'rating' => $data['rating'] ?? 1,
-                'status' => $data['status'] ?? 'New',
-                'state_id' => $stateId,
-                'city_id' => $cityId,
-                'source_id' => $sourceId,
-            ],
+            'payload' => $payload,
         ];
     }
 
@@ -2423,16 +2946,65 @@ class BulkCaMasterImportService
 
     private function importProgressMessage(BulkAction $bulkAction, int $processed, int $total): string
     {
-        return match ($bulkAction->status) {
-            'Failed' => 'Import failed',
-            'Completed' => 'Import completed',
-            'Completed with errors' => 'Import completed with errors',
-            default => $processed <= 0
-                ? 'Preparing file...'
-                : ($processed >= $total
-                    ? 'Finalizing import...'
-                    : sprintf('Processing %d of %d rows...', $processed, $total)),
-        };
+        if (in_array($bulkAction->status, ['Failed', 'Completed', 'Completed with errors'], true)) {
+            return match ($bulkAction->status) {
+                'Failed' => 'Import failed',
+                'Completed' => 'Import completed',
+                default => 'Import completed with errors',
+            };
+        }
+
+        $stage = Cache::get($this->importStageKey((int) $bulkAction->bulk_action_id));
+        $stageLabel = is_array($stage) ? trim((string) ($stage['stage'] ?? '')) : '';
+
+        if ($processed <= 0) {
+            return $stageLabel !== '' ? $stageLabel : 'Starting import...';
+        }
+
+        if ($processed >= $total) {
+            return $stageLabel !== '' ? $stageLabel : 'Finalizing import...';
+        }
+
+        if ($stageLabel !== '') {
+            return sprintf('%s — %d of %d rows', $stageLabel, $processed, $total);
+        }
+
+        return sprintf('Importing %d of %d rows...', $processed, $total);
+    }
+
+    /**
+     * Shared-hosting fallback when imports are not processed inline:
+     * spawn a short-lived queue:work so the job does not wait for cron.
+     */
+    private function kickBulkImportQueueWorker(): void
+    {
+        if (config('queue.default') === 'sync') {
+            return;
+        }
+
+        $php = PHP_BINARY ?: 'php';
+        $artisan = base_path('artisan');
+        $log = storage_path('logs/bulk-import-queue-drain.log');
+
+        try {
+            if (PHP_OS_FAMILY === 'Windows') {
+                pclose(popen(
+                    'start /B "" '.escapeshellarg($php).' '.escapeshellarg($artisan)
+                    .' queue:work --queue=default --stop-when-empty --max-jobs=1 --max-time=300 --tries=2 --timeout=600',
+                    'r'
+                ));
+            } else {
+                $cmd = sprintf(
+                    'nohup %s %s queue:work --queue=default --stop-when-empty --max-jobs=1 --max-time=300 --tries=2 --timeout=600 >> %s 2>&1 &',
+                    escapeshellarg($php),
+                    escapeshellarg($artisan),
+                    escapeshellarg($log),
+                );
+                exec($cmd);
+            }
+        } catch (\Throwable) {
+            // Cron auto-drain remains the backup.
+        }
     }
 
     private function assertFileNotAlreadyImported(array $session): void
