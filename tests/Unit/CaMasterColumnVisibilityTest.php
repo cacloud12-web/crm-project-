@@ -22,6 +22,8 @@ class CaMasterColumnVisibilityTest extends TestCase
         return [
             'selection',
             'firm_name',
+            'email_id',
+            'sales_remarks',
             'ca_name',
             'team_size',
             'last_activity',
@@ -74,7 +76,11 @@ class CaMasterColumnVisibilityTest extends TestCase
     public function visibility_persists_with_versioned_local_storage_key(): void
     {
         $js = $this->crmJs();
+        $this->assertStringContainsString("crm.ca_masters.visible_columns.v2", $js);
         $this->assertStringContainsString("crm.ca_masters.visible_columns.v1", $js);
+        $this->assertStringContainsString('CAM_COLUMN_FORCE_SHOW_MIGRATIONS', $js);
+        $this->assertStringContainsString('2026_07_email_sales_remarks_v3', $js);
+        $this->assertStringContainsString('function applyCaMasterColumnForceShowMigrations', $js);
         $this->assertStringContainsString('function applyCaMasterColumnVisibility', $js);
         $this->assertStringContainsString('function restoreCaMasterDefaultColumns', $js);
         $this->assertStringContainsString('function selectAllCaMasterColumns', $js);
@@ -83,16 +89,34 @@ class CaMasterColumnVisibilityTest extends TestCase
     }
 
     #[Test]
+    public function map_lead_record_includes_email_id_and_sales_remarks(): void
+    {
+        $js = $this->crmJs();
+        $this->assertMatchesRegularExpression('/function mapLeadRecord\([\s\S]*?email_id:\s*l\.email_id/', $js);
+        $this->assertMatchesRegularExpression('/function mapLeadRecord\([\s\S]*?sales_remarks:\s*l\.sales_remarks/', $js);
+    }
+
+    #[Test]
     public function body_and_partner_rows_use_data_column_keys(): void
     {
         $js = $this->crmJs();
-        foreach (['firm_name', 'ca_name', 'mobile', 'employee', 'actions', 'selection'] as $key) {
+        foreach (['firm_name', 'email_id', 'sales_remarks', 'ca_name', 'mobile', 'employee', 'selection'] as $key) {
             $this->assertStringContainsString("camColTd('{$key}'", $js);
         }
+        $this->assertStringContainsString("withCamDataColumn('actions'", $js);
         $this->assertStringContainsString("withCamDataColumn('call_log'", $js);
         $this->assertStringContainsString("withCamDataColumn('google'", $js);
         $this->assertStringContainsString('function renderCaMasterPartnerChildRow', $js);
         $this->assertStringContainsString("camColTd('mobile'", $js);
+        $this->assertStringContainsString('function salesRemarksCell', $js);
+        $this->assertStringContainsString('function truncatedPreviewCell', $js);
+        $this->assertStringContainsString('function emailIdCell', $js);
+        $this->assertStringContainsString('function latestSalesRemarkPreview', $js);
+        $this->assertStringContainsString('function formatSalesRemarksDetailHtml', $js);
+        $this->assertStringContainsString("truncatedPreviewCell(latest, 60, 'cam-sales-remarks-cell'", $js);
+        $this->assertStringContainsString("truncatedPreviewCell(raw, 60, 'cam-email-cell'", $js);
+        $this->assertStringContainsString("label: 'Sales Remarks'", $js);
+        $this->assertStringContainsString("formatSalesRemarksDetailHtml(lead.sales_remarks", $js);
     }
 
     #[Test]

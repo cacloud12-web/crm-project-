@@ -46,6 +46,17 @@ class MasterDataMatchingService
         $state = $raw['state'] ?? ($raw['state_name'] ?? null);
         $pincode = $raw['pincode'] ?? ($raw['pin_code'] ?? ($raw['postal_code'] ?? null));
 
+        // Bulk CSV maps the City column onto key `city_id` even when the value is a city NAME.
+        // Promote non-numeric city_id values to the city name field so they are not dropped.
+        $rawCityIdValue = $raw['city_id'] ?? null;
+        if (($city === null || $city === '') && $rawCityIdValue !== null && $rawCityIdValue !== '' && ! is_numeric($rawCityIdValue)) {
+            $city = is_string($rawCityIdValue) ? trim($rawCityIdValue) : (string) $rawCityIdValue;
+        }
+        $rawStateIdValue = $raw['state_id'] ?? null;
+        if (($state === null || $state === '') && $rawStateIdValue !== null && $rawStateIdValue !== '' && ! is_numeric($rawStateIdValue)) {
+            $state = is_string($rawStateIdValue) ? trim($rawStateIdValue) : (string) $rawStateIdValue;
+        }
+
         $rawFirm = $firmName !== '' ? trim($firmName) : null;
         $rawCa = $caName !== '' ? trim($caName) : null;
         $rawPhone = (is_string($phone) || is_numeric($phone)) ? trim((string) $phone) : null;
@@ -350,6 +361,19 @@ class MasterDataMatchingService
             }
         }
 
+        // identifier_first: when a strong identifier is present but unmatched, do NOT fall through
+        // to firm-name fuzzy (that traps unique-phone sales rows in needs_review).
+        $hasStrongIdentifier = filled($payload['normalized_mobile'] ?? null)
+            || filled($payload['normalized_alternate_mobile'] ?? null)
+            || filled($payload['normalized_email'] ?? null)
+            || filled($payload['normalized_gst'] ?? $payload['gst_no'] ?? null)
+            || filled($payload['normalized_frn'] ?? $payload['frn'] ?? null)
+            || filled($payload['normalized_pan'] ?? $payload['pan_no'] ?? null)
+            || filled($payload['normalized_membership_no'] ?? $payload['membership_no'] ?? null);
+        if ($hasStrongIdentifier && $profile === self::PROFILE_IDENTIFIER_FIRST) {
+            return MatchResult::unmatched('no_identifier_match');
+        }
+
         $firmKey = (string) ($payload['normalized_firm_name'] ?? '');
         if ($firmKey === '') {
             return MatchResult::unmatched('missing_firm_name');
@@ -470,6 +494,20 @@ class MasterDataMatchingService
         similar_text($incoming, $existing, $percent);
 
         return $percent >= 80 ? 0.04 : 0.0;
+    }
+
+    /**
+     * Register a just-created/updated master into the live batch index so later
+     * rows in the same processBatch() see its phones/emails immediately.
+     *
+     * @param  array<string, mixed>  $index
+     */
+    public function indexLead(array &$index, CaMaster $lead): void
+    {
+        $prefixLen = (int) config('crm_mapping.fuzzy_prefix_length', 8);
+        $summary = $this->summarizeLead($lead);
+        $index['by_id'][(int) $lead->ca_id] = $summary;
+        $this->indexSummary($index, $summary, $prefixLen);
     }
 
     /**

@@ -286,6 +286,9 @@ class OcrRepairCategoryAMissingCitiesService
                 }
 
                 $master->city_id = (int) $plan['city_id'];
+                foreach (\App\Support\Ocr\CaMasterCityQuality::attributesAfterRealCityLinked($master) as $key => $value) {
+                    $master->{$key} = $value;
+                }
                 $master->saveQuietly();
                 $updated++;
 

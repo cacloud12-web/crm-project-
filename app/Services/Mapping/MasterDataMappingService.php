@@ -3,6 +3,7 @@
 namespace App\Services\Mapping;
 
 use App\Models\CaMaster;
+use App\Models\City;
 use App\Models\MasterImportBatch;
 use App\Models\MasterMappingDecision;
 use App\Models\OcrDocument;
@@ -94,7 +95,10 @@ class MasterDataMappingService
                 $payload['state_id'] = $this->lookupResolver->resolveStateId($payload['state']);
             }
             if (empty($payload['city_id']) && filled($payload['city'] ?? null)) {
-                $payload['city_id'] = $this->lookupResolver->resolveCityId($payload['city'], $payload['state_id'] ?? null);
+                // Excel/CSV bulk imports must persist city names that are not yet in the master list.
+                $payload['city_id'] = in_array($sourceType, ['csv', 'excel', 'api', 'sales_team'], true)
+                    ? $this->lookupResolver->ensureCityId($payload['city'], $payload['state_id'] ?? null)
+                    : $this->lookupResolver->resolveCityId($payload['city'], $payload['state_id'] ?? null);
             }
             $payload['_staging_id'] = $row['staging_id'] ?? ($row['id'] ?? null);
             $payload['_row_index'] = $i;
@@ -177,6 +181,17 @@ class MasterDataMappingService
             }
             if ($result['decision'] === MasterMappingDecision::DECISION_AUTO_UPDATE && ! empty($result['snapshot'])) {
                 $updatedSnapshots[] = $result['snapshot'];
+            }
+
+            // Keep the in-memory duplicate index warm within this batch (phones/emails/GST).
+            if (! empty($result['ca_id']) && in_array($result['decision'], [
+                MasterMappingDecision::DECISION_AUTO_CREATE,
+                MasterMappingDecision::DECISION_AUTO_UPDATE,
+            ], true)) {
+                $fresh = CaMaster::query()->find((int) $result['ca_id']);
+                if ($fresh) {
+                    $this->matching->indexLead($index, $fresh);
+                }
             }
 
             if ($batch && $stats['processed'] % max(25, (int) ceil(count($payloads) / 4)) === 0) {
@@ -712,17 +727,46 @@ class MasterDataMappingService
             }
         } elseif ($decision === MasterMappingDecision::DECISION_AUTO_CREATE) {
             $mobileCheck = $this->evaluateMobileOwnership($payload, null);
-            if ($mobileCheck['conflict']) {
-                $decision = MasterMappingDecision::DECISION_CONFLICT;
-                $mobileAction = 'conflict_other_master';
-                $match = MatchResult::conflict([[
-                    'ca_id' => (int) $mobileCheck['owner_ca_id'],
-                    'score' => 1.0,
-                    'matched_on' => 'mobile_owned_elsewhere',
-                    'firm_name' => null,
-                    'ca_name' => null,
-                ]], 'mobile_belongs_to_other_master');
+            if ($mobileCheck['conflict'] && $mobileCheck['owner_ca_id']) {
+                // Any phone match ⇒ merge into the owner (never create a duplicate master).
+                $decision = MasterMappingDecision::DECISION_AUTO_UPDATE;
+                $match = MatchResult::exact(
+                    (int) $mobileCheck['owner_ca_id'],
+                    (string) ($mobileCheck['matched_on'] ?? 'mobile_owned_elsewhere'),
+                    [[
+                        'ca_id' => (int) $mobileCheck['owner_ca_id'],
+                        'score' => 1.0,
+                        'matched_on' => (string) ($mobileCheck['matched_on'] ?? 'mobile_owned_elsewhere'),
+                        'firm_name' => null,
+                        'ca_name' => null,
+                    ]],
+                );
+                $owner = CaMaster::query()->find((int) $mobileCheck['owner_ca_id']);
+                if ($owner) {
+                    $merge = DB::transaction(function () use ($owner, $payload) {
+                        $before = $this->snapshotLead($owner);
+                        $lead = $this->mergeIntoExisting($owner, $this->toCaMasterAttributes($payload), $payload);
+                        $this->syncPartners($lead, $payload['members'] ?? []);
+
+                        return [
+                            'lead' => $lead,
+                            'before' => $before,
+                            'after' => $this->snapshotLead($lead),
+                        ];
+                    });
+                    $caId = $merge['lead']->ca_id ?? null;
+                    $appliedAt = now();
+                    $oldValues = $merge['before'];
+                    $newValues = $merge['after'];
+                    $snapshot = ['ca_id' => $caId, 'before' => $merge['before']];
+                    $mobileAction = 'merged_phone_owner';
+                } else {
+                    $decision = MasterMappingDecision::DECISION_CONFLICT;
+                    $mobileAction = 'conflict_other_master';
+                }
             } else {
+                // Drop alternate if it collides (primary is free) so create cannot violate unique phones.
+                $payload = $this->stripConflictingAlternate($payload, null);
                 $lead = DB::transaction(function () use ($payload) {
                     $created = $this->createMaster($this->toCaMasterAttributes($payload));
                     $this->syncPartners($created, $payload['members'] ?? []);
@@ -791,23 +835,55 @@ class MasterDataMappingService
 
     /**
      * @param  array<string, mixed>  $payload
-     * @return array{conflict: bool, owner_ca_id: int|null}
+     * @return array{conflict: bool, owner_ca_id: int|null, matched_on: string|null}
      */
     private function evaluateMobileOwnership(array $payload, ?int $matchedCaId): array
     {
-        $mobile = $payload['normalized_mobile'] ?? $this->normalizer->phone($payload['mobile_no'] ?? null);
-        if (! filled($mobile)) {
-            return ['conflict' => false, 'owner_ca_id' => null];
-        }
-        $owner = $this->phoneNumbers->findLeadByNormalizedNumber((string) $mobile, $matchedCaId);
-        if (! $owner) {
-            return ['conflict' => false, 'owner_ca_id' => null];
-        }
-        if ($matchedCaId !== null && (int) $owner->ca_id === (int) $matchedCaId) {
-            return ['conflict' => false, 'owner_ca_id' => (int) $owner->ca_id];
+        foreach ([
+            'normalized_mobile' => $payload['normalized_mobile'] ?? $this->normalizer->phone($payload['mobile_no'] ?? null),
+            'normalized_alternate_mobile' => $payload['normalized_alternate_mobile']
+                ?? $this->normalizer->phone($payload['alternate_mobile_no'] ?? null),
+        ] as $matchedOn => $mobile) {
+            if (! filled($mobile)) {
+                continue;
+            }
+            $owner = $this->phoneNumbers->findLeadByNormalizedNumber((string) $mobile, $matchedCaId);
+            if (! $owner) {
+                continue;
+            }
+            if ($matchedCaId !== null && (int) $owner->ca_id === (int) $matchedCaId) {
+                continue;
+            }
+
+            return [
+                'conflict' => true,
+                'owner_ca_id' => (int) $owner->ca_id,
+                'matched_on' => $matchedOn,
+            ];
         }
 
-        return ['conflict' => true, 'owner_ca_id' => (int) $owner->ca_id];
+        return ['conflict' => false, 'owner_ca_id' => null, 'matched_on' => null];
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function stripConflictingAlternate(array $payload, ?int $matchedCaId): array
+    {
+        $alt = $payload['normalized_alternate_mobile']
+            ?? $this->normalizer->phone($payload['alternate_mobile_no'] ?? null);
+        if (! filled($alt)) {
+            return $payload;
+        }
+        $owner = $this->phoneNumbers->findLeadByNormalizedNumber((string) $alt, $matchedCaId);
+        if ($owner === null) {
+            return $payload;
+        }
+        $payload['alternate_mobile_no'] = null;
+        $payload['normalized_alternate_mobile'] = null;
+
+        return $payload;
     }
 
     /**
@@ -1025,7 +1101,15 @@ class MasterDataMappingService
     public function toCaMasterAttributes(array $payload): array
     {
         $stateId = $payload['state_id'] ?? $this->lookupResolver->resolveStateId($payload['state'] ?? null);
-        $cityId = $payload['city_id'] ?? $this->lookupResolver->resolveCityId($payload['city'] ?? null, $stateId);
+        $cityId = $payload['city_id'] ?? null;
+        if (empty($cityId) && filled($payload['city'] ?? null)) {
+            $cityId = $this->lookupResolver->ensureCityId($payload['city'], $stateId)
+                ?? $this->lookupResolver->resolveCityId($payload['city'], $stateId);
+        }
+        if ($cityId && ! $stateId) {
+            $stateId = City::query()->where('city_id', $cityId)->value('state_id');
+            $stateId = $stateId ? (int) $stateId : null;
+        }
         $sourceId = $this->resolveSourceId($payload['source_name'] ?? 'OCR Import');
 
         $phone = $payload['normalized_mobile'] ?? null;
@@ -1068,6 +1152,13 @@ class MasterDataMappingService
             ])),
             'created_by_employee_id' => $this->employeeDataScope->resolveEmployeeId(auth()->user()),
         ];
+
+        if (Schema::hasColumn('ca_masters', 'ocr_city_text')) {
+            $cityText = trim((string) ($payload['city'] ?? ''));
+            if ($cityText !== '') {
+                $data['ocr_city_text'] = $cityText;
+            }
+        }
 
         if (Schema::hasColumn('ca_masters', 'field_confidence')) {
             $data['field_confidence'] = $this->incomingFieldConfidence($payload);

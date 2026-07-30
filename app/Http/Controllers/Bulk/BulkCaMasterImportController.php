@@ -14,6 +14,7 @@ use App\Services\Bulk\BulkImportTemplateService;
 use App\Support\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Throwable;
@@ -175,6 +176,11 @@ class BulkCaMasterImportController extends Controller
 
     public function destroy(string $id): JsonResponse
     {
+        Log::info('bulk_import_history.delete.controller', [
+            'bulk_action_id' => $id,
+            'user_id' => auth()->id(),
+        ]);
+
         try {
             $this->historyService->destroy($id);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {

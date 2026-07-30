@@ -1,0 +1,57 @@
+#!/usr/bin/env expect -f
+# Deploy Email ID / Sales Remarks Master Data UI fix to Hostinger.
+# Usage: expect scripts/deploy-master-email-sales-columns.expect
+# Prompts for SSH password via macOS dialog.
+
+set host "82.25.83.189"
+set port "65002"
+set user "u636438798"
+set remote_root "/home/u636438798/domains/crm.caclouddesk.com/public_html"
+set local_root "/Users/CAcloudDesk/Downloads/crm_project 2/crm_project/crm-project"
+
+set pass [exec osascript -e {display dialog "Hostinger SSH password — deploy Master Data Email/Sales columns UI assets." with title "Deploy UI fix" default answer "" with hidden answer} -e {text returned of result}]
+if {$pass eq ""} {
+  puts "Aborted: empty password"
+  exit 1
+}
+
+proc scp_file {local remote pass host port user} {
+  spawn scp -P $port -o StrictHostKeyChecking=accept-new $local ${user}@${host}:$remote
+  expect {
+    -re "(?i)password:" { send "$pass\r"; exp_continue }
+    eof
+  }
+  catch wait result
+  return [lindex $result 3]
+}
+
+puts "Uploading crm.js..."
+set rc [scp_file "$local_root/public/crm-ui/src/api/crm.js" "$remote_root/public/crm-ui/src/api/crm.js" $pass $host $port $user]
+if {$rc != 0} { puts "FAIL crm.js rc=$rc"; exit $rc }
+
+puts "Uploading pages.js..."
+set rc [scp_file "$local_root/public/crm-ui/src/pages/pages.js" "$remote_root/public/crm-ui/src/pages/pages.js" $pass $host $port $user]
+if {$rc != 0} { puts "FAIL pages.js rc=$rc"; exit $rc }
+
+puts "Uploading styles.css..."
+set rc [scp_file "$local_root/public/crm-ui/src/styles.css" "$remote_root/public/crm-ui/src/styles.css" $pass $host $port $user]
+if {$rc != 0} { puts "FAIL styles.css rc=$rc"; exit $rc }
+
+puts "Verifying on server..."
+spawn ssh -p $port -o StrictHostKeyChecking=accept-new ${user}@${host}
+expect {
+  -re "(?i)password:" { send "$pass\r" }
+  timeout { puts "SSH timeout"; exit 1 }
+}
+expect -re {[$#] }
+send "cd $remote_root && rg -n \"key: 'email_id'|key: 'sales_remarks'|visible_columns.v2|email_sales_remarks_v2|sales_remarks: l.sales_remarks\" public/crm-ui/src/pages/pages.js public/crm-ui/src/api/crm.js | head -40; echo VERIFY_DONE\r"
+expect {
+  -re {VERIFY_DONE} {}
+  timeout { puts "verify timeout"; exit 1 }
+}
+expect -re {[$#] }
+send "stat -c '%y %n' public/crm-ui/src/api/crm.js public/crm-ui/src/pages/pages.js public/crm-ui/src/styles.css 2>/dev/null || stat -f '%Sm %N' public/crm-ui/src/api/crm.js public/crm-ui/src/pages/pages.js public/crm-ui/src/styles.css\r"
+expect -re {[$#] }
+send "exit\r"
+expect eof
+puts "DEPLOY_OK"

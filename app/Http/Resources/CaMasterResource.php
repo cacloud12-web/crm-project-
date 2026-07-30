@@ -196,7 +196,11 @@ class CaMasterResource extends JsonResource
             'verification_status' => $this->verification_status
                 ?? ($this->is_verified ? 'verified' : null),
             'data_quality_status' => $this->data_quality_status,
-            'data_quality_issue' => $this->data_quality_issue,
+            'data_quality_issue' => \App\Support\Ocr\CaMasterCityQuality::effectiveDataQualityIssue(
+                $this->resource,
+                $this->resolveCityName(),
+            ),
+            'data_quality_issue_raw' => $this->data_quality_issue,
             'source_type' => $this->source_type,
             'source_ocr_document_id' => $this->source_ocr_document_id,
             'source_ocr_row_id' => $this->source_ocr_row_id,
@@ -360,8 +364,13 @@ class CaMasterResource extends JsonResource
     private function resolveCityName(): ?string
     {
         $fromMaster = trim((string) ($this->city?->city_name ?? ''));
-        if ($fromMaster !== '') {
+        if ($fromMaster !== '' && ! \App\Support\Ocr\CaMasterCityQuality::isPlaceholderCityName($fromMaster)) {
             return $fromMaster;
+        }
+
+        $ocrText = trim((string) ($this->ocr_city_text ?? ''));
+        if ($ocrText !== '' && ! \App\Support\Ocr\CaMasterCityQuality::isPlaceholderCityName($ocrText)) {
+            return $ocrText;
         }
 
         return $this->ocrGeoForCaId((int) $this->ca_id)['city'];

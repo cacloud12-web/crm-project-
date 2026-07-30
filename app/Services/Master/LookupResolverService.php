@@ -118,6 +118,9 @@ class LookupResolverService
 
         $resolvedStateId = $stateId ?: $this->inferStateIdForCity($displayName);
         if ($resolvedStateId === null) {
+            $resolvedStateId = $this->ensureUnspecifiedStateId();
+        }
+        if ($resolvedStateId === null) {
             return null;
         }
 
@@ -136,6 +139,26 @@ class LookupResolverService
         $this->cityCache = [];
 
         return (int) $city->city_id;
+    }
+
+    /**
+     * Catch-all state so sales/OCR cities still get a city_id and show in Master Data.
+     */
+    private function ensureUnspecifiedStateId(): ?int
+    {
+        $existing = $this->resolveStateId('Unspecified');
+        if ($existing) {
+            return $existing;
+        }
+
+        $state = State::query()->firstOrCreate(
+            ['state_name' => 'Unspecified'],
+            ['state_name' => 'Unspecified', 'is_active' => true],
+        );
+
+        $this->stateCache = [];
+
+        return (int) $state->state_id;
     }
 
     private function normalizeCityName(string $name): string

@@ -11,8 +11,8 @@ return [
         'employee_scope' => 'assigned_active_leads',
         'default_sort' => 'created_at',
         'default_sort_dir' => 'desc',
-        'sortable' => ['ca_id', 'firm_name', 'ca_name', 'status', 'rating', 'team_size', 'created_at', 'updated_at', 'team_members_count', 'last_activity_at'],
-        'search_columns' => ['firm_name', 'ca_name', 'mobile_no', 'alternate_mobile_no', 'email_id', 'gst_no'],
+        'sortable' => ['ca_id', 'firm_name', 'ca_name', 'email_id', 'sales_remarks', 'status', 'rating', 'team_size', 'created_at', 'updated_at', 'team_members_count', 'last_activity_at'],
+        'search_columns' => ['firm_name', 'ca_name', 'mobile_no', 'alternate_mobile_no', 'email_id', 'sales_remarks', 'gst_no'],
         'search_relations' => [
             'city' => ['city_name'],
             'state' => ['state_name'],
@@ -31,6 +31,7 @@ return [
             'mobile_no' => 'ilike',
             'alternate_mobile_no' => 'ilike',
             'email_id' => 'ilike',
+            'sales_remarks' => 'ilike',
             'gst_no' => 'ilike',
             'source' => 'source_name',
             'executive' => 'executive_name',

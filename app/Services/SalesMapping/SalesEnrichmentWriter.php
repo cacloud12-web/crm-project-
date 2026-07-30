@@ -16,12 +16,14 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * Writes Sales Mapping enrichment rows only.
- * Never updates ca_masters identity, verification, OCR, or Google fields.
+ * Never updates ca_masters identity names, verification, OCR match flags, or Google fields.
+ * May fill empty email_id, sales_remarks, and city_id (or ocr_city_text display fallback).
  */
 class SalesEnrichmentWriter
 {
     public function __construct(
         private readonly DataNormalizationService $normalizer,
+        private readonly \App\Services\Master\LookupResolverService $lookups,
     ) {}
 
     /**
@@ -72,16 +74,19 @@ class SalesEnrichmentWriter
     private function writeMatchedEnrichment(SalesImportRow $row, int $caId): void
     {
         // Snapshot verification / OCR / identity fields — Sales Mapping must never change them.
-        // email_id / sales_remarks may be filled only when currently empty (never overwrite).
+        // email_id / sales_remarks / city may be filled only when currently empty (never overwrite real values).
         $before = null;
         if (Schema::hasTable('ca_masters')) {
             $cols = [
-                'ca_id', 'ca_name', 'firm_name', 'mobile_no', 'email_id',
+                'ca_id', 'ca_name', 'firm_name', 'mobile_no', 'email_id', 'city_id', 'state_id',
                 'is_verified', 'verification_status', 'google_place_id',
                 'source_ocr_document_id', 'source_ocr_row_id', 'ocr_match_status',
             ];
             if (Schema::hasColumn('ca_masters', 'sales_remarks')) {
                 $cols[] = 'sales_remarks';
+            }
+            if (Schema::hasColumn('ca_masters', 'ocr_city_text')) {
+                $cols[] = 'ocr_city_text';
             }
             $before = CaMaster::query()->where('ca_id', $caId)->first($cols);
         }
@@ -111,7 +116,7 @@ class SalesEnrichmentWriter
             $this->appendHistory($row, $caId);
         }
 
-        $this->fillEmptyMasterEmailAndRemarks($row, $caId);
+        $this->fillEmptyMasterEmailRemarksAndCity($row, $caId);
 
         if ($before) {
             $cols = array_keys($before->getAttributes());
@@ -150,9 +155,10 @@ class SalesEnrichmentWriter
     }
 
     /**
-     * Populate Master email_id / sales_remarks only when currently empty.
+     * Populate Master email_id / sales_remarks / city only when currently empty
+     * (or city is the UNKNOWN placeholder).
      */
-    private function fillEmptyMasterEmailAndRemarks(SalesImportRow $row, int $caId): void
+    private function fillEmptyMasterEmailRemarksAndCity(SalesImportRow $row, int $caId): void
     {
         if (! Schema::hasTable('ca_masters')) {
             return;
@@ -184,10 +190,75 @@ class SalesEnrichmentWriter
                 }
             }
 
+            if ($this->applySalesCityToMaster($lead, $row)) {
+                $dirty = true;
+            }
+
             if ($dirty) {
                 $lead->saveQuietly();
             }
         });
+    }
+
+    /**
+     * Link / display sales CSV city on Master when Master has no real city yet.
+     */
+    private function applySalesCityToMaster(CaMaster $lead, SalesImportRow $row): bool
+    {
+        $cityRaw = trim((string) ($row->city_name ?? ''));
+        if ($cityRaw === '') {
+            return false;
+        }
+
+        if (! $this->masterNeedsCity($lead)) {
+            return false;
+        }
+
+        $dirty = false;
+        $stateId = $lead->state_id ? (int) $lead->state_id : null;
+        $cityId = $this->lookups->resolveCityId($cityRaw, $stateId);
+        if ($cityId === null) {
+            $cityId = $this->lookups->resolveCityId($cityRaw, null);
+        }
+        if ($cityId === null) {
+            $cityId = $this->lookups->ensureCityId($cityRaw, $stateId);
+        }
+
+        if ($cityId !== null) {
+            $lead->city_id = $cityId;
+            $cityStateId = \App\Models\City::query()->where('city_id', $cityId)->value('state_id');
+            if ($cityStateId && (! $lead->state_id || (int) $lead->state_id !== (int) $cityStateId)) {
+                // Prefer the city's real state over a missing / mismatched Master state.
+                if (! $lead->state_id || ! $this->lookups->cityBelongsToState($cityId, (int) $lead->state_id)) {
+                    $lead->state_id = (int) $cityStateId;
+                }
+            }
+            foreach (\App\Support\Ocr\CaMasterCityQuality::attributesAfterRealCityLinked($lead) as $key => $value) {
+                $lead->{$key} = $value;
+            }
+            $dirty = true;
+        }
+
+        // Always keep a displayable text fallback when city name is known from Sales.
+        if (Schema::hasColumn('ca_masters', 'ocr_city_text')) {
+            $existingText = trim((string) ($lead->ocr_city_text ?? ''));
+            if ($existingText === '' || \App\Support\Ocr\CaMasterCityQuality::isPlaceholderCityName($existingText)) {
+                $lead->ocr_city_text = $cityRaw;
+                $dirty = true;
+            }
+        }
+
+        return $dirty;
+    }
+
+    private function masterNeedsCity(CaMaster $lead): bool
+    {
+        $cityId = $lead->city_id !== null ? (int) $lead->city_id : 0;
+        if ($cityId < 1) {
+            return true;
+        }
+
+        return ! \App\Support\Ocr\CaMasterCityQuality::hasLinkedRealCity($lead);
     }
 
     private function mergedSalesRemarksFromRow(SalesImportRow $row): ?string

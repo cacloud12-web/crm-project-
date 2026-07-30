@@ -16,7 +16,8 @@ class PhoneNormalizationService
             return null;
         }
 
-        if (strlen($digits) > 10 && str_starts_with($digits, (string) config('crm_duplicates.phone.country_code', '91'))) {
+        // Always keep the last 10 digits for Indian mobiles (+91 / leading 0 / extra prefixes).
+        if (strlen($digits) > 10) {
             $digits = substr($digits, -10);
         }
 

@@ -796,6 +796,8 @@ window.CAPages = (function () {
     return [
       { key: 'selection', label: 'Select', required: true, defaultVisible: true, picker: false },
       { key: 'firm_name', label: 'Firm Name', required: true, defaultVisible: true, sticky: 'left', filterKey: 'firm_name', filterPlaceholder: 'search', colCls: 'crm-col-firm col-firm', thCls: 'crm-th-firm col-firm' },
+      { key: 'email_id', label: 'Email', required: false, defaultVisible: true, sortField: 'email_id', filterKey: 'email_id', filterPlaceholder: 'search', colCls: 'crm-col-email cam-col-email', thCls: 'crm-th-email cam-col-email' },
+      { key: 'sales_remarks', label: 'Sales Remarks', required: false, defaultVisible: true, sortField: 'sales_remarks', filterKey: 'sales_remarks', filterPlaceholder: 'search', colCls: 'crm-col-remarks cam-col-remarks', thCls: 'crm-th-remarks cam-col-remarks' },
       { key: 'ca_name', label: 'CA Name', required: false, defaultVisible: true, filterKey: 'ca_name', filterPlaceholder: 'search', colCls: 'crm-col-ca col-ca', thCls: 'crm-th-ca col-ca' },
       { key: 'team_size', label: 'Team Size', required: false, defaultVisible: true, sortField: 'team_size', filterKey: 'team_size', filterPlaceholder: 'search', colCls: 'crm-col-team-size', thCls: 'crm-th-team-size' },
       { key: 'last_activity', label: 'Last Activity', required: false, defaultVisible: true, sortField: 'last_activity_at', colCls: 'crm-col-last-activity', thCls: 'crm-th-last-activity' },

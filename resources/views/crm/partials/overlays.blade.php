@@ -176,7 +176,8 @@
               <div><label class="form-label">State <span class="text-rose-500">*</span></label><select name="state_id" class="input-field" required><option value="">Select state</option></select></div>
               <div><label class="form-label">City</label><select name="city_id" class="input-field" disabled><option value="">Select city</option></select></div>
             </div>
-            <div><label class="form-label">Email</label><input name="email_id" type="email" class="input-field" placeholder="ca@firm.com" autocomplete="email" /></div>
+            <div><label class="form-label">Email ID</label><input name="email_id" type="email" class="input-field" placeholder="ca@firm.com" autocomplete="email" /></div>
+            <div class="sm:col-span-2"><label class="form-label">Sales Remarks</label><textarea name="sales_remarks" class="input-field" rows="4" placeholder="Imported sales remarks appear here…"></textarea></div>
             <div><label class="form-label">Team Size</label><input name="team_size" type="number" class="input-field" value="0" min="0" step="1" /></div>
             <div><label class="form-label">Software</label><select name="existing_software" class="input-field"><option value="None" selected>None</option><option value="Tally">Tally</option><option value="Zoho">Zoho</option><option value="Busy">Busy</option><option value="Marg">Marg</option></select></div>
             <div><label class="form-label">Website</label><input name="website" class="input-field" placeholder="firm.in" /></div>

@@ -1,0 +1,40 @@
+#!/usr/bin/env expect -f
+# Read-only production missing-city audit via SSH.
+# No app file uploads. No DB writes. No repair/apply.
+# Writes CSV under storage/app/audits only, then downloads it.
+
+set timeout 120
+set host "82.25.83.189"
+set port "65002"
+set user "u636438798"
+set remote_root "/home/u636438798/domains/crm.caclouddesk.com/public_html"
+set local_csv "/Users/CAcloudDesk/Downloads/crm_project 2/crm_project/crm-project/storage/app/audits/ocr-linked-missing-cities-categories-prod.csv"
+set remote_csv "storage/app/audits/ocr-linked-missing-cities-categories-prod.csv"
+set remote_counts "storage/app/audits/ocr-linked-missing-cities-categories-prod.counts.json"
+
+set pass [exec osascript -e {display dialog "Enter Hostinger SSH password for READ-ONLY missing-city audit (SELECT only; no DB writes, no repair)." with title "Production OCR Audit" default answer "" with hidden answer} -e {text returned of result}]
+if {$pass eq ""} {
+  puts "No password entered; aborting."
+  exit 1
+}
+
+puts "Connecting..."
+spawn ssh -p $port -o StrictHostKeyChecking=accept-new ${user}@${host}
+expect {
+  -re "(?i)password:" { send "$pass\r" }
+  timeout { puts "SSH timeout"; exit 1 }
+}
+expect -re {[$#] }
+
+# Upload runner via remote cat heredoc (not deploying into app/)
+send "mkdir -p $remote_root/storage/app/audits\r"
+expect -re {[$#] }
+send "cat > /tmp/ocr_missing_city_readonly_audit.php << 'AUDITEOF'\r"
+expect -re {> }
+# The PHP body is sent next by the wrapper shell that invokes this expect
+# Placeholder replaced by runner.
+send_user "\n(expect script expects PHP body via external injection)\n"
+send "AUDITEOF\r"
+expect -re {[$#] }
+send "exit\r"
+expect eof

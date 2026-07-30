@@ -1285,6 +1285,10 @@ body.crm-scroll-locked {
 .cam-col-geo { width: 100px; min-width: 88px; }
 .crm-col-source,
 .cam-col-source { width: 110px; min-width: 96px; }
+.crm-col-email,
+.cam-col-email { width: 168px; min-width: 140px; max-width: 200px; }
+.crm-col-remarks,
+.cam-col-remarks { width: 200px; min-width: 160px; max-width: 240px; }
 .crm-col-rating,
 .cam-col-rating { width: 88px; min-width: 80px; }
 .crm-col-status,
@@ -1292,7 +1296,6 @@ body.crm-scroll-locked {
 .crm-col-date,
 .cam-col-date { width: 108px; min-width: 96px; }
 .crm-col-compact { width: 72px; min-width: 64px; }
-.crm-col-remarks { width: 180px; min-width: 140px; }
 .crm-col-actions,
 .cam-col-actions,
 .col-actions {
@@ -7037,6 +7040,15 @@ body:has(#modal-dcp-detail.open) #overlay.active {
   word-break: break-word;
 }
 
+.detail-field-value .detail-sales-remarks {
+  display: block;
+  text-align: left;
+  white-space: pre-wrap;
+  font-weight: 500;
+  line-height: 1.45;
+  max-width: 100%;
+}
+
 .detail-field-value a {
   color: #2E7F96;
   text-decoration: none;
@@ -11461,6 +11473,8 @@ body.rw-open {
 .cam-col-mobile { width: 118px; min-width: 110px; }
 .cam-col-geo { width: 100px; min-width: 88px; }
 .cam-col-source { width: 110px; min-width: 96px; }
+.cam-col-email { width: 168px; min-width: 140px; max-width: 200px; }
+.cam-col-remarks { width: 200px; min-width: 160px; max-width: 240px; }
 .cam-col-rating { width: 88px; min-width: 80px; }
 .cam-col-status { width: 108px; min-width: 96px; }
 .cam-col-person { width: 128px; min-width: 110px; }

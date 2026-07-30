@@ -65,11 +65,19 @@ class LeadPhoneNumberRepository
             foreach ($unique as $number => $type) {
                 $this->purgeStaleRegistryRows($number, $caId);
 
-                LeadPhoneNumber::query()->create([
-                    'ca_id' => $caId,
-                    'normalized_number' => $number,
-                    'phone_type' => $type,
-                ]);
+                // Another active master already owns this number — never steal it or crash the import.
+                $owner = $this->findLeadByNormalizedNumber((string) $number, $caId);
+                if ($owner !== null) {
+                    continue;
+                }
+
+                LeadPhoneNumber::query()->updateOrCreate(
+                    ['normalized_number' => $number],
+                    [
+                        'ca_id' => $caId,
+                        'phone_type' => $type,
+                    ],
+                );
             }
         });
     }

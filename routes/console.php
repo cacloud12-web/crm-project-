@@ -17,7 +17,9 @@ Schedule::command('campaigns:process-scheduled')->everyMinute()->withoutOverlapp
 // Local dev: run `php artisan schedule:work` to process email:sync, campaigns, and auto-drain.
 // Production: add * * * * * php artisan schedule:run to cron.
 
-Schedule::command('queue:work --stop-when-empty --max-time=55 --tries=3 --timeout=300')
+// max-time stays under typical shared-hosting cron limits; import jobs batch
+// ~400 rows so each drain can finish and the next minute continues.
+Schedule::command('queue:work --stop-when-empty --max-time=55 --tries=3 --timeout=280')
     ->everyMinute()
     ->withoutOverlapping()
     ->when(fn () => (bool) config('crm_queue.auto_drain', true) || config('queue.default') !== 'sync');

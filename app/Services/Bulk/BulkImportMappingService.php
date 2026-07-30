@@ -50,8 +50,8 @@ class BulkImportMappingService
             'number',
         ],
         'alternate_mobile_no' => ['alternate_mobile_no', 'alternate mobile no', 'alternate mobile', 'alt mobile', 'secondary mobile', 'alternate phone'],
-        'email_id' => ['email_id', 'email id', 'email', 'e mail', 'e-mail', 'mail id', 'mail'],
-        'sales_remarks' => ['sales_remarks', 'sales remarks', 'sales remark', 'sales notes'],
+        'email_id' => ['email_id', 'email id', 'email', 'e mail', 'e-mail', 'mail id', 'mail', 'email address', 'emailaddress'],
+        'sales_remarks' => ['sales_remarks', 'sales remarks', 'sales remark', 'sales notes', 'sales note'],
         'gst_no' => ['gst_no', 'gst no', 'gst'],
         'team_size' => ['team_size', 'team size'],
         'team_size_id' => ['team_size_id', 'team size id'],
@@ -371,6 +371,11 @@ class BulkImportMappingService
             return ['number' => (int) $m[1]];
         }
         if (preg_match('/^remarks?(\d+)$/', $norm, $m) === 1) {
+            return ['number' => (int) $m[1]];
+        }
+        // "Remark 1", "Remarks 2", "remark-3" already normalized to remark_N / remarks_N above.
+        // Also accept loose "notes 1" style only when the header clearly says remark(s).
+        if (preg_match('/^remarks?\s*[_\-]?\s*(\d+)$/', strtolower(trim($header)), $m) === 1) {
             return ['number' => (int) $m[1]];
         }
         if ($norm === 'remarks' || $norm === 'remark') {

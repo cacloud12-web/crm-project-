@@ -704,6 +704,63 @@ window.CA_CRM = (function () {
     return '<span class="cam-cell-text" title="' + escaped + '">' + escaped + '</span>';
   }
 
+  /** Truncated preview (default 90 chars) with full text on hover via title / instant tooltip. */
+  function truncatedPreviewCell(text, maxLen, cellClass, fullTextForTip, dataColumn) {
+    var raw = text == null || text === '' ? '' : String(text).trim();
+    if (!raw || raw === '—') {
+      return '<span class="cam-cell-text cam-cell-empty' + (cellClass ? ' ' + cellClass : '') + '"' +
+        (dataColumn ? ' data-column-value="' + escapeAttr(dataColumn) + '"' : '') + '>—</span>';
+    }
+    var tipSource = fullTextForTip == null || String(fullTextForTip).trim() === ''
+      ? raw
+      : String(fullTextForTip).trim();
+    var limit = typeof maxLen === 'number' && maxLen > 0 ? maxLen : 90;
+    var preview = raw.length > limit ? raw.slice(0, limit).trimEnd() + '…' : raw;
+    var fullEsc = escapeHtml(tipSource);
+    var tipAttr = escapeAttr(tipSource);
+    var colAttr = dataColumn ? ' data-column-value="' + escapeAttr(dataColumn) + '"' : '';
+    return '<span class="truncate-cell ' + (cellClass || '') + '" title="' + fullEsc + '" data-crm-tip="' + tipAttr + '"' + colAttr + '>' +
+      escapeHtml(preview) +
+      '</span>';
+  }
+
+  /** Prefer the last non-empty remark block (split on blank lines); fall back to full text. */
+  function latestSalesRemarkPreview(text) {
+    var raw = text == null || text === '' ? '' : String(text).trim();
+    if (!raw || raw === '—') {
+      return '';
+    }
+    var parts = raw.split(/\n\s*\n/).map(function (part) {
+      return String(part || '').trim();
+    }).filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : raw;
+  }
+
+  function salesRemarksCell(text) {
+    var raw = text == null || text === '' ? '' : String(text).trim();
+    if (!raw || raw === '—') {
+      return '<span class="cam-cell-text cam-cell-empty cam-sales-remarks-cell" data-column-value="sales_remarks">—</span>';
+    }
+    var latest = latestSalesRemarkPreview(raw) || raw;
+    return truncatedPreviewCell(latest, 60, 'cam-sales-remarks-cell', raw, 'sales_remarks');
+  }
+
+  function emailIdCell(text) {
+    var raw = text == null || text === '' ? '' : String(text).trim();
+    if (!raw || raw === '—') {
+      return '<span class="cam-cell-text cam-cell-empty cam-email-cell" data-column-value="email_id">—</span>';
+    }
+    return truncatedPreviewCell(raw, 60, 'cam-email-cell', raw, 'email_id');
+  }
+
+  function formatSalesRemarksDetailHtml(text) {
+    var raw = text == null || text === '' ? '' : String(text).trim();
+    if (!raw || raw === '—') {
+      return '—';
+    }
+    return '<span class="detail-sales-remarks">' + escapeHtml(raw).replace(/\r\n|\r|\n/g, '<br>') + '</span>';
+  }
+
   function camPhoneCell(raw) {
     var display = formatPhoneDisplay(raw);
     if (!display) {
@@ -2725,10 +2782,11 @@ if (otherInput) {
       mobile_no: l.mobile_no || '—',
       alternate_mobile_no: l.alternate_mobile_no || '—',
       email_id: l.email_id || '—',
+      sales_remarks: l.sales_remarks && String(l.sales_remarks).trim() !== '' ? l.sales_remarks : '—',
       gst_no: l.gst_no || '—',
       state: l.state || l.state_name || '—',
       state_id: l.state_id ? String(l.state_id) : null,
-      city: l.city || l.city_name || '—',
+      city: l.city || l.city_name || l.ocr_city_text || '—',
       city_id: l.city_id ? String(l.city_id) : null,
       team_size: l.team_size != null && l.team_size !== '' ? Number(l.team_size) : 0,
       primary_ca_name: l.primary_ca_name || l.ca_name || '',
@@ -8375,7 +8433,8 @@ if (otherInput) {
         { label: 'CA Name', value: data.ca },
         { label: 'Mobile', value: renderPhoneCell(data.mobile) },
         { label: 'Alternate Mobile', value: renderPhoneCell(data.alternateMobile) },
-        { label: 'Email', value: data.email },
+        { label: 'Email', value: (data.email && data.email !== '—') ? escapeHtml(data.email) : '—' },
+        { label: 'Sales Remarks', value: formatSalesRemarksDetailHtml(lead.sales_remarks || data.salesRemarks) },
         { label: 'GST No.', value: data.gst },
         { label: 'State / City', value: data.state + ' / ' + data.city },
         { label: 'Team Size', value: data.team },
@@ -13215,7 +13274,16 @@ if (otherInput) {
     });
   }
 
-  var CAM_VISIBLE_COLUMNS_STORAGE_KEY = 'crm.ca_masters.visible_columns.v1';
+  var CAM_VISIBLE_COLUMNS_STORAGE_KEY = 'crm.ca_masters.visible_columns.v2';
+  var CAM_VISIBLE_COLUMNS_LEGACY_KEYS = [
+    'crm.ca_masters.visible_columns.v1',
+  ];
+  /** One-time migrations: force-show these default columns for existing saved layouts. */
+  var CAM_COLUMN_FORCE_SHOW_MIGRATIONS = [
+    // v3: heal layouts where Email/Sales were never inserted (or migration marked applied too early).
+    { id: '2026_07_email_sales_remarks_v3', keys: ['email_id', 'sales_remarks'] },
+  ];
+  var CAM_COLUMN_MIGRATIONS_STORAGE_KEY = 'crm.ca_masters.column_migrations.v1';
   var _camVisibleColumnKeys = null;
 
   function camColTd(key, cls, html) {
@@ -13265,13 +13333,18 @@ if (otherInput) {
       seen[k] = true;
       visible.push(k);
     });
+    // null known (legacy array prefs) ⇒ treat every missing defaultVisible column as NEW.
     var known = Array.isArray(knownKeys) ? knownKeys : null;
     defs.forEach(function (d) {
-      if (known && known.indexOf(d.key) < 0 && d.defaultVisible !== false && !seen[d.key]) {
+      if (seen[d.key]) return;
+      if (d.required) {
         seen[d.key] = true;
         visible.push(d.key);
+        return;
       }
-      if (d.required && !seen[d.key]) {
+      if (d.defaultVisible === false) return;
+      var isNewColumn = !known || known.indexOf(d.key) < 0;
+      if (isNewColumn) {
         seen[d.key] = true;
         visible.push(d.key);
       }
@@ -13285,17 +13358,136 @@ if (otherInput) {
     return visible;
   }
 
+  function readAppliedCaMasterColumnMigrations() {
+    try {
+      var raw = localStorage.getItem(CAM_COLUMN_MIGRATIONS_STORAGE_KEY);
+      var parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function markCaMasterColumnMigrationApplied(id) {
+    var applied = readAppliedCaMasterColumnMigrations();
+    if (applied.indexOf(id) >= 0) return;
+    applied.push(id);
+    try {
+      localStorage.setItem(CAM_COLUMN_MIGRATIONS_STORAGE_KEY, JSON.stringify(applied));
+    } catch (e) { /* ignore */ }
+  }
+
+  /** Insert keys after firm_name when present, otherwise append. */
+  function insertCaMasterVisibleKeys(visible, keysToAdd) {
+    var out = visible.slice();
+    var seen = {};
+    out.forEach(function (k) { seen[k] = true; });
+    var insertAt = out.indexOf('firm_name');
+    insertAt = insertAt >= 0 ? insertAt + 1 : out.length;
+    keysToAdd.forEach(function (k) {
+      if (!k || seen[k]) return;
+      // Prefer canonical order from defs when inserting a block.
+      out.splice(insertAt, 0, k);
+      seen[k] = true;
+      insertAt++;
+    });
+    return out;
+  }
+
+  function applyCaMasterColumnForceShowMigrations(visible) {
+    var defs = getCaMasterColumnDefs();
+    // Defer until column defs are available (crm.js loads before pages.js).
+    if (!defs.length) return visible;
+    var byKey = {};
+    defs.forEach(function (d) { byKey[d.key] = d; });
+    var applied = readAppliedCaMasterColumnMigrations();
+    var next = visible.slice();
+    var changed = false;
+    CAM_COLUMN_FORCE_SHOW_MIGRATIONS.forEach(function (migration) {
+      if (!migration || !migration.id || applied.indexOf(migration.id) >= 0) return;
+      var keys = migration.keys || [];
+      // Do not mark applied until every migration key exists in defs.
+      if (!keys.length || keys.some(function (k) { return !byKey[k]; })) return;
+      var toAdd = keys.filter(function (k) {
+        return next.indexOf(k) < 0;
+      });
+      if (toAdd.length) {
+        next = insertCaMasterVisibleKeys(next, toAdd);
+        changed = true;
+      }
+      markCaMasterColumnMigrationApplied(migration.id);
+    });
+
+    // Heal pre-email layouts: Firm Name immediately followed by CA Name with Email/Sales missing.
+    if (byKey.email_id && byKey.sales_remarks) {
+      var firmIdx = next.indexOf('firm_name');
+      var caIdx = next.indexOf('ca_name');
+      var missingEmail = next.indexOf('email_id') < 0;
+      var missingRemarks = next.indexOf('sales_remarks') < 0;
+      if (firmIdx >= 0 && (missingEmail || missingRemarks) && (caIdx < 0 || caIdx === firmIdx + 1 || missingEmail)) {
+        var heal = [];
+        if (missingEmail) heal.push('email_id');
+        if (missingRemarks) heal.push('sales_remarks');
+        if (heal.length) {
+          next = insertCaMasterVisibleKeys(next, heal);
+          changed = true;
+        }
+      }
+    }
+
+    return changed ? next : visible;
+  }
+
   function loadCaMasterVisibleKeysFromStorage() {
     try {
       var raw = localStorage.getItem(CAM_VISIBLE_COLUMNS_STORAGE_KEY);
-      if (!raw) return getCaMasterDefaultVisibleKeys();
+      // Migrate legacy v1 layouts into v2.
+      if (!raw) {
+        for (var i = 0; i < CAM_VISIBLE_COLUMNS_LEGACY_KEYS.length; i++) {
+          var legacyRaw = localStorage.getItem(CAM_VISIBLE_COLUMNS_LEGACY_KEYS[i]);
+          if (legacyRaw) {
+            raw = legacyRaw;
+            break;
+          }
+        }
+      }
+      if (!raw) {
+        var defaults = getCaMasterDefaultVisibleKeys();
+        // Only seed migrations once defs are ready and defaults already include those keys.
+        if (defaults.length) {
+          var defaultSet = {};
+          defaults.forEach(function (k) { defaultSet[k] = true; });
+          CAM_COLUMN_FORCE_SHOW_MIGRATIONS.forEach(function (m) {
+            if (!m || !m.id || !m.keys || !m.keys.length) return;
+            if (m.keys.every(function (k) { return defaultSet[k]; })) {
+              markCaMasterColumnMigrationApplied(m.id);
+            }
+          });
+        }
+        return defaults;
+      }
       var parsed = JSON.parse(raw);
+      var visible;
       if (Array.isArray(parsed)) {
-        return normalizeCaMasterVisibleKeys(parsed, null);
+        // Legacy array format had no `known` list — treat missing defaults as new columns.
+        visible = normalizeCaMasterVisibleKeys(parsed, null);
+      } else if (parsed && typeof parsed === 'object') {
+        visible = normalizeCaMasterVisibleKeys(parsed.visible || parsed.keys || [], parsed.known || null);
+      } else {
+        visible = getCaMasterDefaultVisibleKeys();
       }
-      if (parsed && typeof parsed === 'object') {
-        return normalizeCaMasterVisibleKeys(parsed.visible || parsed.keys || [], parsed.known || null);
-      }
+      visible = applyCaMasterColumnForceShowMigrations(visible);
+      // Persist migrated v2 layout immediately so Email/Sales stick for existing users.
+      try {
+        localStorage.setItem(CAM_VISIBLE_COLUMNS_STORAGE_KEY, JSON.stringify({
+          visible: visible,
+          known: getCaMasterColumnDefs().map(function (d) { return d.key; }),
+        }));
+        CAM_VISIBLE_COLUMNS_LEGACY_KEYS.forEach(function (k) {
+          try { localStorage.removeItem(k); } catch (e2) { /* ignore */ }
+        });
+      } catch (e3) { /* ignore */ }
+      return visible;
     } catch (e) { /* ignore */ }
     return getCaMasterDefaultVisibleKeys();
   }
@@ -13303,6 +13495,24 @@ if (otherInput) {
   function getCaMasterVisibleKeys() {
     if (!_camVisibleColumnKeys) {
       _camVisibleColumnKeys = loadCaMasterVisibleKeysFromStorage();
+    } else {
+      // If visibility was cached before pages.js exposed defs, reload once defs exist.
+      var defsNow = getCaMasterColumnDefs();
+      if (defsNow.length && !_camVisibleColumnKeys.length) {
+        _camVisibleColumnKeys = loadCaMasterVisibleKeysFromStorage();
+      } else if (defsNow.length) {
+        var forced = applyCaMasterColumnForceShowMigrations(_camVisibleColumnKeys.slice());
+        if (forced.length !== _camVisibleColumnKeys.length ||
+            forced.some(function (k, i) { return k !== _camVisibleColumnKeys[i]; })) {
+          _camVisibleColumnKeys = forced;
+          try {
+            localStorage.setItem(CAM_VISIBLE_COLUMNS_STORAGE_KEY, JSON.stringify({
+              visible: forced,
+              known: defsNow.map(function (d) { return d.key; }),
+            }));
+          } catch (e) { /* ignore */ }
+        }
+      }
     }
     return _camVisibleColumnKeys.slice();
   }
@@ -13624,10 +13834,18 @@ if (otherInput) {
     var caLabel = l.ca_name_display || l.primary_ca_name || l.ca_name;
     var caCell = caNameCell(caLabel);
     if (l.verification_status === 'needs_verification' || l.review_required) {
-      var issue = l.data_quality_issue ? String(l.data_quality_issue) : 'Review Required';
+      var issue = l.data_quality_issue ? String(l.data_quality_issue) : '';
+      var cityShown = String(l.city || l.city_display || l.city_name || '').trim();
+      var cityLooksPresent = cityShown !== '' && cityShown !== '—' && cityShown !== '-'
+        && cityShown.toLowerCase() !== 'city missing'
+        && cityShown.toUpperCase() !== 'UNKNOWN - CITY NOT IN SOURCE';
+      // City column can show OCR/linked city while stale DB issue still says missing_city.
+      if (issue === 'missing_city' && cityLooksPresent) {
+        issue = (!l.ca_name || String(l.ca_name).trim() === '') ? 'missing_ca_name' : '';
+      }
       caCell = '<div class="cam-nv-ca">' + caCell +
         '<span class="cam-badge cam-badge--needs-verification" title="Needs Verification">Needs Verification</span>' +
-        '<span class="cam-badge cam-badge--quality-issue" title="' + escapeAttr(issue) + '">' + escapeHtml(issue) + '</span>' +
+        (issue ? '<span class="cam-badge cam-badge--quality-issue" title="' + escapeAttr(issue) + '">' + escapeHtml(issue) + '</span>' : '') +
         (l.source_type === 'ocr' ? '<span class="cam-badge cam-badge--ocr-source">OCR Source</span>' : '') +
         '</div>';
     }
@@ -13639,6 +13857,8 @@ if (otherInput) {
     var parentRow = '<tr class="' + rowCls + '" data-lead-id="' + l.ca_id + '" data-row=\'' + data + '\'>' +
       withCamDataColumn('selection', renderInboxCheckCell(tableKey, l.ca_id)) +
       camColTd('firm_name', 'sticky-left-2 crm-td-firm cam-master-data-cell', firmCell) +
+      camColTd('email_id', 'cam-td-email cam-master-data-cell', emailIdCell(l.email_id)) +
+      camColTd('sales_remarks', 'cam-td-remarks cam-master-data-cell', salesRemarksCell(l.sales_remarks)) +
       camColTd('ca_name', 'crm-td-ca cam-master-data-cell', caCell) +
       camColTd('team_size', 'cam-td-team-size cam-master-data-cell', teamCell) +
       camColTd('last_activity', 'cam-td-last-activity cam-master-data-cell', renderLastActivityDisplayCell(l)) +
@@ -13695,6 +13915,8 @@ if (otherInput) {
     return '<tr class="cam-partner-child-row hidden" data-partner-parent="' + escapeHtml(String(firm.ca_id)) + '" data-partner-id="' + escapeHtml(String(pid || '')) + '">' +
       camColTd('selection', 'cam-partner-child-check', '') +
       camColTd('firm_name', 'sticky-left-2 crm-td-firm cam-master-data-cell cam-partner-indent', '<span class="cam-partner-child-label">Partner</span>') +
+      camColTd('email_id', 'cam-td-email cam-master-data-cell', emailIdCell(partner.email)) +
+      camColTd('sales_remarks', 'cam-td-remarks cam-master-data-cell', '<span class="cam-cell-text cam-cell-empty">—</span>') +
       camColTd('ca_name', 'crm-td-ca cam-master-data-cell', compactTextCell(partner.ca_name)) +
       camColTd('team_size', 'cam-td-team-size cam-master-data-cell', renderCaMasterInlineTeamSizeCell(
         { team_size: partner.team_size, ca_id: firm.ca_id },
@@ -13707,7 +13929,7 @@ if (otherInput) {
       camColTd('alternate_mobile', 'cam-td-mobile cam-master-data-cell', camPhoneDisplayCell(partner.alternate_mobile)) +
       camColTd('city', 'cam-td-geo cam-master-data-cell', compactTextCell(firm.city)) +
       camColTd('state', 'cam-td-geo cam-master-data-cell', compactTextCell(firm.state)) +
-      camColTd('source', 'cam-td-source cam-master-data-cell', '<span class="cam-cell-text text-slate-400">' + escapeHtml(partner.email || '') + '</span>') +
+      camColTd('source', 'cam-td-source cam-master-data-cell', '') +
       camColTd('rating', 'cam-td-rating cam-master-data-cell', '') +
       camColTd('status', 'cam-td-status cam-master-data-cell', '') +
       camColTd('employee', 'cam-td-person cam-master-data-cell', '') +
@@ -14679,7 +14901,35 @@ if (otherInput) {
       });
   }
 
+  function logCaMasterColumnDebugOnce() {
+    if (window.__CAM_COL_DEBUG_LOGGED__) return;
+    window.__CAM_COL_DEBUG_LOGGED__ = true;
+    try {
+      var defs = getCaMasterColumnDefs();
+      var visible = getCaMasterVisibleKeys();
+      console.info('[CA Master] caMasterColumnDefinitions()', defs.map(function (d) {
+        return { key: d.key, label: d.label, defaultVisible: d.defaultVisible !== false };
+      }));
+      console.info('[CA Master] visible keys', visible);
+      console.info('[CA Master] email_id/sales_remarks', {
+        inDefs: {
+          email_id: defs.some(function (d) { return d.key === 'email_id'; }),
+          sales_remarks: defs.some(function (d) { return d.key === 'sales_remarks'; }),
+        },
+        visible: {
+          email_id: visible.indexOf('email_id') >= 0,
+          sales_remarks: visible.indexOf('sales_remarks') >= 0,
+        },
+        storageV2: localStorage.getItem(CAM_VISIBLE_COLUMNS_STORAGE_KEY),
+        storageV1: localStorage.getItem('crm.ca_masters.visible_columns.v1'),
+      });
+    } catch (e) {
+      console.warn('[CA Master] column debug failed', e);
+    }
+  }
+
   function renderCaMasterTable(pageLeads, targetTbodyId) {
+    logCaMasterColumnDebugOnce();
     var ctx = getCaMasterTableContext();
     var tbodyId = targetTbodyId || ctx.tbodyId;
     if (typeof tbodyId === 'object' && tbodyId.id) tbodyId = tbodyId.id;
@@ -14811,6 +15061,7 @@ if (otherInput) {
       lead.mobile_no,
       lead.alternate_mobile_no,
       lead.email_id,
+      lead.sales_remarks,
       lead.city,
       lead.city_name,
       lead.state,
@@ -15254,6 +15505,9 @@ if (otherInput) {
       form.elements.alternate_mobile_no.value = lead.alternate_mobile_no && lead.alternate_mobile_no !== '—' ? lead.alternate_mobile_no : '';
     }
     form.elements.email_id.value = lead.email_id || '';
+    if (form.elements.sales_remarks) {
+      form.elements.sales_remarks.value = lead.sales_remarks && lead.sales_remarks !== '—' ? lead.sales_remarks : '';
+    }
 
     var locationPromise;
     if (window.CA_STATE_CITY) {
@@ -20743,7 +20997,7 @@ if (otherInput) {
             });
         };
         poll();
-        bulkImportWizardState.pollTimer = setInterval(poll, 1500);
+        bulkImportWizardState.pollTimer = setInterval(poll, 1000);
       });
     }
 
@@ -20765,7 +21019,7 @@ if (otherInput) {
       };
       bulkImportWizardState.importInProgress = true;
       setImportBusy(true);
-      setImportProgress(0, 'Preparing import...');
+      setImportProgress(0, 'Starting import...');
       return fetch('/ca-masters/bulk-import', {
         method: 'POST',
         headers: {
@@ -20792,6 +21046,11 @@ if (otherInput) {
           var summary = result.summary;
           bulkImportWizardState.lastBulkActionId = summary.bulk_action_id || null;
           if (summary.bulk_action_id && (summary.uses_background || summary.status === 'Processing')) {
+            if (summary.progress_message) {
+              setImportProgress(summary.progress_percent || 1, summary.progress_message);
+            } else {
+              setImportProgress(1, 'Starting import...');
+            }
             return pollImportStatus(summary.bulk_action_id).then(function (statusData) {
               summary = Object.assign({}, summary, statusData, {
                 inserted_rows: statusData.inserted_rows,
@@ -21443,11 +21702,36 @@ if (otherInput) {
       return;
     }
     if (!window.confirm('Delete this bulk import history record? This cannot be undone.')) return;
-    window._bulkOperationsHistoryCache = (window._bulkOperationsHistoryCache || []).filter(function (item) {
-      return String(item.bulk_action_id) !== String(bulkActionId);
-    });
-    renderBulkOperationsHistoryTable(window._bulkOperationsHistoryCache);
-    toast('Import history record deleted.', 'success');
+
+    var id = String(bulkActionId);
+    var deleteBtn = Array.prototype.find.call(
+      document.querySelectorAll('[data-bulk-history-delete]'),
+      function (el) { return String(el.getAttribute('data-bulk-history-delete')) === id; }
+    ) || null;
+    if (deleteBtn) {
+      deleteBtn.disabled = true;
+      deleteBtn.setAttribute('aria-busy', 'true');
+    }
+
+    // Persist deletion on the server first — never toast success from a local-only row remove.
+    apiFetch('/ca-masters/bulk-import/history/' + encodeURIComponent(id), { method: 'DELETE' })
+      .then(function (body) {
+        toast((body && body.message) || 'Import history record deleted.', 'success');
+        window._bulkOperationsHistoryCache = (window._bulkOperationsHistoryCache || []).filter(function (item) {
+          return String(item.bulk_action_id) !== id;
+        });
+        renderBulkOperationsHistoryTable(window._bulkOperationsHistoryCache);
+        // Reload from API so pagination / cache matches the database.
+        loadBulkOperationsHistory();
+      })
+      .catch(function (err) {
+        if (deleteBtn) {
+          deleteBtn.disabled = false;
+          deleteBtn.removeAttribute('aria-busy');
+        }
+        toast((err && err.message) || 'Unable to delete import history record.', 'error');
+        loadBulkOperationsHistory();
+      });
   }
 
   function bindBulkHistoryTableActions(el) {
@@ -24889,7 +25173,16 @@ if (otherInput) {
         CA_LISTING_SEARCH.bindSortableHeaders(key, 'leads-table', { 1: 'firm_name', 2: 'ca_name', 7: 'status' });
       }
       if (document.getElementById(camCtx.tableId)) {
-        CA_LISTING_SEARCH.bindSortableHeaders(key, camCtx.tableId, { 1: 'firm_name', 2: 'ca_name', 3: 'team_size', 4: 'last_activity_at', 12: 'status', 15: 'updated_at' });
+        CA_LISTING_SEARCH.bindSortableHeaders(key, camCtx.tableId, {
+          1: 'firm_name',
+          2: 'email_id',
+          3: 'sales_remarks',
+          4: 'ca_name',
+          5: 'team_size',
+          6: 'last_activity_at',
+          14: 'status',
+          17: 'updated_at',
+        });
       }
     } else if (key === 'employees') {
       var employees = items.map(mapEmployeeRecord);
@@ -26646,5 +26939,9 @@ if (otherInput) {
     enhanceEntityLookups: enhanceEntityLookups,
     mapLeadRecord: mapLeadRecord,
     mapEmployeeRecord: mapEmployeeRecord,
+    getCaMasterVisibleKeys: getCaMasterVisibleKeys,
+    getCaMasterColumnDefs: getCaMasterColumnDefs,
+    restoreCaMasterDefaultColumns: restoreCaMasterDefaultColumns,
+    applyCaMasterColumnVisibility: applyCaMasterColumnVisibility,
   };
 })();

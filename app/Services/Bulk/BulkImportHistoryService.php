@@ -7,8 +7,10 @@ use App\Models\BulkActionLog;
 use App\Models\ImportDuplicateLog;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use RuntimeException;
+use Throwable;
 
 class BulkImportHistoryService
 {
@@ -32,32 +34,73 @@ class BulkImportHistoryService
     /**
      * Permanently remove an import-history row (and its row logs).
      * Successfully imported CA Master leads are preserved (bulk_action_id nullOnDelete).
+     *
+     * Hard delete (BulkAction does not use SoftDeletes). Listing queries therefore
+     * cannot resurrect the row after a successful destroy.
      */
     public function destroy(int|string $bulkActionId): void
     {
-        DB::transaction(function () use ($bulkActionId): void {
-            $action = BulkAction::query()
-                ->where('action_type', 'ca_master_import')
-                ->whereKey($bulkActionId)
-                ->lockForUpdate()
-                ->firstOrFail();
+        $id = (int) $bulkActionId;
 
-            BulkActionLog::query()
-                ->where('bulk_action_id', $action->bulk_action_id)
-                ->delete();
+        Log::info('bulk_import_history.delete.request', [
+            'bulk_action_id' => $id,
+        ]);
 
-            ImportDuplicateLog::query()
-                ->where('bulk_action_id', $action->bulk_action_id)
-                ->delete();
+        try {
+            DB::transaction(function () use ($id): void {
+                $action = BulkAction::query()
+                    ->where('action_type', 'ca_master_import')
+                    ->whereKey($id)
+                    ->lockForUpdate()
+                    ->firstOrFail();
 
-            if ($action->output_path && Storage::disk('local')->exists($action->output_path)) {
-                Storage::disk('local')->delete($action->output_path);
-            }
+                $logsDeleted = BulkActionLog::query()
+                    ->where('bulk_action_id', $action->bulk_action_id)
+                    ->delete();
 
-            if (! $action->delete()) {
-                throw new RuntimeException('Unable to delete import history record.');
-            }
-        });
+                $dupLogsDeleted = ImportDuplicateLog::query()
+                    ->where('bulk_action_id', $action->bulk_action_id)
+                    ->delete();
+
+                if ($action->output_path && Storage::disk('local')->exists($action->output_path)) {
+                    Storage::disk('local')->delete($action->output_path);
+                }
+
+                // Force a hard DELETE and verify rows affected — never report success on 0.
+                $rowsAffected = BulkAction::query()
+                    ->where('action_type', 'ca_master_import')
+                    ->whereKey($action->bulk_action_id)
+                    ->delete();
+
+                if ($rowsAffected < 1) {
+                    Log::warning('bulk_import_history.delete.zero_rows', [
+                        'bulk_action_id' => $id,
+                        'logs_deleted' => $logsDeleted,
+                        'duplicate_logs_deleted' => $dupLogsDeleted,
+                    ]);
+                    throw new RuntimeException('Unable to delete import history record.');
+                }
+
+                if (BulkAction::query()->whereKey($action->bulk_action_id)->exists()) {
+                    throw new RuntimeException('Unable to delete import history record.');
+                }
+
+                Log::info('bulk_import_history.delete.committed', [
+                    'bulk_action_id' => $id,
+                    'rows_affected' => $rowsAffected,
+                    'logs_deleted' => $logsDeleted,
+                    'duplicate_logs_deleted' => $dupLogsDeleted,
+                ]);
+            });
+        } catch (Throwable $e) {
+            Log::error('bulk_import_history.delete.failed', [
+                'bulk_action_id' => $id,
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+
+            throw $e;
+        }
     }
 
     public function detail(int|string $bulkActionId): array

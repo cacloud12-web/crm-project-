@@ -1,0 +1,100 @@
+#!/usr/bin/expect -f
+# Upload Sheet52 import fixes + CSV to Hostinger, then run master:import-sales-sheet --apply.
+# Usage: expect scripts/deploy-and-import-sheet52.expect
+
+set timeout 7200
+set host "82.25.83.189"
+set port "65002"
+set user "u636438798"
+set remote_root "/home/u636438798/domains/crm.caclouddesk.com/public_html"
+set local_root "/Users/CAcloudDesk/Downloads/crm_project 2/crm_project/crm-project"
+set csv_local "$local_root/storage/app/sales.import/CA CloudDesk Leads - sheet52.csv"
+set csv_remote "$remote_root/storage/app/sales.import/CA CloudDesk Leads - sheet52.csv"
+set php "/opt/alt/php83/usr/bin/php"
+set log_remote "$remote_root/storage/logs/sheet52-import.log"
+
+set pass [exec osascript -e {display dialog "Hostinger SSH password — deploy Sheet52 import fixes and run live Master import." with title "Live Sheet52 Import" default answer "" with hidden answer} -e {text returned of result}]
+if {$pass eq ""} {
+  puts "Aborted: empty password"
+  exit 1
+}
+
+proc scp_file {local remote pass host port user} {
+  spawn scp -P $port -o StrictHostKeyChecking=accept-new $local ${user}@${host}:$remote
+  expect {
+    -re "(?i)password:" { send "$pass\r"; exp_continue }
+    eof
+  }
+  catch wait result
+  return [lindex $result 3]
+}
+
+proc scp_mkdir_via_ssh {dir pass host port user} {
+  spawn ssh -p $port -o StrictHostKeyChecking=accept-new ${user}@${host} "mkdir -p $dir"
+  expect {
+    -re "(?i)password:" { send "$pass\r"; exp_continue }
+    eof
+  }
+  catch wait result
+  return [lindex $result 3]
+}
+
+puts "Ensuring remote sales.import directory..."
+set rc [scp_mkdir_via_ssh "$remote_root/storage/app/sales.import" $pass $host $port $user]
+if {$rc != 0} { puts "FAIL mkdir rc=$rc"; exit $rc }
+
+set files [list \
+  "app/Console/Commands/ImportSalesSheetToMasterCommand.php" \
+  "app/Services/Bulk/SalesSheetMasterImportService.php" \
+  "app/Repositories/Leads/LeadPhoneNumberRepository.php" \
+  "app/Services/Leads/PhoneNormalizationService.php" \
+  "app/Services/Mapping/MasterDataMappingService.php" \
+  "app/Services/Mapping/MasterDataMatchingService.php" \
+  "app/Services/Master/LookupResolverService.php" \
+]
+
+foreach rel $files {
+  puts "Uploading $rel ..."
+  set rc [scp_file "$local_root/$rel" "$remote_root/$rel" $pass $host $port $user]
+  if {$rc != 0} { puts "FAIL $rel rc=$rc"; exit $rc }
+}
+
+puts "Uploading Sheet52 CSV (~3.5MB)..."
+set rc [scp_file $csv_local $csv_remote $pass $host $port $user]
+if {$rc != 0} { puts "FAIL csv rc=$rc"; exit $rc }
+
+puts "Starting live import (this can take 10–20+ minutes)..."
+spawn ssh -p $port -o StrictHostKeyChecking=accept-new ${user}@${host}
+expect {
+  -re "(?i)password:" { send "$pass\r" }
+  timeout { puts "SSH timeout"; exit 1 }
+}
+expect -re {[$#] }
+
+send "cd $remote_root && ls -la storage/app/sales.import/ && $php artisan master:import-sales-sheet --apply --batch=250 2>&1 | tee $log_remote; echo IMPORT_EXIT:\$?\r"
+expect {
+  -re {IMPORT_EXIT:([0-9]+)} {
+    set exitcode $expect_out(1,string)
+    puts "Import finished with exit=$exitcode"
+  }
+  timeout {
+    puts "Import timed out waiting for completion"
+    set exitcode 1
+  }
+}
+expect -re {[$#] }
+send "tail -80 $log_remote; echo TAIL_DONE\r"
+expect {
+  -re {TAIL_DONE} {}
+  timeout {}
+}
+expect -re {[$#] }
+send "exit\r"
+expect eof
+
+if {$exitcode != 0} {
+  puts "IMPORT_FAILED exit=$exitcode"
+  exit $exitcode
+}
+puts "IMPORT_OK"
+exit 0

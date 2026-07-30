@@ -471,7 +471,10 @@ class OcrRepairMissingCitiesService
 
                 $after = (int) $plan['new_city_id'];
                 $master->city_id = $after;
-                // Only city_id — never firm/CA/business fields.
+                // City link only for firm/CA fields — but clear stale missing_city quality flag.
+                foreach (\App\Support\Ocr\CaMasterCityQuality::attributesAfterRealCityLinked($master) as $key => $value) {
+                    $master->{$key} = $value;
+                }
                 $master->saveQuietly();
                 $updated++;
 

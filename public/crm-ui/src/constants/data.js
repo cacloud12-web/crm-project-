@@ -316,6 +316,7 @@ window.CAData = (function () {
       mobile: lead.mobile_no,
       alternateMobile: lead.alternate_mobile_no,
       email: lead.email_id,
+      salesRemarks: lead.sales_remarks,
       gst: lead.gst_no,
       state: lead.state,
       city: lead.city,

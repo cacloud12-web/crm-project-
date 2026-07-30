@@ -109,6 +109,37 @@ class CaMasterListingFiltersTest extends TestCase
         $this->assertSame('Hot', $result['items'][0]->status);
     }
 
+    public function test_email_id_column_filter_works(): void
+    {
+        $email = 'emailfilter'.str_replace('.', '', (string) microtime(true)).'@test.local';
+        CaMaster::query()->where('ca_id', $this->seededIds[1])->update(['email_id' => $email]);
+
+        $result = $this->search([
+            'email_id' => $email,
+            'search' => 'FilterTest',
+        ]);
+
+        $this->assertSame(1, $result['pagination']['total']);
+        $this->assertSame($email, $result['items'][0]->email_id);
+    }
+
+    public function test_sales_remarks_column_filter_and_global_search(): void
+    {
+        $marker = 'RemarksMarker'.str_replace('.', '', (string) microtime(true));
+        CaMaster::query()->where('ca_id', $this->seededIds[0])->update([
+            'sales_remarks' => 'Alpha '.$marker.' omega notes for filter',
+        ]);
+
+        $byFilter = $this->search(['sales_remarks' => $marker]);
+        $this->assertSame(1, $byFilter['pagination']['total']);
+        $this->assertStringContainsString($marker, (string) $byFilter['items'][0]->sales_remarks);
+
+        $bySearch = $this->search(['search' => $marker]);
+        $this->assertGreaterThanOrEqual(1, $bySearch['pagination']['total']);
+        $ids = collect($bySearch['items'])->pluck('ca_id')->all();
+        $this->assertContains($this->seededIds[0], $ids);
+    }
+
     public function test_listing_applier_does_not_throw_for_rating_filters(): void
     {
         $config = ListingQueryApplier::config('ca_masters');

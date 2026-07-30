@@ -1,0 +1,64 @@
+#!/usr/bin/env expect -f
+# READ-ONLY: export prod missing-city OCR-linked masters + cities via SSH.
+# No app uploads. No DB writes. No repair.
+
+set timeout 180
+set host "82.25.83.189"
+set port "65002"
+set user "u636438798"
+set remote_root "/home/u636438798/domains/crm.caclouddesk.com/public_html"
+set local_dir "/Users/CAcloudDesk/Downloads/crm_project 2/crm_project/crm-project/storage/app/audits"
+
+set pass [exec osascript -e {display dialog "Hostinger SSH password — READ-ONLY export of 10055 missing-city masters + cities (SELECT only)." with title "Production export" default answer "" with hidden answer} -e {text returned of result}]
+if {$pass eq ""} {
+  puts "Aborted: empty password"
+  exit 1
+}
+
+spawn ssh -p $port -o StrictHostKeyChecking=accept-new ${user}@${host}
+expect {
+  -re "(?i)password:" { send "$pass\r" }
+  timeout { puts "SSH connect timeout"; exit 1 }
+}
+expect {
+  -re {[$#] } {}
+  -re "(?i)permission denied" { puts "Auth failed"; exit 1 }
+  timeout { puts "Shell timeout"; exit 1 }
+}
+
+send "cd $remote_root && mkdir -p storage/app/audits && /opt/alt/php83/usr/bin/php -d memory_limit=512M <<'PHP'\r"
+expect -re {> }
+
+# Send PHP line by line carefully — expect may choke on large heredocs.
+# Use a compact one-liner file created with printf instead.
+send "PHP\r"
+expect -re {[$#] }
+
+send " /opt/alt/php83/usr/bin/php -d memory_limit=512M -r '\$a=require \"vendor/autoload.php\"; \$app=require \"bootstrap/app.php\"; \$app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); \$o=fopen(\"storage/app/audits/prod-ocr-linked-missing-masters.csv\",\"wb\"); fputcsv(\$o,[\"ca_id\",\"firm_name\",\"city_id\",\"ocr_city_text\",\"source_ocr_row_id\",\"source_ocr_document_id\"]); \$n=0; Illuminate\\Support\\Facades\\DB::table(\"ca_masters\")->whereNull(\"deleted_at\")->where(function(\$q){\$q->whereNull(\"city_id\")->orWhere(\"city_id\",0);})->whereNotNull(\"source_ocr_row_id\")->orderBy(\"ca_id\")->select([\"ca_id\",\"firm_name\",\"city_id\",\"ocr_city_text\",\"source_ocr_row_id\",\"source_ocr_document_id\"])->chunkById(500,function(\$rows) use(\$o,&\$n){foreach(\$rows as \$r){fputcsv(\$o,\[\$r->ca_id,\$r->firm_name,\$r->city_id,\$r->ocr_city_text,\$r->source_ocr_row_id,\$r->source_ocr_document_id\]); \$n++;}}); fclose(\$o); \$c=fopen(\"storage/app/audits/prod-cities.csv\",\"wb\"); fputcsv(\$c,\[\"city_id\",\"city_name\",\"state_id\"]); \$cn=0; foreach(Illuminate\\Support\\Facades\\DB::table(\"cities\")->get() as \$x){\$id=\$x->city_id??\$x->id; \$name=\$x->city_name??\$x->name; fputcsv(\$c,\[\$id,\$name,\$x->state_id??\"\"]); \$cn++;} fclose(\$c); echo \"MASTERS=\$n CITIES=\$cn\\n\";'\r"
+
+set timeout 600
+expect {
+  -re {MASTERS=([0-9]+) CITIES=([0-9]+)} {
+    puts "Export ok"
+  }
+  -re {SQLSTATE|Fatal error|Error} {
+    puts "Export failed"
+    exit 1
+  }
+  timeout {
+    puts "Export timeout"
+    exit 1
+  }
+}
+expect -re {[$#] }
+send "exit\r"
+expect eof
+
+puts "Downloading CSVs..."
+spawn scp -P $port -o StrictHostKeyChecking=accept-new ${user}@${host}:$remote_root/storage/app/audits/prod-ocr-linked-missing-masters.csv ${user}@${host}:$remote_root/storage/app/audits/prod-cities.csv "$local_dir/"
+expect {
+  -re "(?i)password:" { send "$pass\r"; exp_continue }
+  eof {}
+  timeout { puts "SCP timeout"; exit 1 }
+}
+puts "DONE"
