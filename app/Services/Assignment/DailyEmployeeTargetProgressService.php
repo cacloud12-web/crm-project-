@@ -5,17 +5,15 @@ namespace App\Services\Assignment;
 use App\Models\CallLog;
 use App\Models\CaMaster;
 use App\Models\DailyEmployeeTarget;
+use App\Models\DemoSchedule;
 use App\Models\EmailLog;
 use App\Models\FollowUp;
 use App\Models\SmsLog;
-use App\Services\Dashboard\DemoMetricsService;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class DailyEmployeeTargetProgressService
 {
-    public function __construct(
-        private readonly DemoMetricsService $demoMetrics,
-    ) {}
     private const COMPLETED_FOLLOWUP = ['Completed', 'Closed', 'Done'];
 
     private const EMAIL_SUCCESS = ['Sent', 'Delivered', 'Mapped', 'Queued'];
@@ -23,19 +21,174 @@ class DailyEmployeeTargetProgressService
     private const SMS_SUCCESS = ['Sent', 'Delivered', 'Mapped', 'Queued', 'Pending'];
 
     /**
-     * @return array<string, mixed>
+     * @return array<string, int>
      */
     public function achievementsForEmployee(int $employeeId, Carbon|string $date): array
     {
         $dateString = $date instanceof Carbon ? $date->toDateString() : (string) $date;
+        $byEmployee = $this->achievementsForEmployeesOnDate([$employeeId], $dateString);
+
+        return $byEmployee[$employeeId] ?? $this->emptyAchievements();
+    }
+
+    /**
+     * Batch achievements for many employees on one calendar day (org dashboard / assignment cards).
+     *
+     * @param  list<int>  $employeeIds
+     * @return array<int, array<string, int>>
+     */
+    public function achievementsForEmployeesOnDate(array $employeeIds, Carbon|string $date): array
+    {
+        $dateString = $date instanceof Carbon ? $date->toDateString() : (string) $date;
+        $ids = array_values(array_unique(array_map('intval', $employeeIds)));
+        if ($ids === []) {
+            return [];
+        }
+
+        $start = Carbon::parse($dateString, config('app.timezone', 'UTC'))->startOfDay();
+        $end = $start->copy()->endOfDay();
+
+        $leads = CaMaster::query()
+            ->countableInStatistics()
+            ->whereIn('created_by_employee_id', $ids)
+            ->whereBetween('created_at', [$start, $end])
+            ->selectRaw('created_by_employee_id as employee_id, COUNT(*) as aggregate')
+            ->groupBy('created_by_employee_id')
+            ->pluck('aggregate', 'employee_id');
+
+        $calls = CallLog::query()
+            ->whereIn('employee_id', $ids)
+            ->whereBetween('called_at', [$start, $end])
+            ->selectRaw('employee_id, COUNT(*) as aggregate')
+            ->groupBy('employee_id')
+            ->pluck('aggregate', 'employee_id');
+
+        $demos = DemoSchedule::query()
+            ->whereIn('employee_id', $ids)
+            ->whereBetween('created_at', [$start, $end])
+            ->whereNotIn('status', [DemoSchedule::STATUS_CANCELLED])
+            ->selectRaw('employee_id, COUNT(DISTINCT demo_schedules.id) as aggregate')
+            ->groupBy('employee_id')
+            ->pluck('aggregate', 'employee_id');
+
+        $followups = FollowUp::query()
+            ->whereIn('employee_id', $ids)
+            ->whereIn('status', self::COMPLETED_FOLLOWUP)
+            ->whereBetween('updated_at', [$start, $end])
+            ->selectRaw('employee_id, COUNT(*) as aggregate')
+            ->groupBy('employee_id')
+            ->pluck('aggregate', 'employee_id');
+
+        $emails = EmailLog::query()
+            ->whereIn('employee_id', $ids)
+            ->whereIn('email_status', self::EMAIL_SUCCESS)
+            ->whereBetween('created_at', [$start, $end])
+            ->selectRaw('employee_id, COUNT(*) as aggregate')
+            ->groupBy('employee_id')
+            ->pluck('aggregate', 'employee_id');
+
+        $sms = SmsLog::query()
+            ->whereIn('employee_id', $ids)
+            ->whereIn('sms_status', self::SMS_SUCCESS)
+            ->whereBetween('created_at', [$start, $end])
+            ->selectRaw('employee_id, COUNT(*) as aggregate')
+            ->groupBy('employee_id')
+            ->pluck('aggregate', 'employee_id');
+
+        $out = [];
+        foreach ($ids as $id) {
+            $out[$id] = [
+                'lead_completed' => (int) ($leads[$id] ?? 0),
+                'call_completed' => (int) ($calls[$id] ?? 0),
+                'demo_completed' => (int) ($demos[$id] ?? 0),
+                'followup_completed' => (int) ($followups[$id] ?? 0),
+                'email_completed' => (int) ($emails[$id] ?? 0),
+                'sms_completed' => (int) ($sms[$id] ?? 0),
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Sum achievements for one employee across many calendar dates (YTD working days).
+     * Uses 6 range/group queries instead of 6 × N day loops.
+     *
+     * @param  list<string>  $workingDates  Y-m-d strings
+     * @return array<string, int>
+     */
+    public function achievementsForEmployeeOnDates(int $employeeId, array $workingDates): array
+    {
+        $dates = array_values(array_unique(array_filter($workingDates)));
+        if ($dates === []) {
+            return $this->emptyAchievements();
+        }
+
+        sort($dates);
+        $from = Carbon::parse($dates[0], config('app.timezone', 'UTC'))->startOfDay();
+        $to = Carbon::parse($dates[array_key_last($dates)], config('app.timezone', 'UTC'))->endOfDay();
+        $dateSet = array_fill_keys($dates, true);
 
         return [
-            'lead_completed' => $this->leadCompleted($employeeId, $dateString),
-            'call_completed' => $this->callCompleted($employeeId, $dateString),
-            'demo_completed' => $this->demoCompleted($employeeId, $dateString),
-            'followup_completed' => $this->followupCompleted($employeeId, $dateString),
-            'email_completed' => $this->emailCompleted($employeeId, $dateString),
-            'sms_completed' => $this->smsCompleted($employeeId, $dateString),
+            'lead_completed' => $this->sumGroupedDates(
+                CaMaster::query()
+                    ->countableInStatistics()
+                    ->where('created_by_employee_id', $employeeId)
+                    ->whereBetween('created_at', [$from, $to])
+                    ->selectRaw($this->dateExpr('created_at').' as activity_date, COUNT(*) as aggregate')
+                    ->groupBy(DB::raw($this->dateExpr('created_at')))
+                    ->pluck('aggregate', 'activity_date'),
+                $dateSet,
+            ),
+            'call_completed' => $this->sumGroupedDates(
+                CallLog::query()
+                    ->where('employee_id', $employeeId)
+                    ->whereBetween('called_at', [$from, $to])
+                    ->selectRaw($this->dateExpr('called_at').' as activity_date, COUNT(*) as aggregate')
+                    ->groupBy(DB::raw($this->dateExpr('called_at')))
+                    ->pluck('aggregate', 'activity_date'),
+                $dateSet,
+            ),
+            'demo_completed' => $this->sumGroupedDates(
+                DemoSchedule::query()
+                    ->where('employee_id', $employeeId)
+                    ->whereBetween('created_at', [$from, $to])
+                    ->whereNotIn('status', [DemoSchedule::STATUS_CANCELLED])
+                    ->selectRaw($this->dateExpr('created_at').' as activity_date, COUNT(DISTINCT demo_schedules.id) as aggregate')
+                    ->groupBy(DB::raw($this->dateExpr('created_at')))
+                    ->pluck('aggregate', 'activity_date'),
+                $dateSet,
+            ),
+            'followup_completed' => $this->sumGroupedDates(
+                FollowUp::query()
+                    ->where('employee_id', $employeeId)
+                    ->whereIn('status', self::COMPLETED_FOLLOWUP)
+                    ->whereBetween('updated_at', [$from, $to])
+                    ->selectRaw($this->dateExpr('updated_at').' as activity_date, COUNT(*) as aggregate')
+                    ->groupBy(DB::raw($this->dateExpr('updated_at')))
+                    ->pluck('aggregate', 'activity_date'),
+                $dateSet,
+            ),
+            'email_completed' => $this->sumGroupedDates(
+                EmailLog::query()
+                    ->where('employee_id', $employeeId)
+                    ->whereIn('email_status', self::EMAIL_SUCCESS)
+                    ->whereBetween('created_at', [$from, $to])
+                    ->selectRaw($this->dateExpr('created_at').' as activity_date, COUNT(*) as aggregate')
+                    ->groupBy(DB::raw($this->dateExpr('created_at')))
+                    ->pluck('aggregate', 'activity_date'),
+                $dateSet,
+            ),
+            'sms_completed' => $this->sumGroupedDates(
+                SmsLog::query()
+                    ->where('employee_id', $employeeId)
+                    ->whereIn('sms_status', self::SMS_SUCCESS)
+                    ->whereBetween('created_at', [$from, $to])
+                    ->selectRaw($this->dateExpr('created_at').' as activity_date, COUNT(*) as aggregate')
+                    ->groupBy(DB::raw($this->dateExpr('created_at')))
+                    ->pluck('aggregate', 'activity_date'),
+                $dateSet,
+            ),
         ];
     }
 
@@ -151,52 +304,44 @@ class DailyEmployeeTargetProgressService
         };
     }
 
-    private function leadCompleted(int $employeeId, string $date): int
+    /**
+     * @return array<string, int>
+     */
+    private function emptyAchievements(): array
     {
-        return CaMaster::query()
-            ->countableInStatistics()
-            ->where('created_by_employee_id', $employeeId)
-            ->whereDate('created_at', $date)
-            ->count();
+        return [
+            'lead_completed' => 0,
+            'call_completed' => 0,
+            'demo_completed' => 0,
+            'followup_completed' => 0,
+            'email_completed' => 0,
+            'sms_completed' => 0,
+        ];
     }
 
-    private function callCompleted(int $employeeId, string $date): int
+    private function dateExpr(string $column): string
     {
-        return CallLog::query()
-            ->where('employee_id', $employeeId)
-            ->whereDate('called_at', $date)
-            ->count();
+        return match (DB::getDriverName()) {
+            'pgsql' => 'DATE('.$column.')',
+            'sqlite' => 'date('.$column.')',
+            default => 'DATE('.$column.')',
+        };
     }
 
-    private function demoCompleted(int $employeeId, string $date): int
+    /**
+     * @param  \Illuminate\Support\Collection<string, mixed>  $byDate
+     * @param  array<string, bool>  $dateSet
+     */
+    private function sumGroupedDates($byDate, array $dateSet): int
     {
-        return $this->demoMetrics->demosScheduledCreatedOnDate($employeeId, $date);
-    }
+        $total = 0;
+        foreach ($byDate as $date => $count) {
+            $key = substr((string) $date, 0, 10);
+            if (isset($dateSet[$key])) {
+                $total += (int) $count;
+            }
+        }
 
-    private function followupCompleted(int $employeeId, string $date): int
-    {
-        return FollowUp::query()
-            ->where('employee_id', $employeeId)
-            ->whereIn('status', self::COMPLETED_FOLLOWUP)
-            ->whereDate('updated_at', $date)
-            ->count();
-    }
-
-    private function emailCompleted(int $employeeId, string $date): int
-    {
-        return EmailLog::query()
-            ->where('employee_id', $employeeId)
-            ->whereIn('email_status', self::EMAIL_SUCCESS)
-            ->whereDate('created_at', $date)
-            ->count();
-    }
-
-    private function smsCompleted(int $employeeId, string $date): int
-    {
-        return SmsLog::query()
-            ->where('employee_id', $employeeId)
-            ->whereIn('sms_status', self::SMS_SUCCESS)
-            ->whereDate('created_at', $date)
-            ->count();
+        return $total;
     }
 }

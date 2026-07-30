@@ -19,6 +19,9 @@ class EmployeeDataScopeService
         'assignment_access',
     ];
 
+    /** @var array<int, int|null> */
+    private static array $resolvedEmployeeIdsByUserId = [];
+
     public function __construct(
         private readonly RbacService $rbacService,
         private readonly ActivityLogService $activityLogService,
@@ -35,19 +38,24 @@ class EmployeeDataScopeService
             return null;
         }
 
+        $userId = (int) $user->id;
+        if (array_key_exists($userId, self::$resolvedEmployeeIdsByUserId)) {
+            return self::$resolvedEmployeeIdsByUserId[$userId];
+        }
+
         $employeeId = Employee::query()
             ->where('user_id', $user->id)
             ->value('employee_id');
 
         if ($employeeId) {
-            return (int) $employeeId;
+            return self::$resolvedEmployeeIdsByUserId[$userId] = (int) $employeeId;
         }
 
         $employeeId = Employee::query()
             ->where('email_id', $user->email)
             ->value('employee_id');
 
-        return $employeeId ? (int) $employeeId : null;
+        return self::$resolvedEmployeeIdsByUserId[$userId] = $employeeId ? (int) $employeeId : null;
     }
 
     /**

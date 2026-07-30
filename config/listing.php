@@ -57,6 +57,8 @@ return [
         ],
         'date_column' => 'created_at',
         'exclude_columns' => ['google_places_cache'],
+        'cache_unfiltered_total' => true,
+        'cache_unfiltered_total_ttl' => 30,
     ],
 
     'employees' => [

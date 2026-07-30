@@ -77,34 +77,7 @@ class YearlyEmployeeTargetProgressService
      */
     private function achievementsOnWorkingDays(int $employeeId, array $workingDates): array
     {
-        if ($workingDates === []) {
-            return [
-                'lead_completed' => 0,
-                'call_completed' => 0,
-                'demo_completed' => 0,
-                'followup_completed' => 0,
-                'email_completed' => 0,
-                'sms_completed' => 0,
-            ];
-        }
-
-        $totals = [
-            'lead_completed' => 0,
-            'call_completed' => 0,
-            'demo_completed' => 0,
-            'followup_completed' => 0,
-            'email_completed' => 0,
-            'sms_completed' => 0,
-        ];
-
-        foreach ($workingDates as $date) {
-            $day = $this->dailyProgressService->achievementsForEmployee($employeeId, $date);
-            foreach ($totals as $key => $value) {
-                $totals[$key] += (int) ($day[$key] ?? 0);
-            }
-        }
-
-        return $totals;
+        return $this->dailyProgressService->achievementsForEmployeeOnDates($employeeId, $workingDates);
     }
 
     /**

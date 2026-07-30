@@ -180,9 +180,7 @@ class LeadActivityTimelineService
             $items->push($this->normalizeLeadAction($action, $leads->get((int) $action->ca_id)));
         }
 
-        foreach ($caIds as $caId) {
-            $this->appendCommunicationLogs((int) $caId, $leads->get((int) $caId), $items, $usedKeys, $periodBounds);
-        }
+        $this->appendCommunicationLogsForCaIds($caIds, $leads, $items, $usedKeys, $periodBounds);
 
         $logQuery = ActivityLog::query()
             ->whereIn('record_id', collect($caIds)->map(fn ($id) => (string) $id)->all())
@@ -586,55 +584,71 @@ class LeadActivityTimelineService
      * @param  Collection<int, array<string, mixed>>  $items
      * @param  Collection<int, string>  $usedKeys
      */
-    private function appendCommunicationLogs(int $caId, ?CaMaster $lead, Collection $items, Collection $usedKeys, ?array $periodBounds = null): void
+    /**
+     * @param  list<int>  $caIds
+     * @param  Collection<int, CaMaster|null>  $leads
+     * @param  Collection<int, array<string, mixed>>  $items
+     * @param  Collection<int, string>  $usedKeys
+     * @param  array{0: Carbon, 1: Carbon}|null  $periodBounds
+     */
+    private function appendCommunicationLogsForCaIds(array $caIds, Collection $leads, Collection $items, Collection $usedKeys, ?array $periodBounds = null): void
     {
+        if ($caIds === []) {
+            return;
+        }
+
         $emailQuery = EmailLog::query()
-            ->where('ca_id', $caId)
+            ->whereIn('ca_id', $caIds)
             ->whereIn('email_status', self::EMAIL_SUCCESS)
             ->orderByDesc('created_at');
         $this->applyPeriodToQuery($emailQuery, 'created_at', $periodBounds);
-        $emailQuery->limit(50)
-            ->get()
-            ->each(function (EmailLog $log) use ($items, $usedKeys, $lead) {
-                $key = 'email_log:'.$log->id;
-                if ($usedKeys->contains($key)) {
-                    return;
-                }
-                $usedKeys->push($key);
-                $items->push($this->normalizeCommunication($log, $lead, 'Email Sent', 'mail', $log->created_at, $log->subject));
-            });
+        foreach ($emailQuery->limit(min(500, max(50, count($caIds) * 20)))->get() as $log) {
+            $key = 'email_log:'.$log->id;
+            if ($usedKeys->contains($key)) {
+                continue;
+            }
+            $usedKeys->push($key);
+            $items->push($this->normalizeCommunication($log, $leads->get((int) $log->ca_id), 'Email Sent', 'mail', $log->created_at, $log->subject));
+        }
 
         $smsQuery = SmsLog::query()
-            ->where('ca_id', $caId)
+            ->whereIn('ca_id', $caIds)
             ->whereIn('sms_status', self::SMS_SUCCESS)
             ->orderByDesc('created_at');
         $this->applyPeriodToQuery($smsQuery, 'created_at', $periodBounds);
-        $smsQuery->limit(50)
-            ->get()
-            ->each(function (SmsLog $log) use ($items, $usedKeys, $lead) {
-                $key = 'sms_log:'.$log->id;
-                if ($usedKeys->contains($key)) {
-                    return;
-                }
-                $usedKeys->push($key);
-                $items->push($this->normalizeCommunication($log, $lead, 'SMS Sent', 'smartphone', $log->sent_at ?? $log->created_at, $log->message));
-            });
+        foreach ($smsQuery->limit(min(500, max(50, count($caIds) * 20)))->get() as $log) {
+            $key = 'sms_log:'.$log->id;
+            if ($usedKeys->contains($key)) {
+                continue;
+            }
+            $usedKeys->push($key);
+            $items->push($this->normalizeCommunication($log, $leads->get((int) $log->ca_id), 'SMS Sent', 'smartphone', $log->sent_at ?? $log->created_at, $log->message));
+        }
 
         $waQuery = WaMessageLog::query()
-            ->where('ca_id', $caId)
+            ->whereIn('ca_id', $caIds)
             ->whereIn('message_status', self::WA_SUCCESS)
             ->orderByDesc('created_at');
         $this->applyPeriodToQuery($waQuery, 'created_at', $periodBounds);
-        $waQuery->limit(50)
-            ->get()
-            ->each(function (WaMessageLog $log) use ($items, $usedKeys, $lead) {
-                $key = 'wa_log:'.$log->id;
-                if ($usedKeys->contains($key)) {
-                    return;
-                }
-                $usedKeys->push($key);
-                $items->push($this->normalizeCommunication($log, $lead, 'WhatsApp Sent', 'message-circle', $log->sent_at ?? $log->created_at, $log->message));
-            });
+        foreach ($waQuery->limit(min(500, max(50, count($caIds) * 20)))->get() as $log) {
+            $key = 'wa_log:'.$log->id;
+            if ($usedKeys->contains($key)) {
+                continue;
+            }
+            $usedKeys->push($key);
+            $items->push($this->normalizeCommunication($log, $leads->get((int) $log->ca_id), 'WhatsApp Sent', 'message-circle', $log->sent_at ?? $log->created_at, $log->message));
+        }
+    }
+
+    private function appendCommunicationLogs(int $caId, ?CaMaster $lead, Collection $items, Collection $usedKeys, ?array $periodBounds = null): void
+    {
+        $this->appendCommunicationLogsForCaIds(
+            [$caId],
+            collect([$caId => $lead]),
+            $items,
+            $usedKeys,
+            $periodBounds,
+        );
     }
 
     /**

@@ -15,6 +15,7 @@ trait SearchesListings
         $config = ListingQueryApplier::config($configKey);
         $scope = app(EmployeeDataScopeService::class);
         $params = $scope->stripScopedParams($params, $config);
+        $params['_scope_key'] = $scope->cacheScopeKey();
         $scope->applyToListing($query, $config);
 
         $all = filter_var($params['all'] ?? false, FILTER_VALIDATE_BOOLEAN);

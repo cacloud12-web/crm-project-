@@ -25,8 +25,7 @@ class LeadOwnershipService
       return true;
     }
 
-    $employeeId = Employee::query()->where('user_id', $user->id)->value('employee_id')
-      ?: Employee::query()->where('email_id', $user->email)->value('employee_id');
+    $employeeId = app(\App\Services\Rbac\EmployeeDataScopeService::class)->resolveEmployeeId($user);
 
     if (! $employeeId) {
       return false;

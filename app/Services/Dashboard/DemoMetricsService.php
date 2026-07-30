@@ -195,21 +195,57 @@ class DemoMetricsService
      */
     public function aggregateForRange(?int $employeeId, Carbon $from, Carbon $to): array
     {
-        $scheduledCreated = $this->demosScheduledInRange($employeeId, $from, $to);
-        $completed = $this->demosCompletedInRange($employeeId, $from, $to);
+        $fromStart = $from->copy()->startOfDay();
+        $toEnd = $to->copy()->endOfDay();
         $today = now()->toDateString();
+        [$todayStart, $todayEnd] = $this->dayBounds($today);
+        $now = now();
+
+        $cancelled = DemoSchedule::STATUS_CANCELLED;
+        $completed = DemoSchedule::STATUS_COMPLETED;
+        $rescheduled = DemoSchedule::STATUS_RESCHEDULED;
+        $missed = DemoSchedule::STATUS_MISSED;
+        $scheduled = DemoSchedule::STATUS_SCHEDULED;
+
+        $row = $this->scopedQuery($employeeId)
+            ->selectRaw(implode(', ', [
+                "COUNT(DISTINCT CASE WHEN created_at BETWEEN ? AND ? AND status <> ? THEN demo_schedules.id END) as demos_scheduled",
+                "COUNT(DISTINCT CASE WHEN created_at BETWEEN ? AND ? AND status <> ? THEN demo_schedules.id END) as demos_scheduled_today",
+                "COUNT(DISTINCT CASE WHEN status = ? AND updated_at BETWEEN ? AND ? THEN demo_schedules.id END) as demos_completed",
+                "COUNT(DISTINCT CASE WHEN status = ? AND updated_at BETWEEN ? AND ? THEN demo_schedules.id END) as demos_completed_today",
+                "COUNT(DISTINCT CASE WHEN status = ? AND updated_at BETWEEN ? AND ? THEN demo_schedules.id END) as demos_cancelled",
+                "COUNT(DISTINCT CASE WHEN status = ? AND updated_at BETWEEN ? AND ? THEN demo_schedules.id END) as demos_rescheduled",
+                "COUNT(DISTINCT CASE WHEN (
+                    (status = ? AND updated_at BETWEEN ? AND ?)
+                    OR (status = ? AND demo_at < ? AND demo_at BETWEEN ? AND ?)
+                ) THEN demo_schedules.id END) as missed_demos",
+            ]), [
+                $fromStart, $toEnd, $cancelled,
+                $todayStart, $todayEnd, $cancelled,
+                $completed, $fromStart, $toEnd,
+                $completed, $todayStart, $todayEnd,
+                $cancelled, $fromStart, $toEnd,
+                $rescheduled, $fromStart, $toEnd,
+                $missed, $fromStart, $toEnd,
+                $scheduled, $now, $fromStart, $toEnd,
+            ])
+            ->first();
+
+        $scheduledCreated = (int) ($row->demos_scheduled ?? 0);
+        $completedCount = (int) ($row->demos_completed ?? 0);
+        $purchased = $this->demosPurchasedInRange($employeeId, $from, $to);
 
         return [
             'demos_scheduled' => $scheduledCreated,
-            'demos_scheduled_today' => $this->demosScheduledCreatedOnDate($employeeId, $today),
-            'demos_completed' => $completed,
-            'demos_completed_today' => $this->demosCompletedOnDate($employeeId, $today),
-            'demos_cancelled' => $this->demosCancelledInRange($employeeId, $from, $to),
-            'demos_rescheduled' => $this->demosRescheduledInRange($employeeId, $from, $to),
-            'missed_demos' => $this->demosMissedInRange($employeeId, $from, $to),
-            'demos_purchased' => $this->demosPurchasedInRange($employeeId, $from, $to),
+            'demos_scheduled_today' => (int) ($row->demos_scheduled_today ?? 0),
+            'demos_completed' => $completedCount,
+            'demos_completed_today' => (int) ($row->demos_completed_today ?? 0),
+            'demos_cancelled' => (int) ($row->demos_cancelled ?? 0),
+            'demos_rescheduled' => (int) ($row->demos_rescheduled ?? 0),
+            'missed_demos' => (int) ($row->missed_demos ?? 0),
+            'demos_purchased' => $purchased,
             'demo_conversion_rate' => $scheduledCreated > 0
-                ? round(($completed / $scheduledCreated) * 100, 1)
+                ? round(($completedCount / $scheduledCreated) * 100, 1)
                 : 0.0,
         ];
     }

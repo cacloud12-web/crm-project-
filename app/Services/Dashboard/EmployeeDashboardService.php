@@ -102,9 +102,13 @@ class EmployeeDashboardService
                 'overdue_tasks' => $taskCounts['overdue'],
                 'completed_tasks_today' => $taskCounts['completed_today'],
                 'upcoming_this_week' => $followUpCounts['upcoming_week'],
+                'new_leads' => (int) ($leadCounts['status_new'] ?? 0),
                 'hot_leads' => (int) ($leadCounts['hot'] ?? 0),
                 'warm_leads' => (int) ($leadCounts['warm'] ?? 0),
                 'cold_leads' => (int) ($leadCounts['cold'] ?? 0),
+                'pipeline_leads' => (int) ($leadCounts['pipeline'] ?? 0),
+                'converted_leads' => (int) ($leadCounts['converted'] ?? 0),
+                'lost_leads' => (int) ($leadCounts['lost'] ?? 0),
                 'conversion_pct' => $this->conversionPct($employeeId, (int) ($leadCounts['total'] ?? 0)),
                 'todays_target' => (int) ($targetProgress['today']['demo_target'] ?? 0),
                 'todays_achievement' => (int) ($targetProgress['today']['demo_achieved'] ?? 0),
@@ -152,11 +156,20 @@ class EmployeeDashboardService
         $query = CaMaster::query()->countableInStatistics();
         $this->employeeDataScope->scopeCaMasterQuery($query, $employeeId);
 
+        $pipelineStatuses = \App\Support\CrmPipeline::pipelineSegmentStatuses();
+        $pipelineList = $pipelineStatuses === []
+            ? "''"
+            : collect($pipelineStatuses)->map(fn ($s) => "'".str_replace("'", "''", $s)."'")->implode(',');
+
         $row = $query
             ->selectRaw('COUNT(*) as total')
             ->selectRaw(SqlAggregate::countFilter('*', "status = 'Hot'").' as hot')
             ->selectRaw(SqlAggregate::countFilter('*', "status = 'Warm'").' as warm')
             ->selectRaw(SqlAggregate::countFilter('*', "status = 'Cold'").' as cold')
+            ->selectRaw(SqlAggregate::countFilter('*', "status = 'New'").' as status_new')
+            ->selectRaw(SqlAggregate::countFilter('*', "status IN ({$pipelineList})").' as pipeline')
+            ->selectRaw(SqlAggregate::countFilter('*', "status IN ('Active', 'Won') OR software_purchased = true").' as converted')
+            ->selectRaw(SqlAggregate::countFilter('*', "status IN ('Lost', 'Inactive')").' as lost')
             ->first();
 
         return [
@@ -164,6 +177,10 @@ class EmployeeDashboardService
             'hot' => (int) ($row->hot ?? 0),
             'warm' => (int) ($row->warm ?? 0),
             'cold' => (int) ($row->cold ?? 0),
+            'status_new' => (int) ($row->status_new ?? 0),
+            'pipeline' => (int) ($row->pipeline ?? 0),
+            'converted' => (int) ($row->converted ?? 0),
+            'lost' => (int) ($row->lost ?? 0),
         ];
     }
 

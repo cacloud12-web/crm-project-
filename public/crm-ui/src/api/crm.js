@@ -5615,17 +5615,31 @@ if (otherInput) {
     var page = btn.getAttribute('data-nav-page') || btn.getAttribute('data-emp-nav') || '';
     if (!page) return;
 
+    // Role-aware lead hub: employees use Leads; managers/admins/super-admins use Master Data.
+    if (page === 'ca-master' && isEmployeeUser()) {
+      page = 'leads';
+    } else if (page === 'leads' && !isEmployeeUser()) {
+      page = 'ca-master';
+    }
+
+    if (window.CA_RBAC && typeof CA_RBAC.canAccessPage === 'function' && !CA_RBAC.canAccessPage(page)) {
+      if (typeof toast === 'function') toast('You do not have permission to open this page.', 'warning');
+      return;
+    }
+
     var ctx = buildDashboardNavContext();
     var intent = {
       page: page,
       label: btn.getAttribute('data-kpi') || btn.getAttribute('aria-label') || page,
       leadSegment: btn.getAttribute('data-lead-filter') || btn.getAttribute('data-emp-lead-filter') || '',
       leadStatus: btn.getAttribute('data-lead-status') || '',
+      leadView: btn.getAttribute('data-lead-view') || '',
       followupDue: btn.getAttribute('data-followup-filter') || btn.getAttribute('data-emp-followup-filter') || '',
       followupType: btn.getAttribute('data-followup-type') || '',
       followupStatus: btn.getAttribute('data-followup-status') || '',
       assignmentStatus: btn.getAttribute('data-assignment-status') || '',
       assignmentType: btn.getAttribute('data-assignment-type') || '',
+      assignmentPanel: btn.getAttribute('data-assignment-panel') || '',
       commLogStatus: btn.getAttribute('data-comm-log-status') || '',
       consentTab: btn.getAttribute('data-consent-tab') || '',
       workflowTab: btn.getAttribute('data-workflow-tab') || '',
@@ -5639,10 +5653,12 @@ if (otherInput) {
 
     // Legacy globals (still used by some onPage handlers).
     if (intent.leadSegment) window._leadSegmentFilter = intent.leadSegment;
+    if (intent.leadView) window._pendingLeadView = intent.leadView;
     if (intent.followupDue) window._followupDateFilter = intent.followupDue;
     if (intent.commLogStatus) window._commLogStatusFilter = intent.commLogStatus;
     if (intent.consentTab) window._consentDndTab = intent.consentTab;
     if (intent.workflowTab) window._workflowListTab = intent.workflowTab;
+    if (intent.assignmentPanel) window._assignmentFocusSection = intent.assignmentPanel;
 
     setDashboardNavIntent(intent);
     showDashboardNavLoading(intent.label);
@@ -5700,6 +5716,9 @@ if (otherInput) {
     if (intent.employeeName) {
       filters.executive = intent.employeeName;
     }
+    if (intent.leadView) {
+      window._pendingLeadView = intent.leadView;
+    }
 
     CA_LISTING_SEARCH.setState(listingKey || 'ca_masters', {
       page: 1,
@@ -5709,6 +5728,39 @@ if (otherInput) {
     consumeDashboardNavIntent();
     hideDashboardNavLoading();
     return true;
+  }
+
+  function applyPendingLeadViewFromDashboard() {
+    var view = window._pendingLeadView || '';
+    if (!view) return false;
+    window._pendingLeadView = '';
+    if (view === 'pipeline') {
+      if (document.getElementById('cam-hub') && typeof setCamView === 'function') {
+        setCamView('pipeline');
+        return true;
+      }
+      if (document.querySelector('[data-tab-group="leads-view"]') && typeof setLeadsView === 'function') {
+        setLeadsView('pipeline');
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function focusAssignmentSectionFromDashboard() {
+    var section = window._assignmentFocusSection || '';
+    if (!section) return;
+    window._assignmentFocusSection = '';
+    if (section === 'rotation') {
+      var el = document.getElementById('assign-rotation-section');
+      if (el) {
+        setTimeout(function () {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          el.classList.add('assign-section--focus');
+          setTimeout(function () { el.classList.remove('assign-section--focus'); }, 1800);
+        }, 80);
+      }
+    }
   }
 
   function applyDashboardNavIntentToFollowups() {
@@ -5752,10 +5804,12 @@ if (otherInput) {
         (card.leadFilter ? ' data-lead-filter="' + escapeHtml(card.leadFilter) + '"' : '') +
         (card.followupFilter ? ' data-followup-filter="' + escapeHtml(card.followupFilter) + '"' : '');
     if (card.leadStatus) attrs += ' data-lead-status="' + escapeHtml(card.leadStatus) + '"';
+    if (card.leadView) attrs += ' data-lead-view="' + escapeHtml(card.leadView) + '"';
     if (card.followupType) attrs += ' data-followup-type="' + escapeHtml(card.followupType) + '"';
     if (card.followupStatus) attrs += ' data-followup-status="' + escapeHtml(card.followupStatus) + '"';
     if (card.assignmentStatus) attrs += ' data-assignment-status="' + escapeHtml(card.assignmentStatus) + '"';
     if (card.assignmentType) attrs += ' data-assignment-type="' + escapeHtml(card.assignmentType) + '"';
+    if (card.assignmentPanel) attrs += ' data-assignment-panel="' + escapeHtml(card.assignmentPanel) + '"';
     if (card.commLogStatus) attrs += ' data-comm-log-status="' + escapeHtml(card.commLogStatus) + '"';
     if (card.workflowTab) attrs += ' data-workflow-tab="' + escapeHtml(card.workflowTab) + '"';
     if (card.consentTab) attrs += ' data-consent-tab="' + escapeHtml(card.consentTab) + '"';
@@ -5792,62 +5846,62 @@ if (otherInput) {
       title: 'Leads',
       cards: [
         { icon: 'users', label: 'Total Leads', key: 'total_leads', nav: 'ca-master', leadFilter: 'all', desc: 'Open Master Data — all firms' },
-        { icon: 'user-check', label: 'Assigned Leads', key: 'assigned_leads', nav: 'ca-master', leadFilter: 'all', desc: 'Open Master Data for assigned leads (employee filter preserved)' },
-        { icon: 'sparkles', label: 'New Leads', key: 'new_status_leads', nav: 'ca-master', leadFilter: 'status_new', desc: 'Firms with status New' },
-        { icon: 'flame', label: 'Hot Leads', key: 'hot_leads', nav: 'ca-master', leadFilter: 'hot', desc: 'Firms with status Hot' },
-        { icon: 'thermometer', label: 'Warm Leads', key: 'warm_leads', nav: 'ca-master', leadFilter: 'warm', desc: 'Firms with status Warm' },
-        { icon: 'snowflake', label: 'Cold Leads', key: 'cold_leads', nav: 'ca-master', leadFilter: 'cold', desc: 'Firms with status Cold' },
-        { icon: 'git-branch', label: 'In Pipeline', key: 'pipeline', nav: 'ca-master', leadFilter: 'pipeline', desc: 'Pipeline segment firms' },
-        { icon: 'trophy', label: 'Converted / Won', key: 'converted_leads', nav: 'ca-master', leadFilter: 'converted', desc: 'Active, Won, or purchased firms' },
-        { icon: 'user-x', label: 'Lost / Dead', key: 'lost_leads', nav: 'ca-master', leadFilter: 'lost', desc: 'Lost or Inactive firms' },
-        { icon: 'trending-up', label: 'Conversion Rate', key: 'conversion', nav: 'analytics', desc: 'Open analytics / conversion report' },
+        { icon: 'user-check', label: 'Assigned Leads', key: 'assigned_leads', nav: 'ca-master', leadFilter: 'all', desc: 'Open assigned leads list (employee filter preserved)' },
+        { icon: 'sparkles', label: 'New Leads', key: 'new_status_leads', nav: 'ca-master', leadFilter: 'status_new', desc: 'Leads with status New' },
+        { icon: 'flame', label: 'Hot Leads', key: 'hot_leads', nav: 'ca-master', leadFilter: 'hot', desc: 'Leads with status Hot' },
+        { icon: 'thermometer', label: 'Warm Leads', key: 'warm_leads', nav: 'ca-master', leadFilter: 'warm', desc: 'Leads with status Warm' },
+        { icon: 'snowflake', label: 'Cold Leads', key: 'cold_leads', nav: 'ca-master', leadFilter: 'cold', desc: 'Leads with status Cold' },
+        { icon: 'git-branch', label: 'In Pipeline', key: 'pipeline', nav: 'ca-master', leadFilter: 'pipeline', leadView: 'pipeline', desc: 'Open Pipeline / Kanban board' },
+        { icon: 'trophy', label: 'Converted / Won', key: 'converted_leads', nav: 'ca-master', leadFilter: 'converted', desc: 'Converted / Won leads' },
+        { icon: 'user-x', label: 'Lost / Dead', key: 'lost_leads', nav: 'ca-master', leadFilter: 'lost', desc: 'Lost / Dead leads' },
+        { icon: 'trending-up', label: 'Conversion Rate', key: 'conversion', nav: 'analytics', desc: 'Open conversion analytics' },
       ],
     },
     {
       title: 'Daily Work',
       cards: [
-        { icon: 'phone', label: "Today's Calls", key: 'calls_total', nav: 'followups', followupFilter: 'today', followupType: 'Call', desc: "Today's call follow-ups" },
-        { icon: 'calendar-clock', label: "Today's Follow-ups", key: 'followups_due_today', nav: 'followups', followupFilter: 'today', desc: 'Follow-ups due today' },
-        { icon: 'video', label: "Today's Meetings", key: 'meetings_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', desc: "Today's demo meetings" },
-        { icon: 'alert-circle', label: 'Overdue Follow-ups', key: 'overdue_followups', nav: 'followups', followupFilter: 'overdue', desc: 'Overdue follow-up list' },
+        { icon: 'phone', label: "Today's Calls", key: 'calls_total', nav: 'followups', followupFilter: 'today', followupType: 'Call', desc: "Today's call logs" },
+        { icon: 'calendar-clock', label: "Today's Follow-ups", key: 'followups_due_today', nav: 'followups', followupFilter: 'today', desc: "Today's follow-up list" },
+        { icon: 'video', label: "Today's Meetings", key: 'meetings_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', desc: "Today's meetings" },
+        { icon: 'alert-circle', label: 'Overdue Follow-ups', key: 'overdue_followups', nav: 'followups', followupFilter: 'overdue', desc: 'Overdue follow-ups' },
       ],
     },
     {
       title: 'Demo',
       cards: [
         { icon: 'presentation', label: 'Demos Scheduled', key: 'demo_count', nav: 'followups', followupType: 'Demo Scheduled', workflowTab: 'demo_scheduled', desc: 'Scheduled demos' },
-        { icon: 'calendar', label: 'Demos Scheduled Today', key: 'demos_scheduled_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', desc: "Today's scheduled demos" },
+        { icon: 'calendar', label: 'Demos Scheduled Today', key: 'demos_scheduled_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', desc: "Today's demos" },
         { icon: 'badge-check', label: 'Demos Completed', key: 'demo_confirmation_confirmed', nav: 'followups', followupType: 'Demo Completed', workflowTab: 'demo_completed', desc: 'Completed demos' },
         { icon: 'check-circle', label: 'Demos Completed Today', key: 'demos_completed_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Completed', desc: "Today's completed demos" },
-        { icon: 'percent', label: 'Demo Conversion', key: 'demo_ratio', nav: 'analytics', desc: 'Demo conversion analytics' },
+        { icon: 'percent', label: 'Demo Conversion', key: 'demo_ratio', nav: 'analytics', desc: 'Demo conversion report' },
         { icon: 'clock', label: 'Pending Confirmation', key: 'demo_confirmation_pending', nav: 'followups', followupType: 'Demo Scheduled', desc: 'Awaiting confirmation' },
         { icon: 'badge-x', label: 'Missed Demos', key: 'demo_confirmation_rejected', nav: 'followups', followupType: 'Demo Scheduled', followupStatus: 'Missed', desc: 'Missed demos' },
         { icon: 'ban', label: 'Cancelled', key: 'demo_confirmation_cancelled', nav: 'followups', followupType: 'Demo Scheduled', followupStatus: 'Cancelled', desc: 'Cancelled demos' },
         { icon: 'calendar-clock', label: 'Rescheduled', key: 'demo_confirmation_rescheduled', nav: 'followups', followupType: 'Demo Scheduled', desc: 'Rescheduled demos' },
-        { icon: 'shopping-bag', label: 'Purchased', key: 'converted_leads', nav: 'ca-master', leadFilter: 'converted', desc: 'Purchased / converted customers' },
+        { icon: 'shopping-bag', label: 'Purchased', key: 'converted_leads', nav: 'ca-master', leadFilter: 'converted', desc: 'Customers converted after demo' },
       ],
     },
     {
       title: 'Communication',
       cards: [
-        { icon: 'mail', label: 'Emails Sent', key: 'email_messages_total', nav: 'email', desc: 'Open email campaigns & logs' },
-        { icon: 'smartphone', label: 'SMS Sent', key: 'sms_messages_total', nav: 'sms', desc: 'Open SMS campaigns & logs' },
-        { icon: 'message-circle', label: 'WhatsApp Sent', key: 'whatsapp_messages_total', nav: 'whatsapp', desc: 'Open WhatsApp campaigns & logs' },
-        { icon: 'inbox', label: 'Customer Replies', key: 'email_delivered', nav: 'email', desc: 'Open email inbox / reply history' },
+        { icon: 'mail', label: 'Emails Sent', key: 'email_messages_total', nav: 'email', desc: 'Email history' },
+        { icon: 'smartphone', label: 'SMS Sent', key: 'sms_messages_total', nav: 'sms', desc: 'SMS history' },
+        { icon: 'message-circle', label: 'WhatsApp Sent', key: 'whatsapp_messages_total', nav: 'whatsapp', desc: 'WhatsApp history' },
+        { icon: 'inbox', label: 'Customer Replies', key: 'email_delivered', nav: 'email', desc: 'Customer replies / inbox' },
       ],
     },
     {
       title: 'Performance',
       cards: [
-        { icon: 'target', label: 'Daily Demo Target', key: 'daily_demo_target', nav: 'employees', desc: 'Employee daily demo targets' },
-        { icon: 'award', label: 'Target Achieved', key: 'daily_demo_achieved', nav: 'analytics', desc: 'Achieved targets report' },
+        { icon: 'target', label: 'Daily Demo Target', key: 'daily_demo_target', nav: 'employees', desc: 'Employee targets' },
+        { icon: 'award', label: 'Target Achieved', key: 'daily_demo_achieved', nav: 'analytics', desc: 'Achieved targets' },
         { icon: 'gauge', label: 'Remaining Target', key: 'daily_demo_remaining', nav: 'analytics', desc: 'Remaining targets' },
-        { icon: 'percent', label: 'Achievement %', key: 'daily_demo_achievement_pct', nav: 'analytics', desc: 'Performance / achievement report' },
+        { icon: 'percent', label: 'Achievement %', key: 'daily_demo_achievement_pct', nav: 'analytics', desc: 'Performance report' },
         { icon: 'user-check', label: 'Employees', key: 'active_employees', nav: 'employees', desc: 'Employee directory' },
-        { icon: 'git-branch', label: 'Active Assignments', key: 'assignments', nav: 'assignment', assignmentStatus: 'Active', desc: 'Active lead assignments' },
-        { icon: 'refresh-cw', label: 'Auto (Rotation)', key: 'bulk_assignment_total', nav: 'assignment', assignmentType: 'Auto', desc: 'Auto / rotation assignments' },
-        { icon: 'hand', label: 'Manual', key: 'unassigned_leads', nav: 'assignment', assignmentType: 'Manual', desc: 'Manual assignments' },
-        { icon: 'users', label: 'Assigned Leads', key: 'assigned_leads', nav: 'ca-master', leadFilter: 'all', desc: 'All assigned leads (employee filter preserved)' },
+        { icon: 'git-branch', label: 'Active Assignments', key: 'assignments', nav: 'assignment', assignmentStatus: 'Active', desc: 'Active assignment list' },
+        { icon: 'refresh-cw', label: 'Auto (Rotation)', key: 'bulk_assignment_total', nav: 'assignment', assignmentType: 'Auto', assignmentPanel: 'rotation', desc: 'Auto assignment rules' },
+        { icon: 'hand', label: 'Manual', key: 'unassigned_leads', nav: 'assignment', assignmentType: 'Manual', desc: 'Manual assignment list' },
+        { icon: 'users', label: 'Assigned Leads', key: 'assigned_leads', nav: 'ca-master', leadFilter: 'all', desc: 'Assigned leads page' },
       ],
     },
   ];
@@ -5862,13 +5916,16 @@ if (otherInput) {
         { icon: 'flame', label: 'Hot Leads', key: 'hot_leads', nav: 'leads', leadFilter: 'hot', source: 'summary', desc: 'Your Hot leads' },
         { icon: 'thermometer', label: 'Warm Leads', key: 'warm_leads', nav: 'leads', leadFilter: 'warm', source: 'summary', desc: 'Your Warm leads' },
         { icon: 'snowflake', label: 'Cold Leads', key: 'cold_leads', nav: 'leads', leadFilter: 'cold', source: 'summary', desc: 'Your Cold leads' },
+        { icon: 'git-branch', label: 'In Pipeline', key: 'pipeline_leads', nav: 'leads', leadFilter: 'pipeline', leadView: 'pipeline', source: 'summary', desc: 'Your pipeline / Kanban' },
+        { icon: 'trophy', label: 'Converted / Won', key: 'converted_leads', nav: 'leads', leadFilter: 'converted', source: 'summary', desc: 'Your converted leads' },
+        { icon: 'user-x', label: 'Lost / Dead', key: 'lost_leads', nav: 'leads', leadFilter: 'lost', source: 'summary', desc: 'Your lost leads' },
         { icon: 'trending-up', label: 'Conversion Rate', key: 'conversion_pct', nav: 'leads', leadFilter: 'converted', suffix: '%', source: 'summary', desc: 'Your converted leads' },
       ],
     },
     {
       title: 'Daily Work',
       cards: [
-        { icon: 'phone', label: "Today's Calls", key: 'todays_calls', nav: 'followups', followupFilter: 'today', followupType: 'Call', source: 'summary', desc: "Today's calls" },
+        { icon: 'phone', label: "Today's Calls", key: 'todays_calls', nav: 'followups', followupFilter: 'today', followupType: 'Call', source: 'summary', desc: "Today's call logs" },
         { icon: 'calendar-clock', label: "Today's Follow-ups", key: 'followups_due', nav: 'followups', followupFilter: 'today', source: 'today', desc: 'Due today' },
         { icon: 'video', label: "Today's Meetings", key: 'meetings_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', source: 'today', desc: "Today's meetings" },
         { icon: 'list-checks', label: "Today's Tasks", key: 'todays_tasks', nav: 'followups', followupFilter: 'today', source: 'summary', desc: 'Tasks for today' },
@@ -5881,6 +5938,7 @@ if (otherInput) {
       title: 'Demo',
       cards: [
         { icon: 'presentation', label: "Today's Demos", key: 'my_demos', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', source: 'summary', desc: 'Demos scheduled today' },
+        { icon: 'badge-check', label: 'Demos Completed Today', key: 'demos_completed_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Completed', source: 'summary', desc: "Today's completed demos" },
         { icon: 'video', label: 'My Meetings', key: 'my_meetings', nav: 'followups', followupType: 'Demo Scheduled', source: 'summary', desc: 'All your meetings' },
       ],
     },
@@ -6038,14 +6096,14 @@ if (otherInput) {
         '<h2 class="text-card-heading">Today\'s Productivity</h2>' +
       '</div>' +
       '<div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">' +
-        productivityStatCard('Assigned Today', productivity.leads_assigned) +
-        productivityStatCard('Unique Leads', productivity.unique_leads) +
-        productivityStatCard('Duplicate Attempts', productivity.duplicate_attempts) +
-        productivityStatCard('Wrong Numbers', productivity.wrong_numbers) +
-        productivityStatCard('Verified Leads', productivity.verified_leads) +
-        productivityStatCard('Follow-ups Done', productivity.followups_completed) +
-        productivityStatCard('Quality Score', productivity.quality_score) +
-        productivityStatCard('Rank', productivity.rank ? '#' + productivity.rank : '—') +
+        productivityStatCard('Assigned Today', productivity.leads_assigned, { page: 'leads', leadFilter: 'all', desc: 'Open your assigned leads' }) +
+        productivityStatCard('Unique Leads', productivity.unique_leads, { page: 'leads', leadFilter: 'all', desc: 'Open your leads' }) +
+        productivityStatCard('Duplicate Attempts', productivity.duplicate_attempts, { page: 'leads', desc: 'Open leads list' }) +
+        productivityStatCard('Wrong Numbers', productivity.wrong_numbers, { page: 'leads', desc: 'Open leads list' }) +
+        productivityStatCard('Verified Leads', productivity.verified_leads, { page: 'leads', leadFilter: 'all', desc: 'Open your leads' }) +
+        productivityStatCard('Follow-ups Done', productivity.followups_completed, { page: 'followups', followupFilter: 'completed', desc: 'Open completed follow-ups' }) +
+        productivityStatCard('Quality Score', productivity.quality_score, { page: 'leads', desc: 'Open your leads' }) +
+        productivityStatCard('Rank', productivity.rank ? '#' + productivity.rank : '—', { page: 'leads', desc: 'Open your leads' }) +
       '</div>';
   }
 
@@ -6063,6 +6121,8 @@ if (otherInput) {
         (nav.followupStatus ? ' data-followup-status="' + escapeHtml(nav.followupStatus) + '"' : '') +
         (nav.assignmentStatus ? ' data-assignment-status="' + escapeHtml(nav.assignmentStatus) + '"' : '') +
         (nav.assignmentType ? ' data-assignment-type="' + escapeHtml(nav.assignmentType) + '"' : '') +
+        (nav.assignmentPanel ? ' data-assignment-panel="' + escapeHtml(nav.assignmentPanel) + '"' : '') +
+        (nav.leadView ? ' data-lead-view="' + escapeHtml(nav.leadView) + '"' : '') +
         ' title="' + escapeHtml(tooltip) + '"' +
         ' aria-label="' + escapeHtml(tooltip) + '"';
       return '<button type="button" class="rounded-xl border border-slate-100 bg-slate-50 p-3 text-left w-full dash-prod-stat--nav"' + attrs + '>' +
@@ -7498,11 +7558,13 @@ if (otherInput) {
       if (!nav || !nav.page) return '';
       return ' data-dash-nav data-nav-page="' + escapeHtml(nav.page) + '"' +
         (nav.leadFilter ? ' data-lead-filter="' + escapeHtml(nav.leadFilter) + '"' : '') +
+        (nav.leadView ? ' data-lead-view="' + escapeHtml(nav.leadView) + '"' : '') +
         (nav.followupFilter ? ' data-followup-filter="' + escapeHtml(nav.followupFilter) + '"' : '') +
         (nav.followupType ? ' data-followup-type="' + escapeHtml(nav.followupType) + '"' : '') +
         (nav.followupStatus ? ' data-followup-status="' + escapeHtml(nav.followupStatus) + '"' : '') +
         (nav.assignmentStatus ? ' data-assignment-status="' + escapeHtml(nav.assignmentStatus) + '"' : '') +
-        (nav.assignmentType ? ' data-assignment-type="' + escapeHtml(nav.assignmentType) + '"' : '');
+        (nav.assignmentType ? ' data-assignment-type="' + escapeHtml(nav.assignmentType) + '"' : '') +
+        (nav.assignmentPanel ? ' data-assignment-panel="' + escapeHtml(nav.assignmentPanel) + '"' : '');
     }
 
     function section(titleText, cards) {
@@ -7541,8 +7603,10 @@ if (otherInput) {
       section('Lead Metrics', [
         { label: 'Total Assigned', value: metrics.leads.total_assigned, nav: { page: 'ca-master', leadFilter: 'all' }, desc: 'Open assigned leads for selected employee' },
         { label: 'New Leads', value: metrics.leads.new_leads, nav: { page: 'ca-master', leadFilter: 'status_new' }, desc: 'Open New leads' },
-        { label: 'Hot / Warm / Cold', value: metrics.leads.hot_leads + ' / ' + metrics.leads.warm_leads + ' / ' + metrics.leads.cold_leads, nav: { page: 'ca-master', leadFilter: 'hot' }, desc: 'Open Hot leads (use KPI strip for Warm/Cold)' },
-        { label: 'In Pipeline', value: metrics.leads.in_pipeline, nav: { page: 'ca-master', leadFilter: 'pipeline' }, desc: 'Open pipeline leads' },
+        { label: 'Hot Leads', value: metrics.leads.hot_leads, nav: { page: 'ca-master', leadFilter: 'hot' }, desc: 'Open Hot leads' },
+        { label: 'Warm Leads', value: metrics.leads.warm_leads, nav: { page: 'ca-master', leadFilter: 'warm' }, desc: 'Open Warm leads' },
+        { label: 'Cold Leads', value: metrics.leads.cold_leads, nav: { page: 'ca-master', leadFilter: 'cold' }, desc: 'Open Cold leads' },
+        { label: 'In Pipeline', value: metrics.leads.in_pipeline, nav: { page: 'ca-master', leadFilter: 'pipeline', leadView: 'pipeline' }, desc: 'Open Pipeline / Kanban' },
         { label: 'Converted / Won', value: metrics.leads.converted, nav: { page: 'ca-master', leadFilter: 'converted' }, desc: 'Open converted leads' },
         { label: 'Lost / Dead', value: metrics.leads.lost, nav: { page: 'ca-master', leadFilter: 'lost' }, desc: 'Open lost/dead leads' },
         { label: 'Conversion Rate', value: metrics.leads.conversion_rate + '%', nav: { page: 'analytics' }, desc: 'Open conversion analytics' },
@@ -19584,6 +19648,7 @@ if (otherInput) {
     if (pageId === 'leads' || pageId === 'leads-segments') {
       applyDashboardNavIntentToLeadsListing('ca_masters');
       renderLeadsHub();
+      applyPendingLeadViewFromDashboard();
       icons();
       return;
     }
@@ -19603,7 +19668,10 @@ if (otherInput) {
         renderAssignmentHistoryTable();
         renderAssignmentKpis();
         populateAssignmentExecutiveFilter();
-        if (pageId === 'assignment') initAssignmentPage();
+        if (pageId === 'assignment') {
+          initAssignmentPage();
+          focusAssignmentSectionFromDashboard();
+        }
         icons();
       }
       paintEmployeesAssignmentPage();
@@ -19698,19 +19766,14 @@ if (otherInput) {
           }
           /* Primary table first so a toolbar error cannot blank the whole page. */
           showCamPrimaryViews();
-          if (isCamPipelineTabActive()) {
-            if (preserveDashLeadNav && !dashLeadNavApplied) {
-              applyDashboardNavIntentToLeadsListing('ca_masters');
-              dashLeadNavApplied = true;
-            }
-            loadKanbanLeads();
-          } else if (preserveDashLeadNav && !dashLeadNavApplied) {
-            /* Apply dashboard filters after DOM sync would overwrite them — skip DOM sync. */
+          if (preserveDashLeadNav && !dashLeadNavApplied) {
             applyDashboardNavIntentToLeadsListing('ca_masters');
             dashLeadNavApplied = true;
-            syncCamStageFilterFromState();
-            syncCamStageFilterBarVisibility();
-            renderCaMasterTable();
+          }
+          if (applyPendingLeadViewFromDashboard()) {
+            /* Pipeline / Kanban opened from dashboard card. */
+          } else if (isCamPipelineTabActive()) {
+            loadKanbanLeads();
           } else if (dashLeadNavApplied) {
             /* Keep filters from dashboard card navigation across re-paints. */
             syncCamStageFilterFromState();

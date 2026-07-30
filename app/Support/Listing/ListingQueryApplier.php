@@ -2,9 +2,10 @@
 
 namespace App\Support\Listing;
 
+use App\Support\Database\SchemaMemo;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Arr;
-use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Cache;
 
 class ListingQueryApplier
 {
@@ -32,6 +33,27 @@ class ListingQueryApplier
         $perPage = self::resolvePerPage($params, $config);
         $page = max((int) ($params['page'] ?? 1), 1);
 
+        if (self::shouldCacheUnfilteredTotal($params, $config)) {
+            $total = self::cachedUnfilteredTotal($query, $params, $config);
+            $items = (clone $query)->forPage($page, $perPage)->get();
+            $lastPage = max((int) ceil($total / $perPage), 1);
+            $from = $total === 0 ? null : (($page - 1) * $perPage) + 1;
+            $to = $total === 0 ? null : min($page * $perPage, $total);
+
+            return [
+                'items' => $items,
+                'pagination' => [
+                    'current_page' => $page,
+                    'per_page' => $perPage,
+                    'total' => $total,
+                    'last_page' => $lastPage,
+                    'from' => $from,
+                    'to' => $to,
+                ],
+                'meta' => self::buildMeta($params, $total),
+            ];
+        }
+
         $paginator = $query->paginate($perPage, ['*'], 'page', $page);
 
         return [
@@ -46,6 +68,53 @@ class ListingQueryApplier
             ],
             'meta' => self::buildMeta($params, $paginator->total()),
         ];
+    }
+
+    /**
+     * Cache COUNT(*) for default Master Data opens (no search/filters/dates).
+     * Profile showed COUNT as the dominant cold query on large ca_masters tables.
+     */
+    private static function shouldCacheUnfilteredTotal(array $params, array $config): bool
+    {
+        if (! ($config['cache_unfiltered_total'] ?? false)) {
+            return false;
+        }
+
+        if (! empty($params['search']) || ! empty($params['q'])) {
+            return false;
+        }
+
+        foreach (array_keys($config['filters'] ?? []) as $filterKey) {
+            if (! array_key_exists($filterKey, $params)) {
+                continue;
+            }
+            $value = $params[$filterKey];
+            if ($value === null || $value === '' || $value === []) {
+                continue;
+            }
+
+            return false;
+        }
+
+        foreach (['from', 'to', 'date_from', 'date_to'] as $dateKey) {
+            if (! empty($params[$dateKey])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static function cachedUnfilteredTotal(Builder $query, array $params, array $config): int
+    {
+        $table = (string) ($config['table'] ?? $query->getModel()->getTable());
+        $scope = (string) ($params['_scope_key'] ?? (auth()->id() ?? 'guest'));
+        $ttl = (int) ($config['cache_unfiltered_total_ttl'] ?? 30);
+        $cacheKey = 'crm:listing:total:'.$table.':'.$scope;
+
+        return (int) Cache::remember($cacheKey, $ttl, function () use ($query) {
+            return (clone $query)->toBase()->getCountForPagination();
+        });
     }
 
     public static function applyListingFilters(Builder $query, array $params, array $config): array
@@ -101,7 +170,7 @@ class ListingQueryApplier
         }
 
         $table = $query->getModel()->getTable();
-        $columns = array_values(array_diff(Schema::getColumnListing($table), $exclude));
+        $columns = array_values(array_diff(SchemaMemo::columnListing($table), $exclude));
         if ($columns === []) {
             return;
         }

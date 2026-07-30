@@ -10,7 +10,6 @@ use App\Services\Rbac\EmployeeLeadFieldGuard;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Schema;
 
 class CaMasterResource extends JsonResource
 {
@@ -88,7 +87,11 @@ class CaMasterResource extends JsonResource
         }
 
         $first = $collection->first();
-        if (is_object($first) && method_exists($first, 'relationLoaded') && $first->relationLoaded('activeAssignment')) {
+        if (
+            is_object($first)
+            && method_exists($first, 'relationLoaded')
+            && ($first->relationLoaded('activeTeamAssignments') || $first->relationLoaded('activeAssignment'))
+        ) {
             self::$executiveByCaId = [];
         } else {
             self::$executiveByCaId = \App\Models\LeadAssignmentEngine::query()
@@ -116,10 +119,17 @@ class CaMasterResource extends JsonResource
                     $stateId = $lead['state_id'] ?? null;
                     $cityName = $lead['city'] ?? ($lead['city_name'] ?? null);
                     $stateName = $lead['state'] ?? ($lead['state_name'] ?? null);
+                    $cityOk = filled($cityId) || (
+                        filled($cityName) && ! \App\Support\Ocr\CaMasterCityQuality::isPlaceholderCityName((string) $cityName)
+                    );
+                    $stateOk = filled($stateId) || filled($stateName);
 
-                    return (empty($cityId) && empty($cityName)) || (empty($stateId) && empty($stateName));
+                    return ! $cityOk || ! $stateOk;
                 }
-                $hasCity = filled($lead->city_id) || filled($lead->city?->city_name ?? null);
+                $cityName = $lead->city?->city_name ?? null;
+                $hasCity = filled($lead->city_id) || (
+                    filled($cityName) && ! \App\Support\Ocr\CaMasterCityQuality::isPlaceholderCityName((string) $cityName)
+                );
                 $hasState = filled($lead->state_id) || filled($lead->state?->state_name ?? null);
 
                 return ! $hasCity || ! $hasState;
@@ -131,6 +141,12 @@ class CaMasterResource extends JsonResource
             ->all();
 
         self::$ocrGeoByCaId = $needsOcrGeo === [] ? [] : self::loadOcrGeoFallback($needsOcrGeo);
+        // Mark remaining page IDs so resolveCityName/State does not N+1 OCR lookups.
+        foreach ($caIds as $caId) {
+            if (! array_key_exists($caId, self::$ocrGeoByCaId)) {
+                self::$ocrGeoByCaId[$caId] = ['city' => null, 'state' => null];
+            }
+        }
     }
 
     /**
@@ -139,7 +155,7 @@ class CaMasterResource extends JsonResource
      */
     private static function loadOcrGeoFallback(array $caIds): array
     {
-        if ($caIds === [] || ! Schema::hasTable('ocr_parsed_firms')) {
+        if ($caIds === [] || ! \App\Support\Database\SchemaMemo::hasTable('ocr_parsed_firms')) {
             return [];
         }
 

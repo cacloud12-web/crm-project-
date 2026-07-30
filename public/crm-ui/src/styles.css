@@ -3238,6 +3238,14 @@ select.input-field[multiple] {
 .dash-fu-kpi--nav {
   cursor: pointer;
 }
+.dash-kpi-grid .mgr-kpi-card.dash-kpi-card--nav:hover,
+.mgr-emp-prod-card--nav:hover,
+.dash-prod-stat--nav:hover,
+.dash-fu-kpi--nav:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 8px 20px rgb(15 23 42 / 0.1), 0 2px 8px rgb(20 184 166 / 0.12);
+  transform: translateY(-2px) scale(1.02);
+}
 .dash-kpi-card--nav:focus-visible,
 .mgr-emp-prod-card--nav:focus-visible,
 .dash-prod-stat--nav:focus-visible,
@@ -3249,16 +3257,12 @@ select.input-field[multiple] {
 .dash-prod-stat--nav {
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
-.dash-prod-stat--nav:hover {
-  border-color: #cbd5e1;
-  box-shadow: 0 4px 14px rgb(15 23 42 / 0.08);
-  transform: translateY(-1px);
-}
 .mgr-emp-prod-card--nav {
   text-align: left;
   font: inherit;
   color: inherit;
   width: 100%;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 .dash-fu-kpi--nav {
   text-align: left;
@@ -3267,11 +3271,10 @@ select.input-field[multiple] {
   width: 100%;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
 }
-.dash-fu-kpi--nav:hover {
-  border-color: #cbd5e1;
-  box-shadow: 0 4px 12px rgb(15 23 42 / 0.08);
-  transform: translateY(-1px);
-  background: #ffffff;
+.assign-section--focus {
+  outline: 2px solid #14b8a6;
+  outline-offset: 4px;
+  transition: outline-color 0.2s ease;
 }
 .dash-nav-loading {
   position: fixed;

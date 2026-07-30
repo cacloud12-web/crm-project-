@@ -3,6 +3,7 @@
 namespace App\Services\Assignment;
 
 use App\Models\DailyEmployeeTarget;
+use App\Models\DemoSchedule;
 use App\Models\Employee;
 use App\Models\EmployeeCalendarDay;
 use App\Models\YearlyEmployeeTarget;
@@ -149,6 +150,9 @@ class EmployeeTargetService
             || ($yearlyBlock['has_target'] ?? false);
 
         $metrics = $this->buildTodayMetrics($targets, $achievements);
+        $dayStart = Carbon::parse($date)->startOfDay();
+        $dayEnd = Carbon::parse($date)->endOfDay();
+        $demoAggregate = $this->demoMetrics->aggregateForRange($employeeId, $dayStart, $dayEnd);
 
         return [
             'has_target' => $hasTarget,
@@ -159,13 +163,14 @@ class EmployeeTargetService
                 'demo_achieved' => $demoAchieved,
                 'demo_remaining' => $demoRemaining,
                 'demo_pct' => min(100.0, $demoPct),
-                'demos_scheduled_today' => $this->demoMetrics->demosScheduledCreatedOnDate($employeeId, $date),
-                'demos_completed_today' => $this->demoMetrics->demosCompletedOnDate($employeeId, $date),
+                // Same rule as achievements.demo_completed (scheduled created today, not cancelled).
+                'demos_scheduled_today' => $demoAchieved,
+                'demos_completed_today' => (int) ($demoAggregate['demos_completed_today'] ?? 0),
                 'demos_occuring_today' => $this->demoMetrics->demosOccurringOnDate($employeeId, $date),
             ],
             'yearly' => $yearlyBlock,
             'metrics' => $metrics,
-            'demos' => $this->demoMetrics->aggregateForRange($employeeId, Carbon::parse($date)->startOfDay(), Carbon::parse($date)->endOfDay()),
+            'demos' => $demoAggregate,
         ];
     }
 
@@ -178,22 +183,46 @@ class EmployeeTargetService
     {
         $date = now()->toDateString();
         $ids = $employeeIds ?? Employee::query()->where('status', 'Active')->pluck('employee_id')->all();
+        $ids = array_values(array_unique(array_map('intval', $ids)));
+
+        if ($ids === []) {
+            return [
+                'target_date' => $date,
+                'daily_demo_target_total' => 0,
+                'daily_demo_achieved_total' => 0,
+                'daily_demo_remaining_total' => 0,
+                'daily_demo_achievement_pct' => 0.0,
+                'demos_scheduled_today' => 0,
+                'demos_completed_today' => 0,
+                'employee_count' => 0,
+            ];
+        }
 
         $totalTarget = 0;
-        $totalAchieved = 0;
-        $demosScheduledToday = 0;
-        $demosCompletedToday = 0;
-
         foreach ($ids as $employeeId) {
-            $employeeId = (int) $employeeId;
             $targets = $this->resolvedTargetsForDate($employeeId, $date);
-            $achievements = $this->progressService->achievementsForEmployee($employeeId, $date);
-
             $totalTarget += (int) ($targets['demo_target'] ?? 0);
-            $totalAchieved += (int) ($achievements['demo_completed'] ?? 0);
-            $demosScheduledToday += $this->demoMetrics->demosScheduledCreatedOnDate($employeeId, $date);
-            $demosCompletedToday += $this->demoMetrics->demosCompletedOnDate($employeeId, $date);
         }
+
+        $achievementsByEmployee = $this->progressService->achievementsForEmployeesOnDate($ids, $date);
+        $totalAchieved = 0;
+        foreach ($ids as $employeeId) {
+            $totalAchieved += (int) ($achievementsByEmployee[$employeeId]['demo_completed'] ?? 0);
+        }
+
+        [$start, $end] = $this->demoMetrics->dayBounds($date);
+        $demosScheduledToday = (int) DemoSchedule::query()
+            ->whereIn('employee_id', $ids)
+            ->whereBetween('created_at', [$start, $end])
+            ->whereNotIn('status', [DemoSchedule::STATUS_CANCELLED])
+            ->distinct()
+            ->count('demo_schedules.id');
+        $demosCompletedToday = (int) DemoSchedule::query()
+            ->whereIn('employee_id', $ids)
+            ->where('status', DemoSchedule::STATUS_COMPLETED)
+            ->whereBetween('updated_at', [$start, $end])
+            ->distinct()
+            ->count('demo_schedules.id');
 
         $remaining = max(0, $totalTarget - $totalAchieved);
         $pct = $totalTarget > 0 ? round(($totalAchieved / $totalTarget) * 100, 1) : 0.0;

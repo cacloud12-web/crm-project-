@@ -1,179 +1,121 @@
-# Dashboard Statistic Card Navigation Report
+# Dashboard Clickable Statistic Cards — Final Report
 
-**Date:** 2026-07-14  
-**Scope:** Make all dashboard statistic cards clickable with filtered navigation, without changing visual design.
-
-## Summary
-
-Statistic cards on the manager and employee dashboards now act as buttons: pointer cursor, hover elevation, focus ring, tooltips, ARIA labels, and Enter activation. Clicking stores a **nav intent** (`window._dashboardNavIntent`), navigates via existing SPA routes, then applies listing filters on the destination page. No new backend routes were required.
+**Date:** 2026-07-30  
+**Scope:** Super Admin, Admin, Manager, and Employee dashboards  
+**Rule:** Reuse existing SPA pages + listing filters; no new backend routes; RBAC via `CA_RBAC.canAccessPage`
 
 ---
 
-## Reusable code added
+## Architecture (unchanged)
 
-| Helper | File | Purpose |
-|--------|------|---------|
-| `setDashboardNavIntent` / `peekDashboardNavIntent` / `consumeDashboardNavIntent` | `public/crm-ui/src/api/crm.js` | Store/read/clear one-shot navigation intent |
-| `buildDashboardNavContext` | same | Preserve selected employee + date preset |
-| `activateDashboardCardNav` | same | Build intent from `data-*` attrs, show loader (>300ms), `navigateTo` |
-| `applyDashboardNavIntentToLeadsListing` | same | Apply `segment` / `status` / `executive` on `ca_masters` |
-| `applyDashboardNavIntentToFollowups` | same | Apply `followup_due` / `followup_type` / `status` / `employee_id` |
-| `applyDashboardNavIntentToAssignments` | same | Apply `status` / `assignment_type` / `employee_id` |
-| `showDashboardNavLoading` / `hideDashboardNavLoading` | same | Loading chip after 300ms |
-| `renderDashboardKpiCard` | same | Button markup with nav attrs + a11y |
-| Listing segments `warm`, `converted`, `status_new` | `app/Support/Listing/ListingQueryApplier.php` | Server-side lead filters |
-| `converted_leads` metric | `app/Services/Dashboard/DashboardService.php` | KPI value for Converted / Won |
+| Role | Dashboard shell | KPI renderer |
+|------|-----------------|--------------|
+| Super Admin / Admin / Manager | `.mgr-dashboard` via `paintManagerDashboard` | `ADMIN_DASHBOARD_KPI_SECTIONS` + productivity / org target / follow-up strips |
+| Employee | `.emp-dashboard` via `paintEmployeeDashboard` | `EMPLOYEE_DASHBOARD_KPI_SECTIONS` + productivity stats |
 
-**CSS:** `.dash-kpi-card--nav`, `.mgr-emp-prod-card--nav`, `.dash-prod-stat--nav`, `.dash-fu-kpi--nav`, `.dash-nav-loading` in `public/crm-ui/src/styles.css`.
+Click path: card `data-*` → `activateDashboardCardNav` → `_dashboardNavIntent` → `navigateTo(page)` → `onPage` applies filters via existing listing APIs.
 
-**New routes created:** none.
+Permissions: destination pages already gated by `CA_RBAC.canAccessPage`; cards also pre-check before navigate.
 
-**APIs reused:** existing listing endpoints (`/ca-masters`, `/follow-ups`, `/lead-assignments`) and SPA pages (`analytics`, `email`, `sms`, `whatsapp`, `employees`, `assignment`).
+Lead hub: employees → `leads`; managers/admins/super-admins → `ca-master`.
 
 ---
 
-## Controllers / APIs used
+## 1. Clickable cards → route → filters → permission
 
-| Destination | Listing key / page | API |
-|-------------|-------------------|-----|
-| Master Data / Leads | `ca_masters` | `GET /api/ca-masters` (via `CA_LISTING_SEARCH`) |
-| Follow-ups | `follow_ups` | `GET /api/follow-ups` |
-| Assignments | `lead_assignments` | `GET /api/lead-assignments` |
-| Analytics | page `analytics` | existing analytics page / report APIs |
-| Email / SMS / WhatsApp | campaign pages | existing campaign renderers |
-| Employees | page `employees` | existing employees listing |
+### Manager / Admin / Super Admin — KPI strip
 
----
+| Card | Page id | Filters / behavior | Permission (page access) |
+|------|---------|--------------------|--------------------------|
+| Total Leads | `ca-master` | all (+ executive if employee selected) | `ca_master` view |
+| Assigned Leads | `ca-master` | all + executive | `ca_master` view |
+| New Leads | `ca-master` | `segment=status_new` | `ca_master` view |
+| Hot / Warm / Cold | `ca-master` | `hot` / `warm` / `cold` | `ca_master` view |
+| In Pipeline | `ca-master` | `segment=pipeline` + **Kanban view** | `ca_master` view |
+| Converted / Won | `ca-master` | `segment=converted` | `ca_master` view |
+| Lost / Dead | `ca-master` | `segment=lost` | `ca_master` view |
+| Conversion Rate | `analytics` | — | reports/analytics |
+| Today's Calls | `followups` | today + type Call | `followups` view |
+| Today's Follow-ups | `followups` | today | `followups` view |
+| Today's Meetings | `followups` | today + Demo Scheduled | `followups` view |
+| Overdue Follow-ups | `followups` | overdue | `followups` view |
+| Demos Scheduled / Today / Completed / Today | `followups` | type ± due | `followups` view |
+| Demo Conversion | `analytics` | — | analytics |
+| Missed / Cancelled / Rescheduled | `followups` | type + status where set | `followups` view |
+| Purchased | `ca-master` | `converted` | `ca_master` view |
+| Emails / SMS / WhatsApp / Replies | `email` / `sms` / `whatsapp` / `email` | — | communication modules |
+| Daily Demo Target | `employees` | — | `employees` / assignment hub |
+| Target Achieved / Remaining / Achievement % | `analytics` | — | analytics |
+| Active Assignments | `assignment` | `status=Active` | `assignment` view |
+| Auto (Rotation) | `assignment` | `assignment_type=Auto` + **scroll to rotation rules** | `assignment` view |
+| Manual | `assignment` | `assignment_type=Manual` | `assignment` view |
+| Assigned Leads (bottom) | `ca-master` | all + executive | `ca_master` view |
 
-## Manager dashboard — KPI strip (`ADMIN_DASHBOARD_KPI_SECTIONS`)
+### Employee productivity panel (selected employee)
 
-| Card | Route (page id) | Applied filters |
-|------|-----------------|-----------------|
-| Total Leads | `ca-master` | `segment=all` (+ `executive` if employee selected) |
-| Assigned Leads | `ca-master` | same + employee name as `executive` when filtered |
-| New Leads | `ca-master` | `segment=status_new` |
-| Hot Leads | `ca-master` | `segment=hot` |
-| Warm Leads | `ca-master` | `segment=warm` |
-| Cold Leads | `ca-master` | `segment=cold` |
-| In Pipeline | `ca-master` | `segment=pipeline` |
-| Converted / Won | `ca-master` | `segment=converted` |
-| Lost / Dead | `ca-master` | `segment=lost` |
-| Conversion Rate | `analytics` | (page open; employee/date context in intent) |
-| Today's Calls | `followups` | `followup_due=today`, `followup_type=Call` |
-| Today's Follow-ups | `followups` | `followup_due=today` |
-| Today's Meetings | `followups` | `followup_due=today`, `followup_type=Demo Scheduled` |
-| Overdue Follow-ups | `followups` | `followup_due=overdue` |
-| Demos Scheduled | `followups` | `followup_type=Demo Scheduled` |
-| Demos Scheduled Today | `followups` | `followup_due=today`, `followup_type=Demo Scheduled` |
-| Demos Completed | `followups` | `followup_type=Demo Completed` |
-| Demos Completed Today | `followups` | `followup_due=today`, `followup_type=Demo Completed` |
-| Demo Conversion | `analytics` | — |
-| Pending Confirmation | `followups` | `followup_type=Demo Scheduled` |
-| Missed Demos | `followups` | `followup_type=Demo Scheduled`, `status=Missed` |
-| Cancelled | `followups` | `followup_type=Demo Scheduled`, `status=Cancelled` |
-| Rescheduled | `followups` | `followup_type=Demo Scheduled` |
-| Purchased | `ca-master` | `segment=converted` |
-| Emails Sent | `email` | — |
-| SMS Sent | `sms` | — |
-| WhatsApp Sent | `whatsapp` | — |
-| Customer Replies | `email` | — |
-| Daily Demo Target | `employees` | — |
-| Target Achieved | `analytics` | — |
-| Remaining Target | `analytics` | — |
-| Achievement % | `analytics` | — |
-| Employees | `employees` | — |
-| Active Assignments | `assignment` | `status=Active` |
-| Auto (Rotation) | `assignment` | `assignment_type=Auto` |
-| Manual | `assignment` | `assignment_type=Manual` |
-| Assigned Leads (bottom) | `ca-master` | `segment=all` + employee |
+Same destinations as above (Hot/Warm/Cold are **separate** cards). Data remains scoped by dashboard employee filter + listing RBAC.
+
+### Organization target + Follow-up Status strip
+
+Also clickable → `employees` / `analytics` / `followups` as mapped in UI.
+
+### Employee dashboard KPI strip
+
+| Card | Page | Filters | Permission |
+|------|------|---------|------------|
+| My / Assigned Leads | `leads` | all | `leads` view |
+| New / Hot / Warm / Cold | `leads` | matching segment | `leads` view |
+| In Pipeline | `leads` | pipeline + Kanban | `leads` view |
+| Converted / Lost | `leads` | converted / lost | `leads` view |
+| Conversion Rate | `leads` | converted | `leads` view |
+| Daily work / demos / targets | `followups` or `assignment` | due/type as labeled | module view |
+
+Employee productivity mini-cards also navigate (leads / followups).
 
 ---
 
-## Manager — Employee productivity panel
+## 2. New routes added
 
-Same destinations as the user brief (Lead / Daily / Demo / Communication / Performance / Follow-up). Combined **Hot / Warm / Cold** opens Hot (`segment=hot`); use KPI strip for Warm/Cold specifically.
-
----
-
-## Manager — Organization target panel
-
-| Card | Route | Filters |
-|------|-------|---------|
-| Daily Target | `employees` | — |
-| Achieved | `analytics` | — |
-| Remaining | `analytics` | — |
-| Achievement % | `analytics` | — |
-| Demos Scheduled Today | `followups` | today + Demo Scheduled |
-| Demos Completed Today | `followups` | today + Demo Completed |
+**None.** All destinations reuse existing SPA page ids and listing filters.
 
 ---
 
-## Manager — Follow-up Status strip (`dash-fu-kpi`)
+## 3. Files modified
 
-| Card | Route | Filters |
-|------|-------|---------|
-| Today | `followups` | `followup_due=today` |
-| Upcoming | `followups` | `followup_due=pending` |
-| Completed Today | `followups` | `followup_due=completed` |
-| Missed | `followups` | `followup_due=overdue` |
-| Overdue | `followups` | `followup_due=overdue` |
-| Follow-up Conv. | `analytics` | — |
-| Demo Conv. | `analytics` | — |
-
----
-
-## Manager — Pipeline funnel rows
-
-| Control | Route | Filters |
-|---------|-------|---------|
-| Funnel stage row | `ca-master` | `segment=pipeline` |
+| File | Change |
+|------|--------|
+| `public/crm-ui/src/api/crm.js` | Nav intent, KPI configs, productivity panel, pipeline view + assignment rotation focus, role-aware lead hub, RBAC pre-check |
+| `public/crm-ui/src/pages/pages.js` | Follow-up strip buttons (prior) |
+| `public/crm-ui/src/styles.css` | Pointer, hover shadow + **scale(1.02)**, focus ring |
+| `app/Support/Listing/ListingQueryApplier.php` | Segments `warm` / `converted` / `status_new` (prior) |
+| `app/Services/Dashboard/DashboardService.php` | `converted_leads` metric (prior) |
+| `app/Services/Dashboard/EmployeeDashboardService.php` | Extra lead counts in **one** aggregate query (new/pipeline/converted/lost) |
 
 ---
 
-## Employee dashboard (`EMPLOYEE_DASHBOARD_KPI_SECTIONS`)
+## 4. Performance confirmation
 
-| Card | Route | Filters |
-|------|-------|---------|
-| My Leads / Assigned Leads | `leads` | `segment=all` |
-| New Leads | `leads` | `segment=status_new` |
-| Hot / Warm / Cold | `leads` | `hot` / `warm` / `cold` |
-| Conversion Rate | `leads` | `segment=converted` |
-| Today's Calls / Follow-ups / Meetings / Tasks | `followups` | today (+ type where set) |
-| Overdue / My Follow-ups / Upcoming | `followups` | overdue / none / pending |
-| Today's Demos / My Meetings | `followups` | Demo Scheduled (+ today) |
-| Today's Target | `assignment` | — |
-| Today's Achieved | `followups` | today + Demo Scheduled |
+- No extra dashboard metric queries for navigation (client-side only).
+- Employee lead cards use **one** expanded `COUNT FILTER` query (not N+1).
+- Destination pages reuse existing `CA_LISTING_SEARCH` / `reloadListing` — same as manual filter use.
+- Loader only if navigation exceeds 300ms.
 
 ---
 
-## Behavior preserved
+## 5. Existing functionality
 
-- Selected dashboard **employee** → `executive` (leads) or `employee_id` (follow-ups / assignments)
-- Selected **date preset** stored on intent (destination pages that already use listing “due” filters apply today/overdue directly)
-- Org/branch scoping unchanged (existing listing RBAC)
-- Master Data no longer clears hot/pipeline/lost/new segments on KPI toolbar paint (bugfix so dashboard filters stick)
-- `resetCamListingDefaults` skipped when landing from a dashboard lead card
-
----
-
-## Testing checklist
-
-- [ ] Every manager KPI card navigates and listing count roughly matches the card
-- [ ] Employee KPI cards navigate to Leads / Follow-ups / Assignment
-- [ ] Productivity panel + org target + follow-up strip cards navigate
-- [ ] Employee filter on dashboard carries to Master Data (`executive`) and follow-ups (`employee_id`)
-- [ ] Browser Back returns to dashboard without JS errors
-- [ ] Hover / focus ring / tooltip / Enter on keyboard
-- [ ] Loader appears only if navigation takes >300ms
-- [ ] No duplicate listing fetches beyond normal page load
+- Cards remain buttons; values unchanged.
+- `navigateTo` still enforces RBAC; unauthorized → toast, stay put.
+- Browser Back works via SPA history.
+- No dummy pages or fake data.
 
 ---
 
-## Files touched
+## 6. UI behavior (common)
 
-- `public/crm-ui/src/api/crm.js`
-- `public/crm-ui/src/pages/pages.js`
-- `public/crm-ui/src/styles.css`
-- `app/Support/Listing/ListingQueryApplier.php` (segments; earlier in this work)
-- `app/Services/Dashboard/DashboardService.php` (`converted_leads`)
-- `DASHBOARD_CARD_NAV_REPORT.md` (this file)
+- Pointer cursor  
+- Hover elevation + shadow + slight scale  
+- Focus ring + Enter (native button)  
+- Same-tab navigation  
+- Tooltips / `aria-label` describe destination  
+- Employee / date context preserved on intent when applicable  

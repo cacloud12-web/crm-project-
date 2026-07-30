@@ -236,16 +236,17 @@ class CaMasterService
      */
     private function listingRelations(): array
     {
+        // activeTeamAssignments alone covers executive + team (avoids duplicate
+        // lead_assignment_engines query from also eager-loading activeAssignment).
         $relations = [
             'city:city_id,city_name',
             'state:state_id,state_name',
             'sourceLead:source_id,source_name',
             'createdByEmployee:employee_id,name',
-            'activeAssignment.employee:employee_id,name',
             'activeTeamAssignments.employee:employee_id,name,role,status',
         ];
-        if (\Illuminate\Support\Facades\Schema::hasTable('ca_master_partners')) {
-            $relations[] = 'partners';
+        if (\App\Support\Database\SchemaMemo::hasTable('ca_master_partners')) {
+            $relations[] = 'partners:id,ca_id,ca_name,membership_no,mobile,alternate_mobile,email,team_size,designation,is_primary,status,sequence_no';
         }
 
         return $relations;

@@ -19,14 +19,34 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class LeadActivityTimelineService
 {
     /**
+     * @var array<string, string>
+     */
+    private const TABLE_PRIMARY_KEYS = [
+        'call_logs' => 'id',
+        'follow_up_histories' => 'history_id',
+        'follow_ups' => 'followup_id',
+        'lead_actions' => 'action_id',
+        'assignment_histories' => 'id',
+        'email_logs' => 'id',
+        'email_inbound_messages' => 'id',
+        'wa_message_logs' => 'id',
+        'sms_logs' => 'id',
+        'lead_quality_histories' => 'id',
+    ];
+
+    /** @var array<string, true> */
+    private const SOFT_DELETE_TABLES = [
+        'follow_ups' => true,
+    ];
+
+    /**
      * Latest-activity summaries for Master/Leads list cells.
-     * Uses one latest row per source table (not full history).
+     * One SQL union of latest-per-source rows, then one overall latest per CA.
      *
      * @param  list<int>  $caIds
      * @return array<int, array<string, mixed>>
@@ -38,17 +58,11 @@ class LeadActivityTimelineService
             return [];
         }
 
-        $events = $this->collectLatestEventsForCaIds($caIds);
+        $latestByCaId = $this->latestSummaryEventsForCaIds($caIds);
         $summaries = [];
 
-        foreach ($caIds as $caId) {
-            $latest = collect($events[$caId] ?? [])
-                ->sortByDesc(fn (array $event) => $event['occurred_at']->timestamp)
-                ->first();
-
-            if ($latest !== null) {
-                $summaries[$caId] = $this->formatSummary($latest);
-            }
+        foreach ($latestByCaId as $caId => $event) {
+            $summaries[(int) $caId] = $this->formatSummary($event);
         }
 
         return $summaries;
@@ -80,7 +94,342 @@ class LeadActivityTimelineService
     }
 
     /**
-     * Latest event only per activity source per CA (list/summary path).
+     * Single-pass latest activity for list cells: one UNION of per-source latest
+     * rows, then one overall latest per ca_id (avoids N schema checks + N hydrates).
+     *
+     * @param  list<int>  $caIds
+     * @return array<int, array<string, mixed>>
+     */
+    private function latestSummaryEventsForCaIds(array $caIds): array
+    {
+        $placeholders = implode(',', array_fill(0, count($caIds), '?'));
+        $unions = [];
+        $bindings = [];
+
+        $pushUnion = function (string $sql, array $bind) use (&$unions, &$bindings): void {
+            $unions[] = $sql;
+            foreach ($bind as $value) {
+                $bindings[] = $value;
+            }
+        };
+
+        // Each branch returns at most one row per ca_id (activity_rn = 1).
+        $this->appendLatestSourceUnion(
+            $pushUnion,
+            'call_logs',
+            $placeholders,
+            $caIds,
+            'COALESCE(called_at, created_at)',
+            "'call'",
+            "'Call'",
+            "'phone'",
+            'employee_id',
+            "TRIM(COALESCE(NULLIF(call_note, ''), call_status, ''))",
+            null,
+        );
+
+        $this->appendLatestSourceUnion(
+            $pushUnion,
+            'follow_up_histories',
+            $placeholders,
+            $caIds,
+            'created_at',
+            "'follow_up'",
+            'event_type',
+            "'calendar-clock'",
+            'employee_id',
+            "TRIM(COALESCE(NULLIF(remarks, ''), outcome, ''))",
+            'performed_by',
+        );
+
+        $this->appendLatestSourceUnion(
+            $pushUnion,
+            'follow_ups',
+            $placeholders,
+            $caIds,
+            'COALESCE(updated_at, created_at)',
+            "'follow_up'",
+            "'Follow-up'",
+            "'calendar-clock'",
+            'employee_id',
+            "TRIM(COALESCE(NULLIF(remarks, ''), NULLIF(outcome, ''), followup_type, ''))",
+            null,
+        );
+
+        $this->appendLatestSourceUnion(
+            $pushUnion,
+            'lead_actions',
+            $placeholders,
+            $caIds,
+            'COALESCE(action_at, created_at)',
+            "'lead_action'",
+            "COALESCE(NULLIF(action_type, ''), 'Lead Action')",
+            "'git-branch'",
+            'employee_id',
+            'TRIM(COALESCE(remarks, \'\'))',
+            null,
+        );
+
+        $this->appendLatestSourceUnion(
+            $pushUnion,
+            'assignment_histories',
+            $placeholders,
+            $caIds,
+            'COALESCE(assigned_at, created_at)',
+            "'assignment'",
+            "'Assignment Changed'",
+            "'user-check'",
+            'assigned_by',
+            "TRIM(COALESCE(NULLIF(reason, ''), assignment_type, ''))",
+            null,
+            'new_employee_id',
+        );
+
+        $this->appendLatestSourceUnion(
+            $pushUnion,
+            'email_logs',
+            $placeholders,
+            $caIds,
+            'COALESCE(reply_received_at, sent_at, created_at)',
+            "'email'",
+            "CASE WHEN reply_received_at IS NOT NULL THEN 'Email Reply' ELSE 'Email' END",
+            "'mail'",
+            'employee_id',
+            'TRIM(COALESCE(subject, \'\'))',
+            null,
+        );
+
+        $this->appendLatestSourceUnion(
+            $pushUnion,
+            'email_inbound_messages',
+            $placeholders,
+            $caIds,
+            'COALESCE(received_at, created_at)',
+            "'email'",
+            "'Email'",
+            "'mail'",
+            null,
+            'TRIM(COALESCE(subject, \'\'))',
+            'from_email',
+        );
+
+        $this->appendLatestSourceUnion(
+            $pushUnion,
+            'wa_message_logs',
+            $placeholders,
+            $caIds,
+            'COALESCE(sent_at, delivered_at, created_at)',
+            "'whatsapp'",
+            "'WhatsApp'",
+            "'message-circle'",
+            'employee_id',
+            "TRIM(COALESCE(NULLIF(message, ''), template_name, ''))",
+            null,
+        );
+
+        $this->appendLatestSourceUnion(
+            $pushUnion,
+            'sms_logs',
+            $placeholders,
+            $caIds,
+            'COALESCE(sent_at, delivered_at, created_at)',
+            "'sms'",
+            "'SMS'",
+            "'message-square'",
+            'employee_id',
+            'TRIM(COALESCE(message, \'\'))',
+            null,
+        );
+
+        $this->appendLatestSourceUnion(
+            $pushUnion,
+            'lead_quality_histories',
+            $placeholders,
+            $caIds,
+            'COALESCE(recorded_at, created_at)',
+            "'status_changed'",
+            "'Status Changed'",
+            "'shield-alert'",
+            'employee_id',
+            "TRIM(COALESCE(NULLIF(reason, ''), event_type, ''))",
+            null,
+        );
+
+        // Lead created/updated markers (always present for listed CAs).
+            $pushUnion(
+                "SELECT ca_id, created_at AS occurred_at, 'lead_created' AS type, 'Lead Created' AS label, 'sparkles' AS icon,
+                        created_by_employee_id AS employee_id, NULL AS employee_id_alt, '' AS note, NULL AS name_fallback
+                 FROM ca_masters
+                 WHERE ca_id IN ({$placeholders}) AND created_at IS NOT NULL",
+                $caIds,
+            );
+            $pushUnion(
+                "SELECT ca_id, updated_at AS occurred_at, 'lead_updated' AS type, 'Lead Updated' AS label, 'edit-3' AS icon,
+                        NULL AS employee_id, NULL AS employee_id_alt, '' AS note, 'System' AS name_fallback
+                 FROM ca_masters
+                 WHERE ca_id IN ({$placeholders})
+                   AND updated_at IS NOT NULL
+                   AND created_at IS NOT NULL
+                   AND updated_at > created_at",
+                $caIds,
+            );
+
+        if ($unions === []) {
+            return [];
+        }
+
+        $unionSql = implode("\nUNION ALL\n", $unions);
+        $sql = "SELECT ca_id, occurred_at, type, label, icon, employee_id, employee_id_alt, note, name_fallback
+                FROM (
+                    SELECT events.*,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY ca_id
+                               ORDER BY occurred_at DESC, ca_id DESC
+                           ) AS summary_rn
+                    FROM (
+                        {$unionSql}
+                    ) events
+                    WHERE occurred_at IS NOT NULL
+                ) ranked
+                WHERE summary_rn = 1";
+
+        try {
+            $rows = DB::select($sql, $bindings);
+        } catch (\Throwable) {
+            // Fallback preserves prior multi-query behavior if window/union unsupported.
+            return $this->latestSummaryEventsFallback($caIds);
+        }
+
+        $employeeIds = [];
+        foreach ($rows as $row) {
+            foreach ([(int) ($row->employee_id ?? 0), (int) ($row->employee_id_alt ?? 0)] as $employeeId) {
+                if ($employeeId > 0) {
+                    $employeeIds[$employeeId] = true;
+                }
+            }
+        }
+
+        $employeeNames = $employeeIds === []
+            ? []
+            : DB::table('employees')
+                ->whereIn('employee_id', array_keys($employeeIds))
+                ->pluck('name', 'employee_id')
+                ->all();
+
+        $events = [];
+        foreach ($rows as $row) {
+            $caId = (int) $row->ca_id;
+            $occurredAt = Carbon::parse($row->occurred_at);
+            $employeeName = $row->name_fallback ?: null;
+            $primaryEmployeeId = (int) ($row->employee_id ?? 0);
+            $altEmployeeId = (int) ($row->employee_id_alt ?? 0);
+            if ($primaryEmployeeId > 0 && isset($employeeNames[$primaryEmployeeId])) {
+                $employeeName = $employeeNames[$primaryEmployeeId];
+            } elseif ($altEmployeeId > 0 && isset($employeeNames[$altEmployeeId])) {
+                $employeeName = $employeeNames[$altEmployeeId];
+            }
+            if ($employeeName === null || $employeeName === '') {
+                $employeeName = 'System';
+            }
+
+            $label = (string) ($row->label ?? '');
+            if (($row->type ?? '') === 'follow_up' && $label !== 'Follow-up') {
+                $label = $this->followUpHistoryLabel($label);
+            }
+
+            $events[$caId] = [
+                'ca_id' => $caId,
+                'occurred_at' => $occurredAt,
+                'type' => (string) $row->type,
+                'label' => $label !== '' ? $label : 'Activity',
+                'icon' => (string) ($row->icon ?: 'activity'),
+                'employee_name' => $employeeName,
+                'note' => trim((string) ($row->note ?? '')),
+            ];
+        }
+
+        return $events;
+    }
+
+    /**
+     * @param  callable(string, array<int, mixed>): void  $pushUnion
+     * @param  list<int>  $caIds
+     */
+    private function appendLatestSourceUnion(
+        callable $pushUnion,
+        string $table,
+        string $placeholders,
+        array $caIds,
+        string $orderExpression,
+        string $typeSql,
+        string $labelSql,
+        string $iconSql,
+        ?string $employeeIdColumn,
+        string $noteSql,
+        ?string $nameFallbackColumn,
+        ?string $altEmployeeIdColumn = null,
+    ): void {
+        $pk = self::TABLE_PRIMARY_KEYS[$table] ?? null;
+        if ($pk === null) {
+            return;
+        }
+
+        if (preg_match('/[^a-zA-Z0-9_,\s\(\)]/', $orderExpression) === 1) {
+            $orderExpression = 'created_at';
+        }
+
+        $softDelete = isset(self::SOFT_DELETE_TABLES[$table]) ? ' AND deleted_at IS NULL' : '';
+        $employeeSelect = $employeeIdColumn ?? 'NULL';
+        $altEmployeeSelect = $altEmployeeIdColumn ?? 'NULL';
+        $fallbackSelect = $nameFallbackColumn ?? 'NULL';
+
+        $pushUnion(
+            "SELECT ca_id, occurred_at, type, label, icon, employee_id, employee_id_alt, note, name_fallback
+             FROM (
+                SELECT ca_id,
+                       {$orderExpression} AS occurred_at,
+                       {$typeSql} AS type,
+                       {$labelSql} AS label,
+                       {$iconSql} AS icon,
+                       {$employeeSelect} AS employee_id,
+                       {$altEmployeeSelect} AS employee_id_alt,
+                       {$noteSql} AS note,
+                       {$fallbackSelect} AS name_fallback,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY ca_id
+                           ORDER BY {$orderExpression} DESC, {$pk} DESC
+                       ) AS activity_rn
+                FROM {$table}
+                WHERE ca_id IN ({$placeholders}){$softDelete}
+             ) source_ranked
+             WHERE activity_rn = 1",
+            $caIds,
+        );
+    }
+
+    /**
+     * @param  list<int>  $caIds
+     * @return array<int, array<string, mixed>>
+     */
+    private function latestSummaryEventsFallback(array $caIds): array
+    {
+        $grouped = $this->collectLatestEventsForCaIds($caIds);
+        $events = [];
+
+        foreach ($grouped as $caId => $sourceEvents) {
+            $latest = collect($sourceEvents)
+                ->sortByDesc(fn (array $event) => $event['occurred_at']->timestamp)
+                ->first();
+            if ($latest !== null) {
+                $events[(int) $caId] = $latest;
+            }
+        }
+
+        return $events;
+    }
+
+    /**
+     * Latest event only per activity source per CA (fallback path).
      *
      * @param  list<int>  $caIds
      * @return array<int, list<array<string, mixed>>>
@@ -291,16 +640,17 @@ class LeadActivityTimelineService
      */
     private function latestModels(Builder $query, string $table, array $caIds, string $orderExpression): Collection
     {
-        if ($caIds === [] || ! Schema::hasTable($table)) {
+        if ($caIds === [] || ! isset(self::TABLE_PRIMARY_KEYS[$table])) {
             return collect();
         }
 
+        $pk = self::TABLE_PRIMARY_KEYS[$table];
         $ids = $this->latestRowIds($table, $caIds, $orderExpression);
         if ($ids === []) {
             return collect();
         }
 
-        return $query->whereIn($table.'.id', $ids)->get();
+        return $query->whereIn($table.'.'.$pk, $ids)->get();
     }
 
     /**
@@ -309,7 +659,8 @@ class LeadActivityTimelineService
      */
     private function latestRowIds(string $table, array $caIds, string $orderExpression): array
     {
-        if (! Schema::hasTable($table) || ! Schema::hasColumn($table, 'ca_id') || ! Schema::hasColumn($table, 'id')) {
+        $pk = self::TABLE_PRIMARY_KEYS[$table] ?? null;
+        if ($pk === null) {
             return [];
         }
 
@@ -319,14 +670,14 @@ class LeadActivityTimelineService
         }
 
         $placeholders = implode(',', array_fill(0, count($caIds), '?'));
-        $softDelete = Schema::hasColumn($table, 'deleted_at') ? ' AND deleted_at IS NULL' : '';
+        $softDelete = isset(self::SOFT_DELETE_TABLES[$table]) ? ' AND deleted_at IS NULL' : '';
 
         try {
             $rows = DB::select(
-                "SELECT id FROM (
-                    SELECT id, ROW_NUMBER() OVER (
+                "SELECT {$pk} AS activity_id FROM (
+                    SELECT {$pk}, ROW_NUMBER() OVER (
                         PARTITION BY ca_id
-                        ORDER BY {$orderExpression} DESC, id DESC
+                        ORDER BY {$orderExpression} DESC, {$pk} DESC
                     ) AS activity_rn
                     FROM {$table}
                     WHERE ca_id IN ({$placeholders}){$softDelete}
@@ -334,20 +685,20 @@ class LeadActivityTimelineService
                 $caIds
             );
 
-            return array_values(array_map(static fn ($row) => (int) $row->id, $rows));
+            return array_values(array_map(static fn ($row) => (int) $row->activity_id, $rows));
         } catch (\Throwable) {
             // Fallback for engines without window functions: fetch ordered rows and unique in PHP.
             $builder = DB::table($table)->whereIn('ca_id', $caIds);
-            if (Schema::hasColumn($table, 'deleted_at')) {
+            if (isset(self::SOFT_DELETE_TABLES[$table])) {
                 $builder->whereNull('deleted_at');
             }
 
             return $builder
                 ->orderByRaw($orderExpression.' DESC')
-                ->orderByDesc('id')
-                ->get(['id', 'ca_id'])
+                ->orderByDesc($pk)
+                ->get([$pk, 'ca_id'])
                 ->unique('ca_id')
-                ->pluck('id')
+                ->pluck($pk)
                 ->map(fn ($id) => (int) $id)
                 ->values()
                 ->all();

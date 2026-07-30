@@ -167,11 +167,14 @@ class DashboardService
             'from' => $from->toDateString(),
             'to' => $to->toDateString(),
         ], fn ($v) => $v !== null);
+        // Productivity panel is only shown for a selected employee — skip the org-wide rebuild.
         $employeeProductivity = null;
-        try {
-            $employeeProductivity = $this->managerEmployeeProductivity->productivity($employeeId, null, $range);
-        } catch (InvalidArgumentException) {
-            $employeeProductivity = null;
+        if ($employeeId) {
+            try {
+                $employeeProductivity = $this->managerEmployeeProductivity->productivity($employeeId, null, $range);
+            } catch (InvalidArgumentException) {
+                $employeeProductivity = null;
+            }
         }
 
         return [
