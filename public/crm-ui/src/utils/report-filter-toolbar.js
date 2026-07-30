@@ -161,18 +161,23 @@ window.CrmReportFilterToolbar = (function () {
    * @param {string} [cfg.wrapperId]
    * @param {string} [cfg.wrapperClass]
    * @param {string} [cfg.errorId]
-   * @param {string} cfg.applyId
+   * @param {string} [cfg.applyId] kept for legacy ids; Apply is hidden unless showApply
    * @param {string} cfg.resetId
    * @param {string} [cfg.applyLabel]
+   * @param {boolean} [cfg.showApply] default false — filters auto-apply on change
    * @param {Array} cfg.fields
    */
   function build(cfg) {
     cfg = cfg || {};
     var parts = (cfg.fields || []).map(buildField).filter(Boolean);
+    if (cfg.showApply === true && cfg.applyId) {
+      parts.push(
+        '<button type="button" class="btn-primary btn-sm crm-report-filter__apply" id="' + escapeAttr(cfg.applyId) + '">' +
+          escapeAttr(cfg.applyLabel || 'Apply') +
+        '</button>'
+      );
+    }
     parts.push(
-      '<button type="button" class="btn-primary btn-sm crm-report-filter__apply" id="' + escapeAttr(cfg.applyId) + '">' +
-        escapeAttr(cfg.applyLabel || 'Apply') +
-      '</button>',
       '<button type="button" class="crm-toolbar-icon-btn crm-report-filter__reset" id="' + escapeAttr(cfg.resetId) + '" ' +
         'data-crm-tip="Reset Filters" aria-label="Reset Filters">' +
         '<i data-lucide="rotate-ccw" class="h-4 w-4" aria-hidden="true"></i>' +
@@ -299,12 +304,123 @@ window.CrmReportFilterToolbar = (function () {
     return true;
   }
 
+  /**
+   * Ready for auto-refresh: both empty, or both set with from <= to.
+   * Incomplete ranges are skipped silently (user still picking dates).
+   * @returns {{ ok: boolean, incomplete?: boolean, invalid?: boolean }}
+   */
+  function dateRangeAutoReady(fromId, toId, errorId) {
+    var from = fromId ? readInputValue(fromId) : '';
+    var to = toId ? readInputValue(toId) : '';
+    if (!fromId && !toId) return { ok: true };
+    if ((from && !to) || (!from && to)) {
+      hideDateRangeError(errorId);
+      return { ok: false, incomplete: true };
+    }
+    if (from && to && from > to) {
+      showDateRangeError(errorId, 'From Date cannot be later than To Date.');
+      return { ok: false, invalid: true };
+    }
+    hideDateRangeError(errorId);
+    return { ok: true };
+  }
+
+  /**
+   * Bind debounced auto-apply on filter toolbar changes (no Apply button).
+   * @param {HTMLElement} root toolbar or page root containing .crm-report-filter-toolbar
+   * @param {function} onApply callback invoked after debounce
+   * @param {object} [opts]
+   * @param {number} [opts.debounceMs=350]
+   * @param {string} [opts.fromId]
+   * @param {string} [opts.toId]
+   * @param {string} [opts.errorId]
+   * @param {function():boolean} [opts.isBusy] skip firing while true (queues one trailing run)
+   * @returns {{ destroy: function, flush: function }}
+   */
+  function bindAutoApply(root, onApply, opts) {
+    opts = opts || {};
+    if (!root || typeof onApply !== 'function') {
+      return { destroy: function () {}, flush: function () {} };
+    }
+    var debounceMs = typeof opts.debounceMs === 'number' ? opts.debounceMs : 350;
+    var timer = null;
+    var pending = false;
+    var destroyed = false;
+
+    function shouldSkipTarget(target) {
+      if (!target || !target.closest) return true;
+      if (target.closest('.crm-report-filter__reset, .crm-report-filter__apply')) return true;
+      if (target.closest('[data-ra-export], #ra-export-toggle, #ra-refresh, #ra-print, #ra-share')) return true;
+      return false;
+    }
+
+    function isFilterControl(target) {
+      if (!target || !target.closest) return false;
+      if (!root.contains(target)) return false;
+      return !!(
+        target.closest('.crm-report-filter') ||
+        target.matches('.crm-report-filter__control, select, input[type="search"], [data-crm-date-input]') ||
+        target.classList.contains('crm-datetime-source')
+      );
+    }
+
+    function runApply() {
+      if (destroyed) return;
+      if (opts.fromId || opts.toId) {
+        var ready = dateRangeAutoReady(opts.fromId, opts.toId, opts.errorId);
+        if (!ready.ok) return;
+      }
+      if (typeof opts.isBusy === 'function' && opts.isBusy()) {
+        pending = true;
+        return;
+      }
+      pending = false;
+      onApply();
+    }
+
+    function schedule() {
+      if (destroyed) return;
+      clearTimeout(timer);
+      timer = setTimeout(runApply, debounceMs);
+    }
+
+    function onChange(e) {
+      if (shouldSkipTarget(e.target) || !isFilterControl(e.target)) return;
+      schedule();
+    }
+
+    root.addEventListener('change', onChange);
+    root.addEventListener('input', onChange);
+
+    return {
+      destroy: function () {
+        destroyed = true;
+        clearTimeout(timer);
+        root.removeEventListener('change', onChange);
+        root.removeEventListener('input', onChange);
+      },
+      flush: function () {
+        clearTimeout(timer);
+        runApply();
+      },
+      /** Call when an in-flight load finishes so a queued filter change can run. */
+      notifyIdle: function () {
+        if (pending) {
+          pending = false;
+          schedule();
+        }
+      },
+    };
+  }
+
   return {
     build: build,
     buildFieldsFromPreset: buildFieldsFromPreset,
     initDatePickers: initDatePickers,
     initToolbar: initToolbar,
     validateDateRange: validateDateRange,
+    dateRangeAutoReady: dateRangeAutoReady,
+    bindAutoApply: bindAutoApply,
     hideDateRangeError: hideDateRangeError,
     writeInputValue: writeInputValue,
     clearDateFields: clearDateFields,

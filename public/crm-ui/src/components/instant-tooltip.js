@@ -47,11 +47,23 @@
     root.querySelectorAll('[title], [data-crm-tip]').forEach(migrateElement);
   }
 
+  function isLive(el) {
+    return !!(el && el.isConnected && el.getClientRects && el.getClientRects().length);
+  }
+
   function position(el) {
     var tip = ensureTip();
     if (!el || tip.hidden) return;
+    if (!isLive(el)) {
+      hide();
+      return;
+    }
 
     var rect = el.getBoundingClientRect();
+    if (!rect.width && !rect.height) {
+      hide();
+      return;
+    }
     var tipRect = tip.getBoundingClientRect();
     var gap = 8;
     var left = rect.left + rect.width / 2 - tipRect.width / 2;
@@ -91,6 +103,9 @@
     if (!tipEl) return;
     tipEl.hidden = true;
     tipEl.classList.remove('is-visible');
+    tipEl.removeAttribute('data-placement');
+    tipEl.style.left = '';
+    tipEl.style.top = '';
     activeEl = null;
   }
 
@@ -129,17 +144,35 @@
   }
 
   function onScrollOrResize() {
-    if (activeEl) position(activeEl);
+    if (!activeEl) return;
+    if (!isLive(activeEl)) {
+      hide();
+      return;
+    }
+    position(activeEl);
   }
 
   function bindObserver() {
     if (observer || typeof MutationObserver === 'undefined') return;
     observer = new MutationObserver(function (mutations) {
+      var activeGone = false;
       mutations.forEach(function (mutation) {
         mutation.addedNodes.forEach(function (node) {
           migrateTree(node);
         });
+        if (activeEl && mutation.removedNodes && mutation.removedNodes.length) {
+          for (var i = 0; i < mutation.removedNodes.length; i++) {
+            var removed = mutation.removedNodes[i];
+            if (removed === activeEl || (removed.contains && removed.contains(activeEl))) {
+              activeGone = true;
+              break;
+            }
+          }
+        }
       });
+      if (activeGone || (activeEl && !activeEl.isConnected)) {
+        hide();
+      }
     });
     observer.observe(document.body, { childList: true, subtree: true });
   }

@@ -11,8 +11,11 @@ window.CrmReportAnalytics = (function () {
     sortDir: 'desc',
     bound: false,
     drillDown: null,
-    /** Applied filter values — survive Apply / soft refresh / full re-render. */
+    /** Applied filter values — survive soft refresh / full re-render. */
     filters: null,
+    filterAutoBind: null,
+    filterRefreshPending: false,
+    reportLoadGen: 0,
   };
 
   var RA_FILTER_FIELDS = {
@@ -229,7 +232,7 @@ window.CrmReportAnalytics = (function () {
 
   function getFilterQuery() {
     var parts = [];
-    /* Prefer live DOM when present; otherwise use shared applied state (critical after Apply wipe). */
+    /* Prefer live DOM when present; otherwise use shared applied state (critical after soft refresh wipe). */
     if (document.getElementById('ra-filter-from') || document.getElementById('ra-filter-employee')) {
       captureFiltersFromDom();
     } else {
@@ -250,6 +253,10 @@ window.CrmReportAnalytics = (function () {
   }
 
   function validateDateRange() {
+    if (window.CrmReportFilterToolbar && typeof window.CrmReportFilterToolbar.dateRangeAutoReady === 'function') {
+      var ready = window.CrmReportFilterToolbar.dateRangeAutoReady('ra-filter-from', 'ra-filter-to', 'ra-filter-date-error');
+      return !!ready.ok;
+    }
     if (window.CrmReportFilterToolbar) {
       return window.CrmReportFilterToolbar.validateDateRange('ra-filter-from', 'ra-filter-to', 'ra-filter-date-error');
     }
@@ -262,7 +269,6 @@ window.CrmReportAnalytics = (function () {
       return false;
     }
     if ((fromEl.value && !toEl.value) || (!fromEl.value && toEl.value)) {
-      toast('Please complete the date range with both From Date and To Date.', 'warning');
       return false;
     }
     return true;
@@ -738,7 +744,6 @@ window.CrmReportAnalytics = (function () {
         '<label class="ra-table-search">' +
           '<input type="search" id="ra-table-search" placeholder="Search table…" value="' + escapeHtml(state.tableSearch) + '" aria-label="Search report table" /></label>' +
       '</header>' +
-      '<p class="ra-table-meta">' + fmtNum(rows.length) + ' of ' + fmtNum(allRows.length) + ' rows · click column headers to sort</p>' +
       '<div class="ra-table-wrap scrollbar-thin"><table class="ra-table ra-lc-table"><thead><tr>' + thead + '</tr></thead><tbody>' + tbody + '</tbody></table></div>' +
     '</section>';
   }
@@ -762,7 +767,6 @@ window.CrmReportAnalytics = (function () {
       if (filters.indexOf('search') >= 0) {
         parts.push('<label class="ra-lc-filter ra-lc-filter--grow" title="Search table"><input type="search" id="ra-filter-source" class="input-field input-field-sm" placeholder="Search table…" aria-label="Search table" /></label>');
       }
-      parts.push('<button type="button" class="btn-primary btn-sm ra-lc-apply" id="ra-filter-apply">Apply</button>');
       parts.push('<button type="button" class="crm-toolbar-icon-btn" id="ra-filter-reset" title="Reset filters" aria-label="Reset filters"><i data-lucide="rotate-ccw" class="h-4 w-4"></i></button>');
       return '<div class="ra-lc-toolbar"><div class="ra-lc-filters">' + parts.join('') + '</div></div>';
     }
@@ -772,6 +776,7 @@ window.CrmReportAnalytics = (function () {
       errorId: 'ra-filter-date-error',
       applyId: 'ra-filter-apply',
       resetId: 'ra-filter-reset',
+      showApply: false,
       fields: toolbar.buildFieldsFromPreset(enabled, DRAWER_FIELD_DEFS),
     });
   }
@@ -783,6 +788,7 @@ window.CrmReportAnalytics = (function () {
   }
 
   function renderReportBody(report) {
+    hideReportTips();
     var noticeHost = document.querySelector('.ra-lc-main');
     var existingNotice = noticeHost ? noticeHost.querySelector('.ra-notice') : null;
     var noticeHtml = buildNotice(report.slug || state.slug);
@@ -802,7 +808,14 @@ window.CrmReportAnalytics = (function () {
     iconsIn($('ra-root'));
   }
 
+  function hideReportTips() {
+    if (window.CrmInstantTooltip && typeof window.CrmInstantTooltip.hide === 'function') {
+      window.CrmInstantTooltip.hide();
+    }
+  }
+
   function renderSoftLoading() {
+    hideReportTips();
     var kpis = $('ra-kpis');
     var charts = $('ra-charts');
     var table = $('ra-table');
@@ -824,12 +837,31 @@ window.CrmReportAnalytics = (function () {
       page &&
       root &&
       page.contains(root) &&
-      $('ra-filter-apply') &&
+      ($('ra-filter-reset') || root.querySelector('.crm-report-filter-toolbar, .ra-lc-toolbar')) &&
       ($('ra-kpis') || $('ra-charts') || $('ra-table'))
     );
   }
 
+  function ensureFilterAutoBind(root) {
+    if (!root || !window.CrmReportFilterToolbar || typeof window.CrmReportFilterToolbar.bindAutoApply !== 'function') {
+      return;
+    }
+    if (state.filterAutoBind && typeof state.filterAutoBind.destroy === 'function') {
+      state.filterAutoBind.destroy();
+    }
+    state.filterAutoBind = window.CrmReportFilterToolbar.bindAutoApply(root, function () {
+      applyFilters();
+    }, {
+      debounceMs: 350,
+      fromId: 'ra-filter-from',
+      toId: 'ra-filter-to',
+      errorId: 'ra-filter-date-error',
+      isBusy: function () { return !!state.loading; },
+    });
+  }
+
   function renderUnifiedShell(report) {
+    hideReportTips();
     var slug = report.slug || state.slug;
     var meta = SLUG_META[slug] || {};
     var title = report.label || meta.title || fmtLabel(slug);
@@ -875,6 +907,7 @@ window.CrmReportAnalytics = (function () {
     loadEmployeeOptions();
     if (window.CrmDateTimePicker) window.CrmDateTimePicker.initAll(root);
     applyFiltersToDom(state.filters);
+    ensureFilterAutoBind(root);
     iconsIn(root);
   }
 
@@ -1003,7 +1036,10 @@ window.CrmReportAnalytics = (function () {
 
   function loadReport(slug, opts) {
     opts = opts || {};
-    if (state.loading && !opts.force) return Promise.resolve();
+    if (state.loading && !opts.force) {
+      state.filterRefreshPending = true;
+      return Promise.resolve();
+    }
     var previousSlug = state.slug;
     var isRefresh = slug === previousSlug;
     if (!isRefresh) {
@@ -1026,6 +1062,7 @@ window.CrmReportAnalytics = (function () {
     if (state.filters && state.filters.search && (isRefresh || opts.preserveSearch)) {
       state.tableSearch = state.filters.search;
     }
+    var loadGen = ++state.reportLoadGen;
     state.loading = true;
     mountReportInShell();
 
@@ -1039,32 +1076,43 @@ window.CrmReportAnalytics = (function () {
     var query = getFilterQuery();
     return apiFetch('/reports/' + encodeURIComponent(slug) + query)
       .then(function (body) {
+        if (loadGen !== state.reportLoadGen) return;
         state.report = body.data || {};
         state.loading = false;
         if (soft && canSoftRefresh()) {
           renderReportBody(state.report);
           applyFiltersToDom(state.filters);
           loadEmployeeOptions();
+          ensureFilterAutoBind($('ra-root'));
         } else {
           renderShell(state.report);
         }
         persistFilters(state.slug, state.filters);
         syncReportLocation(state.slug);
+        if (state.filterRefreshPending) {
+          state.filterRefreshPending = false;
+          applyFilters();
+        } else if (state.filterAutoBind && typeof state.filterAutoBind.notifyIdle === 'function') {
+          state.filterAutoBind.notifyIdle();
+        }
       })
       .catch(function (err) {
+        if (loadGen !== state.reportLoadGen) return;
         state.loading = false;
         renderError(err.message || 'Unable to load report');
         toast(err.message || 'Unable to load report', 'error');
+        if (state.filterAutoBind && typeof state.filterAutoBind.notifyIdle === 'function') {
+          state.filterAutoBind.notifyIdle();
+        }
       });
   }
 
   function refreshReport() {
     if (!state.slug) return;
-    loadReport(state.slug, { preserveSearch: true, preserveDrill: true, soft: true });
+    loadReport(state.slug, { preserveSearch: true, preserveDrill: true, soft: true, force: true });
   }
 
   function applyFilters() {
-    if (state.loading) return;
     if (!validateDateRange()) return;
     hideDateRangeError();
     syncHubFilters();

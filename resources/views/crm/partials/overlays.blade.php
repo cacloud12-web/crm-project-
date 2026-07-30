@@ -373,6 +373,37 @@
           <label class="form-label">Mobile</label>
           <input name="mobile_no" type="tel" class="input-field" autocomplete="tel" />
         </div>
+        <div id="profile-work-type-section" class="space-y-4 border-t border-slate-100 pt-4">
+          <p class="text-card-heading text-sm">Work Type</p>
+          <div>
+            <label class="form-label" for="profile-work-type">Calling / Demo Provider</label>
+            <select name="work_type" id="profile-work-type" class="input-field">
+              <option value="calling">Calling</option>
+              <option value="demo_provider">Demo Provider</option>
+              <option value="both">Both</option>
+            </select>
+          </div>
+          <div id="profile-demo-fields-wrap" class="hidden space-y-4">
+            <div>
+              <label class="form-label" for="profile-demo-meeting-link">Demo Meeting Link</label>
+              <input name="demo_meeting_link" type="url" id="profile-demo-meeting-link" class="input-field" placeholder="https://meet.google.com/…" />
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="form-label" for="profile-demo-min-team-size">Minimum Team Size</label>
+                <input name="demo_min_team_size" type="number" min="1" step="1" id="profile-demo-min-team-size" class="input-field" placeholder="1" />
+              </div>
+              <div>
+                <label class="form-label" for="profile-demo-max-team-size">Maximum Team Size</label>
+                <input name="demo_max_team_size" type="number" min="1" step="1" id="profile-demo-max-team-size" class="input-field" placeholder="25" />
+              </div>
+            </div>
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input name="active_for_demo" type="checkbox" id="profile-active-for-demo" value="1" class="rounded border-slate-300" />
+              Active for demo assignment
+            </label>
+          </div>
+        </div>
       </form>
       <div class="ca-modal-footer">
         <div class="ca-modal-footer-buttons">

@@ -2716,31 +2716,38 @@ if (otherInput) {
       window.CrmReportFilterToolbar.initToolbar(filterBar);
     }
 
+    function runActivityFilterApply() {
+      activityFilters = readActivityFiltersFromForm();
+      if (window.CrmReportFilterToolbar) {
+        window.CrmReportFilterToolbar.setSharedState('activity_logs', activityFilters);
+      }
+      if (window.CA_LISTING_SEARCH) {
+        CA_LISTING_SEARCH.setState('activity_logs', { page: 1, filters: activityFilters });
+        reloadListing('activity_logs').then(function () {
+          populateActivityFilterOptions();
+          writeActivityFiltersToForm(activityFilters);
+          renderActivityTimeline(activityLogsCache);
+        });
+        return;
+      }
+      loadActivityLogsFromDatabase(activityFilters, function (logs) {
+        populateActivityFilterOptions();
+        writeActivityFiltersToForm(activityFilters);
+        renderActivityLogsTable(logs);
+        renderActivityTimeline(logs);
+      });
+    }
+
+    if (filterBar && window.CrmReportFilterToolbar && typeof window.CrmReportFilterToolbar.bindAutoApply === 'function' && !filterBar._activityAutoBound) {
+      filterBar._activityAutoBound = true;
+      window.CrmReportFilterToolbar.bindAutoApply(filterBar, runActivityFilterApply, { debounceMs: 350 });
+    }
+
     var applyBtn = document.getElementById('activity-filter-apply');
     var clearBtn = document.getElementById('activity-filter-reset');
     if (applyBtn && !applyBtn._activityBound) {
       applyBtn._activityBound = true;
-      applyBtn.addEventListener('click', function () {
-        activityFilters = readActivityFiltersFromForm();
-        if (window.CrmReportFilterToolbar) {
-          window.CrmReportFilterToolbar.setSharedState('activity_logs', activityFilters);
-        }
-        if (window.CA_LISTING_SEARCH) {
-          CA_LISTING_SEARCH.setState('activity_logs', { page: 1, filters: activityFilters });
-          reloadListing('activity_logs').then(function () {
-            populateActivityFilterOptions();
-            writeActivityFiltersToForm(activityFilters);
-            renderActivityTimeline(activityLogsCache);
-          });
-          return;
-        }
-        loadActivityLogsFromDatabase(activityFilters, function (logs) {
-          populateActivityFilterOptions();
-          writeActivityFiltersToForm(activityFilters);
-          renderActivityLogsTable(logs);
-          renderActivityTimeline(logs);
-        });
-      });
+      applyBtn.addEventListener('click', runActivityFilterApply);
     }
     if (clearBtn && !clearBtn._activityBound) {
       clearBtn._activityBound = true;
@@ -8505,9 +8512,43 @@ if (otherInput) {
         if (mobileInput) mobileInput.value = '';
       }
     }
+    fillProfileWorkTypeFields(u);
+    bindProfileWorkTypeEvents();
     if (typeof closeDetailDrawer === 'function') closeDetailDrawer();
     openModal(modal);
     icons();
+  }
+
+  function isProfileDemoWorkType(workType) {
+    return workType === 'demo_provider' || workType === 'both';
+  }
+
+  function toggleProfileDemoFields() {
+    var workTypeSel = document.getElementById('profile-work-type');
+    var wrap = document.getElementById('profile-demo-fields-wrap');
+    if (!workTypeSel || !wrap) return;
+    wrap.classList.toggle('hidden', !isProfileDemoWorkType(workTypeSel.value));
+  }
+
+  function bindProfileWorkTypeEvents() {
+    var workTypeSel = document.getElementById('profile-work-type');
+    if (!workTypeSel || workTypeSel._profileDemoBound) return;
+    workTypeSel._profileDemoBound = true;
+    workTypeSel.addEventListener('change', toggleProfileDemoFields);
+  }
+
+  function fillProfileWorkTypeFields(user) {
+    var workTypeSel = document.getElementById('profile-work-type');
+    var linkInput = document.getElementById('profile-demo-meeting-link');
+    var minInput = document.getElementById('profile-demo-min-team-size');
+    var maxInput = document.getElementById('profile-demo-max-team-size');
+    var activeToggle = document.getElementById('profile-active-for-demo');
+    if (workTypeSel) workTypeSel.value = user && user.work_type ? user.work_type : 'calling';
+    if (linkInput) linkInput.value = (user && user.demo_meeting_link) || '';
+    if (minInput) minInput.value = user && user.demo_min_team_size != null ? user.demo_min_team_size : '';
+    if (maxInput) maxInput.value = user && user.demo_max_team_size != null ? user.demo_max_team_size : '';
+    if (activeToggle) activeToggle.checked = !!(user && user.active_for_demo);
+    toggleProfileDemoFields();
   }
 
   function renderLoginEmailChangeStatus(data) {
@@ -11586,28 +11627,44 @@ if (otherInput) {
       window.CrmReportFilterToolbar.initToolbar(filterBar);
     }
 
+    function runAuditFilterApply() {
+      if (window.CrmReportFilterToolbar &&
+        typeof window.CrmReportFilterToolbar.dateRangeAutoReady === 'function') {
+        var ready = window.CrmReportFilterToolbar.dateRangeAutoReady('audit-filter-from', 'audit-filter-to', 'audit-filter-date-error');
+        if (!ready.ok) return;
+      } else if (window.CrmReportFilterToolbar &&
+        !window.CrmReportFilterToolbar.validateDateRange('audit-filter-from', 'audit-filter-to', 'audit-filter-date-error')) {
+        return;
+      }
+      var auditFilters = readAuditFiltersFromForm();
+      if (window.CrmReportFilterToolbar) {
+        window.CrmReportFilterToolbar.setSharedState('audit_logs', auditFilters);
+      }
+      if (window.CA_LISTING_SEARCH) {
+        CA_LISTING_SEARCH.setState('activity_logs', { page: 1, filters: auditFilters });
+        reloadListing('activity_logs').then(function () {
+          populateAuditFilterOptions();
+          writeAuditFiltersToForm(auditFilters);
+          renderAuditLogsTable(activityLogsCache);
+        });
+      }
+    }
+
+    if (filterBar && window.CrmReportFilterToolbar && typeof window.CrmReportFilterToolbar.bindAutoApply === 'function' && !filterBar._auditAutoBound) {
+      filterBar._auditAutoBound = true;
+      window.CrmReportFilterToolbar.bindAutoApply(filterBar, runAuditFilterApply, {
+        debounceMs: 350,
+        fromId: 'audit-filter-from',
+        toId: 'audit-filter-to',
+        errorId: 'audit-filter-date-error',
+      });
+    }
+
     var applyBtn = document.getElementById('audit-filter-apply');
     var clearBtn = document.getElementById('audit-filter-reset');
     if (applyBtn && !applyBtn._auditBound) {
       applyBtn._auditBound = true;
-      applyBtn.addEventListener('click', function () {
-        if (window.CrmReportFilterToolbar &&
-          !window.CrmReportFilterToolbar.validateDateRange('audit-filter-from', 'audit-filter-to', 'audit-filter-date-error')) {
-          return;
-        }
-        var auditFilters = readAuditFiltersFromForm();
-        if (window.CrmReportFilterToolbar) {
-          window.CrmReportFilterToolbar.setSharedState('audit_logs', auditFilters);
-        }
-        if (window.CA_LISTING_SEARCH) {
-          CA_LISTING_SEARCH.setState('activity_logs', { page: 1, filters: auditFilters });
-          reloadListing('activity_logs').then(function () {
-            populateAuditFilterOptions();
-            writeAuditFiltersToForm(auditFilters);
-            renderAuditLogsTable(activityLogsCache);
-          });
-        }
-      });
+      applyBtn.addEventListener('click', runAuditFilterApply);
     }
     if (clearBtn && !clearBtn._auditBound) {
       clearBtn._auditBound = true;
@@ -11685,6 +11742,10 @@ if (otherInput) {
 
   function applyDuplicateAttemptsFilters() {
     if (window.CrmReportFilterToolbar &&
+      typeof window.CrmReportFilterToolbar.dateRangeAutoReady === 'function') {
+      var ready = window.CrmReportFilterToolbar.dateRangeAutoReady('dup-attempts-from', 'dup-attempts-to', 'dup-attempts-date-error');
+      if (!ready.ok) return;
+    } else if (window.CrmReportFilterToolbar &&
       !window.CrmReportFilterToolbar.validateDateRange('dup-attempts-from', 'dup-attempts-to', 'dup-attempts-date-error')) {
       return;
     }
@@ -11854,6 +11915,16 @@ if (otherInput) {
     var applyBtn = document.getElementById('dup-attempts-apply');
     var clearBtn = document.getElementById('dup-attempts-reset');
     var exportBtn = document.getElementById('dup-attempts-export-btn');
+
+    if (filterBar && window.CrmReportFilterToolbar && typeof window.CrmReportFilterToolbar.bindAutoApply === 'function' && !filterBar._dupAutoBound) {
+      filterBar._dupAutoBound = true;
+      window.CrmReportFilterToolbar.bindAutoApply(filterBar, applyDuplicateAttemptsFilters, {
+        debounceMs: 350,
+        fromId: 'dup-attempts-from',
+        toId: 'dup-attempts-to',
+        errorId: 'dup-attempts-date-error',
+      });
+    }
 
     if (applyBtn && !applyBtn._dupFilterBound) {
       applyBtn._dupFilterBound = true;
@@ -18881,9 +18952,11 @@ if (otherInput) {
     document.getElementById('form-edit-profile')?.addEventListener('submit', function (e) {
       e.preventDefault();
       var fd = new FormData(e.target);
+      var workType = String(fd.get('work_type') || 'calling');
       var payload = {
         name: (fd.get('name') || '').trim(),
         email: (fd.get('email') || '').trim(),
+        work_type: workType,
       };
       var designationWrap = document.getElementById('profile-field-designation');
       if (designationWrap && !designationWrap.classList.contains('hidden')) {
@@ -18892,6 +18965,32 @@ if (otherInput) {
       var mobileWrap = document.getElementById('profile-field-mobile');
       if (mobileWrap && !mobileWrap.classList.contains('hidden')) {
         payload.mobile_no = (fd.get('mobile_no') || '').trim();
+      }
+      if (isProfileDemoWorkType(workType)) {
+        var minSize = parseInt(fd.get('demo_min_team_size'), 10);
+        var maxSize = parseInt(fd.get('demo_max_team_size'), 10);
+        payload.demo_meeting_link = (fd.get('demo_meeting_link') || '').trim();
+        payload.demo_min_team_size = minSize || null;
+        payload.demo_max_team_size = maxSize || null;
+        payload.active_for_demo = !!(document.getElementById('profile-active-for-demo') && document.getElementById('profile-active-for-demo').checked);
+        if (!payload.demo_meeting_link) {
+          toast('Demo meeting link is required for Demo Provider work types.', 'error');
+          return;
+        }
+        if (!minSize || !maxSize) {
+          toast('Minimum and maximum team size are required for Demo Provider work types.', 'error');
+          return;
+        }
+        if (minSize > maxSize) {
+          toast('Minimum team size cannot be greater than maximum team size.', 'error');
+          return;
+        }
+      } else {
+        payload.work_type = 'calling';
+        payload.demo_meeting_link = null;
+        payload.demo_min_team_size = null;
+        payload.demo_max_team_size = null;
+        payload.active_for_demo = false;
       }
       apiFetch('/auth/profile', {
         method: 'PUT',

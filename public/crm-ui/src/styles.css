@@ -6187,6 +6187,11 @@ body:has(#modal-dcp-detail.open) #overlay.active {
   flex-wrap: nowrap;
   align-items: flex-end;
   gap: 0.45rem;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .crm-report-filter {
   display: flex;
@@ -6194,6 +6199,8 @@ body:has(#modal-dcp-detail.open) #overlay.active {
   gap: 0.2rem;
   min-width: 0;
   flex: 0 0 auto;
+  position: relative;
+  z-index: 1;
 }
 .crm-report-filter--date {
   width: 9.25rem;
@@ -16787,12 +16794,6 @@ body.ra-drawer-open .crm-header {
   background: #eff6ff;
   color: #1d4ed8;
   font-size: 11px;
-}
-
-.ra-table-meta {
-  margin: 0 0 0.35rem;
-  font-size: 11px;
-  color: #94a3b8;
 }
 
 .ra-skeleton { padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem; }

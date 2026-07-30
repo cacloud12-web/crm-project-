@@ -217,6 +217,8 @@ class RbacService
             ];
         }
 
+        $employeeProfile = $this->resolveEmployeeWorkProfile($user);
+
         return [
             'authenticated' => true,
             'id' => $user->id,
@@ -229,6 +231,11 @@ class RbacService
             'employee_id' => $this->resolveEmployeeRecordId($user),
             'designation' => $this->resolveEmployeeDesignation($user),
             'mobile' => $this->resolveEmployeeMobile($user),
+            'work_type' => $employeeProfile['work_type'] ?? 'calling',
+            'demo_meeting_link' => $employeeProfile['demo_meeting_link'] ?? null,
+            'demo_min_team_size' => $employeeProfile['demo_min_team_size'] ?? null,
+            'demo_max_team_size' => $employeeProfile['demo_max_team_size'] ?? null,
+            'active_for_demo' => (bool) ($employeeProfile['active_for_demo'] ?? false),
         ];
     }
 
@@ -247,6 +254,28 @@ class RbacService
         $employeeId = Employee::query()->where('email_id', $user->email)->value('employee_id');
 
         return $employeeId ? (int) $employeeId : null;
+    }
+
+    /** @return array<string, mixed> */
+    private function resolveEmployeeWorkProfile(?User $user): array
+    {
+        if (! $user) {
+            return [];
+        }
+
+        $row = Employee::query()
+            ->where(function ($q) use ($user) {
+                $q->where('user_id', $user->id)->orWhere('email_id', $user->email);
+            })
+            ->first([
+                'work_type',
+                'demo_meeting_link',
+                'demo_min_team_size',
+                'demo_max_team_size',
+                'active_for_demo',
+            ]);
+
+        return $row ? $row->toArray() : [];
     }
 
     private function resolveEmployeeDesignation(?User $user): ?string

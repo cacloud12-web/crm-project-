@@ -49,6 +49,47 @@ class ProfileUpdateTest extends TestCase
             ->assertJsonPath('data.name', 'Employee Updated');
     }
 
+    public function test_super_admin_can_set_demo_provider_work_type_on_profile(): void
+    {
+        $user = CrmTestAccounts::superAdmin();
+        $this->actingAs($user);
+
+        $response = $this->putJson('/auth/profile', [
+            'name' => $user->name,
+            'email' => $user->email,
+            'work_type' => 'both',
+            'demo_meeting_link' => 'https://meet.google.com/crm-demo-sa',
+            'demo_min_team_size' => 1,
+            'demo_max_team_size' => 50,
+            'active_for_demo' => true,
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('data.work_type', 'both')
+            ->assertJsonPath('data.demo_meeting_link', 'https://meet.google.com/crm-demo-sa')
+            ->assertJsonPath('data.demo_min_team_size', 1)
+            ->assertJsonPath('data.demo_max_team_size', 50)
+            ->assertJsonPath('data.active_for_demo', true);
+
+        $this->assertNotNull($response->json('data.employee_id'));
+    }
+
+    public function test_demo_provider_profile_requires_meeting_link_and_team_size(): void
+    {
+        $user = CrmTestAccounts::superAdmin();
+        $this->actingAs($user);
+
+        $response = $this->putJson('/auth/profile', [
+            'name' => $user->name,
+            'email' => $user->email,
+            'work_type' => 'demo_provider',
+            'active_for_demo' => true,
+        ]);
+
+        $response->assertUnprocessable()
+            ->assertJsonValidationErrors(['demo_meeting_link', 'demo_min_team_size', 'demo_max_team_size']);
+    }
+
     public function test_profile_email_must_be_unique(): void
     {
         $user = CrmTestAccounts::superAdmin();
