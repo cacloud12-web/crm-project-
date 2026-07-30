@@ -736,13 +736,26 @@ window.CA_CRM = (function () {
     return parts.length ? parts[parts.length - 1] : raw;
   }
 
-  function salesRemarksCell(text) {
+  function salesRemarksCell(text, opts) {
+    opts = opts || {};
     var raw = text == null || text === '' ? '' : String(text).trim();
-    if (!raw || raw === '—') {
-      return '<span class="cam-cell-text cam-cell-empty cam-sales-remarks-cell" data-column-value="sales_remarks">—</span>';
+    var empty = !raw || raw === '—';
+    var inner;
+    if (empty) {
+      inner = '<span class="cam-cell-text cam-cell-empty cam-sales-remarks-cell" data-column-value="sales_remarks">—</span>';
+    } else {
+      var latest = latestSalesRemarkPreview(raw) || raw;
+      inner = truncatedPreviewCell(latest, 60, 'cam-sales-remarks-cell', raw, 'sales_remarks');
     }
-    var latest = latestSalesRemarkPreview(raw) || raw;
-    return truncatedPreviewCell(latest, 60, 'cam-sales-remarks-cell', raw, 'sales_remarks');
+    if (!opts.canEdit || !opts.caId) {
+      return inner;
+    }
+    return '<button type="button" class="cam-inline-remarks-btn' + (empty ? ' cam-cell-empty' : '') +
+      '" data-cam-inline-remarks="' + escapeHtml(String(opts.caId)) +
+      '" title="' + (empty ? 'Add sales remark' : 'Add / view sales remarks') +
+      '" aria-label="' + (empty ? 'Add sales remark' : 'Add sales remark') + '">' +
+      inner +
+    '</button>';
   }
 
   function emailIdCell(text) {
@@ -8914,9 +8927,9 @@ if (otherInput) {
         '<i data-lucide="' + item.icon + '" class="h-4 w-4"></i>' +
         '<span class="leads-kpi-label">' + item.label + '</span></button>';
     }).join('');
-    var actionHtml = '';
+    var actionHtml = iconBtn('columns-3', 'Manage columns', 'id="cam-columns-btn" data-cam-columns-toggle aria-haspopup="dialog" aria-expanded="false"');
     if (crmCanAction('leads', 'create')) {
-      actionHtml =
+      actionHtml +=
         '<button type="button" class="crm-toolbar-icon-btn crm-toolbar-icon-btn--primary" data-open-modal="add-lead" id="leads-kpi-add-btn" title="Add Lead" aria-label="Add Lead">' +
           '<i data-lucide="plus" class="h-4 w-4"></i></button>';
     }
@@ -8925,9 +8938,9 @@ if (otherInput) {
         '<div class="leads-kpi-chips cam-control-chips">' + chipsHtml + '</div>' +
         (isEmployeeUser() ? leadsStatusFilterToolbarHtml() : '') +
       '</div>' +
-      (actionHtml
-        ? '<div class="leads-kpi-actions" role="toolbar" aria-label="Lead actions">' + actionHtml + '</div>'
-        : '');
+      '<div class="leads-kpi-actions" role="toolbar" aria-label="Lead actions">' + actionHtml + '</div>';
+    ensureCaMasterColumnsPopoverMounted();
+    applyCaMasterColumnVisibility(document.getElementById('leads-hub') || document);
     syncLeadsStatusFilterFromState();
     if (!el._kpiStripBound) {
       el._kpiStripBound = true;
@@ -9366,6 +9379,12 @@ if (otherInput) {
 
   function renderLeadsHub() {
     return ensureLeadsHubData(function () {
+      var page = document.getElementById('leads-hub');
+      if (page) {
+        bindCaMasterColumnsUi(page);
+        ensureCaMasterColumnsPopoverMounted();
+      }
+      ensureSalesRemarksUiBound();
       renderLeadKpis();
       bindLeadsColumnFilters();
       var pipelineActive = isLeadsPipelineTabActive();
@@ -9373,6 +9392,7 @@ if (otherInput) {
       var finishHub = function () {
         initLeadActions();
         bindModalTriggers(document.getElementById('leads-selected-bar') || document);
+        applyCaMasterColumnVisibility(document.getElementById('leads-hub') || document);
         var pendingLeadId = window._pendingOpenLeadId;
         if (pendingLeadId) {
           window._pendingOpenLeadId = null;
@@ -9415,34 +9435,14 @@ if (otherInput) {
     }
 
     var leads = pageLeads || getRealLeadsFiltered();
+    var colCount = getCaMasterVisibleColumnCount() || getCaMasterColumnDefs().length || 18;
 
-    el.innerHTML = leads.length ? leads.map(function (l) {
-      var data = JSON.stringify(CAData.leadToRowData(l)).replace(/'/g, '&#39;');
-      var executive = l.executive && l.executive !== 'Unassigned'
-        ? compactTextCell(l.executive)
-        : '<span class="cam-cell-text cam-cell-empty">Unassigned</span>';
-      return '<tr class="ca-table-row crm-table-row" data-lead-id="' + l.ca_id + '" data-row=\'' + data + '\'>' +
-        renderInboxCheckCell('leads-data-table', l.ca_id) +
-        '<td class="sticky-left-2 crm-td-firm font-medium text-slate-900">' + firmNameCell(l.firm_name) + '</td>' +
-        '<td class="sticky-left-3 crm-td-ca font-medium text-slate-900">' + caNameCell(l.ca_name) + '</td>' +
-        '<td class="crm-td-mobile">' + camPhoneCell(l.mobile_no) + '</td>' +
-        renderLeadCallLogQuickCell(l) +
-        '<td class="crm-td-mobile">' + camPhoneCell(l.alternate_mobile_no) + '</td>' +
-        '<td class="crm-td-geo">' + compactTextCell(l.city) + '</td>' +
-        '<td class="crm-td-geo">' + compactTextCell(l.stage) + '</td>' +
-        '<td class="crm-td-status"><span class="cam-cell-badge">' + statusBadge(l.status) + '</span></td>' +
-        '<td class="crm-td-person">' + executive + '</td>' +
-        '<td class="crm-td-source">' + compactTextCell(l.source) + '</td>' +
-        '<td class="crm-td-rating"><span class="cam-cell-rating">' + stars(l.priority) + '</span></td>' +
-        '<td class="crm-td-date"><span class="cam-cell-text cam-cell-mono text-slate-500" title="' + escapeHtml(l.updated) + '">' + escapeHtml(l.updated) + '</span></td>' +
-        renderLeadResearchQuickCell(l) +
-        renderCrmRowActionsCell(l) +
-      '</tr>';
-    }).join('') : emptyTableRow(15, getLeadsTableEmptyMessage());
-    bindLeadRows(el);
-    bindCrmRowActions(el);
-    bindCrmActionsDismiss();
+    el.innerHTML = leads.length
+      ? leads.map(function (l) { return renderCaMasterTableRow(l, 'leads-data-table'); }).join('')
+      : renderCaMasterEmptyState(colCount, getLeadsTableEmptyMessage());
+    bindCaMasterTableRows(el);
     syncInboxChecks('leads-data-table');
+    applyCaMasterColumnVisibility(document.getElementById('leads-hub') || document);
     icons();
   }
 
@@ -13824,16 +13824,29 @@ if (otherInput) {
     return getCaMasterVisibleKeys().indexOf(key) >= 0;
   }
 
+  function getCaMasterColumnVisibilityRoots(scope) {
+    if (scope) return [scope];
+    var roots = [];
+    var cam = document.getElementById('cam-hub');
+    var leads = document.getElementById('leads-hub');
+    if (cam) roots.push(cam);
+    if (leads) roots.push(leads);
+    if (!roots.length) roots.push(document);
+    return roots;
+  }
+
   function applyCaMasterColumnVisibility(scope) {
-    scope = scope || document.getElementById('cam-hub') || document;
     var visible = {};
     getCaMasterVisibleKeys().forEach(function (k) { visible[k] = true; });
+    var roots = getCaMasterColumnVisibilityRoots(scope);
     getCaMasterColumnDefs().forEach(function (d) {
       var show = !!visible[d.key];
-      var nodes = scope.querySelectorAll('[data-column="' + d.key + '"]');
-      for (var i = 0; i < nodes.length; i++) {
-        nodes[i].hidden = !show;
-        nodes[i].classList.toggle('cam-col-is-hidden', !show);
+      for (var r = 0; r < roots.length; r++) {
+        var nodes = roots[r].querySelectorAll('[data-column="' + d.key + '"]');
+        for (var i = 0; i < nodes.length; i++) {
+          nodes[i].hidden = !show;
+          nodes[i].classList.toggle('cam-col-is-hidden', !show);
+        }
       }
     });
     syncCaMasterColumnsSelectAllState();
@@ -13962,8 +13975,9 @@ if (otherInput) {
   }
 
   function ensureCaMasterColumnsPopoverMounted() {
-    var hub = document.getElementById('cam-hub');
-    if (!hub || document.getElementById('cam-columns-popover')) return;
+    if (document.getElementById('cam-columns-popover')) return;
+    var hub = document.getElementById('cam-hub') || document.getElementById('leads-hub');
+    if (!hub) return;
     hub.insertAdjacentHTML('beforeend', camColumnsPopoverHtml());
   }
 
@@ -14139,7 +14153,10 @@ if (otherInput) {
       withCamDataColumn('selection', renderInboxCheckCell(tableKey, l.ca_id)) +
       camColTd('firm_name', 'sticky-left-2 crm-td-firm cam-master-data-cell', firmCell) +
       camColTd('email_id', 'cam-td-email cam-master-data-cell', emailIdCell(l.email_id)) +
-      camColTd('sales_remarks', 'cam-td-remarks cam-master-data-cell', salesRemarksCell(l.sales_remarks)) +
+      camColTd('sales_remarks', 'cam-td-remarks cam-master-data-cell', salesRemarksCell(l.sales_remarks, {
+        canEdit: canEdit && (crmCanAction('leads', 'edit') || crmCanAction('ca_master', 'edit')),
+        caId: l.ca_id,
+      })) +
       camColTd('ca_name', 'crm-td-ca cam-master-data-cell', caCell) +
       camColTd('team_size', 'cam-td-team-size cam-master-data-cell', teamCell) +
       camColTd('last_activity', 'cam-td-last-activity cam-master-data-cell', renderLastActivityDisplayCell(l)) +
@@ -14577,6 +14594,7 @@ if (otherInput) {
     bindCaMasterColumnsUi(page);
     ensureCaMasterColumnsPopoverMounted();
     applyCaMasterColumnVisibility(page);
+    ensureSalesRemarksUiBound();
 
     page.addEventListener('change', function (e) {
       if (e.target && e.target.id === 'cam-filter-pipeline-stage') {
@@ -14834,7 +14852,7 @@ if (otherInput) {
       })
         .then(function () {
           toast('Mobile updated.', 'success');
-          renderCaMasterTable();
+          refreshCaMasterOrLeadsTable();
         })
         .catch(function (err) {
           toast((err && err.message) || 'Mobile update failed.', 'error');
@@ -14856,6 +14874,124 @@ if (otherInput) {
         ev.preventDefault();
         restore();
       }
+    });
+  }
+
+  function openSalesRemarksModal(caId) {
+    if (!caId) {
+      toast('Lead not found', 'warning');
+      return;
+    }
+    var lead = getLeadRecord(caId);
+    if (isEmployeeUser() && lead && !canUseLeadQuickActions(lead)) {
+      toast('You can only add remarks for leads assigned to you.', 'error');
+      return;
+    }
+    if (lead && lead.is_read_only) {
+      toast('This lead is read-only.', 'warning');
+      return;
+    }
+    var modal = document.getElementById('modal-sales-remarks');
+    var form = document.getElementById('form-sales-remarks');
+    if (!modal || !form) {
+      toast('Sales remarks form is unavailable.', 'warning');
+      return;
+    }
+    form.reset();
+    var caInput = document.getElementById('sales-remarks-ca-id');
+    if (caInput) caInput.value = String(caId);
+    var firmEl = document.getElementById('sales-remarks-firm');
+    var caEl = document.getElementById('sales-remarks-ca');
+    var historyWrap = document.getElementById('sales-remarks-history-wrap');
+    var historyEl = document.getElementById('sales-remarks-history');
+    var noteEl = document.getElementById('sales-remarks-note');
+    if (firmEl) firmEl.textContent = (lead && lead.firm_name) || 'Lead #' + caId;
+    if (caEl) caEl.textContent = (lead && (lead.ca_name_display || lead.ca_name)) || '—';
+    var existing = lead && lead.sales_remarks && lead.sales_remarks !== '—'
+      ? String(lead.sales_remarks).trim()
+      : '';
+    if (historyWrap && historyEl) {
+      if (existing) {
+        historyWrap.classList.remove('hidden');
+        historyEl.innerHTML = formatSalesRemarksDetailHtml(existing);
+      } else {
+        historyWrap.classList.add('hidden');
+        historyEl.innerHTML = '';
+      }
+    }
+    openModal(modal);
+    icons();
+    if (noteEl) {
+      try { noteEl.focus(); } catch (e) { /* ignore */ }
+    }
+
+    // Refresh lead details if cache is stale/missing remarks.
+    fetchLeadForFollowup(caId).then(function (fresh) {
+      if (!fresh) return;
+      if (firmEl) firmEl.textContent = fresh.firm_name || firmEl.textContent;
+      if (caEl) caEl.textContent = fresh.ca_name_display || fresh.ca_name || caEl.textContent;
+      var remarks = fresh.sales_remarks && fresh.sales_remarks !== '—'
+        ? String(fresh.sales_remarks).trim()
+        : '';
+      if (historyWrap && historyEl) {
+        if (remarks) {
+          historyWrap.classList.remove('hidden');
+          historyEl.innerHTML = formatSalesRemarksDetailHtml(remarks);
+        }
+      }
+    }).catch(function () { /* ignore */ });
+  }
+
+  function ensureSalesRemarksUiBound() {
+    if (window._salesRemarksUiBound) return;
+    window._salesRemarksUiBound = true;
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-cam-inline-remarks]');
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openSalesRemarksModal(btn.getAttribute('data-cam-inline-remarks'));
+    });
+    var form = document.getElementById('form-sales-remarks');
+    if (!form) return;
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var caId = (document.getElementById('sales-remarks-ca-id') || {}).value || '';
+      var noteEl = document.getElementById('sales-remarks-note');
+      var remark = noteEl ? String(noteEl.value || '').trim() : '';
+      if (!caId) {
+        toast('Lead is required.', 'warning');
+        return;
+      }
+      if (!remark) {
+        toast('Please enter a sales remark.', 'warning');
+        if (noteEl) noteEl.focus();
+        return;
+      }
+      var submitBtn = document.getElementById('sales-remarks-save-btn');
+      if (submitBtn) submitBtn.disabled = true;
+      apiFetch('/ca-masters/' + encodeURIComponent(caId) + '/sales-remarks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ remark: remark }),
+      })
+        .then(function () {
+          closeModal(document.getElementById('modal-sales-remarks'));
+          form.reset();
+          toast('Sales remark saved.', 'success');
+          invalidateDataCaches(['leads', 'ca_masters', 'segment_counts']);
+          refreshCaMasterOrLeadsTable();
+        })
+        .catch(function (err) {
+          if (err && err.status === 403) {
+            toast('You do not have permission to add remarks for this lead.', 'error');
+            return;
+          }
+          toast((err && err.message) || 'Failed to save sales remark.', 'error');
+        })
+        .finally(function () {
+          if (submitBtn) submitBtn.disabled = false;
+        });
     });
   }
 
@@ -15285,7 +15421,12 @@ if (otherInput) {
 
   function bindCaMasterTableRows(container) {
     if (!container) return;
-    bindCaMasterActionMenus(container.closest('#cam-hub') || container.closest('.cam-page') || document);
+    bindCaMasterActionMenus(
+      container.closest('#cam-hub')
+        || container.closest('#leads-hub')
+        || container.closest('.cam-page')
+        || document
+    );
     bindLeadRows(container);
   }
 
@@ -19155,7 +19296,7 @@ if (otherInput) {
           form.reset();
           clearLeadCallLogErrors(form);
           syncLeadCallLogFields();
-          invalidateDataCaches(['metrics', 'followups', 'segment_counts', 'leads']);
+          invalidateDataCaches(['metrics', 'followups', 'segment_counts', 'leads', 'ca_masters']);
           refreshCaMasterOrLeadsTable();
           refreshFollowupsPage({ reload: true, calendar: true });
           if (typeof loadEmployeeWorkflowLists === 'function') loadEmployeeWorkflowLists();
@@ -19177,6 +19318,7 @@ if (otherInput) {
           if (submitBtn) submitBtn.disabled = false;
         });
     });
+    ensureSalesRemarksUiBound();
 
     var leadCallLogStatus = document.getElementById('lead-call-log-status');
     if (leadCallLogStatus) {
@@ -25480,20 +25622,21 @@ if (otherInput) {
         ? 'leads-table'
         : (document.getElementById(camCtx.tableId) ? camCtx.tableId : 'leads-data-table');
       applyListingPagination(key, paginationTableId, body, paginationSlot);
+      var caMasterSortMap = {
+        1: 'firm_name',
+        2: 'email_id',
+        3: 'sales_remarks',
+        4: 'ca_name',
+        5: 'team_size',
+        6: 'last_activity_at',
+        14: 'status',
+        17: 'updated_at',
+      };
       if (document.getElementById('leads-table')) {
-        CA_LISTING_SEARCH.bindSortableHeaders(key, 'leads-table', { 1: 'firm_name', 2: 'ca_name', 7: 'status' });
+        CA_LISTING_SEARCH.bindSortableHeaders(key, 'leads-table', caMasterSortMap);
       }
       if (document.getElementById(camCtx.tableId)) {
-        CA_LISTING_SEARCH.bindSortableHeaders(key, camCtx.tableId, {
-          1: 'firm_name',
-          2: 'email_id',
-          3: 'sales_remarks',
-          4: 'ca_name',
-          5: 'team_size',
-          6: 'last_activity_at',
-          14: 'status',
-          17: 'updated_at',
-        });
+        CA_LISTING_SEARCH.bindSortableHeaders(key, camCtx.tableId, caMasterSortMap);
       }
     } else if (key === 'employees') {
       var employees = items.map(mapEmployeeRecord);

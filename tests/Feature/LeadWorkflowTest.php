@@ -109,7 +109,28 @@ class LeadWorkflowTest extends TestCase
             'call_status' => 'Connected',
             'workflow_stage' => 'called',
         ]);
+        $lead->refresh();
+        $this->assertNotNull($lead->sales_remarks);
+        $this->assertStringContainsString('Spoke with CA', (string) $lead->sales_remarks);
+        $this->assertStringContainsString('Call · Connected', (string) $lead->sales_remarks);
         $this->assertNull($response->json('data.next_follow_up'));
+    }
+
+    public function test_sales_remarks_can_be_appended_from_listing(): void
+    {
+        $this->actingAsAdmin();
+        $lead = $this->createLead();
+        $lead->update(['sales_remarks' => "Imported note\nline two"]);
+
+        $response = $this->postJson('/ca-masters/'.$lead->ca_id.'/sales-remarks', [
+            'remark' => 'Spoke again today',
+        ]);
+
+        $response->assertOk();
+        $lead->refresh();
+        $this->assertStringContainsString('Imported note', (string) $lead->sales_remarks);
+        $this->assertStringContainsString('Spoke again today', (string) $lead->sales_remarks);
+        $this->assertStringContainsString('[Remark ·', (string) $lead->sales_remarks);
     }
 
     public function test_connected_call_with_next_date_creates_follow_up(): void

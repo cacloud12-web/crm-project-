@@ -817,7 +817,8 @@ window.CAPages = (function () {
     ];
   }
 
-  function caMasterFirmsTable(tbodyId, tableId, paginationId) {
+  function caMasterFirmsTable(tbodyId, tableId, paginationId, opts) {
+    opts = opts || {};
     tbodyId = tbodyId || 'ca-master-data-table';
     tableId = tableId || 'ca-master-table';
     paginationId = paginationId || 'ca-master-pagination-slot';
@@ -843,39 +844,16 @@ window.CAPages = (function () {
       cls: 'cam-table-card leads-table-card',
       inbox: true,
       inboxKey: tbodyId,
-      inboxModule: 'ca-master',
+      inboxModule: opts.inboxModule || 'ca-master',
       columnFilters: true,
       filterGroup: 'ca_masters',
     });
   }
 
   function leadsEnterpriseTable() {
-    return enterpriseTable([
-      { label: 'Firm', colCls: 'crm-col-firm col-firm', thCls: 'crm-th-firm col-firm', sticky: 'left', filterKey: 'firm_name', filterPlaceholder: 'search' },
-      { label: 'Lead Name', colCls: 'crm-col-ca col-ca', thCls: 'crm-th-ca col-ca', sticky: 'left-2', filterKey: 'ca_name', filterPlaceholder: 'search' },
-      { label: 'Mobile', colCls: 'crm-col-mobile', thCls: 'crm-th-mobile', filterKey: 'mobile_no', filterPlaceholder: 'search' },
-      { label: 'Call Log', colCls: 'crm-col-call-log', thCls: 'crm-th-call-log' },
-      { label: 'Alt Mobile', colCls: 'crm-col-mobile', thCls: 'crm-th-mobile', filterKey: 'alternate_mobile_no', filterPlaceholder: 'search' },
-      { label: 'City', colCls: 'crm-col-geo', thCls: 'crm-th-geo', filterKey: 'city', filterPlaceholder: 'search' },
-      { label: 'Stage', colCls: 'crm-col-status', thCls: 'crm-th-status' },
-      { label: 'Status', colCls: 'crm-col-status', thCls: 'crm-th-status', filterKey: 'status', filterPlaceholder: 'search' },
-      { label: 'Employee', colCls: 'crm-col-person', thCls: 'crm-th-person', filterKey: 'executive', filterPlaceholder: 'search' },
-      { label: 'Source', colCls: 'crm-col-source', thCls: 'crm-th-source', filterKey: 'source', filterPlaceholder: 'search' },
-      { label: 'Priority', colCls: 'crm-col-rating', thCls: 'crm-th-rating' },
-      { label: 'Updated', colCls: 'crm-col-date', thCls: 'crm-th-date' },
-      { label: 'Google Lookup', colCls: 'crm-col-research', thCls: 'crm-th-research' },
-      { label: 'Actions', colCls: 'crm-col-actions col-actions', thCls: 'crm-th-actions col-actions', sticky: 'right' },
-    ], {
-      tbodyId: 'leads-data-table',
-      tableId: 'leads-table',
-      wrapId: 'leads-table-wrap',
-      paginationId: 'leads-pagination-slot',
-      cls: 'leads-table-card cam-table-card',
-      inbox: true,
-      inboxKey: 'leads-data-table',
+    /* Same column definitions + Manage Columns as Master Data (shared component). */
+    return caMasterFirmsTable('leads-data-table', 'leads-table', 'leads-pagination-slot', {
       inboxModule: 'leads',
-      columnFilters: true,
-      filterGroup: 'ca_masters',
     });
   }
 

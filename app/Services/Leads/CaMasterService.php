@@ -349,6 +349,48 @@ class CaMasterService
         return $lead;
     }
 
+    /**
+     * Append a free-form sales remark (from the Sales Remarks cell).
+     */
+    public function appendSalesRemark(CaMaster $caMaster, string $remark): CaMaster
+    {
+        $user = auth()->user();
+        if ($user) {
+            $this->leadOwnership->assertCanEdit($user, $caMaster);
+            $this->leadLockService->assertCanMutate($caMaster, $user);
+        }
+
+        if (! \Illuminate\Support\Facades\Schema::hasColumn('ca_masters', 'sales_remarks')) {
+            return $caMaster->fresh(['city', 'state', 'sourceLead', 'lockedByEmployee']) ?? $caMaster;
+        }
+
+        $remark = trim($remark);
+        if ($remark === '') {
+            throw new \InvalidArgumentException('Sales remark is required.');
+        }
+
+        $when = now()->timezone(config('app.timezone'))->format('d M Y H:i');
+        $block = '[Remark · '.$when.']'."\n".$remark;
+        $existing = trim((string) ($caMaster->sales_remarks ?? ''));
+        $caMaster->update([
+            'sales_remarks' => $existing === '' ? $block : $existing."\n\n".$block,
+        ]);
+        $lead = $caMaster->fresh(['city', 'state', 'sourceLead', 'lockedByEmployee']);
+
+        $this->activityLogService->log(
+            'CA_MASTER',
+            'Add Sales Remark',
+            $this->shortId((string) $lead->ca_id),
+            $lead->firm_name ?: $lead->ca_name,
+            afterValue: mb_substr($remark, 0, 200),
+        );
+
+        $this->invalidateDashboardCache();
+        $this->cacheService->forgetMasterListings();
+
+        return $lead;
+    }
+
     public function update(CaMaster $caMaster, array $data): CaMaster
     {
         $user = auth()->user();

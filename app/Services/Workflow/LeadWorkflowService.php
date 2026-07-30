@@ -23,6 +23,7 @@ use App\Services\Demo\DemoAvailabilityService;
 use App\Services\Rbac\EmployeeDataScopeService;
 use App\Services\Rbac\RbacService;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Schema;
 use InvalidArgumentException;
 
 class LeadWorkflowService
@@ -109,12 +110,20 @@ class LeadWorkflowService
 
         $lead = CaMaster::query()->findOrFail($caId);
         $leadUpdates = $this->leadUpdatesForOutcome($status);
+        $salesRemarkBlock = $this->formatCallSalesRemarkBlock($status, $note, $calledAt);
+        if ($salesRemarkBlock !== null) {
+            $existingRemarks = trim((string) ($lead->sales_remarks ?? ''));
+            $leadUpdates['sales_remarks'] = $existingRemarks === ''
+                ? $salesRemarkBlock
+                : $existingRemarks."\n\n".$salesRemarkBlock;
+        }
         if ($leadUpdates !== []) {
             $lead->update($leadUpdates);
+            $this->cacheService->forgetMasterListings();
         }
 
         if ($status === 'Wrong Number') {
-            $this->leadQualityHistory->markWrongNumber($lead, 'Call status: Wrong Number', $actor);
+            $this->leadQualityHistory->markWrongNumber($lead->fresh() ?? $lead, 'Call status: Wrong Number', $actor);
         }
 
         $nextFollowUp = $nextFollowUp ?? null;
@@ -902,6 +911,27 @@ class LeadWorkflowService
         $this->cacheService->forgetLeadSegmentCounts();
         $this->cacheService->forgetPipelineStageCounts();
         $this->cacheService->forgetEmployeeRankings();
+        $this->cacheService->forgetMasterListings();
+    }
+
+    /**
+     * Format a call note so it appears in the Sales Remarks column (latest block preview).
+     */
+    private function formatCallSalesRemarkBlock(string $status, string $note, Carbon $calledAt): ?string
+    {
+        if (! Schema::hasColumn('ca_masters', 'sales_remarks')) {
+            return null;
+        }
+
+        $note = trim($note);
+        if ($note === '') {
+            return null;
+        }
+
+        $when = $calledAt->timezone(config('app.timezone'))->format('d M Y H:i');
+        $statusLabel = trim($status) !== '' ? trim($status) : 'Call';
+
+        return '[Call · '.$statusLabel.' · '.$when.']'."\n".$note;
     }
 
     /**

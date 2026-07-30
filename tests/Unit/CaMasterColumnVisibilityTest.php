@@ -86,6 +86,20 @@ class CaMasterColumnVisibilityTest extends TestCase
         $this->assertStringContainsString('function selectAllCaMasterColumns', $js);
         $this->assertStringContainsString('Manage Columns', $js);
         $this->assertStringContainsString('cam-columns-btn', $js);
+        $this->assertStringContainsString('getElementById(\'leads-hub\')', $js);
+        $this->assertStringContainsString('function getCaMasterColumnVisibilityRoots', $js);
+    }
+
+    #[Test]
+    public function leads_hub_reuses_master_manage_columns(): void
+    {
+        $pages = $this->pagesJs();
+        $crm = $this->crmJs();
+        $this->assertStringContainsString("caMasterFirmsTable('leads-data-table', 'leads-table', 'leads-pagination-slot'", $pages);
+        $this->assertStringContainsString("id=\"cam-columns-btn\" data-cam-columns-toggle", $crm);
+        $this->assertStringContainsString("renderCaMasterTableRow(l, 'leads-data-table')", $crm);
+        $this->assertStringContainsString('bindCaMasterColumnsUi(page)', $crm);
+        $this->assertStringContainsString("document.getElementById('cam-hub') || document.getElementById('leads-hub')", $crm);
     }
 
     #[Test]

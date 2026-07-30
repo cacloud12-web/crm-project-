@@ -1750,5 +1750,37 @@
     </div>
   </div>
 
+  <div id="modal-sales-remarks" class="ca-modal" role="dialog" aria-modal="true" aria-labelledby="sales-remarks-title">
+    <div class="ca-modal-panel">
+      <div class="ca-modal-header">
+        <h3 id="sales-remarks-title" class="ca-modal-title">
+          <span class="ca-modal-icon"><i data-lucide="message-square-text" class="h-5 w-5"></i></span>
+          Sales Remarks
+        </h3>
+        <button type="button" class="ca-modal-close" data-close-crm-modal aria-label="Close"><i data-lucide="x" class="h-5 w-5"></i></button>
+      </div>
+      <form id="form-sales-remarks" class="ca-modal-body space-y-4" novalidate>
+        <input type="hidden" name="ca_id" id="sales-remarks-ca-id" />
+        <div id="sales-remarks-context" class="followup-lead-context card">
+          <p class="followup-lead-context__title" id="sales-remarks-firm">—</p>
+          <p class="text-caption text-slate-500 mt-1" id="sales-remarks-ca">—</p>
+        </div>
+        <div id="sales-remarks-history-wrap" class="hidden">
+          <label class="form-label">Existing remarks</label>
+          <div id="sales-remarks-history" class="sales-remarks-history"></div>
+        </div>
+        <div class="ca-field" data-field="remark">
+          <label class="form-label" for="sales-remarks-note">Add remark <span class="text-rose-500">*</span></label>
+          <textarea name="remark" id="sales-remarks-note" class="input-field" rows="4" placeholder="Type a sales remark…" required maxlength="2000"></textarea>
+          <p class="ca-field-error hidden" data-error-for="remark"></p>
+        </div>
+      </form>
+      <div class="ca-modal-footer">
+        <button type="button" class="btn-secondary" data-close-crm-modal>Cancel</button>
+        <button type="submit" form="form-sales-remarks" class="btn-primary" id="sales-remarks-save-btn">Save Remark</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div id="toast-container" aria-live="polite"></div>

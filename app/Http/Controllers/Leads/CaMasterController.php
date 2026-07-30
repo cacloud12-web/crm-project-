@@ -331,6 +331,25 @@ class CaMasterController extends Controller
         }
     }
 
+    public function appendSalesRemark(Request $request, string $caMaster): JsonResponse
+    {
+        try {
+            $lead = $this->caMasterService->find($caMaster);
+            $data = $request->validate([
+                'remark' => 'required|string|max:2000',
+            ]);
+            $lead = $this->caMasterService->appendSalesRemark($lead, (string) $data['remark']);
+
+            return ApiResponse::success(new CaMasterResource($lead), 'Sales remark added');
+        } catch (LeadLockedException $exception) {
+            return ApiResponse::error($exception->getMessage(), 423, [
+                'lock' => $exception->lockInfo(),
+            ]);
+        } catch (\InvalidArgumentException $exception) {
+            return ApiResponse::error($exception->getMessage(), 422);
+        }
+    }
+
     public function destroy(string $id): JsonResponse
     {
         $lead = $this->caMasterService->find($id);
