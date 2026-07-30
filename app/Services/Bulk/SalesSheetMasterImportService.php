@@ -280,6 +280,14 @@ class SalesSheetMasterImportService
         if ($alt !== null && $mobile !== null && $alt === $mobile) {
             $alt = null;
         }
+        // If Mobile No is empty/invalid but Alternate is valid, use Alt as primary so
+        // Master Data Mobile is filled (remarks can still import independently).
+        if ($mobile === null && $alt !== null) {
+            $mobile = $alt;
+            $alt = null;
+            $mobileRaw = $altRaw !== '' ? $altRaw : (string) $mobile;
+            $altRaw = '';
+        }
 
         if ($firm === '' && $ca === '' && $mobile === null && $email === '') {
             return null;

@@ -1,0 +1,50 @@
+#!/usr/bin/expect -f
+# Deploy login-email-change reclaim fix to Hostinger.
+set timeout 120
+set host "82.25.83.189"
+set port "65002"
+set user "u636438798"
+set remote_root "/home/u636438798/domains/crm.caclouddesk.com/public_html"
+set local_root "/Users/CAcloudDesk/Downloads/crm_project 2/crm_project/crm-project"
+set php "/opt/alt/php83/usr/bin/php"
+
+set pass [exec osascript -e {display dialog "Hostinger SSH password — deploy login email change fix." with title "Deploy Login Email Fix" default answer "" with hidden answer} -e {text returned of result}]
+if {$pass eq ""} {
+  puts "Aborted: empty password"
+  exit 1
+}
+
+proc scp_file {local remote pass host port user} {
+  spawn scp -P $port -o StrictHostKeyChecking=accept-new $local ${user}@${host}:$remote
+  expect {
+    -re "(?i)password:" { send "$pass\r"; exp_continue }
+    eof
+  }
+  catch wait result
+  return [lindex $result 3]
+}
+
+puts "Uploading LoginEmailChangeService.php..."
+set rc [scp_file "$local_root/app/Services/Auth/LoginEmailChangeService.php" "$remote_root/app/Services/Auth/LoginEmailChangeService.php" $pass $host $port $user]
+if {$rc != 0} { puts "FAIL service rc=$rc"; exit $rc }
+
+puts "Uploading RequestLoginEmailChangeRequest.php..."
+set rc [scp_file "$local_root/app/Http/Requests/Auth/RequestLoginEmailChangeRequest.php" "$remote_root/app/Http/Requests/Auth/RequestLoginEmailChangeRequest.php" $pass $host $port $user]
+if {$rc != 0} { puts "FAIL request rc=$rc"; exit $rc }
+
+spawn ssh -p $port -o StrictHostKeyChecking=accept-new ${user}@${host}
+expect {
+  -re "(?i)password:" { send "$pass\r" }
+  timeout { puts "SSH timeout"; exit 1 }
+}
+expect -re {[$#] }
+send "cd $remote_root && $php artisan optimize:clear && rg -n 'ensureEmailAvailableFor|canReclaimEmailFrom|reclaimEmailFromUser' app/Services/Auth/LoginEmailChangeService.php | head -10; echo DEPLOY_OK\r"
+expect {
+  -re {DEPLOY_OK} {}
+  timeout { puts "verify timeout"; exit 1 }
+}
+expect -re {[$#] }
+send "exit\r"
+expect eof
+puts "LOGIN_EMAIL_FIX_DEPLOYED"
+exit 0

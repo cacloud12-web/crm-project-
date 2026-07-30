@@ -1,0 +1,41 @@
+#!/usr/bin/expect -f
+# Read-only live performance diagnostics. No config changes.
+set timeout 180
+set host "82.25.83.189"
+set port "65002"
+set user "u636438798"
+set remote_root "/home/u636438798/domains/crm.caclouddesk.com/public_html"
+set php "/opt/alt/php83/usr/bin/php"
+
+set pass [exec osascript -e {display dialog "Hostinger SSH password — READ-ONLY performance audit (no changes)." with title "Performance Audit" default answer "" with hidden answer} -e {text returned of result}]
+if {$pass eq ""} { puts "Aborted"; exit 1 }
+
+spawn ssh -p $port -o StrictHostKeyChecking=accept-new ${user}@${host}
+expect {
+  -re "(?i)password:" { send "$pass\r" }
+  timeout { puts "SSH timeout"; exit 1 }
+}
+expect -re {[$#] }
+
+send "cd $remote_root && echo '=== HOST ===' && uname -a; php -v 2>/dev/null | head -1; $php -v | head -1; echo '=== LOAD/MEM ===' && uptime; free -m 2>/dev/null | head -5; echo '=== DISK ===' && df -h . 2>/dev/null | tail -1; echo '=== ENV KEYS (no secrets) ===' && (grep -E '^(APP_ENV|APP_DEBUG|CACHE_STORE|SESSION_DRIVER|QUEUE_CONNECTION|LOG_CHANNEL|DB_CONNECTION)=' .env | sed 's/=.*/=***/' ); echo '=== OPTIMIZE ARTIFACTS ===' && ls -la bootstrap/cache/*.php 2>/dev/null | awk '{print \$5,\$9}'; echo '=== LOG SIZES ===' && du -sh storage/logs 2>/dev/null; ls -lh storage/logs/*.log 2>/dev/null | tail -5; echo '=== STORAGE ===' && du -sh storage/app storage/framework storage/logs 2>/dev/null; echo '=== QUEUE WORKERS ===' && (ps aux | grep -E 'queue:work|horizon' | grep -v grep | head -5 || echo none); echo '=== OPCACHE ===' && $php -i 2>/dev/null | grep -E 'opcache.enable|opcache.memory' | head -10; echo AUDIT_PART1_DONE\r"
+expect {
+  -re {AUDIT_PART1_DONE} {}
+  timeout { puts "part1 timeout"; exit 1 }
+}
+
+send "cd $remote_root && $php artisan tinker --execute=\"echo 'APP_ENV='.config('app.env').PHP_EOL; echo 'APP_DEBUG='.(config('app.debug')?'true':'false').PHP_EOL; echo 'CACHE='.config('cache.default').PHP_EOL; echo 'SESSION='.config('session.driver').PHP_EOL; echo 'QUEUE='.config('queue.default').PHP_EOL; echo 'DB='.config('database.default').PHP_EOL; foreach (['ca_masters','ocr_parsed_firms','sales_import_rows','employees','activity_logs','call_logs','lead_assignment_engines','follow_ups','email_logs'] as \\\$t) { try { \\\$c=DB::table(\\\$t)->count(); echo \\\$t.'='.\\\$c.PHP_EOL; } catch (Throwable \\\$e) { echo \\\$t.'=ERR'.PHP_EOL; } }\" 2>&1 | tail -40; echo AUDIT_PART2_DONE\r"
+expect {
+  -re {AUDIT_PART2_DONE} {}
+  timeout { puts "part2 timeout"; exit 1 }
+}
+
+send "cd $remote_root && $php artisan tinker --execute=\"\\\$tables=['ca_masters','sales_import_rows','call_logs','activity_logs','ocr_parsed_firms']; foreach (\\\$tables as \\\$t) { echo '--- '.\\\$t.' ---'.PHP_EOL; try { \\\$idx=DB::select('SHOW INDEX FROM '.\\\$t); \\\$names=[]; foreach (\\\$idx as \\\$i) { \\\$names[\\\$i->Key_name]=(\\\$names[\\\$i->Key_name]??[]); \\\$names[\\\$i->Key_name][]=\\\$i->Column_name; } foreach (\\\$names as \\\$k=>\\\$cols) echo \\\$k.': '.implode(',',\\\$cols).PHP_EOL; } catch (Throwable \\\$e) { echo 'ERR '.\\\$e->getMessage().PHP_EOL; } }\" 2>&1 | tail -80; echo AUDIT_PART3_DONE\r"
+expect {
+  -re {AUDIT_PART3_DONE} {}
+  timeout { puts "part3 timeout"; exit 1 }
+}
+
+send "exit\r"
+expect eof
+puts "LIVE_AUDIT_OK"
+exit 0

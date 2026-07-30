@@ -1,0 +1,34 @@
+#!/usr/bin/expect -f
+set timeout 300
+set host "82.25.83.189"
+set port "65002"
+set user "u636438798"
+set remote_root "/home/u636438798/domains/crm.caclouddesk.com/public_html"
+set php "/opt/alt/php83/usr/bin/php"
+set local_script "/Users/CAcloudDesk/Downloads/crm_project 2/crm_project/crm-project/scripts/live-mobile-rca-readonly.php"
+
+set pass [exec osascript -e {display dialog "Hostinger SSH — READ-ONLY mobile RCA." with title "Mobile RCA" default answer "" with hidden answer} -e {text returned of result}]
+if {$pass eq ""} { puts "Aborted"; exit 1 }
+
+spawn scp -P $port -o StrictHostKeyChecking=accept-new $local_script ${user}@${host}:$remote_root/storage/app/live-mobile-rca-readonly.php
+expect {
+  -re "(?i)password:" { send "$pass\r"; exp_continue }
+  eof
+}
+
+spawn ssh -p $port -o StrictHostKeyChecking=accept-new ${user}@${host}
+expect {
+  -re "(?i)password:" { send "$pass\r" }
+  timeout { exit 1 }
+}
+expect -re {[$#] }
+send "cd $remote_root && $php storage/app/live-mobile-rca-readonly.php && rm -f storage/app/live-mobile-rca-readonly.php && echo DONE\r"
+expect {
+  -re {DONE} {}
+  timeout { puts "timeout"; exit 1 }
+}
+expect -re {[$#] }
+send "exit\r"
+expect eof
+puts LIVE_OK
+exit 0

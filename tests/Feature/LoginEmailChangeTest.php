@@ -559,6 +559,50 @@ class LoginEmailChangeTest extends TestCase
             ->assertSee('was cancelled', false);
     }
 
+    public function test_super_admin_can_reclaim_email_held_by_employee_user(): void
+    {
+        Mail::fake();
+
+        $user = $this->actingAsSuperAdmin();
+        $heldEmail = $this->uniqueGmail('held.by.employee');
+
+        $employeeUser = CrmTestAccounts::employeeUser();
+        $employeeUser->forceFill(['email' => $heldEmail])->save();
+
+        $this->postJson('/auth/login-email-change', $this->changePayload($user, $heldEmail))
+            ->assertOk()
+            ->assertJsonPath('data.pending_verification.new_email', $heldEmail);
+
+        $employeeUser->refresh();
+        $this->assertNotSame($heldEmail, strtolower((string) $employeeUser->email));
+        $this->assertStringStartsWith('released+', (string) $employeeUser->email);
+
+        $this->assertDatabaseHas('login_email_change_requests', [
+            'user_id' => $user->id,
+            'new_email' => $heldEmail,
+            'status' => LoginEmailChangeRequest::STATUS_PENDING,
+        ]);
+    }
+
+    public function test_soft_deleted_user_email_does_not_block_login_email_change(): void
+    {
+        Mail::fake();
+
+        $user = $this->actingAsSuperAdmin();
+        $heldEmail = $this->uniqueGmail('soft.deleted.holder');
+
+        $ghost = User::factory()->create([
+            'email' => $heldEmail,
+            'crm_role' => 'employee',
+            'is_active' => false,
+        ]);
+        $ghost->delete();
+
+        $this->postJson('/auth/login-email-change', $this->changePayload($user, $heldEmail))
+            ->assertOk()
+            ->assertJsonPath('data.pending_verification.new_email', $heldEmail);
+    }
+
     public function test_smtp_failure_during_request_rolls_back_and_returns_error(): void
     {
         $this->smtpDispatchFailureMock();

@@ -4,7 +4,6 @@ namespace App\Http\Requests\Auth;
 
 use App\Rules\ValidLoginEmailAddress;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 
 class RequestLoginEmailChangeRequest extends FormRequest
 {
@@ -21,7 +20,6 @@ class RequestLoginEmailChangeRequest extends FormRequest
                 'email',
                 'max:255',
                 new ValidLoginEmailAddress,
-                Rule::unique('users', 'email'),
                 'different:current_email',
             ],
             'new_email_confirmation' => 'required|same:new_email',
@@ -34,6 +32,8 @@ class RequestLoginEmailChangeRequest extends FormRequest
     {
         $this->merge([
             'current_email' => $this->user()?->email,
+            'new_email' => strtolower(trim((string) $this->input('new_email', ''))),
+            'new_email_confirmation' => strtolower(trim((string) $this->input('new_email_confirmation', ''))),
         ]);
     }
 
@@ -41,7 +41,6 @@ class RequestLoginEmailChangeRequest extends FormRequest
     {
         return [
             'new_email.different' => 'The new email must be different from your current login email.',
-            'new_email.unique' => 'This email address is already in use.',
             'new_email_confirmation.same' => 'The email confirmation does not match.',
         ];
     }

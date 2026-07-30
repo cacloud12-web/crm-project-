@@ -121,11 +121,7 @@ class LoginEmailChangeService
             ]);
         }
 
-        if (User::query()->where('email', $normalizedEmail)->exists()) {
-            throw ValidationException::withMessages([
-                'new_email' => ['This email address is already in use.'],
-            ]);
-        }
+        $this->ensureEmailAvailableFor($user, $normalizedEmail);
 
         if ($this->activePendingRequestFor($user)) {
             throw ValidationException::withMessages([
@@ -313,12 +309,22 @@ class LoginEmailChangeService
             ]);
         }
 
-        if (User::query()->where('email', $request->new_email)->where('id', '!=', $request->user_id)->exists()) {
-            $request->update(['status' => LoginEmailChangeRequest::STATUS_FAILED]);
+        if (User::query()->whereRaw('LOWER(email) = ?', [$request->new_email])->where('id', '!=', $request->user_id)->exists()) {
+            // Last chance: free reclaimable holders before failing verification.
+            $holder = User::query()
+                ->whereRaw('LOWER(email) = ?', [strtolower((string) $request->new_email)])
+                ->where('id', '!=', $request->user_id)
+                ->first();
+            $claimant = User::query()->find($request->user_id);
+            if ($holder && $claimant && $this->canReclaimEmailFrom($claimant, $holder)) {
+                $this->reclaimEmailFromUser($holder, (string) $request->new_email);
+            } else {
+                $request->update(['status' => LoginEmailChangeRequest::STATUS_FAILED]);
 
-            throw ValidationException::withMessages([
-                'token' => ['This email address is no longer available. Please request a new login email change.'],
-            ]);
+                throw ValidationException::withMessages([
+                    'token' => ['This email address is no longer available. Please request a new login email change.'],
+                ]);
+            }
         }
 
         $user = User::query()->findOrFail($request->user_id);
@@ -377,6 +383,89 @@ class LoginEmailChangeService
                 'new_email' => ['Please enter a valid email address.'],
             ]);
         }
+    }
+
+    /**
+     * Ensure the Super Admin can claim this login email.
+     * Soft-deleted holders are ignored. Active/inactive non–super-admin holders
+     * are reclaimed (email freed) so the Super Admin can use their real mailbox.
+     */
+    private function ensureEmailAvailableFor(User $claimant, string $normalizedEmail): void
+    {
+        $holders = User::query()
+            ->whereRaw('LOWER(email) = ?', [$normalizedEmail])
+            ->where('id', '!=', $claimant->id)
+            ->get();
+
+        if ($holders->isEmpty()) {
+            return;
+        }
+
+        foreach ($holders as $holder) {
+            if ($this->canReclaimEmailFrom($claimant, $holder)) {
+                $this->reclaimEmailFromUser($holder, $normalizedEmail);
+                continue;
+            }
+
+            $label = trim((string) ($holder->name ?: $holder->email));
+            throw ValidationException::withMessages([
+                'new_email' => [
+                    'This email address is already in use'.($label !== '' ? ' by '.$label : '').
+                    '. Free it from User Management first, or deactivate that account.',
+                ],
+            ]);
+        }
+    }
+
+    private function canReclaimEmailFrom(User $claimant, User $holder): bool
+    {
+        if ($this->rbacService->roleKey($claimant) !== 'super_admin') {
+            return false;
+        }
+
+        // Never steal another Super Admin mailbox.
+        if ($this->rbacService->roleKey($holder) === 'super_admin') {
+            return false;
+        }
+
+        return true;
+    }
+
+    private function reclaimEmailFromUser(User $holder, string $normalizedEmail): void
+    {
+        $released = sprintf(
+            'released+%d.%s@reclaimed.local',
+            (int) $holder->id,
+            now()->format('YmdHis'),
+        );
+
+        DB::transaction(function () use ($holder, $normalizedEmail, $released) {
+            $holder->update([
+                'email' => $released,
+                'email_verified_at' => null,
+            ]);
+
+            $employee = $holder->employee()->first();
+            if ($employee && strcasecmp((string) $employee->email_id, $normalizedEmail) === 0) {
+                $employee->update(['email_id' => $released]);
+            }
+        });
+
+        Log::warning('Login email reclaimed for Super Admin change', [
+            'holder_user_id' => $holder->id,
+            'previous_email' => $normalizedEmail,
+            'released_email' => $released,
+        ]);
+
+        $this->logEmailChangeAudit(
+            $holder,
+            $normalizedEmail,
+            $released,
+            LoginEmailChangeRequest::STATUS_CANCELLED,
+            null,
+            null,
+            'Email freed so Super Admin could claim '.$normalizedEmail,
+        );
     }
 
     private function expireStaleRequests(User $user): void

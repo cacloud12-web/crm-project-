@@ -896,6 +896,17 @@ class MasterDataMappingService
     private function attachSalesMobile(CaMaster $lead, array $attrs, array $payload): array
     {
         $incoming = $payload['normalized_mobile'] ?? $this->normalizer->phone($attrs['mobile_no'] ?? ($payload['mobile_no'] ?? null));
+        $incomingDisplay = $payload['mobile_no'] ?? $incoming;
+        // Fall back to alternate when primary incoming is empty (never overwrite existing primary).
+        if (! filled($incoming)) {
+            $incoming = $payload['normalized_alternate_mobile']
+                ?? $this->normalizer->phone($attrs['alternate_mobile_no'] ?? ($payload['alternate_mobile_no'] ?? null));
+            $incomingDisplay = $payload['alternate_mobile_no'] ?? $incoming;
+            if (filled($incoming)) {
+                unset($attrs['alternate_mobile_no']);
+            }
+        }
+
         if (! filled($incoming)) {
             unset($attrs['mobile_no']);
 
@@ -912,13 +923,13 @@ class MasterDataMappingService
         }
 
         if (! filled($lead->mobile_no)) {
-            $attrs['mobile_no'] = $payload['mobile_no'] ?: $incoming;
+            $attrs['mobile_no'] = $incomingDisplay ?: $incoming;
 
             return ['attrs' => $attrs, 'mobile_action' => 'added_primary'];
         }
 
         if (! filled($lead->alternate_mobile_no)) {
-            $attrs['alternate_mobile_no'] = $payload['mobile_no'] ?: $incoming;
+            $attrs['alternate_mobile_no'] = $incomingDisplay ?: $incoming;
             unset($attrs['mobile_no']);
 
             return ['attrs' => $attrs, 'mobile_action' => 'added_alternate'];
@@ -1116,6 +1127,26 @@ class MasterDataMappingService
         if ($phone && $this->phoneClassification->validateForSave($phone, 'mobile_no') !== null) {
             $phone = null;
         }
+        $altPhone = $payload['normalized_alternate_mobile']
+            ?? $this->normalizer->phone($payload['alternate_mobile_no'] ?? null);
+        if ($altPhone && $this->phoneClassification->validateForSave($altPhone, 'alternate_mobile_no') !== null) {
+            $altPhone = null;
+        }
+        // Prefer a valid alternate over leaving primary empty (display Mobile column).
+        $altDisplay = $payload['alternate_mobile_no'] ?? null;
+        if (! filled($phone) && filled($altPhone)) {
+            $phone = $altPhone;
+            $altPhone = null;
+            $altDisplay = null;
+            $payload['mobile_no'] = $payload['alternate_mobile_no'] ?? $phone;
+        }
+
+        // Persist digits-validated numbers; never keep garbage text like "CNC"/"NI" as mobile_no.
+        $mobileDisplay = filled($phone)
+            ? (($payload['mobile_no'] ?? null) && $this->normalizer->phone($payload['mobile_no']) === $phone
+                ? $payload['mobile_no']
+                : $phone)
+            : null;
 
         // Persist source text as-is; normalized_* columns are for matching/dedupe only.
         $data = [
@@ -1124,8 +1155,10 @@ class MasterDataMappingService
             'normalized_firm_name' => $payload['normalized_firm_name'] ?? $this->normalizer->firmName($payload['firm_name'] ?? null),
             'normalized_ca_name' => $payload['normalized_ca_name'] ?? $this->normalizer->caName($payload['ca_name'] ?? null),
             'normalized_state' => $payload['normalized_state'] ?? $this->normalizer->state($payload['state'] ?? null),
-            'mobile_no' => ($payload['mobile_no'] ?? null) ?: $phone,
-            'alternate_mobile_no' => $payload['alternate_mobile_no'] ?? null,
+            'mobile_no' => $mobileDisplay,
+            'alternate_mobile_no' => filled($altPhone)
+                ? ($altDisplay ?: $altPhone)
+                : null,
             'email_id' => (($payload['email_id'] ?? null) !== null && trim((string) $payload['email_id']) !== '')
                 ? $payload['email_id']
                 : null,

@@ -108,7 +108,29 @@ class CaMasterResource extends JsonResource
         }
 
         self::$lastActivityByCaId = app(LeadActivityTimelineService::class)->summariesForCaIds($caIds);
-        self::$ocrGeoByCaId = self::loadOcrGeoFallback($caIds);
+
+        $needsOcrGeo = $collection
+            ->filter(function ($lead) {
+                if (is_array($lead)) {
+                    $cityId = $lead['city_id'] ?? null;
+                    $stateId = $lead['state_id'] ?? null;
+                    $cityName = $lead['city'] ?? ($lead['city_name'] ?? null);
+                    $stateName = $lead['state'] ?? ($lead['state_name'] ?? null);
+
+                    return (empty($cityId) && empty($cityName)) || (empty($stateId) && empty($stateName));
+                }
+                $hasCity = filled($lead->city_id) || filled($lead->city?->city_name ?? null);
+                $hasState = filled($lead->state_id) || filled($lead->state?->state_name ?? null);
+
+                return ! $hasCity || ! $hasState;
+            })
+            ->map(fn ($lead) => (int) (is_array($lead) ? ($lead['ca_id'] ?? 0) : $lead->ca_id))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        self::$ocrGeoByCaId = $needsOcrGeo === [] ? [] : self::loadOcrGeoFallback($needsOcrGeo);
     }
 
     /**

@@ -15,11 +15,19 @@ use App\Models\SmsLog;
 use App\Models\WaMessageLog;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class LeadActivityTimelineService
 {
     /**
+     * Latest-activity summaries for Master/Leads list cells.
+     * Uses one latest row per source table (not full history).
+     *
      * @param  list<int>  $caIds
      * @return array<int, array<string, mixed>>
      */
@@ -30,7 +38,7 @@ class LeadActivityTimelineService
             return [];
         }
 
-        $events = $this->collectEventsForCaIds($caIds);
+        $events = $this->collectLatestEventsForCaIds($caIds);
         $summaries = [];
 
         foreach ($caIds as $caId) {
@@ -72,6 +80,283 @@ class LeadActivityTimelineService
     }
 
     /**
+     * Latest event only per activity source per CA (list/summary path).
+     *
+     * @param  list<int>  $caIds
+     * @return array<int, list<array<string, mixed>>>
+     */
+    private function collectLatestEventsForCaIds(array $caIds): array
+    {
+        /** @var array<int, list<array<string, mixed>>> $grouped */
+        $grouped = [];
+
+        $append = function (array $event) use (&$grouped): void {
+            $caId = (int) ($event['ca_id'] ?? 0);
+            if ($caId <= 0 || ! ($event['occurred_at'] instanceof CarbonInterface)) {
+                return;
+            }
+            $grouped[$caId][] = $event;
+        };
+
+        $this->latestCallLogs($caIds)->each(function (CallLog $log) use ($append): void {
+            $append([
+                'ca_id' => (int) $log->ca_id,
+                'occurred_at' => $log->called_at ?? $log->created_at,
+                'type' => 'call',
+                'label' => 'Call',
+                'icon' => 'phone',
+                'employee_name' => $log->employee?->name ?? 'System',
+                'note' => trim((string) ($log->call_note ?: $log->call_status ?: '')),
+            ]);
+        });
+
+        $this->latestModels(FollowUpHistory::query()->with('employee:employee_id,name'), 'follow_up_histories', $caIds, 'created_at')
+            ->each(function (FollowUpHistory $history) use ($append): void {
+                $append([
+                    'ca_id' => (int) $history->ca_id,
+                    'occurred_at' => $history->created_at,
+                    'type' => 'follow_up',
+                    'label' => $this->followUpHistoryLabel($history->event_type),
+                    'icon' => 'calendar-clock',
+                    'employee_name' => $history->employee?->name ?? ($history->performed_by ?: 'System'),
+                    'note' => trim((string) ($history->remarks ?: $history->outcome ?: '')),
+                ]);
+            });
+
+        $this->latestModels(FollowUp::query()->with('employee:employee_id,name'), 'follow_ups', $caIds, 'COALESCE(updated_at, created_at)')
+            ->each(function (FollowUp $followUp) use ($append): void {
+                $append([
+                    'ca_id' => (int) $followUp->ca_id,
+                    'occurred_at' => $followUp->updated_at ?? $followUp->created_at,
+                    'type' => 'follow_up',
+                    'label' => 'Follow-up',
+                    'icon' => 'calendar-clock',
+                    'employee_name' => $followUp->employee?->name ?? 'System',
+                    'note' => trim((string) ($followUp->remarks ?: $followUp->outcome ?: $followUp->followup_type ?: '')),
+                ]);
+            });
+
+        $this->latestModels(LeadAction::query()->with('employee:employee_id,name'), 'lead_actions', $caIds, 'COALESCE(action_at, created_at)')
+            ->each(function (LeadAction $action) use ($append): void {
+                $append([
+                    'ca_id' => (int) $action->ca_id,
+                    'occurred_at' => $action->action_at ?? $action->created_at,
+                    'type' => 'lead_action',
+                    'label' => $action->action_type ?: 'Lead Action',
+                    'icon' => 'git-branch',
+                    'employee_name' => $action->employee?->name ?? 'System',
+                    'note' => trim((string) ($action->remarks ?? '')),
+                ]);
+            });
+
+        $this->latestModels(
+            AssignmentHistory::query()->with(['newEmployee:employee_id,name', 'assignedByEmployee:employee_id,name']),
+            'assignment_histories',
+            $caIds,
+            'COALESCE(assigned_at, created_at)'
+        )->each(function (AssignmentHistory $history) use ($append): void {
+            $append([
+                'ca_id' => (int) $history->ca_id,
+                'occurred_at' => $history->assigned_at ?? $history->created_at,
+                'type' => 'assignment',
+                'label' => 'Assignment Changed',
+                'icon' => 'user-check',
+                'employee_name' => $history->assignedByEmployee?->name
+                    ?? $history->newEmployee?->name
+                    ?? 'System',
+                'note' => trim((string) ($history->reason ?: $history->assignment_type ?: '')),
+            ]);
+        });
+
+        $this->latestModels(EmailLog::query()->with('employee:employee_id,name'), 'email_logs', $caIds, 'COALESCE(reply_received_at, sent_at, created_at)')
+            ->each(function (EmailLog $log) use ($append): void {
+                $append([
+                    'ca_id' => (int) $log->ca_id,
+                    'occurred_at' => $log->reply_received_at ?? $log->sent_at ?? $log->created_at,
+                    'type' => 'email',
+                    'label' => $log->reply_received_at ? 'Email Reply' : 'Email',
+                    'icon' => 'mail',
+                    'employee_name' => $log->employee?->name ?? 'System',
+                    'note' => trim((string) ($log->subject ?: Str::limit(strip_tags((string) $log->body), 120, '…'))),
+                ]);
+            });
+
+        $this->latestModels(EmailInboundMessage::query(), 'email_inbound_messages', $caIds, 'COALESCE(received_at, created_at)')
+            ->each(function (EmailInboundMessage $message) use ($append): void {
+                $append([
+                    'ca_id' => (int) $message->ca_id,
+                    'occurred_at' => $message->received_at ?? $message->created_at,
+                    'type' => 'email',
+                    'label' => 'Email',
+                    'icon' => 'mail',
+                    'employee_name' => $message->from_email ?: 'Customer',
+                    'note' => trim((string) ($message->subject ?: Str::limit(strip_tags((string) ($message->body_text ?: $message->body_html)), 120, '…'))),
+                ]);
+            });
+
+        $this->latestModels(WaMessageLog::query()->with('employee:employee_id,name'), 'wa_message_logs', $caIds, 'COALESCE(sent_at, delivered_at, created_at)')
+            ->each(function (WaMessageLog $log) use ($append): void {
+                $append([
+                    'ca_id' => (int) $log->ca_id,
+                    'occurred_at' => $log->sent_at ?? $log->delivered_at ?? $log->created_at,
+                    'type' => 'whatsapp',
+                    'label' => 'WhatsApp',
+                    'icon' => 'message-circle',
+                    'employee_name' => $log->employee?->name ?? 'System',
+                    'note' => trim((string) ($log->message ?: $log->template_name ?: '')),
+                ]);
+            });
+
+        $this->latestModels(SmsLog::query()->with('employee:employee_id,name'), 'sms_logs', $caIds, 'COALESCE(sent_at, delivered_at, created_at)')
+            ->each(function (SmsLog $log) use ($append): void {
+                $append([
+                    'ca_id' => (int) $log->ca_id,
+                    'occurred_at' => $log->sent_at ?? $log->delivered_at ?? $log->created_at,
+                    'type' => 'sms',
+                    'label' => 'SMS',
+                    'icon' => 'message-square',
+                    'employee_name' => $log->employee?->name ?? 'System',
+                    'note' => trim((string) ($log->message ?: '')),
+                ]);
+            });
+
+        $this->latestModels(LeadQualityHistory::query()->with('employee:employee_id,name'), 'lead_quality_histories', $caIds, 'COALESCE(recorded_at, created_at)')
+            ->each(function (LeadQualityHistory $history) use ($append): void {
+                $append([
+                    'ca_id' => (int) $history->ca_id,
+                    'occurred_at' => $history->recorded_at ?? $history->created_at,
+                    'type' => 'status_changed',
+                    'label' => 'Status Changed',
+                    'icon' => 'shield-alert',
+                    'employee_name' => $history->employee?->name ?? 'System',
+                    'note' => trim((string) ($history->reason ?: $history->event_type ?: '')),
+                ]);
+            });
+
+        CaMaster::query()
+            ->with('createdByEmployee:employee_id,name')
+            ->whereIn('ca_id', $caIds)
+            ->get(['ca_id', 'created_at', 'updated_at', 'created_by_employee_id'])
+            ->each(function (CaMaster $lead) use ($append): void {
+                if ($lead->created_at) {
+                    $append([
+                        'ca_id' => (int) $lead->ca_id,
+                        'occurred_at' => $lead->created_at,
+                        'type' => 'lead_created',
+                        'label' => 'Lead Created',
+                        'icon' => 'sparkles',
+                        'employee_name' => $lead->createdByEmployee?->name ?? 'System',
+                        'note' => '',
+                    ]);
+                }
+
+                if ($lead->updated_at && $lead->created_at && $lead->updated_at->gt($lead->created_at)) {
+                    $append([
+                        'ca_id' => (int) $lead->ca_id,
+                        'occurred_at' => $lead->updated_at,
+                        'type' => 'lead_updated',
+                        'label' => 'Lead Updated',
+                        'icon' => 'edit-3',
+                        'employee_name' => 'System',
+                        'note' => '',
+                    ]);
+                }
+            });
+
+        return $grouped;
+    }
+
+    /**
+     * @param  list<int>  $caIds
+     * @return Collection<int, CallLog>
+     */
+    private function latestCallLogs(array $caIds): Collection
+    {
+        return $this->latestModels(
+            CallLog::query()->with('employee:employee_id,name'),
+            'call_logs',
+            $caIds,
+            'COALESCE(called_at, created_at)'
+        );
+    }
+
+    /**
+     * Load at most one latest row per ca_id for the given table.
+     *
+     * @template TModel of Model
+     *
+     * @param  Builder<TModel>  $query
+     * @param  list<int>  $caIds
+     * @return Collection<int, TModel>
+     */
+    private function latestModels(Builder $query, string $table, array $caIds, string $orderExpression): Collection
+    {
+        if ($caIds === [] || ! Schema::hasTable($table)) {
+            return collect();
+        }
+
+        $ids = $this->latestRowIds($table, $caIds, $orderExpression);
+        if ($ids === []) {
+            return collect();
+        }
+
+        return $query->whereIn($table.'.id', $ids)->get();
+    }
+
+    /**
+     * @param  list<int>  $caIds
+     * @return list<int>
+     */
+    private function latestRowIds(string $table, array $caIds, string $orderExpression): array
+    {
+        if (! Schema::hasTable($table) || ! Schema::hasColumn($table, 'ca_id') || ! Schema::hasColumn($table, 'id')) {
+            return [];
+        }
+
+        // Allow only safe SQL identifiers / COALESCE(...) patterns built by this class.
+        if (preg_match('/[^a-zA-Z0-9_,\s\(\)]/', $orderExpression) === 1) {
+            $orderExpression = 'created_at';
+        }
+
+        $placeholders = implode(',', array_fill(0, count($caIds), '?'));
+        $softDelete = Schema::hasColumn($table, 'deleted_at') ? ' AND deleted_at IS NULL' : '';
+
+        try {
+            $rows = DB::select(
+                "SELECT id FROM (
+                    SELECT id, ROW_NUMBER() OVER (
+                        PARTITION BY ca_id
+                        ORDER BY {$orderExpression} DESC, id DESC
+                    ) AS activity_rn
+                    FROM {$table}
+                    WHERE ca_id IN ({$placeholders}){$softDelete}
+                ) ranked WHERE activity_rn = 1",
+                $caIds
+            );
+
+            return array_values(array_map(static fn ($row) => (int) $row->id, $rows));
+        } catch (\Throwable) {
+            // Fallback for engines without window functions: fetch ordered rows and unique in PHP.
+            $builder = DB::table($table)->whereIn('ca_id', $caIds);
+            if (Schema::hasColumn($table, 'deleted_at')) {
+                $builder->whereNull('deleted_at');
+            }
+
+            return $builder
+                ->orderByRaw($orderExpression.' DESC')
+                ->orderByDesc('id')
+                ->get(['id', 'ca_id'])
+                ->unique('ca_id')
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->values()
+                ->all();
+        }
+    }
+
+    /**
+     * Full history for drawer timeline (unchanged behavior).
+     *
      * @param  list<int>  $caIds
      * @return array<int, list<array<string, mixed>>>
      */

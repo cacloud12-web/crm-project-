@@ -1,0 +1,34 @@
+#!/usr/bin/expect -f
+set timeout 240
+set host "82.25.83.189"
+set port "65002"
+set user "u636438798"
+set remote_root "/home/u636438798/domains/crm.caclouddesk.com/public_html"
+set php "/opt/alt/php83/usr/bin/php"
+set local_script "/Users/CAcloudDesk/Downloads/crm_project 2/crm_project/crm-project/scripts/live-perf-readonly.php"
+
+set pass [exec osascript -e {display dialog "Hostinger SSH password — READ-ONLY performance counts." with title "Performance Audit" default answer "" with hidden answer} -e {text returned of result}]
+if {$pass eq ""} { puts "Aborted"; exit 1 }
+
+spawn scp -P $port -o StrictHostKeyChecking=accept-new $local_script ${user}@${host}:$remote_root/storage/app/live-perf-readonly.php
+expect {
+  -re "(?i)password:" { send "$pass\r"; exp_continue }
+  eof
+}
+
+spawn ssh -p $port -o StrictHostKeyChecking=accept-new ${user}@${host}
+expect {
+  -re "(?i)password:" { send "$pass\r" }
+  timeout { exit 1 }
+}
+expect -re {[$#] }
+send "cd $remote_root && echo LOAD: && uptime && echo ENV: && grep -E '^(APP_ENV|APP_DEBUG|CACHE_STORE|SESSION_DRIVER|QUEUE_CONNECTION)=' .env | sed -E 's/(PASSWORD|KEY|SECRET)=.*/\\1=***/' && echo PHP: && $php -v | head -1 && echo CACHE_FILES: && ls bootstrap/cache/ 2>/dev/null && echo LOGS: && du -sh storage/logs 2>/dev/null && ls -lh storage/logs/*.log 2>/dev/null | tail -3 && echo WORKERS: && (ps -u \$USER -o args= 2>/dev/null | grep -E 'queue:work|horizon' | grep -v grep || echo none) && $php storage/app/live-perf-readonly.php && rm -f storage/app/live-perf-readonly.php && echo DONE\r"
+expect {
+  -re {DONE} {}
+  timeout { puts "timeout"; exit 1 }
+}
+expect -re {[$#] }
+send "exit\r"
+expect eof
+puts LIVE_OK
+exit 0

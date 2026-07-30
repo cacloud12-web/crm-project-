@@ -72,6 +72,16 @@ class MasterDataMatchingService
         $rawState = is_string($state) ? trim($state) : null;
         $normalizedFirm = $this->normalizer->firmName($rawFirm);
         $normalizedCa = $this->normalizer->caName($rawCa);
+        $normalizedMobile = $this->normalizer->phone($rawPhone);
+        $normalizedAlt = $this->normalizer->phone($rawAltPhone);
+
+        // Empty/invalid primary + valid alternate → promote to primary so Mobile is not blank.
+        if ($normalizedMobile === null && $normalizedAlt !== null) {
+            $rawPhone = $rawAltPhone;
+            $normalizedMobile = $normalizedAlt;
+            $rawAltPhone = null;
+            $normalizedAlt = null;
+        }
 
         // Display/save fields stay raw; normalized_* are match-only keys.
         return [
@@ -80,9 +90,9 @@ class MasterDataMatchingService
             'ca_name' => $rawCa,
             'normalized_ca_name' => $normalizedCa,
             'mobile_no' => $rawPhone,
-            'normalized_mobile' => $this->normalizer->phone($rawPhone),
+            'normalized_mobile' => $normalizedMobile,
             'alternate_mobile_no' => $rawAltPhone,
-            'normalized_alternate_mobile' => $this->normalizer->phone($rawAltPhone),
+            'normalized_alternate_mobile' => $normalizedAlt,
             'email_id' => $rawEmail,
             'normalized_email' => $this->normalizer->email($rawEmail),
             'gst_no' => $rawGst,

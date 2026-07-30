@@ -1,0 +1,310 @@
+{
+  "audit_meta": {
+    "title": "CA Cloud Desk CRM Performance Audit",
+    "type": "read_only",
+    "code_or_config_modified": false,
+    "audit_date": "2026-07-30",
+    "live_host": "crm.caclouddesk.com",
+    "live_node": "us-bos-web1999",
+    "method": [
+      "live_ssh_readonly_diagnostics",
+      "static_code_analysis"
+    ]
+  },
+  "live_snapshot": {
+    "php": "8.3.30",
+    "app_env": "production",
+    "app_debug": false,
+    "cache_store": "file",
+    "session_driver": "file",
+    "queue_connection": "sync",
+    "database": "mysql",
+    "opcache_enabled": true,
+    "opcache_memory_used_mb": 32.9,
+    "bootstrap_cache_files": ["packages.php", "services.php"],
+    "config_route_view_cache_present": false,
+    "queue_workers_running": false,
+    "storage_logs_size": "344K",
+    "load_average": [22.34, 23.76, 23.36],
+    "table_counts": {
+      "ca_masters": 137065,
+      "ocr_parsed_firms": 114327,
+      "sales_import_rows": 0,
+      "employees": 9,
+      "activity_logs": 33647,
+      "call_logs": 5,
+      "lead_assignment_engines": 107,
+      "follow_ups": 2,
+      "email_logs": 0,
+      "jobs": 0,
+      "failed_jobs": 0
+    },
+    "index_notes": {
+      "ca_masters_duplicate_status_created_at": [
+        "ca_masters_status_created_at_index",
+        "ca_masters_status_created_index"
+      ],
+      "missing_denormalized_last_activity_at": true,
+      "telescope_or_debugbar_present": false
+    }
+  },
+  "healthy_findings": [
+    "APP_DEBUG=false in production",
+    "No Telescope or Debugbar packages detected",
+    "Laravel logs small (~344KB)",
+    "OPcache enabled",
+    "Many lookup indexes already present on ca_masters and ocr_parsed_firms"
+  ],
+  "issues": {
+    "critical": [
+      {
+        "id": "C1",
+        "title": "Shared host CPU saturation (load ~22–24)",
+        "file": "N/A (Hostinger shared node us-bos-web1999)",
+        "function": "OS scheduler / PHP-FPM pool / neighboring tenants",
+        "query": null,
+        "estimated_performance_impact": "Severe. Load >20 queues requests for CPU even when SQL is fast; typically 2–10× TTFB inflation under contention.",
+        "recommended_fix": "Move to dedicated/VPS with reserved CPU/RAM; reduce concurrent cron load; re-check uptime after app fixes."
+      },
+      {
+        "id": "C2",
+        "title": "QUEUE_CONNECTION=sync with no workers",
+        "file": "Live .env; app/Support/Queue/QueueDispatcher.php; routes/console.php",
+        "function": "Job dispatch path (ShouldQueue jobs run inline)",
+        "query": null,
+        "estimated_performance_impact": "Critical. OCR/bulk/campaign jobs block HTTP PHP workers; freezes UI for concurrent employees.",
+        "recommended_fix": "Set QUEUE_CONNECTION=database (or Redis); run persistent queue:work; keep APP_DEBUG=false."
+      },
+      {
+        "id": "C3",
+        "title": "Master/leads list runs 10+ unbounded activity queries per page",
+        "file": "app/Services/Leads/LeadActivityTimelineService.php",
+        "function": "collectEventsForCaIds → summariesForCaIds → CaMasterResource::prepareCollection",
+        "query": "SELECT * FROM call_logs WHERE ca_id IN (...); same unbounded get() for follow_up_histories, follow_ups, lead_actions, assignment_histories, email_logs, email_inbound_messages, wa_message_logs, sms_logs, lead_quality_histories, plus ca_masters (no LIMIT; PHP picks latest)",
+        "estimated_performance_impact": "Critical on every Master Data / Leads listing: ~10–11 round-trips + large hydration + PHP sort per request.",
+        "recommended_fix": "Denormalize last_activity_at/type on ca_masters, or one UNION ALL MAX per ca_id; never load full histories for list summaries."
+      },
+      {
+        "id": "C4",
+        "title": "last_activity_at sort uses 12-branch correlated subquery",
+        "file": "app/Support/Listing/ListingQueryApplier.php",
+        "function": "applySort (sort_by=last_activity_at)",
+        "query": "ORDER BY (SELECT MAX(v) FROM (SELECT called_at FROM call_logs WHERE ca_id = ca_masters.ca_id UNION ALL …11 sources…))",
+        "estimated_performance_impact": "Critical when sorting by Last Activity on 137k rows; multi-second or timeout risk for page 1.",
+        "recommended_fix": "Persist indexed last_activity_at; ORDER BY that column; remove UNION subquery sort."
+      },
+      {
+        "id": "C5",
+        "title": "Unminified ~2.5MB CRM UI payload on every page",
+        "file": "resources/views/components/crm/scripts.blade.php; public/crm-ui/src/api/crm.js (~1.1MB); pages/pages.js; styles.css",
+        "function": "Full SPA script include list (all modules every authenticated page)",
+        "query": null,
+        "estimated_performance_impact": "Critical perceived load: parse/compile of 1MB+ JS blocks interactivity; worse under Hostinger latency.",
+        "recommended_fix": "Bundle/minify/code-split by route; gzip/brotli; defer OCR/demos/reports until those pages open."
+      }
+    ],
+    "high": [
+      {
+        "id": "H1",
+        "title": "Config/route/view caches not built on live",
+        "file": "Live bootstrap/cache/ (packages.php, services.php only)",
+        "function": "Laravel bootstrap config/route/view loading",
+        "query": null,
+        "estimated_performance_impact": "High: tens–hundreds of ms per request reparsing config/routes under load.",
+        "recommended_fix": "php artisan config:cache && route:cache && view:cache after deploy."
+      },
+      {
+        "id": "H2",
+        "title": "File session + file cache drivers",
+        "file": "Live .env; app/Services/Cache/CrmCacheService.php",
+        "function": "Session I/O; Cache::remember / bumpDashboardCacheVersion",
+        "query": "Filesystem I/O under storage/framework/sessions and storage/framework/cache",
+        "estimated_performance_impact": "High with concurrent employees: lock contention and disk I/O; orphaned file cache keys after version bumps.",
+        "recommended_fix": "Use database or Redis for session and cache."
+      },
+      {
+        "id": "H3",
+        "title": "?all=1 / max_all=5000 catalog loads",
+        "file": "public/crm-ui/src/api/crm.js; config/listing.php; app/Support/Listing/ListingQueryApplier.php",
+        "function": "listingAllQuery; ListingQueryApplier::apply when all=true",
+        "query": "GET listings with all=1 → SELECT … LIMIT 5000 (ca-masters, employees, lead-assignments, follow-ups, lookups)",
+        "estimated_performance_impact": "High: multi-MB JSON + heavy serialization; often after invalidateDataCaches reloads.",
+        "recommended_fix": "Lower max_all for heavy resources; typeahead endpoints; stop full CA master catalog reloads for dropdowns."
+      },
+      {
+        "id": "H4",
+        "title": "max_per_page allows up to 1000",
+        "file": "config/listing.php",
+        "function": "ListingQueryApplier::resolvePerPage",
+        "query": "Paginated ca_masters with per_page=1000 plus activity fan-out (C3)",
+        "estimated_performance_impact": "High: one user can monopolize DB/PHP.",
+        "recommended_fix": "Cap UI and API at 50–100 for ca_masters."
+      },
+      {
+        "id": "H5",
+        "title": "OCR geo fallback on each list page",
+        "file": "app/Http/Resources/CaMasterResource.php",
+        "function": "loadOcrGeoFallback",
+        "query": "SELECT crm_ca_id, matched_ca_id, city, state FROM ocr_parsed_firms WHERE crm_ca_id IN (...) OR matched_ca_id IN (...) ORDER BY mapped_at DESC, id DESC",
+        "estimated_performance_impact": "High when city/state missing on masters against 114k OCR rows.",
+        "recommended_fix": "Copy city/state onto ca_masters at map/approve; remove list-time OCR fallback."
+      },
+      {
+        "id": "H6",
+        "title": "Global dashboard cache invalidation on writes",
+        "file": "app/Services/Cache/CrmCacheService.php",
+        "function": "bumpDashboardCacheVersion / forgetDashboardMetrics",
+        "query": null,
+        "estimated_performance_impact": "High under concurrency: all users recompute dashboard aggregates after single-lead writes.",
+        "recommended_fix": "Scope invalidation by employee/org; Redis tags/TTL; avoid org-wide bumps for single edits."
+      },
+      {
+        "id": "H7",
+        "title": "Case-insensitive search cannot use normal indexes",
+        "file": "app/Support/Listing/ListingQueryApplier.php",
+        "function": "whereIlike / applySearch",
+        "query": "WHERE LOWER(column) LIKE LOWER('%…%') plus whereHas on city/state/source/team",
+        "estimated_performance_impact": "High on 137k-row Master search: full scans + EXISTS subqueries.",
+        "recommended_fix": "Search normalized_* indexed columns with prefix/FULLTEXT; avoid LOWER() on indexed columns."
+      },
+      {
+        "id": "H8",
+        "title": "Partners eager-loaded on every listing row",
+        "file": "app/Services/Leads/CaMasterService.php",
+        "function": "listingRelations",
+        "query": "SELECT * FROM ca_master_partners WHERE ca_id IN (...)",
+        "estimated_performance_impact": "Medium–High: bloated list API when many partners exist.",
+        "recommended_fix": "Load partners only on detail/drawer endpoints."
+      },
+      {
+        "id": "H9",
+        "title": "Minute-level scheduler load on shared hosting",
+        "file": "routes/console.php",
+        "function": "workflow:process-demo-reminders; campaigns:process-scheduled; email:sync; conditional queue:work",
+        "query": "Command-dependent",
+        "estimated_performance_impact": "High on load=20+ hosts: cron competes with HTTP for CPU.",
+        "recommended_fix": "Keep cron healthy; use async queues; reduce unused every-minute jobs; never run heavy OCR in web requests."
+      }
+    ],
+    "medium": [
+      {
+        "id": "M1",
+        "title": "Sales import files(): full GROUP BY then PHP pagination",
+        "file": "app/Http/Controllers/Mapping/SalesImportController.php",
+        "function": "files",
+        "query": "SELECT source_file_name, COUNT(*), SUM(CASE…) FROM sales_import_rows GROUP BY source_file_name, import_batch_id → get() + Collection slice; plus status GROUP BY and DISTINCT employees",
+        "estimated_performance_impact": "Medium now (0 rows); High when large CSV batches return.",
+        "recommended_fix": "SQL LIMIT/OFFSET pagination; materialize stats on master_import_batches."
+      },
+      {
+        "id": "M2",
+        "title": "Duplicate/redundant indexes on ca_masters",
+        "file": "Live MySQL schema / migrations",
+        "function": null,
+        "query": "Duplicate (status, created_at); redundant status / city_id singles vs composites",
+        "estimated_performance_impact": "Medium write amplification on 137k-row table.",
+        "recommended_fix": "Drop duplicate composite; review redundant singles covered by composites."
+      },
+      {
+        "id": "M3",
+        "title": "Lucide loaded from unpkg CDN every page",
+        "file": "resources/views/components/crm/scripts.blade.php",
+        "function": "External script include",
+        "query": null,
+        "estimated_performance_impact": "Medium: extra DNS/TLS and third-party latency.",
+        "recommended_fix": "Self-host Lucide or icon subset on same origin."
+      },
+      {
+        "id": "M4",
+        "title": "Large JSON list resources",
+        "file": "app/Http/Resources/CaMasterResource.php",
+        "function": "toArray / prepareCollection",
+        "query": "Driven by C3/H5/H8",
+        "estimated_performance_impact": "Medium: larger responses slow clients and table paint.",
+        "recommended_fix": "Slim list DTO; enrich on drawer open."
+      },
+      {
+        "id": "M5",
+        "title": "activity_logs growth / subject filter indexes",
+        "file": "Live activity_logs indexes; app/Services/Activity/ActivityLogService.php",
+        "function": "Listing/filter helpers",
+        "query": "module/action/date indexed; subject/ca-style filters may scan",
+        "estimated_performance_impact": "Medium as table grows past 33k.",
+        "recommended_fix": "Align indexes to real WHERE clauses; archive old logs."
+      },
+      {
+        "id": "M6",
+        "title": "Mail/SMTP during request path under sync queue",
+        "file": "app/Services/Email/EmailSettingsService.php; campaign/login-email flows",
+        "function": "SMTP send/test",
+        "query": null,
+        "estimated_performance_impact": "Medium: SMTP RTT blocks request under sync.",
+        "recommended_fix": "Always queue outbound mail."
+      },
+      {
+        "id": "M7",
+        "title": "ocr_parsed_firms large table pressure",
+        "file": "ocr_parsed_firms (114327 rows)",
+        "function": "OCR review/mapping services; CaMasterResource::loadOcrGeoFallback",
+        "query": "Match/review filters; OR on crm_ca_id/matched_ca_id",
+        "estimated_performance_impact": "Medium for OCR screens; secondary for Master via H5.",
+        "recommended_fix": "Archive mapped rows; tighten covering indexes; avoid dual-column OR without indexes."
+      }
+    ],
+    "low": [
+      {
+        "id": "L1",
+        "title": "Laravel logs not excessive",
+        "file": "storage/logs/laravel.log (~315KB live)",
+        "function": "Monolog",
+        "query": null,
+        "estimated_performance_impact": "Low currently.",
+        "recommended_fix": "Keep LOG_LEVEL=error; rotate if debug re-enabled."
+      },
+      {
+        "id": "L2",
+        "title": "Telescope/Debugbar absent",
+        "file": "composer packages (none found)",
+        "function": null,
+        "query": null,
+        "estimated_performance_impact": "None — healthy.",
+        "recommended_fix": "Keep out of production."
+      },
+      {
+        "id": "L3",
+        "title": "sales_import_rows and call_logs empty today",
+        "file": "Live table counts",
+        "function": null,
+        "query": null,
+        "estimated_performance_impact": "Low now; C3/M1 patterns still latent risk.",
+        "recommended_fix": "Fix code paths before next large import."
+      },
+      {
+        "id": "L4",
+        "title": "OPcache memory ~33MB",
+        "file": "PHP OPcache status",
+        "function": "Zend OPcache",
+        "query": null,
+        "estimated_performance_impact": "Low if hit rate high.",
+        "recommended_fix": "Raise opcache.memory_consumption if hit rate drops (ops)."
+      },
+      {
+        "id": "L5",
+        "title": "PHP-FPM/MySQL knobs not directly inspectable on shared plan",
+        "file": "Hostinger managed PHP-FPM / MySQL",
+        "function": "Pool size / innodb_buffer_pool",
+        "query": null,
+        "estimated_performance_impact": "Unknown; shared plans usually under-provision vs 137k-row CRM.",
+        "recommended_fix": "Request host metrics / upgrade; optional temporary slow-query log (ops)."
+      }
+    ]
+  },
+  "remediation_order": [
+    "C1 host capacity",
+    "C2 async queue + workers",
+    "C3/C4 denormalize last activity",
+    "H1/H2 Laravel caches + session/cache driver",
+    "C5/H3/H4 frontend minify and catalog caps",
+    "H7/H8/M4 slim list + normalized search"
+  ]
+}

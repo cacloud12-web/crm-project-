@@ -4724,6 +4724,7 @@ if (otherInput) {
       new_status_leads: metrics ? metrics.new_status_leads : 0,
       pipeline: metrics ? metrics.pipeline_leads : 0,
       lost_leads: metrics ? metrics.lost_leads : 0,
+      converted_leads: metrics ? (metrics.converted_leads != null ? metrics.converted_leads : 0) : 0,
       warm_leads: metrics ? metrics.warm_leads : 0,
       cold_leads: metrics ? metrics.cold_leads : 0,
       active_employees: metrics ? metrics.active_employees : getDashboardExecutives().length,
@@ -4765,6 +4766,15 @@ if (otherInput) {
       organization_target: metrics ? metrics.organization_target : null,
       demos_scheduled_today: metrics ? metrics.demos_scheduled_today : 0,
       demos_completed_today: metrics ? metrics.demos_completed_today : 0,
+      daily_demo_target: metrics && metrics.organization_target ? metrics.organization_target.daily_demo_target_total : 0,
+      daily_demo_achieved: metrics && metrics.organization_target ? metrics.organization_target.daily_demo_achieved_total : 0,
+      daily_demo_remaining: metrics && metrics.organization_target ? metrics.organization_target.daily_demo_remaining_total : 0,
+      daily_demo_achievement_pct: metrics && metrics.organization_target
+        ? (Math.min(100, Number(metrics.organization_target.daily_demo_achievement_pct || 0)) + '%')
+        : '0%',
+      demo_confirmation_cancelled: metrics && metrics.demo_confirmations
+        ? (metrics.demo_confirmations.demo_confirmation_cancelled || metrics.demo_confirmations.demos_cancelled || 0)
+        : (metrics && metrics.demos_cancelled != null ? metrics.demos_cancelled : 0),
       productivity: metrics ? metrics.productivity : null,
       duplicate_monitoring: metrics ? metrics.duplicate_monitoring : null,
     };
@@ -5571,24 +5581,196 @@ if (otherInput) {
     return when.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
   }
 
+  function setDashboardNavIntent(intent) {
+    window._dashboardNavIntent = intent && typeof intent === 'object' ? intent : null;
+  }
+
+  function peekDashboardNavIntent() {
+    return window._dashboardNavIntent || null;
+  }
+
+  function consumeDashboardNavIntent() {
+    var intent = window._dashboardNavIntent || null;
+    window._dashboardNavIntent = null;
+    return intent;
+  }
+
+  function buildDashboardNavContext() {
+    var employeeId = getDashboardEmployeeFilterId();
+    var dateFilter = getDashboardDateFilter();
+    var metrics = window.dashboardMetrics || {};
+    var productivity = metrics.employee_productivity || null;
+    var employeeName = productivity && productivity.employee ? (productivity.employee.name || '') : '';
+    return {
+      employeeId: employeeId || null,
+      employeeName: employeeName || null,
+      datePreset: dateFilter.preset || 'today',
+      dateFrom: dateFilter.from || '',
+      dateTo: dateFilter.to || '',
+    };
+  }
+
+  function activateDashboardCardNav(btn) {
+    if (!btn) return;
+    var page = btn.getAttribute('data-nav-page') || btn.getAttribute('data-emp-nav') || '';
+    if (!page) return;
+
+    var ctx = buildDashboardNavContext();
+    var intent = {
+      page: page,
+      label: btn.getAttribute('data-kpi') || btn.getAttribute('aria-label') || page,
+      leadSegment: btn.getAttribute('data-lead-filter') || btn.getAttribute('data-emp-lead-filter') || '',
+      leadStatus: btn.getAttribute('data-lead-status') || '',
+      followupDue: btn.getAttribute('data-followup-filter') || btn.getAttribute('data-emp-followup-filter') || '',
+      followupType: btn.getAttribute('data-followup-type') || '',
+      followupStatus: btn.getAttribute('data-followup-status') || '',
+      assignmentStatus: btn.getAttribute('data-assignment-status') || '',
+      assignmentType: btn.getAttribute('data-assignment-type') || '',
+      commLogStatus: btn.getAttribute('data-comm-log-status') || '',
+      consentTab: btn.getAttribute('data-consent-tab') || '',
+      workflowTab: btn.getAttribute('data-workflow-tab') || '',
+      employeeId: ctx.employeeId,
+      employeeName: ctx.employeeName,
+      datePreset: ctx.datePreset,
+      dateFrom: ctx.dateFrom,
+      dateTo: ctx.dateTo,
+      openedAt: Date.now(),
+    };
+
+    // Legacy globals (still used by some onPage handlers).
+    if (intent.leadSegment) window._leadSegmentFilter = intent.leadSegment;
+    if (intent.followupDue) window._followupDateFilter = intent.followupDue;
+    if (intent.commLogStatus) window._commLogStatusFilter = intent.commLogStatus;
+    if (intent.consentTab) window._consentDndTab = intent.consentTab;
+    if (intent.workflowTab) window._workflowListTab = intent.workflowTab;
+
+    setDashboardNavIntent(intent);
+    showDashboardNavLoading(intent.label);
+
+    if (page === 'bulk') {
+      if (typeof navigateTo === 'function') navigateTo('bulk');
+      setTimeout(function () {
+        if (typeof window.openBulkImportWizard === 'function') window.openBulkImportWizard();
+        hideDashboardNavLoading();
+      }, 120);
+      return;
+    }
+
+    if (typeof navigateTo === 'function') navigateTo(page);
+    // Hide loader after destination paint; fallback timeout.
+    setTimeout(hideDashboardNavLoading, 1200);
+  }
+
+  function showDashboardNavLoading(label) {
+    clearTimeout(window._dashNavLoadingTimer);
+    window._dashNavLoadingTimer = setTimeout(function () {
+      var existing = document.getElementById('dash-nav-loading');
+      if (existing) return;
+      var el = document.createElement('div');
+      el.id = 'dash-nav-loading';
+      el.className = 'dash-nav-loading';
+      el.setAttribute('role', 'status');
+      el.setAttribute('aria-live', 'polite');
+      el.innerHTML = '<span class="dash-nav-loading__spinner" aria-hidden="true"></span><span>Opening ' + escapeHtml(label || 'page') + '…</span>';
+      document.body.appendChild(el);
+    }, 300);
+  }
+
+  function hideDashboardNavLoading() {
+    clearTimeout(window._dashNavLoadingTimer);
+    var el = document.getElementById('dash-nav-loading');
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  function applyDashboardNavIntentToLeadsListing(listingKey) {
+    var intent = peekDashboardNavIntent();
+    if (!intent || !window.CA_LISTING_SEARCH) return false;
+    if (intent.page !== 'ca-master' && intent.page !== 'leads' && intent.page !== 'leads-segments') return false;
+
+    var filters = {};
+    if (intent.leadSegment && intent.leadSegment !== 'all') {
+      filters.segment = intent.leadSegment;
+      window._leadSegmentFilter = intent.leadSegment;
+    } else {
+      window._leadSegmentFilter = 'all';
+    }
+    if (intent.leadStatus) {
+      filters.status = intent.leadStatus;
+    }
+    if (intent.employeeName) {
+      filters.executive = intent.employeeName;
+    }
+
+    CA_LISTING_SEARCH.setState(listingKey || 'ca_masters', {
+      page: 1,
+      search: '',
+      filters: filters,
+    });
+    consumeDashboardNavIntent();
+    hideDashboardNavLoading();
+    return true;
+  }
+
+  function applyDashboardNavIntentToFollowups() {
+    var intent = peekDashboardNavIntent();
+    if (!intent || intent.page !== 'followups' || !window.CA_LISTING_SEARCH) return false;
+    var filters = {};
+    if (intent.followupDue) filters.followup_due = intent.followupDue;
+    if (intent.followupType) filters.followup_type = intent.followupType;
+    if (intent.followupStatus) filters.status = intent.followupStatus;
+    if (intent.employeeId) filters.employee_id = String(intent.employeeId);
+    CA_LISTING_SEARCH.setState('follow_ups', { page: 1, filters: filters });
+    window._followupDateFilter = '';
+    consumeDashboardNavIntent();
+    hideDashboardNavLoading();
+    return true;
+  }
+
+  function applyDashboardNavIntentToAssignments() {
+    var intent = peekDashboardNavIntent();
+    if (!intent || intent.page !== 'assignment' || !window.CA_LISTING_SEARCH) return false;
+    var filters = {};
+    if (intent.assignmentStatus) filters.status = intent.assignmentStatus;
+    if (intent.assignmentType) filters.assignment_type = intent.assignmentType;
+    if (intent.employeeId) filters.employee_id = String(intent.employeeId);
+    CA_LISTING_SEARCH.setState('lead_assignments', { page: 1, filters: filters });
+    consumeDashboardNavIntent();
+    hideDashboardNavLoading();
+    return true;
+  }
+
   function renderDashboardKpiCard(card, value, mode) {
     var display = value !== undefined && value !== null && value !== '' ? value : '—';
     if (card.suffix && display !== '—') display = display + card.suffix;
+    var tooltip = card.desc || ('Open ' + card.label);
+    var aria = 'Open ' + card.label + (card.desc ? ' — ' + card.desc : '');
     var attrs = mode === 'employee'
-      ? ' data-emp-nav="' + card.nav + '"' +
-        (card.leadFilter ? ' data-emp-lead-filter="' + card.leadFilter + '"' : '') +
-        (card.followupFilter ? ' data-emp-followup-filter="' + card.followupFilter + '"' : '')
-      : ' data-nav-page="' + card.nav + '"' +
-        (card.leadFilter ? ' data-lead-filter="' + card.leadFilter + '"' : '') +
-        (card.followupFilter ? ' data-followup-filter="' + card.followupFilter + '"' : '');
+      ? ' data-emp-nav="' + escapeHtml(card.nav) + '"' +
+        (card.leadFilter ? ' data-emp-lead-filter="' + escapeHtml(card.leadFilter) + '"' : '') +
+        (card.followupFilter ? ' data-emp-followup-filter="' + escapeHtml(card.followupFilter) + '"' : '')
+      : ' data-nav-page="' + escapeHtml(card.nav) + '"' +
+        (card.leadFilter ? ' data-lead-filter="' + escapeHtml(card.leadFilter) + '"' : '') +
+        (card.followupFilter ? ' data-followup-filter="' + escapeHtml(card.followupFilter) + '"' : '');
+    if (card.leadStatus) attrs += ' data-lead-status="' + escapeHtml(card.leadStatus) + '"';
+    if (card.followupType) attrs += ' data-followup-type="' + escapeHtml(card.followupType) + '"';
+    if (card.followupStatus) attrs += ' data-followup-status="' + escapeHtml(card.followupStatus) + '"';
+    if (card.assignmentStatus) attrs += ' data-assignment-status="' + escapeHtml(card.assignmentStatus) + '"';
+    if (card.assignmentType) attrs += ' data-assignment-type="' + escapeHtml(card.assignmentType) + '"';
+    if (card.commLogStatus) attrs += ' data-comm-log-status="' + escapeHtml(card.commLogStatus) + '"';
+    if (card.workflowTab) attrs += ' data-workflow-tab="' + escapeHtml(card.workflowTab) + '"';
+    if (card.consentTab) attrs += ' data-consent-tab="' + escapeHtml(card.consentTab) + '"';
     var accent = card.accent || (card.key || 'default').replace(/_/g, '-');
-    return '<button type="button" class="mgr-kpi-card dash-kpi-card dash-kpi-card--premium" data-accent="' + escapeHtml(accent) + '"' + attrs + ' data-kpi="' + escapeHtml(card.label) + '">' +
-  '<div class="mgr-kpi-top">' +
-    '<span class="mgr-kpi-icon"><i data-lucide="' + card.icon + '" class="h-4 w-4"></i></span>' +
-  '</div>' +
-  '<p class="mgr-kpi-value" data-metric="' + (card.key || '') + '">' + escapeHtml(String(display)) + '</p>' +
-  '<p class="mgr-kpi-label">' + escapeHtml(card.label) + '</p>' +
-'</button>';
+    return '<button type="button" class="mgr-kpi-card dash-kpi-card dash-kpi-card--premium dash-kpi-card--nav"' +
+      ' data-accent="' + escapeHtml(accent) + '"' + attrs +
+      ' data-kpi="' + escapeHtml(card.label) + '"' +
+      ' title="' + escapeHtml(tooltip) + '"' +
+      ' aria-label="' + escapeHtml(aria) + '">' +
+      '<div class="mgr-kpi-top">' +
+        '<span class="mgr-kpi-icon" aria-hidden="true"><i data-lucide="' + card.icon + '" class="h-4 w-4"></i></span>' +
+      '</div>' +
+      '<p class="mgr-kpi-value" data-metric="' + (card.key || '') + '">' + escapeHtml(String(display)) + '</p>' +
+      '<p class="mgr-kpi-label">' + escapeHtml(card.label) + '</p>' +
+    '</button>';
   }
 
   function renderDashboardKpiSections(containerId, sections, resolveValue, mode) {
@@ -5597,9 +5779,9 @@ if (otherInput) {
     container.innerHTML = sections.map(function (section) {
       return '<section class="dash-kpi-section" aria-label="' + escapeHtml(section.title) + '">' +
         '<h2 class="dash-kpi-section-title">' + escapeHtml(section.title) + '</h2>' +
-        '<div class="mgr-kpi-grid dash-kpi-grid dash-kpi-section-grid">' +
+        '<div class="mgr-kpi-grid dash-kpi-grid dash-kpi-section-grid" role="list">' +
         section.cards.map(function (card) {
-          return renderDashboardKpiCard(card, resolveValue(card), mode);
+          return '<div role="listitem">' + renderDashboardKpiCard(card, resolveValue(card), mode) + '</div>';
         }).join('') +
         '</div></section>';
     }).join('');
@@ -5609,39 +5791,63 @@ if (otherInput) {
     {
       title: 'Leads',
       cards: [
-        { icon: 'users', label: 'Total Leads', key: 'total_leads', nav: 'ca-master', leadFilter: 'all', desc: 'All firms in master data' },
-        { icon: 'sparkles', label: 'New Leads', key: 'new_status_leads', nav: 'ca-master', leadFilter: 'new', desc: 'Leads with New status' },
-        { icon: 'flame', label: 'Hot Leads', key: 'hot_leads', nav: 'ca-master', leadFilter: 'hot', desc: 'High-intent prospects' },
-        { icon: 'thermometer', label: 'Warm Leads', key: 'warm_leads', nav: 'ca-master', leadFilter: 'pipeline', desc: 'In active pipeline' },
-        { icon: 'snowflake', label: 'Cold Leads', key: 'cold_leads', nav: 'ca-master', leadFilter: 'cold', desc: 'Low engagement leads' },
-        { icon: 'trending-up', label: 'Conversion Rate', key: 'conversion', nav: 'analytics', desc: 'Lead-to-sale conversion' },
+        { icon: 'users', label: 'Total Leads', key: 'total_leads', nav: 'ca-master', leadFilter: 'all', desc: 'Open Master Data — all firms' },
+        { icon: 'user-check', label: 'Assigned Leads', key: 'assigned_leads', nav: 'ca-master', leadFilter: 'all', desc: 'Open Master Data for assigned leads (employee filter preserved)' },
+        { icon: 'sparkles', label: 'New Leads', key: 'new_status_leads', nav: 'ca-master', leadFilter: 'status_new', desc: 'Firms with status New' },
+        { icon: 'flame', label: 'Hot Leads', key: 'hot_leads', nav: 'ca-master', leadFilter: 'hot', desc: 'Firms with status Hot' },
+        { icon: 'thermometer', label: 'Warm Leads', key: 'warm_leads', nav: 'ca-master', leadFilter: 'warm', desc: 'Firms with status Warm' },
+        { icon: 'snowflake', label: 'Cold Leads', key: 'cold_leads', nav: 'ca-master', leadFilter: 'cold', desc: 'Firms with status Cold' },
+        { icon: 'git-branch', label: 'In Pipeline', key: 'pipeline', nav: 'ca-master', leadFilter: 'pipeline', desc: 'Pipeline segment firms' },
+        { icon: 'trophy', label: 'Converted / Won', key: 'converted_leads', nav: 'ca-master', leadFilter: 'converted', desc: 'Active, Won, or purchased firms' },
+        { icon: 'user-x', label: 'Lost / Dead', key: 'lost_leads', nav: 'ca-master', leadFilter: 'lost', desc: 'Lost or Inactive firms' },
+        { icon: 'trending-up', label: 'Conversion Rate', key: 'conversion', nav: 'analytics', desc: 'Open analytics / conversion report' },
       ],
     },
     {
       title: 'Daily Work',
       cards: [
-        { icon: 'phone', label: "Today's Calls", key: 'calls_total', nav: 'followups', desc: 'Scheduled calls today' },
-        { icon: 'calendar-clock', label: "Today's Follow-ups", key: 'followups_due_today', nav: 'followups', followupFilter: 'today', desc: 'Due for follow-up today' },
-        { icon: 'video', label: "Today's Meetings", key: 'meetings_today', nav: 'followups', desc: 'Demos and meetings' },
-        { icon: 'alert-circle', label: 'Overdue Follow-ups', key: 'overdue_followups', nav: 'followups', followupFilter: 'overdue', desc: 'Past due actions' },
+        { icon: 'phone', label: "Today's Calls", key: 'calls_total', nav: 'followups', followupFilter: 'today', followupType: 'Call', desc: "Today's call follow-ups" },
+        { icon: 'calendar-clock', label: "Today's Follow-ups", key: 'followups_due_today', nav: 'followups', followupFilter: 'today', desc: 'Follow-ups due today' },
+        { icon: 'video', label: "Today's Meetings", key: 'meetings_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', desc: "Today's demo meetings" },
+        { icon: 'alert-circle', label: 'Overdue Follow-ups', key: 'overdue_followups', nav: 'followups', followupFilter: 'overdue', desc: 'Overdue follow-up list' },
       ],
     },
     {
       title: 'Demo',
       cards: [
-        { icon: 'percent', label: 'Demo Ratio', key: 'demo_ratio', nav: 'analytics', desc: 'Demo completion rate' },
-        { icon: 'clock', label: 'Pending Confirmation', key: 'demo_confirmation_pending', nav: 'followups', desc: 'Awaiting client response' },
-        { icon: 'badge-check', label: 'Confirmed', key: 'demo_confirmation_confirmed', nav: 'followups', desc: 'Client confirmed demos' },
-        { icon: 'badge-x', label: 'Rejected', key: 'demo_confirmation_rejected', nav: 'followups', desc: 'Declined demo requests' },
-        { icon: 'calendar-clock', label: 'Rescheduled', key: 'demo_confirmation_rescheduled', nav: 'followups', desc: 'Moved to new slot' },
-        { icon: 'shield-alert', label: 'Rejected After Reschedule', key: 'demo_confirmation_rejected_after_reschedule', nav: 'followups', desc: 'Cancelled after reschedule' },
+        { icon: 'presentation', label: 'Demos Scheduled', key: 'demo_count', nav: 'followups', followupType: 'Demo Scheduled', workflowTab: 'demo_scheduled', desc: 'Scheduled demos' },
+        { icon: 'calendar', label: 'Demos Scheduled Today', key: 'demos_scheduled_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', desc: "Today's scheduled demos" },
+        { icon: 'badge-check', label: 'Demos Completed', key: 'demo_confirmation_confirmed', nav: 'followups', followupType: 'Demo Completed', workflowTab: 'demo_completed', desc: 'Completed demos' },
+        { icon: 'check-circle', label: 'Demos Completed Today', key: 'demos_completed_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Completed', desc: "Today's completed demos" },
+        { icon: 'percent', label: 'Demo Conversion', key: 'demo_ratio', nav: 'analytics', desc: 'Demo conversion analytics' },
+        { icon: 'clock', label: 'Pending Confirmation', key: 'demo_confirmation_pending', nav: 'followups', followupType: 'Demo Scheduled', desc: 'Awaiting confirmation' },
+        { icon: 'badge-x', label: 'Missed Demos', key: 'demo_confirmation_rejected', nav: 'followups', followupType: 'Demo Scheduled', followupStatus: 'Missed', desc: 'Missed demos' },
+        { icon: 'ban', label: 'Cancelled', key: 'demo_confirmation_cancelled', nav: 'followups', followupType: 'Demo Scheduled', followupStatus: 'Cancelled', desc: 'Cancelled demos' },
+        { icon: 'calendar-clock', label: 'Rescheduled', key: 'demo_confirmation_rescheduled', nav: 'followups', followupType: 'Demo Scheduled', desc: 'Rescheduled demos' },
+        { icon: 'shopping-bag', label: 'Purchased', key: 'converted_leads', nav: 'ca-master', leadFilter: 'converted', desc: 'Purchased / converted customers' },
+      ],
+    },
+    {
+      title: 'Communication',
+      cards: [
+        { icon: 'mail', label: 'Emails Sent', key: 'email_messages_total', nav: 'email', desc: 'Open email campaigns & logs' },
+        { icon: 'smartphone', label: 'SMS Sent', key: 'sms_messages_total', nav: 'sms', desc: 'Open SMS campaigns & logs' },
+        { icon: 'message-circle', label: 'WhatsApp Sent', key: 'whatsapp_messages_total', nav: 'whatsapp', desc: 'Open WhatsApp campaigns & logs' },
+        { icon: 'inbox', label: 'Customer Replies', key: 'email_delivered', nav: 'email', desc: 'Open email inbox / reply history' },
       ],
     },
     {
       title: 'Performance',
       cards: [
-        { icon: 'user-check', label: 'Employees', key: 'active_employees', nav: 'employees', desc: 'Active team members' },
-        { icon: 'git-branch', label: 'Assignments', key: 'assignments', nav: 'assignment', desc: 'Leads assigned to team' },
+        { icon: 'target', label: 'Daily Demo Target', key: 'daily_demo_target', nav: 'employees', desc: 'Employee daily demo targets' },
+        { icon: 'award', label: 'Target Achieved', key: 'daily_demo_achieved', nav: 'analytics', desc: 'Achieved targets report' },
+        { icon: 'gauge', label: 'Remaining Target', key: 'daily_demo_remaining', nav: 'analytics', desc: 'Remaining targets' },
+        { icon: 'percent', label: 'Achievement %', key: 'daily_demo_achievement_pct', nav: 'analytics', desc: 'Performance / achievement report' },
+        { icon: 'user-check', label: 'Employees', key: 'active_employees', nav: 'employees', desc: 'Employee directory' },
+        { icon: 'git-branch', label: 'Active Assignments', key: 'assignments', nav: 'assignment', assignmentStatus: 'Active', desc: 'Active lead assignments' },
+        { icon: 'refresh-cw', label: 'Auto (Rotation)', key: 'bulk_assignment_total', nav: 'assignment', assignmentType: 'Auto', desc: 'Auto / rotation assignments' },
+        { icon: 'hand', label: 'Manual', key: 'unassigned_leads', nav: 'assignment', assignmentType: 'Manual', desc: 'Manual assignments' },
+        { icon: 'users', label: 'Assigned Leads', key: 'assigned_leads', nav: 'ca-master', leadFilter: 'all', desc: 'All assigned leads (employee filter preserved)' },
       ],
     },
   ];
@@ -5650,38 +5856,39 @@ if (otherInput) {
     {
       title: 'Leads',
       cards: [
-        { icon: 'users', label: 'My Leads', key: 'my_leads', nav: 'leads', source: 'summary', desc: 'Total assigned to you' },
-        { icon: 'user-check', label: 'Assigned Leads', key: 'assigned_leads_today', nav: 'leads', source: 'today', desc: 'New assignments today' },
-        { icon: 'flame', label: 'Hot Leads', key: 'hot_leads', nav: 'leads', leadFilter: 'hot', source: 'summary', desc: 'High priority prospects' },
-        { icon: 'thermometer', label: 'Warm Leads', key: 'warm_leads', nav: 'leads', leadFilter: 'pipeline', source: 'summary', desc: 'In your pipeline' },
-        { icon: 'snowflake', label: 'Cold Leads', key: 'cold_leads', nav: 'leads', leadFilter: 'cold', source: 'summary', desc: 'Needs re-engagement' },
-        { icon: 'trending-up', label: 'Conversion Rate', key: 'conversion_pct', nav: 'leads', suffix: '%', source: 'summary', desc: 'Your conversion rate' },
+        { icon: 'users', label: 'My Leads', key: 'my_leads', nav: 'leads', leadFilter: 'all', source: 'summary', desc: 'All leads assigned to you' },
+        { icon: 'user-check', label: 'Assigned Leads', key: 'assigned_leads_today', nav: 'leads', leadFilter: 'all', source: 'today', desc: 'Your assigned leads' },
+        { icon: 'sparkles', label: 'New Leads', key: 'new_leads', nav: 'leads', leadFilter: 'status_new', source: 'summary', desc: 'Your New status leads' },
+        { icon: 'flame', label: 'Hot Leads', key: 'hot_leads', nav: 'leads', leadFilter: 'hot', source: 'summary', desc: 'Your Hot leads' },
+        { icon: 'thermometer', label: 'Warm Leads', key: 'warm_leads', nav: 'leads', leadFilter: 'warm', source: 'summary', desc: 'Your Warm leads' },
+        { icon: 'snowflake', label: 'Cold Leads', key: 'cold_leads', nav: 'leads', leadFilter: 'cold', source: 'summary', desc: 'Your Cold leads' },
+        { icon: 'trending-up', label: 'Conversion Rate', key: 'conversion_pct', nav: 'leads', leadFilter: 'converted', suffix: '%', source: 'summary', desc: 'Your converted leads' },
       ],
     },
     {
       title: 'Daily Work',
       cards: [
-        { icon: 'phone', label: "Today's Calls", key: 'todays_calls', nav: 'followups', source: 'summary', desc: 'Calls scheduled today' },
+        { icon: 'phone', label: "Today's Calls", key: 'todays_calls', nav: 'followups', followupFilter: 'today', followupType: 'Call', source: 'summary', desc: "Today's calls" },
         { icon: 'calendar-clock', label: "Today's Follow-ups", key: 'followups_due', nav: 'followups', followupFilter: 'today', source: 'today', desc: 'Due today' },
-        { icon: 'video', label: "Today's Meetings", key: 'meetings_today', nav: 'followups', source: 'today', desc: 'Demos and meetings' },
-        { icon: 'list-checks', label: "Today's Tasks", key: 'todays_tasks', nav: 'followups', source: 'summary', desc: 'Tasks for today' },
+        { icon: 'video', label: "Today's Meetings", key: 'meetings_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', source: 'today', desc: "Today's meetings" },
+        { icon: 'list-checks', label: "Today's Tasks", key: 'todays_tasks', nav: 'followups', followupFilter: 'today', source: 'summary', desc: 'Tasks for today' },
         { icon: 'alert-circle', label: 'Overdue Follow-ups', key: 'followups_overdue', nav: 'followups', followupFilter: 'overdue', source: 'today', desc: 'Past due items' },
         { icon: 'calendar-clock', label: 'My Follow-ups', key: 'my_followups', nav: 'followups', source: 'summary', desc: 'All your follow-ups' },
-        { icon: 'clock', label: 'Upcoming Tasks', key: 'upcoming_tasks', nav: 'followups', source: 'today', desc: 'Scheduled ahead' },
+        { icon: 'clock', label: 'Upcoming Tasks', key: 'upcoming_tasks', nav: 'followups', followupFilter: 'pending', source: 'today', desc: 'Open / pending follow-ups' },
       ],
     },
     {
       title: 'Demo',
       cards: [
-        { icon: 'presentation', label: "Today's Demos", key: 'my_demos', nav: 'followups', source: 'summary', desc: 'Demos scheduled today' },
-        { icon: 'video', label: 'My Meetings', key: 'my_meetings', nav: 'followups', source: 'summary', desc: 'All your meetings' },
+        { icon: 'presentation', label: "Today's Demos", key: 'my_demos', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', source: 'summary', desc: 'Demos scheduled today' },
+        { icon: 'video', label: 'My Meetings', key: 'my_meetings', nav: 'followups', followupType: 'Demo Scheduled', source: 'summary', desc: 'All your meetings' },
       ],
     },
     {
       title: 'Performance',
       cards: [
-        { icon: 'target', label: "Today's Target", key: 'todays_target', nav: 'followups', source: 'summary', desc: 'Daily demo target' },
-        { icon: 'award', label: "Today's Achieved", key: 'todays_achievement', nav: 'followups', source: 'summary', desc: 'Demos scheduled today' },
+        { icon: 'target', label: "Today's Target", key: 'todays_target', nav: 'assignment', source: 'summary', desc: 'Daily demo target' },
+        { icon: 'award', label: "Today's Achieved", key: 'todays_achievement', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', source: 'summary', desc: 'Demos scheduled toward target' },
       ],
     },
   ];
@@ -5842,10 +6049,30 @@ if (otherInput) {
       '</div>';
   }
 
-  function productivityStatCard(label, value) {
+  function productivityStatCard(label, value, nav) {
+    nav = nav || {};
+    var display = value !== undefined && value !== null && value !== '' ? String(value) : '—';
+    var tooltip = nav.desc || ('Open ' + label);
+    var attrs = '';
+    if (nav.page) {
+      attrs =
+        ' data-dash-nav data-nav-page="' + escapeHtml(nav.page) + '"' +
+        (nav.leadFilter ? ' data-lead-filter="' + escapeHtml(nav.leadFilter) + '"' : '') +
+        (nav.followupFilter ? ' data-followup-filter="' + escapeHtml(nav.followupFilter) + '"' : '') +
+        (nav.followupType ? ' data-followup-type="' + escapeHtml(nav.followupType) + '"' : '') +
+        (nav.followupStatus ? ' data-followup-status="' + escapeHtml(nav.followupStatus) + '"' : '') +
+        (nav.assignmentStatus ? ' data-assignment-status="' + escapeHtml(nav.assignmentStatus) + '"' : '') +
+        (nav.assignmentType ? ' data-assignment-type="' + escapeHtml(nav.assignmentType) + '"' : '') +
+        ' title="' + escapeHtml(tooltip) + '"' +
+        ' aria-label="' + escapeHtml(tooltip) + '"';
+      return '<button type="button" class="rounded-xl border border-slate-100 bg-slate-50 p-3 text-left w-full dash-prod-stat--nav"' + attrs + '>' +
+        '<p class="text-caption text-slate-500">' + escapeHtml(label) + '</p>' +
+        '<p class="text-lg font-semibold text-slate-900 mt-1">' + escapeHtml(display) + '</p>' +
+      '</button>';
+    }
     return '<div class="rounded-xl border border-slate-100 bg-slate-50 p-3">' +
       '<p class="text-caption text-slate-500">' + escapeHtml(label) + '</p>' +
-      '<p class="text-lg font-semibold text-slate-900 mt-1">' + escapeHtml(String(value ?? '—')) + '</p>' +
+      '<p class="text-lg font-semibold text-slate-900 mt-1">' + escapeHtml(display) + '</p>' +
     '</div>';
   }
 
@@ -6185,11 +6412,10 @@ if (otherInput) {
     if (!root || root._empDashBound) return;
     root._empDashBound = true;
     root.addEventListener('click', function (e) {
-      var navBtn = e.target.closest('[data-emp-nav]');
-      if (navBtn) {
-        if (navBtn.dataset.empLeadFilter) window._leadSegmentFilter = navBtn.dataset.empLeadFilter;
-        if (navBtn.dataset.empFollowupFilter) window._followupDateFilter = navBtn.dataset.empFollowupFilter;
-        if (typeof navigateTo === 'function') navigateTo(navBtn.dataset.empNav);
+      var navBtn = e.target.closest('[data-emp-nav], [data-nav-page].dash-kpi-card--nav, [data-dash-nav]');
+      if (navBtn && (navBtn.getAttribute('data-emp-nav') || navBtn.classList.contains('dash-kpi-card--nav') || navBtn.hasAttribute('data-dash-nav'))) {
+        e.preventDefault();
+        activateDashboardCardNav(navBtn);
         return;
       }
       var fuTab = e.target.closest('[data-emp-fu-tab]');
@@ -7229,12 +7455,12 @@ if (otherInput) {
         '<span class="text-caption text-slate-500">' + escapeHtml(targetSummary.target_date || '') + '</span>' +
       '</div>' +
       '<div class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">' +
-        productivityStatCard('Daily Target', targetSummary.daily_demo_target_total) +
-        productivityStatCard('Achieved', targetSummary.daily_demo_achieved_total) +
-        productivityStatCard('Remaining', targetSummary.daily_demo_remaining_total) +
-        productivityStatCard('Achievement %', pct + '%') +
-        productivityStatCard('Demos Scheduled Today', targetSummary.demos_scheduled_today) +
-        productivityStatCard('Demos Completed Today', targetSummary.demos_completed_today) +
+        productivityStatCard('Daily Target', targetSummary.daily_demo_target_total, { page: 'employees', desc: 'Open employee targets' }) +
+        productivityStatCard('Achieved', targetSummary.daily_demo_achieved_total, { page: 'analytics', desc: 'Open achieved targets report' }) +
+        productivityStatCard('Remaining', targetSummary.daily_demo_remaining_total, { page: 'analytics', desc: 'Open remaining targets' }) +
+        productivityStatCard('Achievement %', pct + '%', { page: 'analytics', desc: 'Open performance report' }) +
+        productivityStatCard('Demos Scheduled Today', targetSummary.demos_scheduled_today, { page: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', desc: "Open today's scheduled demos" }) +
+        productivityStatCard('Demos Completed Today', targetSummary.demos_completed_today, { page: 'followups', followupFilter: 'today', followupType: 'Demo Completed', desc: "Open today's completed demos" }) +
       '</div>';
   }
 
@@ -7268,6 +7494,17 @@ if (otherInput) {
       : 'Organization Productivity';
     if (dateLabel) title += ' · ' + dateLabel;
 
+    function prodNavAttrs(nav) {
+      if (!nav || !nav.page) return '';
+      return ' data-dash-nav data-nav-page="' + escapeHtml(nav.page) + '"' +
+        (nav.leadFilter ? ' data-lead-filter="' + escapeHtml(nav.leadFilter) + '"' : '') +
+        (nav.followupFilter ? ' data-followup-filter="' + escapeHtml(nav.followupFilter) + '"' : '') +
+        (nav.followupType ? ' data-followup-type="' + escapeHtml(nav.followupType) + '"' : '') +
+        (nav.followupStatus ? ' data-followup-status="' + escapeHtml(nav.followupStatus) + '"' : '') +
+        (nav.assignmentStatus ? ' data-assignment-status="' + escapeHtml(nav.assignmentStatus) + '"' : '') +
+        (nav.assignmentType ? ' data-assignment-type="' + escapeHtml(nav.assignmentType) + '"' : '');
+    }
+
     function section(titleText, cards) {
       return '<div class="mgr-emp-prod-section">' +
         '<h3 class="mgr-emp-prod-section__title">' + escapeHtml(titleText) + '</h3>' +
@@ -7275,7 +7512,17 @@ if (otherInput) {
           var cardClass = card.wide
             ? 'mgr-emp-prod-card mgr-emp-prod-card--wide'
             : 'mgr-emp-prod-card';
-    
+          var tooltip = card.desc || ('Open ' + card.label);
+          if (card.nav && card.nav.page) {
+            cardClass += ' mgr-emp-prod-card--nav';
+            return '<button type="button" class="' + cardClass + '"' + prodNavAttrs(card.nav) +
+              ' data-kpi="' + escapeHtml(card.label) + '"' +
+              ' title="' + escapeHtml(tooltip) + '"' +
+              ' aria-label="' + escapeHtml(tooltip) + '">' +
+              '<p class="mgr-emp-prod-card__label">' + escapeHtml(card.label) + '</p>' +
+              '<p class="mgr-emp-prod-card__value">' + escapeHtml(String(card.value ?? '—')) + '</p>' +
+            '</button>';
+          }
           return '<div class="' + cardClass + '">' +
             '<p class="mgr-emp-prod-card__label">' + escapeHtml(card.label) + '</p>' +
             '<p class="mgr-emp-prod-card__value">' + escapeHtml(String(card.value ?? '—')) + '</p>' +
@@ -7292,48 +7539,48 @@ if (otherInput) {
         '<h2 class="text-card-heading">' + escapeHtml(title) + '</h2>' +
       '</div>' +
       section('Lead Metrics', [
-        { label: 'Total Assigned', value: metrics.leads.total_assigned },
-        { label: 'New Leads', value: metrics.leads.new_leads },
-        { label: 'Hot / Warm / Cold', value: metrics.leads.hot_leads + ' / ' + metrics.leads.warm_leads + ' / ' + metrics.leads.cold_leads },
-        { label: 'In Pipeline', value: metrics.leads.in_pipeline },
-        { label: 'Converted / Won', value: metrics.leads.converted },
-        { label: 'Lost / Dead', value: metrics.leads.lost },
-        { label: 'Conversion Rate', value: metrics.leads.conversion_rate + '%' },
+        { label: 'Total Assigned', value: metrics.leads.total_assigned, nav: { page: 'ca-master', leadFilter: 'all' }, desc: 'Open assigned leads for selected employee' },
+        { label: 'New Leads', value: metrics.leads.new_leads, nav: { page: 'ca-master', leadFilter: 'status_new' }, desc: 'Open New leads' },
+        { label: 'Hot / Warm / Cold', value: metrics.leads.hot_leads + ' / ' + metrics.leads.warm_leads + ' / ' + metrics.leads.cold_leads, nav: { page: 'ca-master', leadFilter: 'hot' }, desc: 'Open Hot leads (use KPI strip for Warm/Cold)' },
+        { label: 'In Pipeline', value: metrics.leads.in_pipeline, nav: { page: 'ca-master', leadFilter: 'pipeline' }, desc: 'Open pipeline leads' },
+        { label: 'Converted / Won', value: metrics.leads.converted, nav: { page: 'ca-master', leadFilter: 'converted' }, desc: 'Open converted leads' },
+        { label: 'Lost / Dead', value: metrics.leads.lost, nav: { page: 'ca-master', leadFilter: 'lost' }, desc: 'Open lost/dead leads' },
+        { label: 'Conversion Rate', value: metrics.leads.conversion_rate + '%', nav: { page: 'analytics' }, desc: 'Open conversion analytics' },
       ]) +
       section('Daily Work', [
-        { label: "Today's Calls", value: metrics.daily_work.todays_calls },
-        { label: "Today's Follow-ups", value: metrics.daily_work.todays_followups },
-        { label: "Today's Meetings", value: metrics.daily_work.todays_meetings },
-        { label: 'Overdue Follow-ups', value: metrics.daily_work.overdue_followups },
+        { label: "Today's Calls", value: metrics.daily_work.todays_calls, nav: { page: 'followups', followupFilter: 'today', followupType: 'Call' }, desc: "Open today's call logs" },
+        { label: "Today's Follow-ups", value: metrics.daily_work.todays_followups, nav: { page: 'followups', followupFilter: 'today' }, desc: "Open today's follow-ups" },
+        { label: "Today's Meetings", value: metrics.daily_work.todays_meetings, nav: { page: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled' }, desc: "Open today's meetings" },
+        { label: 'Overdue Follow-ups', value: metrics.daily_work.overdue_followups, nav: { page: 'followups', followupFilter: 'overdue' }, desc: 'Open overdue follow-ups' },
       ]) +
       section('Demo Metrics', [
-        { label: 'Demos Scheduled', value: metrics.demos.demos_scheduled },
-        { label: 'Demos Scheduled Today', value: metrics.demos.demos_scheduled_today },
-        { label: 'Demos Completed', value: metrics.demos.demos_completed },
-        { label: 'Demos Completed Today', value: metrics.demos.demos_completed_today },
-        { label: 'Demo Conversion', value: metrics.demos.demo_conversion_rate + '%' },
-        { label: 'Missed Demos', value: metrics.demos.missed_demos },
-        { label: 'Cancelled', value: metrics.demos.demos_cancelled },
-        { label: 'Rescheduled', value: metrics.demos.demos_rescheduled },
-        { label: 'Purchased', value: metrics.demos.demos_purchased },
+        { label: 'Demos Scheduled', value: metrics.demos.demos_scheduled, nav: { page: 'followups', followupType: 'Demo Scheduled' }, desc: 'Open scheduled demos' },
+        { label: 'Demos Scheduled Today', value: metrics.demos.demos_scheduled_today, nav: { page: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled' }, desc: "Open today's demos" },
+        { label: 'Demos Completed', value: metrics.demos.demos_completed, nav: { page: 'followups', followupType: 'Demo Completed' }, desc: 'Open completed demos' },
+        { label: 'Demos Completed Today', value: metrics.demos.demos_completed_today, nav: { page: 'followups', followupFilter: 'today', followupType: 'Demo Completed' }, desc: "Open today's completed demos" },
+        { label: 'Demo Conversion', value: metrics.demos.demo_conversion_rate + '%', nav: { page: 'analytics' }, desc: 'Open demo conversion report' },
+        { label: 'Missed Demos', value: metrics.demos.missed_demos, nav: { page: 'followups', followupType: 'Demo Scheduled', followupStatus: 'Missed' }, desc: 'Open missed demos' },
+        { label: 'Cancelled', value: metrics.demos.demos_cancelled, nav: { page: 'followups', followupType: 'Demo Scheduled', followupStatus: 'Cancelled' }, desc: 'Open cancelled demos' },
+        { label: 'Rescheduled', value: metrics.demos.demos_rescheduled, nav: { page: 'followups', followupType: 'Demo Scheduled' }, desc: 'Open rescheduled demos' },
+        { label: 'Purchased', value: metrics.demos.demos_purchased, nav: { page: 'ca-master', leadFilter: 'converted' }, desc: 'Open purchased customers' },
       ]) +
       section('Communication', [
-        { label: 'Emails Sent', value: metrics.communication.emails_sent },
-        { label: 'SMS Sent', value: metrics.communication.sms_sent },
-        { label: 'WhatsApp Sent', value: metrics.communication.whatsapp_sent },
-        { label: 'Customer Replies', value: metrics.communication.customer_replies },
+        { label: 'Emails Sent', value: metrics.communication.emails_sent, nav: { page: 'email' }, desc: 'Open email logs' },
+        { label: 'SMS Sent', value: metrics.communication.sms_sent, nav: { page: 'sms' }, desc: 'Open SMS logs' },
+        { label: 'WhatsApp Sent', value: metrics.communication.whatsapp_sent, nav: { page: 'whatsapp' }, desc: 'Open WhatsApp logs' },
+        { label: 'Customer Replies', value: metrics.communication.customer_replies, nav: { page: 'email' }, desc: 'Open customer reply history' },
       ]) +
       section('Performance', [
-        { label: 'Daily Demo Target', value: metrics.performance.target_assigned },
-        { label: 'Target Achieved', value: metrics.performance.target_achieved },
-        { label: 'Remaining Target', value: metrics.performance.pending_target },
-        { label: 'Achievement %', value: metrics.performance.productivity_pct + '%' },
+        { label: 'Daily Demo Target', value: metrics.performance.target_assigned, nav: { page: 'employees' }, desc: 'Open employee targets' },
+        { label: 'Target Achieved', value: metrics.performance.target_achieved, nav: { page: 'analytics' }, desc: 'Open achieved targets' },
+        { label: 'Remaining Target', value: metrics.performance.pending_target, nav: { page: 'analytics' }, desc: 'Open remaining targets' },
+        { label: 'Achievement %', value: metrics.performance.productivity_pct + '%', nav: { page: 'analytics' }, desc: 'Open performance report' },
       ]) +
       section('Follow-up', [
-        { label: 'Pending', value: metrics.followups.pending },
-        { label: 'Completed', value: metrics.followups.completed },
-        { label: 'Missed', value: metrics.followups.missed },
-        { label: 'Next Upcoming', value: nextFollowup, wide: true },
+        { label: 'Pending', value: metrics.followups.pending, nav: { page: 'followups', followupFilter: 'pending' }, desc: 'Open pending follow-ups' },
+        { label: 'Completed', value: metrics.followups.completed, nav: { page: 'followups', followupFilter: 'completed' }, desc: 'Open completed follow-ups' },
+        { label: 'Missed', value: metrics.followups.missed, nav: { page: 'followups', followupFilter: 'overdue' }, desc: 'Open missed follow-ups' },
+        { label: 'Next Upcoming', value: nextFollowup, wide: true, nav: { page: 'followups', followupFilter: 'pending' }, desc: 'Open upcoming follow-ups' },
       ]);
   }
 
@@ -7950,32 +8197,38 @@ if (otherInput) {
   function initDashboardInteractions(top) {
     var root = document.querySelector('.mgr-dashboard');
     if (!root) return;
-    root.querySelectorAll('[data-nav-page]').forEach(function (btn) {
-      if (btn._dashNavBound) return;
-      btn._dashNavBound = true;
-      btn.addEventListener('click', function () {
-        if (btn.dataset.leadFilter) window._leadSegmentFilter = btn.dataset.leadFilter;
-        if (btn.dataset.consentTab) window._consentDndTab = btn.dataset.consentTab;
-        if (btn.dataset.followupFilter) window._followupDateFilter = btn.dataset.followupFilter;
-        if (btn.dataset.commLogStatus) window._commLogStatusFilter = btn.dataset.commLogStatus;
-        var page = btn.dataset.navPage;
-        if (page === 'bulk') {
-          if (typeof navigateTo === 'function') navigateTo('bulk');
-          setTimeout(function () {
-            if (typeof window.openBulkImportWizard === 'function') window.openBulkImportWizard();
-          }, 120);
-          return;
+    if (!root._dashNavDelegated) {
+      root._dashNavDelegated = true;
+      root.addEventListener('click', function (e) {
+        var btn = e.target.closest('[data-nav-page], [data-dash-nav]');
+        if (!btn) return;
+        // Allow non-KPI nav buttons (quick actions, link buttons) through same path.
+        if (btn.classList.contains('mgr-link-btn') || btn.classList.contains('dash-quick-action-btn') || btn.classList.contains('dash-filter-chip') || btn.classList.contains('dash-kpi-card--nav') || btn.hasAttribute('data-dash-nav') || btn.classList.contains('mgr-kpi-card') || btn.classList.contains('dash-fu-kpi--nav') || btn.classList.contains('mgr-emp-prod-card--nav') || btn.classList.contains('dash-prod-stat--nav') || btn.classList.contains('mgr-funnel-row')) {
+          e.preventDefault();
+          activateDashboardCardNav(btn);
         }
-        if (typeof navigateTo === 'function') navigateTo(page);
       });
-    });
+      root.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        var btn = e.target.closest('[data-nav-page], [data-dash-nav], [data-emp-nav]');
+        if (!btn) return;
+        if (btn.tagName === 'BUTTON') return; // native Enter on button
+        e.preventDefault();
+        activateDashboardCardNav(btn);
+      });
+    }
     root.querySelectorAll('.mgr-funnel-row').forEach(function (row) {
       if (row._dashFunnelBound) return;
       row._dashFunnelBound = true;
-      row.addEventListener('click', function () {
-        window._leadSegmentFilter = 'pipeline';
-        if (typeof navigateTo === 'function') navigateTo('ca-master');
-      });
+      row.setAttribute('role', 'button');
+      row.setAttribute('tabindex', '0');
+      row.setAttribute('aria-label', 'Open pipeline leads');
+      row.setAttribute('title', 'Open pipeline leads');
+      row.setAttribute('data-dash-nav', '');
+      row.setAttribute('data-nav-page', 'ca-master');
+      row.setAttribute('data-lead-filter', 'pipeline');
+      row.setAttribute('data-kpi', 'In Pipeline');
+      // Click/Enter handled by delegated [data-nav-page] listeners above.
     });
     if (top) bindModalTriggers(top);
     bindModalTriggers(root);
@@ -8573,18 +8826,6 @@ if (otherInput) {
     var el = document.getElementById('leads-kpi-strip');
     if (!el) return;
     var activeSegment = getLeadFilter();
-    if (activeSegment === 'hot' || activeSegment === 'new' || activeSegment === 'pipeline' || activeSegment === 'lost') {
-      activeSegment = 'all';
-      window._leadSegmentFilter = 'all';
-      if (window.CA_LISTING_SEARCH) {
-        var state = CA_LISTING_SEARCH.getState('ca_masters');
-        var filters = Object.assign({}, state.filters || {});
-        if (filters.segment === 'hot' || filters.segment === 'new' || filters.segment === 'pipeline' || filters.segment === 'lost') {
-          delete filters.segment;
-          CA_LISTING_SEARCH.setState('ca_masters', { filters: filters });
-        }
-      }
-    }
     var activeView = isLeadsPipelineTabActive() ? 'pipeline' : 'all';
     var items = [
       { kind: 'view', id: 'pipeline', label: 'Pipeline', icon: 'git-branch' },
@@ -8973,31 +9214,7 @@ if (otherInput) {
     var el = document.getElementById('cam-kpi-strip');
     if (!el) return;
     var activeSegment = getLeadFilter();
-    if (activeSegment === 'hot') {
-      activeSegment = 'all';
-      window._leadSegmentFilter = 'all';
-      if (window.CA_LISTING_SEARCH) {
-        var state = CA_LISTING_SEARCH.getState('ca_masters');
-        var filters = Object.assign({}, state.filters || {});
-        if (filters.segment === 'hot') {
-          delete filters.segment;
-          CA_LISTING_SEARCH.setState('ca_masters', { filters: filters });
-        }
-      }
-    }
     var activeView = isCamPipelineTabActive() ? 'pipeline' : 'all';
-    if (activeSegment === 'pipeline' || activeSegment === 'lost') {
-      activeSegment = 'all';
-      window._leadSegmentFilter = 'all';
-      if (window.CA_LISTING_SEARCH) {
-        var clearState = CA_LISTING_SEARCH.getState('ca_masters');
-        var clearFilters = Object.assign({}, clearState.filters || {});
-        if (clearFilters.segment === 'pipeline' || clearFilters.segment === 'lost') {
-          delete clearFilters.segment;
-          CA_LISTING_SEARCH.setState('ca_masters', { filters: clearFilters });
-        }
-      }
-    }
     var items = [
       { kind: 'view', id: 'pipeline', label: 'Master Pipeline', icon: 'git-branch' },
       { kind: 'view', id: 'all', label: 'All Firms', icon: 'list' },
@@ -19365,12 +19582,16 @@ if (otherInput) {
       return;
     }
     if (pageId === 'leads' || pageId === 'leads-segments') {
+      applyDashboardNavIntentToLeadsListing('ca_masters');
       renderLeadsHub();
       icons();
       return;
     }
     if (pageId === 'employees' || pageId === 'assignment') {
       function paintEmployeesAssignmentPage() {
+        if (pageId === 'assignment') {
+          applyDashboardNavIntentToAssignments();
+        }
         if (window.CA_LISTING_SEARCH) {
           reloadListing('employees');
         } else {
@@ -19395,10 +19616,12 @@ if (otherInput) {
       return;
     }
     if (pageId === 'followups') {
-      var dueFilter = window._followupDateFilter || '';
-      if (dueFilter && window.CA_LISTING_SEARCH) {
-        CA_LISTING_SEARCH.setState('follow_ups', { page: 1, filters: { followup_due: dueFilter } });
-        window._followupDateFilter = '';
+      if (!applyDashboardNavIntentToFollowups()) {
+        var dueFilter = window._followupDateFilter || '';
+        if (dueFilter && window.CA_LISTING_SEARCH) {
+          CA_LISTING_SEARCH.setState('follow_ups', { page: 1, filters: { followup_due: dueFilter } });
+          window._followupDateFilter = '';
+        }
       }
       setFollowupTypePanels('list');
       if (window.CA_LISTING_SEARCH) {
@@ -19425,14 +19648,21 @@ if (otherInput) {
       return;
     }
     if (pageId === 'ca-master' || pageId === 'bulk' || pageId === 'ocr-import') {
-      if (pageId === 'bulk' || pageId === 'ca-master' || pageId === 'ocr-import') window._leadSegmentFilter = 'all';
+      var dashLeadIntent = peekDashboardNavIntent();
+      var preserveDashLeadNav = !!(dashLeadIntent && dashLeadIntent.page === 'ca-master' && pageId === 'ca-master');
+      var dashLeadNavApplied = false;
+      if ((pageId === 'bulk' || pageId === 'ca-master' || pageId === 'ocr-import') && !preserveDashLeadNav) {
+        window._leadSegmentFilter = 'all';
+      }
       var camHubEarly = document.getElementById('cam-hub');
       var camSecondaryEarly = camHubEarly ? camHubEarly.getAttribute('data-cam-secondary') : '';
 
       function paintCaMasterUi(reason) {
         try {
           if (!document.getElementById('cam-hub')) return;
-          resetCamListingDefaults();
+          if (!preserveDashLeadNav && !dashLeadNavApplied) {
+            resetCamListingDefaults();
+          }
           initCaMasterPage();
           applyMasterDataRbac();
           if (camSecondaryEarly === 'ocr' || pageId === 'ocr-import') {
@@ -19469,7 +19699,23 @@ if (otherInput) {
           /* Primary table first so a toolbar error cannot blank the whole page. */
           showCamPrimaryViews();
           if (isCamPipelineTabActive()) {
+            if (preserveDashLeadNav && !dashLeadNavApplied) {
+              applyDashboardNavIntentToLeadsListing('ca_masters');
+              dashLeadNavApplied = true;
+            }
             loadKanbanLeads();
+          } else if (preserveDashLeadNav && !dashLeadNavApplied) {
+            /* Apply dashboard filters after DOM sync would overwrite them — skip DOM sync. */
+            applyDashboardNavIntentToLeadsListing('ca_masters');
+            dashLeadNavApplied = true;
+            syncCamStageFilterFromState();
+            syncCamStageFilterBarVisibility();
+            renderCaMasterTable();
+          } else if (dashLeadNavApplied) {
+            /* Keep filters from dashboard card navigation across re-paints. */
+            syncCamStageFilterFromState();
+            syncCamStageFilterBarVisibility();
+            renderCaMasterTable();
           } else {
             syncCamListingStateFromDom();
             syncCamStageFilterFromState();
@@ -19478,8 +19724,10 @@ if (otherInput) {
           }
           try {
             renderCamKpis();
-            /* Toolbar injects the status filter — clear again so defaults stick. */
-            resetCamListingDefaults();
+            /* Toolbar injects the status filter — clear again so defaults stick, unless dashboard card nav applied filters. */
+            if (!dashLeadNavApplied) {
+              resetCamListingDefaults();
+            }
             applyMasterDataRbac();
             syncCamStageFilterFromState();
             syncCamStageFilterBarVisibility();

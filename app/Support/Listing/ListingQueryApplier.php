@@ -316,10 +316,16 @@ class ListingQueryApplier
         match ($segment) {
             'new' => $query->where('is_newly_established', true),
             'hot' => $query->where('status', 'Hot'),
+            'warm' => $query->where('status', 'Warm'),
             'cold' => $query->where('status', 'Cold'),
             'pipeline' => $query->whereIn('status', \App\Support\CrmPipeline::pipelineSegmentStatuses()),
             'negotiation' => $query->whereIn('status', ['Negotiation', 'Hot']),
             'lost' => $query->whereIn('status', ['Lost', 'Inactive']),
+            'converted' => $query->where(function (Builder $inner) {
+                $inner->whereIn('status', ['Active', 'Won'])
+                    ->orWhere('software_purchased', true);
+            }),
+            'status_new' => $query->where('status', 'New'),
             'mobile_missing' => $query->where(function (Builder $inner) {
                 $inner->whereNull('mobile_no')->orWhere('mobile_no', '');
             }),

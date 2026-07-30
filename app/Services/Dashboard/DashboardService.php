@@ -191,6 +191,7 @@ class DashboardService
             'new_status_leads' => (int) ($leadCounts['status_new'] ?? 0),
             'pipeline_leads' => (int) ($leadCounts['pipeline'] ?? 0),
             'lost_leads' => (int) ($leadCounts['lost'] ?? 0),
+            'converted_leads' => (int) ($leadCounts['converted'] ?? 0),
             'calls_total' => $this->dashboardMetrics->callsInPeriod($employeeId, $from, $to),
             'meetings_today' => $this->dashboardMetrics->meetingsInPeriod($employeeId, $from, $to),
             'active_employees' => $employeeId
