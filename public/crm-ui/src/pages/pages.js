@@ -1467,10 +1467,10 @@ window.CAPages = (function () {
     var assignBody =
       '<div class="assign-page" id="assignment-page-root">' +
       kpis([
-        { icon: 'user-cog', label: 'Active Assignments', value: '—', trend: '', valueId: 'assign-kpi-active' },
-        { icon: 'refresh-cw', label: 'Auto (Rotation)', value: '—', trend: '', valueId: 'assign-kpi-auto' },
-        { icon: 'user-plus', label: 'Manual', value: '—', trend: '', valueId: 'assign-kpi-manual' },
-        { icon: 'target', label: 'Assigned Leads', value: '—', trend: '', valueId: 'assign-kpi-target' },
+        { icon: 'user-cog', label: 'Active Assignments', value: '—', trend: '', valueId: 'assign-kpi-active', filterKey: 'active', listing: 'lead_assignments' },
+        { icon: 'refresh-cw', label: 'Auto (Rotation)', value: '—', trend: '', valueId: 'assign-kpi-auto', filterKey: 'auto', listing: 'lead_assignments' },
+        { icon: 'user-plus', label: 'Manual', value: '—', trend: '', valueId: 'assign-kpi-manual', filterKey: 'manual', listing: 'lead_assignments' },
+        { icon: 'target', label: 'Assigned Leads', value: '—', trend: '', valueId: 'assign-kpi-target', filterKey: 'assigned_leads', listing: 'lead_assignments' },
       ], {
         compact: true,
         gridClass: 'crm-kpi-grid crm-kpi-grid--compact assign-kpi-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 mb-3',

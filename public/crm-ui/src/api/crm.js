@@ -752,8 +752,8 @@ window.CA_CRM = (function () {
     }
     return '<button type="button" class="cam-inline-remarks-btn' + (empty ? ' cam-cell-empty' : '') +
       '" data-cam-inline-remarks="' + escapeHtml(String(opts.caId)) +
-      '" title="' + (empty ? 'Add sales remark' : 'Add / view sales remarks') +
-      '" aria-label="' + (empty ? 'Add sales remark' : 'Add sales remark') + '">' +
+      '" title="' + (empty ? 'Add sales remark' : 'Add sales remark') +
+      '" aria-label="Add sales remark">' +
       inner +
     '</button>';
   }
@@ -1121,6 +1121,12 @@ window.CA_CRM = (function () {
         applyCaMasterSummaryFilter(camCard.getAttribute('data-cam-summary'));
         return;
       }
+      var assignKpi = e.target.closest('[data-kpi-filter][data-kpi-listing="lead_assignments"]');
+      if (assignKpi) {
+        e.preventDefault();
+        applyAssignmentKpiFilter(assignKpi.getAttribute('data-kpi-filter'));
+        return;
+      }
       var kpiCard = e.target.closest('[data-kpi-filter][data-kpi-listing="follow_ups"]');
       if (kpiCard) {
         e.preventDefault();
@@ -1129,6 +1135,12 @@ window.CA_CRM = (function () {
     });
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Enter' && e.key !== ' ') return;
+      var assignKpi = e.target.closest('[data-kpi-filter][data-kpi-listing="lead_assignments"]');
+      if (assignKpi) {
+        e.preventDefault();
+        applyAssignmentKpiFilter(assignKpi.getAttribute('data-kpi-filter'));
+        return;
+      }
       var kpiCard = e.target.closest('[data-kpi-filter][data-kpi-listing="follow_ups"]');
       if (!kpiCard) return;
       e.preventDefault();
@@ -9863,6 +9875,7 @@ if (otherInput) {
     });
     CA_LISTING_SEARCH.clearState('lead_assignments');
     reloadListing('lead_assignments');
+    setAssignmentKpiActive('');
   }
 
   function bindAssignmentActiveSection() {
@@ -11182,6 +11195,7 @@ if (otherInput) {
 
   function initAssignmentPage() {
     if (!document.getElementById('assignment-page-root')) return;
+    ensureKpiCardsBound();
     bindAssignmentActiveSection();
     bindAssignmentListingToolbar('assignment_histories', 'assignment-history-search');
     populateAssignmentExecutiveFilter();
@@ -14454,6 +14468,76 @@ if (otherInput) {
     });
   }
 
+  function setAssignmentKpiActive(filterKey) {
+    document.querySelectorAll('[data-kpi-listing="lead_assignments"]').forEach(function (card) {
+      card.classList.toggle('is-active', !!filterKey && card.getAttribute('data-kpi-filter') === filterKey);
+    });
+  }
+
+  function scrollToAssignmentActiveSection() {
+    var section = document.getElementById('assign-active-section');
+    if (!section) return;
+    setTimeout(function () {
+      section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      section.classList.add('assign-section--focus');
+      setTimeout(function () { section.classList.remove('assign-section--focus'); }, 1600);
+    }, 40);
+  }
+
+  function applyAssignmentKpiFilter(filterKey) {
+    if (filterKey === 'assigned_leads') {
+      setAssignmentKpiActive(filterKey);
+      var navBtn = document.createElement('button');
+      navBtn.setAttribute('data-nav-page', 'ca-master');
+      navBtn.setAttribute('data-lead-filter', 'all');
+      navBtn.setAttribute('data-kpi', 'Assigned Leads');
+      navBtn.setAttribute('aria-label', 'Assigned Leads');
+      activateDashboardCardNav(navBtn);
+      return;
+    }
+
+    var statusEl = document.getElementById('assignment-status-filter');
+    var typeEl = document.getElementById('assignment-type-filter');
+    var searchEl = document.getElementById('assignment-search');
+    var execEl = document.getElementById('assignment-executive-filter');
+    if (searchEl) searchEl.value = '';
+    if (statusEl) statusEl.value = '';
+    if (typeEl) typeEl.value = '';
+    if (execEl) {
+      if (execEl.dataset.crmEntityLookup && window.CrmEntityLookup) {
+        window.CrmEntityLookup.setValue(execEl, '', null);
+      } else {
+        execEl.value = '';
+      }
+    }
+
+    var label = 'Assignments';
+    if (filterKey === 'active') {
+      if (statusEl) statusEl.value = 'Active';
+      label = 'Active Assignments';
+    } else if (filterKey === 'auto') {
+      if (typeEl) typeEl.value = 'Auto';
+      if (statusEl) statusEl.value = 'Active';
+      label = 'Auto (Rotation) assignments';
+    } else if (filterKey === 'manual') {
+      if (typeEl) typeEl.value = 'Manual';
+      if (statusEl) statusEl.value = 'Active';
+      label = 'Manual assignments';
+    } else {
+      filterKey = '';
+      label = 'All assignments';
+    }
+
+    if (window.CA_LISTING_SEARCH) {
+      applyAssignmentActiveFilters();
+    } else {
+      renderAssignmentTable();
+    }
+    setAssignmentKpiActive(filterKey);
+    scrollToAssignmentActiveSection();
+    toast('Showing ' + label, 'info');
+  }
+
   function applyFollowupKpiFilter(filterKey) {
     var filters = {};
     var label = 'All follow-ups';
@@ -14877,7 +14961,9 @@ if (otherInput) {
     });
   }
 
-  function openSalesRemarksModal(caId) {
+  function openCaMasterInlineRemarks(btn) {
+    if (!btn || btn.querySelector('input, textarea')) return;
+    var caId = btn.getAttribute('data-cam-inline-remarks');
     if (!caId) {
       toast('Lead not found', 'warning');
       return;
@@ -14891,55 +14977,70 @@ if (otherInput) {
       toast('This lead is read-only.', 'warning');
       return;
     }
-    var modal = document.getElementById('modal-sales-remarks');
-    var form = document.getElementById('form-sales-remarks');
-    if (!modal || !form) {
-      toast('Sales remarks form is unavailable.', 'warning');
-      return;
+    var original = btn.innerHTML;
+    var wrap = document.createElement('span');
+    wrap.className = 'cam-inline-remarks-edit';
+    wrap.innerHTML =
+      '<input type="text" class="input-field input-field-sm cam-inline-remarks-input" value="" maxlength="2000" placeholder="Add remark…" aria-label="Sales remark" title="Add sales remark" />' +
+      '<button type="button" class="btn-secondary btn-xs" data-cam-remarks-save>Save</button>';
+    btn.innerHTML = '';
+    btn.appendChild(wrap);
+    var input = wrap.querySelector('input');
+    input.focus();
+    var finished = false;
+    function restore() {
+      if (finished) return;
+      finished = true;
+      btn.innerHTML = original;
+      btn.classList.remove('is-loading');
     }
-    form.reset();
-    var caInput = document.getElementById('sales-remarks-ca-id');
-    if (caInput) caInput.value = String(caId);
-    var firmEl = document.getElementById('sales-remarks-firm');
-    var caEl = document.getElementById('sales-remarks-ca');
-    var historyWrap = document.getElementById('sales-remarks-history-wrap');
-    var historyEl = document.getElementById('sales-remarks-history');
-    var noteEl = document.getElementById('sales-remarks-note');
-    if (firmEl) firmEl.textContent = (lead && lead.firm_name) || 'Lead #' + caId;
-    if (caEl) caEl.textContent = (lead && (lead.ca_name_display || lead.ca_name)) || '—';
-    var existing = lead && lead.sales_remarks && lead.sales_remarks !== '—'
-      ? String(lead.sales_remarks).trim()
-      : '';
-    if (historyWrap && historyEl) {
-      if (existing) {
-        historyWrap.classList.remove('hidden');
-        historyEl.innerHTML = formatSalesRemarksDetailHtml(existing);
-      } else {
-        historyWrap.classList.add('hidden');
-        historyEl.innerHTML = '';
+    function save() {
+      if (finished) return;
+      var remark = String(input.value || '').trim();
+      if (!remark) {
+        restore();
+        return;
       }
+      finished = true;
+      btn.classList.add('is-loading');
+      apiFetch('/ca-masters/' + encodeURIComponent(caId) + '/sales-remarks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ remark: remark }),
+      })
+        .then(function () {
+          toast('Sales remark saved.', 'success');
+          invalidateDataCaches(['leads', 'ca_masters', 'segment_counts']);
+          refreshCaMasterOrLeadsTable();
+        })
+        .catch(function (err) {
+          if (err && err.status === 403) {
+            toast('You do not have permission to add remarks for this lead.', 'error');
+          } else {
+            toast((err && err.message) || 'Failed to save sales remark.', 'error');
+          }
+          finished = false;
+          restore();
+        });
     }
-    openModal(modal);
-    icons();
-    if (noteEl) {
-      try { noteEl.focus(); } catch (e) { /* ignore */ }
-    }
-
-    // Refresh lead details if cache is stale/missing remarks.
-    fetchLeadForFollowup(caId).then(function (fresh) {
-      if (!fresh) return;
-      if (firmEl) firmEl.textContent = fresh.firm_name || firmEl.textContent;
-      if (caEl) caEl.textContent = fresh.ca_name_display || fresh.ca_name || caEl.textContent;
-      var remarks = fresh.sales_remarks && fresh.sales_remarks !== '—'
-        ? String(fresh.sales_remarks).trim()
-        : '';
-      if (historyWrap && historyEl) {
-        if (remarks) {
-          historyWrap.classList.remove('hidden');
-          historyEl.innerHTML = formatSalesRemarksDetailHtml(remarks);
-        }
+    wrap.querySelector('[data-cam-remarks-save]').addEventListener('click', function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      save();
+    });
+    input.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        save();
       }
-    }).catch(function () { /* ignore */ });
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        restore();
+      }
+    });
+    input.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+    });
   }
 
   function ensureSalesRemarksUiBound() {
@@ -14948,50 +15049,10 @@ if (otherInput) {
     document.addEventListener('click', function (e) {
       var btn = e.target.closest('[data-cam-inline-remarks]');
       if (!btn) return;
+      if (btn.querySelector('input, textarea') || e.target.closest('[data-cam-remarks-save]')) return;
       e.preventDefault();
       e.stopPropagation();
-      openSalesRemarksModal(btn.getAttribute('data-cam-inline-remarks'));
-    });
-    var form = document.getElementById('form-sales-remarks');
-    if (!form) return;
-    form.addEventListener('submit', function (e) {
-      e.preventDefault();
-      var caId = (document.getElementById('sales-remarks-ca-id') || {}).value || '';
-      var noteEl = document.getElementById('sales-remarks-note');
-      var remark = noteEl ? String(noteEl.value || '').trim() : '';
-      if (!caId) {
-        toast('Lead is required.', 'warning');
-        return;
-      }
-      if (!remark) {
-        toast('Please enter a sales remark.', 'warning');
-        if (noteEl) noteEl.focus();
-        return;
-      }
-      var submitBtn = document.getElementById('sales-remarks-save-btn');
-      if (submitBtn) submitBtn.disabled = true;
-      apiFetch('/ca-masters/' + encodeURIComponent(caId) + '/sales-remarks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ remark: remark }),
-      })
-        .then(function () {
-          closeModal(document.getElementById('modal-sales-remarks'));
-          form.reset();
-          toast('Sales remark saved.', 'success');
-          invalidateDataCaches(['leads', 'ca_masters', 'segment_counts']);
-          refreshCaMasterOrLeadsTable();
-        })
-        .catch(function (err) {
-          if (err && err.status === 403) {
-            toast('You do not have permission to add remarks for this lead.', 'error');
-            return;
-          }
-          toast((err && err.message) || 'Failed to save sales remark.', 'error');
-        })
-        .finally(function () {
-          if (submitBtn) submitBtn.disabled = false;
-        });
+      openCaMasterInlineRemarks(btn);
     });
   }
 
