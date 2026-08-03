@@ -5,8 +5,8 @@
 (function () {
   'use strict';
 
-  var PER_PAGE_OPTIONS = [10, 25, 50, 100, 200];
-  var FOLLOWUP_PER_PAGE_OPTIONS = [10, 25, 50, 100, 200];
+  var PER_PAGE_OPTIONS = [10, 25, 50, 100, 200, 500, 1000];
+  var FOLLOWUP_PER_PAGE_OPTIONS = [10, 25, 50, 100, 200, 500, 1000];
   var DEFAULT_PER_PAGE = 10;
   var _scopeHandlers = {};
 

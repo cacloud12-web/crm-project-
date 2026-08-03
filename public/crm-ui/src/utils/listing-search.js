@@ -3,14 +3,14 @@
   'use strict';
 
   var DEFAULT_PER_PAGE = 10;
-  var DEFAULT_PER_PAGE_OPTIONS = [10, 25, 50, 100, 200];
+  var DEFAULT_PER_PAGE_OPTIONS = [10, 25, 50, 100, 200, 500, 1000];
   var LISTING_PER_PAGE_OPTIONS = {
-    ca_masters: [10, 25, 50, 100],
-    follow_ups: [10, 25, 50, 100, 200],
-    support_tickets: [10, 25, 50, 100, 200],
-    sales_list: [10, 25, 50, 100, 200],
-    lead_assignments: [10, 25, 50, 100, 200],
-    employees: [10, 25, 50, 100, 200],
+    ca_masters: [10, 25, 50, 100, 200, 500, 1000],
+    follow_ups: [10, 25, 50, 100, 200, 500, 1000],
+    support_tickets: [10, 25, 50, 100, 200, 500, 1000],
+    sales_list: [10, 25, 50, 100, 200, 500, 1000],
+    lead_assignments: [10, 25, 50, 100, 200, 500, 1000],
+    employees: [10, 25, 50, 100, 200, 500, 1000],
   };
 
   var REGISTRY = {
