@@ -1429,7 +1429,7 @@ window.CA_CRM = (function () {
       toast('You do not have permission for this action.', 'warning');
       return;
     }
-    if (action === 'assign' && !crmCanAction('assignment', 'create')) {
+    if (action === 'assign' && !crmCanAction('assignment', 'assign')) {
       toast('You do not have permission for this action.', 'warning');
       return;
     }
@@ -3751,7 +3751,7 @@ if (otherInput) {
     document.querySelectorAll('[data-inbox-module="ca-master"] [data-inbox-action]').forEach(function (btn) {
       var action = btn.getAttribute('data-inbox-action');
       var allowed = true;
-      if (action === 'assign') allowed = crmCanAction('assignment', 'create');
+      if (action === 'assign') allowed = crmCanAction('assignment', 'assign');
       else if (action === 'import') allowed = crmCanAction('ca_master', 'import');
       else if (action === 'export') allowed = crmCanAction('ca_master', 'export');
       else if (action === 'delete') allowed = crmCanAction('ca_master', 'delete');
@@ -5932,7 +5932,7 @@ if (otherInput) {
         { icon: 'user-check', label: 'Employees', key: 'active_employees', nav: 'employees', desc: 'Employee directory' },
         { icon: 'git-branch', label: 'Active Assignments', key: 'assignments', nav: 'assignment', assignmentStatus: 'Active', desc: 'Active assignment list' },
         { icon: 'refresh-cw', label: 'Auto (Rotation)', key: 'bulk_assignment_total', nav: 'assignment', assignmentType: 'Auto', assignmentPanel: 'rotation', desc: 'Auto assignment rules' },
-        { icon: 'hand', label: 'Manual', key: 'unassigned_leads', nav: 'assignment', assignmentType: 'Manual', desc: 'Manual assignment list' },
+        { icon: 'hand', label: 'Unassigned Leads', key: 'unassigned_leads', nav: 'assignment', assignmentType: 'Manual', desc: 'Unassigned leads for manual assignment' },
         { icon: 'users', label: 'Assigned Leads', key: 'assigned_leads', nav: 'ca-master', leadFilter: 'all', desc: 'Assigned leads page' },
       ],
     },
@@ -8370,7 +8370,7 @@ if (otherInput) {
     var leads = (metrics.recent_leads || []).map(mapDashboardLeadSummary);
     if (!leads.length) leads = getDashboardLeads();
     if (!leads.length) {
-      el.innerHTML = emptyTableRow(4, 'No leads yet — add firms from Master Data.');
+      el.innerHTML = emptyTableRow(4, 'No leads yet - add firms from Master Data.');
       return;
     }
     el.innerHTML = leads.slice(0, 6).map(function (l) {
@@ -9592,10 +9592,10 @@ if (otherInput) {
     if (crmCanAction('assignment', 'view')) {
       items.push({ action: 'view', label: 'View', icon: 'eye' });
     }
-    if (crmCanAction('assignment', 'create') || crmCanAction('assignment', 'edit')) {
+    if (crmCanAction('assignment', 'assign') || crmCanAction('assignment', 'reassign')) {
       items.push({ action: 'reassign', label: 'Reassign', icon: 'user-check' });
     }
-    if (crmCanAction('assignment', 'edit')) {
+    if (crmCanAction('assignment', 'reassign') || crmCanAction('assignment', 'assign')) {
       if (status === 'active') {
         items.push({ action: 'pause', label: 'Pause Assignment', icon: 'pause-circle' });
       } else if (status === 'paused') {
@@ -11361,7 +11361,7 @@ if (otherInput) {
       var el = document.getElementById(id);
       if (el) el.textContent = String(val);
     };
-    setKpi('assign-kpi-active', activeCount || metrics.assigned_leads || 0);
+    setKpi('assign-kpi-active', activeCount);
     setKpi('assign-kpi-auto', autoCount);
     setKpi('assign-kpi-manual', manualCount);
     setKpi('assign-kpi-target', metrics.assigned_leads != null ? metrics.assigned_leads : activeCount);
@@ -13670,7 +13670,7 @@ if (otherInput) {
   function caMasterColumnAllowedInPicker(def) {
     if (!def || def.picker === false || def.key === 'selection') return false;
     if (def.permission === 'assignment') {
-      if (typeof crmCanAction === 'function' && !crmCanAction('assignment', 'view') && !crmCanAction('assignment', 'create')) {
+      if (typeof crmCanAction === 'function' && !crmCanAction('assignment', 'view') && !crmCanAction('assignment', 'assign')) {
         return false;
       }
     }
@@ -27084,7 +27084,13 @@ if (otherInput) {
     var canEdit = canEditSalesList();
     var canHistory = canViewSalesListHistory();
     if (!items.length) {
-      el.innerHTML = '<tr><td colspan="20" class="text-center text-slate-500 p-6">No sales records yet. Converted leads will appear here automatically.</td></tr>';
+      el.innerHTML = '<tr class="crm-table-empty-row"><td colspan="20">' +
+        '<div class="cam-empty-state">' +
+          '<i data-lucide="shopping-bag" class="h-10 w-10" aria-hidden="true"></i>' +
+          '<p class="cam-empty-title">No sales records yet</p>' +
+          '<p class="cam-empty-sub">Converted leads will appear here automatically.</p>' +
+        '</div></td></tr>';
+      icons();
       return;
     }
     el.innerHTML = items.map(function (row) {

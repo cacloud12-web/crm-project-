@@ -24,7 +24,6 @@ class WipeTransactionalCrmDataSeeder extends Seeder
         'lead_quality_histories',
         'lead_actions',
         'lead_lockings',
-        'lead_filter_preferences',
         'call_logs',
         'assignment_histories',
         'lead_assignment_engines',

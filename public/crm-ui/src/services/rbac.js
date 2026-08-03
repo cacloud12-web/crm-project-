@@ -5,9 +5,12 @@
   var PAGE_ACCESS = {
     dashboard: { module: 'dashboard', permission: 'view' },
     'ca-master': { module: 'ca_master', permission: 'view' },
+    'recycle-bin': { module: 'ca_master', permission: 'delete' },
     leads: { module: 'leads', permission: 'view' },
+    'leads-segments': { module: 'leads', permission: 'view' },
     'sales-list': { module: 'sales_list', permission: 'view' },
     assignment: { module: 'assignment', permission: 'view' },
+    employees: { module: 'employees', permission: 'view' },
     followups: { module: 'followups', permission: 'view' },
     tickets: { module: 'tickets', permission: 'view' },
     bulk: { module: 'bulk', permission: 'view' },
@@ -18,17 +21,23 @@
     sms: { module: 'campaigns', permission: 'view' },
     email: { module: 'campaigns', permission: 'view' },
     campaigns: { module: 'campaigns', permission: 'view' },
+    reception: { module: 'campaigns', permission: 'view' },
     'consent-dnd': { module: 'consent', permission: 'view' },
     reports: { module: 'reports', permission: 'view_reports' },
+    analytics: { module: 'reports', permission: 'view_reports' },
+    'duplicate-attempts': { module: 'reports', permission: 'view_reports' },
     activity: { module: 'activity', permission: 'view' },
+    audit: { module: 'activity', permission: 'view' },
     queue: { module: 'admin', permission: 'view' },
-    'db-health': { module: 'admin', permission: 'reports' },
+    'db-health': { module: 'admin', permission: 'manage_settings' },
     settings: { module: 'settings', permission: 'view' },
     'roles-permissions': { module: 'roles_permissions', permission: 'view' },
     'email-configuration': { module: 'email_configuration', permission: 'view' },
     'settings-email-templates': { module: 'email_templates', permission: 'view' },
     'settings-whatsapp-templates': { module: 'whatsapp_templates', permission: 'view' },
     'settings-google-api': { module: 'google_api', permission: 'view' },
+    'settings-demo-providers': { module: 'settings', permission: 'manage_settings' },
+    'demo-calendar': { module: 'dashboard', permission: 'view' },
     notifications: { module: 'dashboard', permission: 'view' },
     payments: { module: 'dashboard', permission: 'view' },
   };
@@ -68,7 +77,7 @@
     { selector: '[data-open-modal="add-lead"]:not(#cam-add-firm-btn)', module: 'leads', permission: 'create' },
     { selector: '[data-master-add]', module: 'ca_master', permission: 'create' },
     { selector: '[data-open-modal="add-employee"]', module: 'employees', permission: 'create' },
-    { selector: '[data-open-modal="assign-lead"]', module: 'assignment', permission: 'create' },
+    { selector: '[data-open-modal="assign-lead"]', module: 'assignment', permission: 'assign' },
     { selector: '[data-open-modal="followup"]', module: 'followups', permission: 'schedule_followup' },
     { selector: '[data-open-modal="ticket"]', module: 'tickets', permission: 'create' },
     { selector: '#ticket-create-btn', module: 'tickets', permission: 'create' },
@@ -92,7 +101,7 @@
     { selector: 'button[data-open-modal="sms-campaign"]', module: 'campaigns', permission: 'send_sms' },
     { selector: '[data-open-modal="add-campaign"]', module: 'campaigns', permission: 'send_email' },
     { selector: '[data-manager-schedule-followup]', module: 'followups', permission: 'schedule_followup' },
-    { selector: '[data-inbox-action="assign"]', module: 'assignment', permission: 'create' },
+    { selector: '[data-inbox-action="assign"]', module: 'assignment', permission: 'assign' },
     { selector: '[data-inbox-action="import"]', permission: 'import', usePageModule: true },
     { selector: '[data-inbox-action="export"]', permission: 'export', usePageModule: true },
   ];
@@ -114,6 +123,9 @@
     send_sms: ['campaigns', 'send_sms'],
     reports: ['reports', 'view_reports'],
     view_reports: ['reports', 'view_reports'],
+    /* Mirror backend: checking assign/reassign also accepts legacy create/edit grants (SA/Admin). */
+    assign: ['assign', 'create'],
+    reassign: ['reassign', 'edit'],
   };
 
   function listAllows(perms, permission) {
@@ -139,15 +151,18 @@
 
   function canAccessPage(pageId) {
     var rule = PAGE_ACCESS[pageId];
-    if (!rule) return can('dashboard', 'view');
+    if (!rule) {
+      /* Default deny unknown pages — prevent accidental dashboard.view bypass. */
+      return false;
+    }
     return can(rule.module, rule.permission);
   }
 
-  /** Footer / SPA shortcut: Employees always get Recycle Bin; others need ca_master.delete. */
+  /** Recycle Bin: match backend spa rule — employees with leads.view; others need ca_master.delete. */
   function canAccessRecycleBin() {
     var u = user();
     if (!u.authenticated) return false;
-    if (u.role === 'employee') return true;
+    if (u.role === 'employee') return can('leads', 'view');
     return can('ca_master', 'delete');
   }
 

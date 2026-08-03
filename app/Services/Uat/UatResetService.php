@@ -70,7 +70,6 @@ class UatResetService
         'bulk_actions',
         'activity_logs',
         'saved_listing_filters',
-        'lead_filter_preferences',
         'login_email_change_requests',
         'admin_dashboard_metrics',
         'throttle_logs',

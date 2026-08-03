@@ -113,4 +113,36 @@ class LeadAssignmentStatusTest extends TestCase
         $this->assertSame(0, ActivityLog::query()->where('action', 'Assignment Paused')->count());
         $this->assertSame(0, AssignmentHistory::query()->where('reason', 'PAUSE_ASSIGNMENT')->count());
     }
+
+    public function test_manager_can_pause_assignment_with_reassign_permission(): void
+    {
+        $manager = CrmTestAccounts::manager();
+        $this->actingAs($manager);
+
+        $employee = CrmTestAccounts::employee();
+        $lead = CaMaster::query()->create([
+            'firm_name' => 'Manager Pause OK',
+            'ca_name' => 'Manager CA',
+            'mobile_no' => '7123456782',
+            'email_id' => 'manager.pause@local.test',
+            'status' => 'New',
+        ]);
+
+        $assignment = LeadAssignmentEngine::query()->create([
+            'ca_id' => $lead->ca_id,
+            'employee_id' => $employee->employee_id,
+            'assigned_date' => now()->toDateString(),
+            'assignment_type' => 'Manual',
+            'rotation_logic_used' => 'TEST',
+            'priority_score' => 1,
+            'target_leads' => 0,
+            'achieved_leads' => 0,
+            'status' => 'Active',
+        ]);
+
+        $this->patchJson('/lead-assignments/'.$assignment->assignment_id.'/status', [
+            'status' => 'Paused',
+        ])->assertOk()
+            ->assertJsonPath('data.status', 'Paused');
+    }
 }

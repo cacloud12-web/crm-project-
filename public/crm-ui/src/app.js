@@ -26,6 +26,7 @@
   const SETTINGS_PAGES = [
     'settings', 'sales-list', 'email-configuration', 'roles-permissions',
     'settings-email-templates', 'settings-whatsapp-templates', 'settings-google-api',
+    'settings-demo-providers',
   ];
 
   const sidebar = document.getElementById('sidebar');
@@ -335,9 +336,11 @@
     '/employee-imports': 'employee-imports',
     '/settings': 'settings',
     '/settings/roles-permissions': 'roles-permissions',
+    '/settings/email-configuration': 'email-configuration',
     '/settings/email-templates': 'settings-email-templates',
     '/settings/whatsapp-templates': 'settings-whatsapp-templates',
     '/settings/google-api': 'settings-google-api',
+    '/settings/demo-providers': 'settings-demo-providers',
     '/reports': 'reports',
     '/duplicate-attempts': 'duplicate-attempts',
     '/analytics': 'analytics',
@@ -369,9 +372,11 @@
     'employee-imports': '/employee-imports',
     settings: '/settings',
     'roles-permissions': '/settings/roles-permissions',
+    'email-configuration': '/settings/email-configuration',
     'settings-email-templates': '/settings/email-templates',
     'settings-whatsapp-templates': '/settings/whatsapp-templates',
     'settings-google-api': '/settings/google-api',
+    'settings-demo-providers': '/settings/demo-providers',
     reports: '/reports',
     'duplicate-attempts': '/duplicate-attempts',
     analytics: '/analytics',
@@ -482,12 +487,16 @@
 
   function applyPageContent(pageId) {
     const page = CAPages.get(pageId);
+    if (!page) {
+      console.error('[CRM] Unknown page:', pageId);
+      return;
+    }
     var pendingReport = window.__CRM_PENDING_REPORT_SLUG__;
     if (pageId === 'reports' && pendingReport && window.CA_CRM && typeof CA_CRM.openReport === 'function') {
       window.__CRM_PENDING_REPORT_SLUG__ = null;
       pageContainer.classList.remove('page-exit');
       pageContainer.classList.add('page-enter');
-      document.title = (page && page.title ? page.title : 'Reports') + ' — CA Cloud Desk';
+      document.title = (page.title ? page.title : 'Reports') + ' — CA Cloud Desk';
       /* Mount BI report directly into the CRM content area (no hub flash). */
       CA_CRM.openReport(pendingReport);
       if (window.CA_RBAC && typeof window.CA_RBAC.onPageChange === 'function') {
@@ -566,8 +575,10 @@
     });
     navigateTo(resolvePageFromLocation());
     window.addEventListener('hashchange', function () {
-      const id = (location.hash || '#dashboard').replace('#', '');
-      if (CAPages.get(id)) navigateTo(id);
+      var hash = (location.hash || '').replace(/^#/, '');
+      /* Empty hash means a real path navigation cleared it — do not bounce to dashboard. */
+      if (!hash) return;
+      if (CAPages.get(hash)) navigateTo(hash);
     });
     window.addEventListener('popstate', function () {
       navigateTo(resolvePageFromLocation());
@@ -682,7 +693,13 @@
       var auditPanel = document.querySelector('.ca-tab-panel[data-panel="audit"].active #audit-logs-table');
       if (auditPanel && window.CA_CRM && CA_CRM.initAuditPage) CA_CRM.initAuditPage();
     }
-    if (window.CA_CRM) CA_CRM.onPage(pageId);
+    if (window.CA_CRM) {
+      try {
+        CA_CRM.onPage(pageId);
+      } catch (err) {
+        console.error('[CRM] Page init failed for', pageId, err);
+      }
+    }
     if (window.CrmDateTimePicker) {
       window.CrmDateTimePicker.initAll(pageContainer);
     }

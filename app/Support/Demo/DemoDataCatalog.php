@@ -48,7 +48,6 @@ final class DemoDataCatalog
         'queue_logs' => 'CRM queue logs (legacy)',
         'admin_dashboard_metrics' => 'Pre-aggregated dashboard snapshots',
         'lead_lockings' => 'Lead edit locks',
-        'lead_filter_preferences' => 'Saved lead filter prefs',
         'notification_masters' => 'Notification templates',
         'template_masters' => 'Message templates',
         'rating_masters' => 'Rating lookup master',

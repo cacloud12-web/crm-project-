@@ -91,7 +91,11 @@ return Application::configure(basePath: dirname(__DIR__))
 
             $message = $status === 403
                 ? ($e->getMessage() ?: 'You do not have permission to perform this action.')
-                : ($e->getMessage() ?: 'Something went wrong. Please try again.');
+                : (
+                    $status >= 500 && ! config('app.debug')
+                        ? 'Something went wrong. Please try again.'
+                        : ($e->getMessage() ?: 'Something went wrong. Please try again.')
+                );
 
             return response()->json([
                 'success' => false,

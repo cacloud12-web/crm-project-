@@ -1738,37 +1738,21 @@ window.CAPages = (function () {
     ];
     return hdr('Communication') +
       '<div class="comm-page">' +
-      '<div class="comm-grid">' +
+      '<div class="comm-grid grid sm:grid-cols-2 lg:grid-cols-3 gap-4">' +
         cards.map(function (c) {
-          return '<button type="button" class="comm-card communication-card" data-comm-page="' + c.page + '" data-comm-label="' + c.label + '" aria-label="Open ' + c.label + '">' +
-            '<span class="communication-card__icon" aria-hidden="true"><i data-lucide="' + c.icon + '"></i></span>' +
-            '<span class="communication-card__content">' +
-              '<span class="communication-card__title">' + c.label + '</span>' +
-              '<span class="communication-card__desc">' + c.desc + '</span>' +
+          return '<button type="button" class="card-interactive report-card communication-card flex items-center gap-3" data-comm-page="' + c.page + '" data-comm-label="' + c.label + '" aria-label="Open ' + c.label + '">' +
+            '<span class="report-card__icon communication-card__icon flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand" aria-hidden="true"><i data-lucide="' + c.icon + '" class="h-5 w-5"></i></span>' +
+            '<span class="report-card__content communication-card__content min-w-0 flex-1">' +
+              '<span class="text-card-heading report-card__title communication-card__title">' + c.label + '</span>' +
+              '<span class="text-caption text-slate-500 report-card-meta communication-card__desc">' + c.desc + '</span>' +
             '</span>' +
-            
           '</button>';
         }).join('') +
-      '</div>' +
-      '<div class="comm-footer">' +
-        '<div class="comm-footer-links">' +
-          [
-            { label: 'Lead Management', page: 'leads' },
-            { label: 'Follow-ups', page: 'followups' },
-            { label: 'Consent & DND', page: 'consent-dnd' },
-            { label: 'Reports', page: 'reports' },
-            { label: 'Activity Logs', page: 'activity' },
-            { label: 'Settings', page: 'settings' },
-          ].map(function (item) {
-            return '<button type="button" class="comm-footer-link" data-comm-page="' + item.page + '">' + item.label + '</button>';
-          }).join('') +
-        '</div>' +
-        '<p class="comm-footer-copy">Copyright © 2020 Law Seva Management Pvt. Ltd. All Rights reserved. Version: 4.2.32</p>' +
       '</div></div>';
   }
 
   function campaignsPage() {
-    return hdr('Campaign Management', 'Unified dashboard for Email, SMS, and WhatsApp campaigns — stats, logs, retry, and export.', null,
+    return hdr('Campaign Management', null, null,
       actPrimary('Email Campaign', 'data-open-modal="add-campaign" data-campaign-channel="email"', 'mail') +
       actPrimary('SMS Campaign', 'data-open-modal="add-campaign" data-campaign-channel="sms"', 'smartphone') +
       actPrimary('WhatsApp Campaign', 'data-open-modal="add-campaign" data-campaign-channel="whatsapp"', 'message-circle')) +
@@ -1783,7 +1767,7 @@ window.CAPages = (function () {
   }
 
   function smsPage() {
-    return hdr('SMS', 'Send DLT-compliant SMS using approved templates and track delivery logs.', null,
+    return hdr('SMS', null, null,
       actExport('Export Logs') + actPrimary('New Campaign', 'data-open-modal="add-campaign" data-campaign-channel="sms" data-sms-campaign-create')) +
       kpis([
         { icon: 'smartphone', label: 'Total Campaigns', value: '—', trend: 'Live', valueId: 'sms-kpi-campaigns' },
@@ -1829,7 +1813,7 @@ window.CAPages = (function () {
   }
 
   function receptionPage() {
-    return hdr('Reception', 'Manage visitor queue, calls, and front-desk routing.', null,
+    return hdr('Reception', null, null,
       actPrimary('Add Visitor', 'data-page-action="Add visitor to queue"')) +
       '<p class="text-caption text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 mb-4">Preview module — sample data shown below. Full reception workflow is not yet connected to the backend.</p>' +
       kpis([
@@ -1847,7 +1831,7 @@ window.CAPages = (function () {
 
   /* ─── WhatsApp ─── */
   function whatsappPage() {
-    return hdr('Chat', 'WhatsApp Cloud API — campaigns, templates, live send, and delivery logs.', null,
+    return hdr('Chat', null, null,
       actSecondary('WhatsApp Settings', 'id="whatsapp-settings-open-btn"', 'settings') +
       actExport('Export Logs') + actPrimary('New Campaign', 'data-open-modal="add-campaign" data-campaign-channel="whatsapp"', 'megaphone')) +
       kpis([
@@ -1908,7 +1892,7 @@ window.CAPages = (function () {
 
   /* ─── Email ─── */
   function emailPage() {
-    return hdr('Email', 'Outbound campaigns, inbox replies, delivery logs, and bounce tracking.', null,
+    return hdr('Email', null, null,
       actExport('Export Logs') + actPrimary('New Campaign', 'data-open-modal="add-campaign" data-campaign-channel="email"')) +
       kpis([
         { icon: 'mail', label: 'Total Campaigns', value: '—', trend: 'Live', valueId: 'email-kpi-campaigns' },
@@ -1950,7 +1934,7 @@ window.CAPages = (function () {
   }
 
   function consentDndPage() {
-    return hdr('Consent & DND', 'Manage consent records and do-not-disturb lists before outreach.', null,
+    return hdr('Consent & DND', null, null,
       actPrimary('Add Consent', 'data-open-modal="add-consent"') + actPrimary('Add DND', 'data-open-modal="add-dnd"')) +
       kpis([
         { icon: 'ban', label: 'DND Contacts', value: '—', trend: 'Live', valueId: 'safety-kpi-dnd' },
@@ -2365,11 +2349,13 @@ window.CAPages = (function () {
       '<div class="sales-list-module" id="sales-list-module">' +
       hdr(
         'Sales List',
-        'Converted customers and payment tracking.',
+        null,
         null,
         salesListHeroSearchHtml() +
-        actSecondary('Export Excel', 'id="sales-list-export-csv"', 'file-spreadsheet') +
-        actSecondary('Export PDF', 'id="sales-list-export-pdf"', 'file-text')
+        '<div class="page-hero-toolbar" role="group" aria-label="Export">' +
+          actSecondary('Export Excel', 'id="sales-list-export-csv"', 'file-spreadsheet') +
+          actSecondary('Export PDF', 'id="sales-list-export-pdf"', 'file-text') +
+        '</div>'
       ) +
       enterpriseTable(salesListTableColumns(), {
         tbodyId: 'sales-list-data-table',
@@ -2544,13 +2530,13 @@ window.CAPages = (function () {
       '<div id="email-config-page-root" class="email-config-page">' +
         settingsSubPageHero(
           'Email Configuration',
-          'Configure SMTP and IMAP accounts for outbound campaigns, notifications, and inbox sync.',
+          null,
           actSecondary('Add Account', 'id="email-account-add-btn"', 'plus'),
         ) +
         '<div id="email-accounts-status" class="mb-4"></div>' +
         '<section class="card ecfg-card p-0 overflow-hidden mb-6">' +
           '<div class="ecfg-card-head ecfg-card-head--tabs border-b border-slate-100">' +
-            '<div><h2 class="ecfg-section-title"><i data-lucide="mail" class="h-5 w-5"></i> SMTP &amp; IMAP Configuration</h2><p class="ecfg-section-sub">Communication email account for campaigns, notifications, and inbox sync.</p></div>' +
+            '<div><h2 class="ecfg-section-title"><i data-lucide="mail" class="h-5 w-5"></i> SMTP &amp; IMAP Configuration</h2></div>' +
             '<div class="ca-tabs ecfg-tabs" data-tab-group="email-account">' +
               '<button type="button" class="ca-tab active" data-tab-group="email-account" data-tab="smtp">SMTP Configuration</button>' +
               '<button type="button" class="ca-tab" data-tab-group="email-account" data-tab="view">View SMTP</button>' +
@@ -2628,7 +2614,7 @@ window.CAPages = (function () {
       '<div id="settings-demo-providers-page" class="settings-demo-providers-page">' +
         settingsSubPageHero(
           'Demo Providers / Availability',
-          'Configure demo provider working hours, slot duration, breaks, leave dates, and meeting links.'
+          null
         ) +
         '<div class="card p-5"><div id="demo-providers-settings-list"><p class="text-caption text-slate-400">Loading providers…</p></div></div>' +
       '</div>'
@@ -2640,7 +2626,7 @@ window.CAPages = (function () {
       '<div id="settings-google-api-page" class="settings-google-api-page">' +
         settingsSubPageHero(
           'Google API Settings',
-          'Configure the Google Places API key used for firm research, geocoding, and location lookups. Keys saved here override the environment variable.'
+          null
         ) +
         '<section class="card p-6 max-w-2xl">' +
           '<div id="google-api-status" class="mb-4 flex flex-wrap items-center gap-2">' +
@@ -2671,7 +2657,7 @@ window.CAPages = (function () {
       '<div id="roles-permissions-page" class="roles-permissions-page">' +
         settingsSubPageHero(
           'Roles & Permissions',
-          'Role-level grants and individual employee allow/deny overrides. Only Super Admin can change access.',
+          null,
           '<div class="roles-perm-toolbar">' +
             '<div class="roles-perm-scope" role="group" aria-label="Permission scope">' +
               '<button type="button" class="roles-perm-scope-btn is-active" id="roles-perm-scope-role" data-perm-scope="role">Entire Role</button>' +
@@ -2708,7 +2694,6 @@ window.CAPages = (function () {
             '<i data-lucide="search" class="h-4 w-4 roles-perm-search-icon" aria-hidden="true"></i>' +
             '<input type="search" id="roles-perm-search" class="input-field roles-perm-search" placeholder="Search modules…" autocomplete="off" aria-label="Search modules" />' +
           '</div>' +
-          '<p class="roles-perm-filter-hint text-caption text-slate-500">Role mode saves role grants. Employee mode saves allow/deny overrides (deny wins).</p>' +
         '</div>' +
         '<section class="card p-0 overflow-hidden roles-perm-matrix-card">' +
           '<div class="roles-perm-matrix-wrap scrollbar-thin" id="roles-perm-matrix-scroll">' +
@@ -2719,16 +2704,15 @@ window.CAPages = (function () {
           '</div>' +
           '<div id="roles-perm-mobile" class="roles-perm-mobile" aria-live="polite"></div>' +
         '</section>' +
-        '<p class="text-caption text-slate-500 mt-3" id="roles-perm-note">Super Admin always has full access and cannot be edited. Communication module key is <code>campaigns</code>.</p>' +
       '</div>';
     return settingsHubLayout('roles', content);
   }
 
   /* ─── Settings ─── */
   function settingsPage() {
-    var content = hdr('Settings', 'Configure assignment rules, filters, and integrations.', null,
+    var content = hdr('Settings', null, null,
       actPrimary('Save Settings', 'id="settings-save-btn"', 'save')) +
-      tabs([{ id: 'general', label: 'General' }, { id: 'assignment', label: 'Assignment Rules' }, { id: 'filters', label: 'Filter Preferences' }, { id: 'integrations', label: 'Integrations' }], 'general') +
+      tabs([{ id: 'general', label: 'General' }, { id: 'assignment', label: 'Assignment Rules' }, { id: 'integrations', label: 'Integrations' }], 'general') +
       panel('general', true,
         '<div class="grid lg:grid-cols-2 gap-4">' +
           '<div><label class="text-caption font-medium text-slate-600 mb-1.5 block">Company Name</label><input id="settings-company-name" class="input-field" value="CA Cloud Desk" /></div>' +
@@ -2747,16 +2731,6 @@ window.CAPages = (function () {
             '<p class="text-caption text-slate-500 mb-3">Maximum leads each employee can receive per day before automatic assignment stops.</p>' +
             '<input type="number" min="1" max="500" step="1" id="settings-daily-max-capacity" class="input-field" value="50" />' +
           '</div>' +
-        '</div>') +
-      panel('filters', false,
-        '<p class="text-caption text-slate-500 mb-4">Default filter preferences for new users</p>' +
-        '<div class="grid lg:grid-cols-2 gap-4">' +
-          '<div><label class="text-caption font-medium text-slate-600 mb-1.5 block">City</label><select class="input-field"><option>All</option><option>Mumbai</option></select></div>' +
-          '<div><label class="text-caption font-medium text-slate-600 mb-1.5 block">Team Size Min</label><input type="number" class="input-field" value="6" /></div>' +
-          '<div><label class="text-caption font-medium text-slate-600 mb-1.5 block">Team Size Max</label><input type="number" class="input-field" value="15" /></div>' +
-          '<div><label class="text-caption font-medium text-slate-600 mb-1.5 block">Existing Software</label><select class="input-field"><option>Any</option><option>Tally</option><option>Zoho</option></select></div>' +
-          '<div><label class="text-caption font-medium text-slate-600 mb-1.5 block">Rating Min</label><select class="input-field"><option>4+</option><option>3+</option></select></div>' +
-          '<div><label class="text-caption font-medium text-slate-600 mb-1.5 block">Newly Established</label><select class="input-field"><option>Any</option><option>Yes</option><option>No</option></select></div>' +
         '</div>') +
       panel('integrations', false,
         '<div class="grid gap-4" id="integration-cards">' +
@@ -2889,7 +2863,7 @@ window.CAPages = (function () {
   }
 
   function recycleBinPage() {
-    return hdr('Recycle Bin', 'Restore or permanently delete soft-deleted leads.', null, '') +
+    return hdr('Recycle Bin', null, null, '') +
       '<div class="card p-4 mb-4">' +
         '<div class="flex flex-wrap items-center justify-between gap-3 mb-3">' +
           '<div>' +

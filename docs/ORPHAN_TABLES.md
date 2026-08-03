@@ -15,7 +15,6 @@ Tables below exist in schema but are not wired to active CRM UI flows. They are 
 | `admin_dashboard_metrics` | Pre-aggregated dashboard snapshots | Dashboard | No | Yes | Yes |
 | `lead_actions` | Lead action history | CA Master | No | Yes | Yes |
 | `lead_lockings` | Concurrent edit locks | CA Master | No | Yes | Yes |
-| `lead_filter_preferences` | Saved filter presets | Listings | No | Yes | Yes |
 | `notification_masters` | Notification templates | Notifications | No | Yes | Yes |
 | `template_masters` | Message templates | Communications | No | Yes | Yes |
 | `rating_masters` | Rating lookup master | Masters | No | Yes | Yes |

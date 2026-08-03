@@ -203,8 +203,7 @@
 
       listRoot.innerHTML =
         '<header class="page-hero page-hero--standard crm-tm-hero">' +
-          '<div><h1 class="text-page-title">' + cfg.typeLabel + ' Templates</h1>' +
-          '<p class="text-body text-slate-500">Create reusable ' + cfg.typeLabel.toLowerCase() + ' templates with dynamic variables for Communication campaigns.</p></div>' +
+          '<div><h1 class="text-page-title">' + cfg.typeLabel + ' Templates</h1></div>' +
           '<div class="crm-tm-hero-actions">' + createBtn + '</div>' +
         '</header>' +
         '<div class="crm-listing-filter-bar card mb-4">' +

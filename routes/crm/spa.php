@@ -55,6 +55,9 @@ Route::middleware(['auth', 'rbac'])->group(function () {
     Route::get('settings/roles-permissions', fn () => view('crm.index', ['spaPage' => 'roles-permissions']))
         ->middleware('spa.access:roles-permissions');
 
+    Route::get('settings/email-configuration', fn () => view('crm.index', ['spaPage' => 'email-configuration']))
+        ->middleware('spa.access:email-configuration');
+
     Route::get('settings/email-templates', fn () => view('crm.index', ['spaPage' => 'settings-email-templates']))
         ->middleware('spa.access:settings-email-templates');
 

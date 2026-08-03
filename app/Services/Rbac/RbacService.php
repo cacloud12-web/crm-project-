@@ -506,7 +506,7 @@ class RbacService
         }
 
         if (preg_match('#^lead-assignments/\d+/status$#', $path) && $method === 'PATCH') {
-            return ['module' => 'assignment', 'permission' => 'edit'];
+            return ['module' => 'assignment', 'permission' => 'reassign'];
         }
 
         // Single assign uses POST /lead-assignments — managers have "assign", not "create".
