@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var PER_PAGE_OPTIONS = [10, 25, 50, 100, 200, 500, 1000];
+  var PER_PAGE_OPTIONS = [10, 25, 50, 100, 200];
   var FOLLOWUP_PER_PAGE_OPTIONS = [10, 25, 50, 100, 200];
   var DEFAULT_PER_PAGE = 10;
   var _scopeHandlers = {};
@@ -21,7 +21,7 @@
   function normalizePerPage(value, options) {
     var list = Array.isArray(options) && options.length ? options : PER_PAGE_OPTIONS;
     var n = parseInt(value, 10);
-    if (list.indexOf(n) >= 0) return n;
+    if (!isNaN(n) && list.indexOf(n) >= 0) return n;
     return list.indexOf(DEFAULT_PER_PAGE) >= 0 ? DEFAULT_PER_PAGE : list[0];
   }
 
@@ -75,9 +75,10 @@
       ? '<div class="crm-table-pagination__left">' +
           '<label class="crm-table-pagination__rows">' +
             '<span class="crm-table-pagination__rows-label">Rows per page</span>' +
-            '<select class="crm-table-pagination__per-page" aria-label="Rows per page">' +
+            '<select class="crm-table-pagination__per-page" aria-label="Rows per page" data-current-per-page="' + perPage + '">' +
               perPageOptions.map(function (n) {
-                return '<option value="' + n + '"' + (n === perPage ? ' selected' : '') + '>' + n + '</option>';
+                var selected = Number(n) === Number(perPage) ? ' selected' : '';
+                return '<option value="' + n + '"' + selected + '>' + n + '</option>';
               }).join('') +
             '</select>' +
           '</label>' +
@@ -187,13 +188,17 @@
       if (!sel) return;
       var wrap = sel.closest('.crm-table-pagination');
       if (!wrap) return;
-      var perPage = parseInt(sel.value, 10);
-      if (!perPage) return;
-
       var listingKey = wrap.getAttribute('data-listing');
-      if (listingKey === 'follow_ups' || wrap.getAttribute('data-pagination-scope') === 'followup-activity') {
-        perPage = normalizePerPage(perPage, FOLLOWUP_PER_PAGE_OPTIONS);
+      var scope = wrap.getAttribute('data-pagination-scope');
+      var optionList = PER_PAGE_OPTIONS;
+      if (listingKey && window.CA_LISTING_SEARCH && CA_LISTING_SEARCH.LISTING_PER_PAGE_OPTIONS
+          && CA_LISTING_SEARCH.LISTING_PER_PAGE_OPTIONS[listingKey]) {
+        optionList = CA_LISTING_SEARCH.LISTING_PER_PAGE_OPTIONS[listingKey];
+      } else if (listingKey === 'follow_ups' || scope === 'followup-activity') {
+        optionList = FOLLOWUP_PER_PAGE_OPTIONS;
       }
+      var perPage = normalizePerPage(sel.value, optionList);
+      sel.value = String(perPage);
 
       if (listingKey && window.CA_LISTING_SEARCH) {
         CA_LISTING_SEARCH.setState(listingKey, { page: 1, per_page: perPage });
@@ -201,7 +206,6 @@
         return;
       }
 
-      var scope = wrap.getAttribute('data-pagination-scope');
       if (scope && _scopeHandlers[scope] && typeof _scopeHandlers[scope].onPerPageChange === 'function') {
         _scopeHandlers[scope].onPerPageChange(perPage, wrap);
       }

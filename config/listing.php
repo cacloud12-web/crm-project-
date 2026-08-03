@@ -432,6 +432,9 @@ return [
         'primary_key' => 'id',
         'default_sort' => 'purchase_date',
         'default_sort_dir' => 'desc',
+        'default_per_page' => 10,
+        'max_per_page' => 200,
+        'allowed_per_page' => [10, 25, 50, 100, 200],
         'sortable' => [
             'serial_number', 'sale_month', 'points', 'customer_name', 'firm_name', 'reference_name',
             'mobile_no', 'city_name', 'plan_purchased', 'purchase_date', 'cooling_period_days',

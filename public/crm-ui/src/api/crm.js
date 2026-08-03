@@ -357,6 +357,8 @@ window.CA_CRM = (function () {
       wa_message_logs: 'wa-logs-pagination-slot',
       email_logs: 'email-logs-pagination-slot',
       sms_logs: 'sms-logs-pagination-slot',
+      sales_list: 'sales-list-pagination-slot',
+      support_tickets: 'tickets-pagination-slot',
     };
     var id = slots[key];
     return id && document.getElementById(id) ? id : null;
@@ -365,8 +367,14 @@ window.CA_CRM = (function () {
   function applyListingPagination(key, tableId, body, slotId) {
     if (!window.CA_LISTING_SEARCH || !body) return;
     var parsed = CA_LISTING_SEARCH.unwrapListingBody(body);
-    if (parsed.pagination && parsed.pagination.per_page) {
-      CA_LISTING_SEARCH.setState(key, { per_page: parsed.pagination.per_page });
+    if (parsed.pagination && parsed.pagination.per_page != null) {
+      var allowed = (window.CA_LISTING_SEARCH.LISTING_PER_PAGE_OPTIONS && CA_LISTING_SEARCH.LISTING_PER_PAGE_OPTIONS[key])
+        || (window.CATablePagination && CATablePagination.PER_PAGE_OPTIONS)
+        || [10, 25, 50, 100, 200];
+      var nextPerPage = window.CATablePagination && CATablePagination.normalizePerPage
+        ? CATablePagination.normalizePerPage(parsed.pagination.per_page, allowed)
+        : parseInt(parsed.pagination.per_page, 10) || 10;
+      CA_LISTING_SEARCH.setState(key, { per_page: nextPerPage });
     }
     if (parsed.pagination) {
       CA_LISTING_SEARCH.renderPaginationBar(key, tableId, parsed.pagination, slotId || listingPaginationSlot(key));

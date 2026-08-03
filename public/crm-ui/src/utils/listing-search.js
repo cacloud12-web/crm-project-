@@ -3,6 +3,15 @@
   'use strict';
 
   var DEFAULT_PER_PAGE = 10;
+  var DEFAULT_PER_PAGE_OPTIONS = [10, 25, 50, 100, 200];
+  var LISTING_PER_PAGE_OPTIONS = {
+    ca_masters: [10, 25, 50, 100],
+    follow_ups: [10, 25, 50, 100, 200],
+    support_tickets: [10, 25, 50, 100, 200],
+    sales_list: [10, 25, 50, 100, 200],
+    lead_assignments: [10, 25, 50, 100, 200],
+    employees: [10, 25, 50, 100, 200],
+  };
 
   var REGISTRY = {
     ca_masters: { endpoint: '/ca-masters', tableId: 'leads-data-table', altTables: ['ca-master-data-table', 'ca-master-new-data-table', 'dashboard-leads-table'] },
@@ -123,15 +132,18 @@
     }
 
     var state = getState(key);
-    var perPageOptions = key === 'follow_ups' && window.CATablePagination && CATablePagination.FOLLOWUP_PER_PAGE_OPTIONS
-      ? CATablePagination.FOLLOWUP_PER_PAGE_OPTIONS
-      : null;
-    var perPage = state.per_page || pagination.per_page || CATablePagination.DEFAULT_PER_PAGE;
-    if (perPageOptions && CATablePagination.normalizePerPage) {
+    var perPageOptions = LISTING_PER_PAGE_OPTIONS[key]
+      || (window.CATablePagination && CATablePagination.PER_PAGE_OPTIONS)
+      || DEFAULT_PER_PAGE_OPTIONS;
+    var perPage = state.per_page || pagination.per_page || DEFAULT_PER_PAGE;
+    if (window.CATablePagination && CATablePagination.normalizePerPage) {
       perPage = CATablePagination.normalizePerPage(perPage, perPageOptions);
-      if (state.per_page !== perPage) {
-        setState(key, { per_page: perPage });
-      }
+    } else {
+      perPage = parseInt(perPage, 10) || DEFAULT_PER_PAGE;
+      if (perPageOptions.indexOf(perPage) < 0) perPage = DEFAULT_PER_PAGE;
+    }
+    if (Number(state.per_page) !== Number(perPage)) {
+      setState(key, { per_page: perPage });
     }
     CATablePagination.renderInto(slot || slotId, {
       tableId: tableId,
@@ -267,6 +279,7 @@
 
   window.CA_LISTING_SEARCH = {
     REGISTRY: REGISTRY,
+    LISTING_PER_PAGE_OPTIONS: LISTING_PER_PAGE_OPTIONS,
     getState: getState,
     setState: setState,
     clearState: clearState,
