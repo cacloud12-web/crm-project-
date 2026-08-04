@@ -17808,6 +17808,7 @@ body.ra-drawer-open .crm-header {
 }
 .cam-inline-assign-btn,
 .cam-inline-mobile-btn,
+.cam-inline-email-btn,
 .cam-inline-remarks-btn {
   display: inline-flex;
   align-items: center;
@@ -17823,6 +17824,7 @@ body.ra-drawer-open .crm-header {
 }
 .cam-inline-assign-btn:hover,
 .cam-inline-mobile-btn:hover,
+.cam-inline-email-btn:hover,
 .cam-inline-remarks-btn:hover {
   background: #f1f5f9;
 }
@@ -17874,8 +17876,24 @@ body.ra-drawer-open .crm-header {
   min-height: 1.75rem !important;
   padding: 0.15rem 0.4rem !important;
 }
+.cam-inline-email-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  width: 100%;
+  max-width: 16rem;
+}
+.cam-inline-email-input {
+  flex: 1 1 auto;
+  min-width: 9rem;
+  max-width: 14rem;
+  font-size: 0.75rem !important;
+  min-height: 1.75rem !important;
+  padding: 0.15rem 0.4rem !important;
+}
 .cam-inline-assign-btn.is-loading,
-.cam-inline-mobile-btn.is-loading {
+.cam-inline-mobile-btn.is-loading,
+.cam-inline-email-btn.is-loading {
   opacity: 0.6;
   pointer-events: none;
 }

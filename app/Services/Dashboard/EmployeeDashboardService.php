@@ -316,7 +316,7 @@ class EmployeeDashboardService
     private function recentAssignedLeads(int $employeeId): array
     {
         return LeadAssignmentEngine::query()
-            ->with(['caMaster:ca_id,firm_name,status,updated_at'])
+            ->with(['caMaster:ca_id,firm_name,status,updated_at,email_id,mobile_no,team_size'])
             ->where('employee_id', $employeeId)
             ->where('status', 'Active')
             ->orderByDesc('assigned_date')
@@ -330,6 +330,9 @@ class EmployeeDashboardService
                     'ca_id' => $lead?->ca_id,
                     'firm_name' => $lead?->firm_name ?? '—',
                     'status' => $lead?->status ?? '—',
+                    'email_id' => $lead?->email_id,
+                    'mobile_no' => $lead?->mobile_no,
+                    'team_size' => $lead?->team_size !== null ? (int) $lead->team_size : 0,
                     'priority_score' => $assignment->priority_score,
                     'assigned_date' => $assignment->assigned_date?->toDateString(),
                     'updated_at' => $lead?->updated_at?->toIso8601String(),

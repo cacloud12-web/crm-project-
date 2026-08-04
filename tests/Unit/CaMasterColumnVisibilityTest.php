@@ -23,11 +23,11 @@ class CaMasterColumnVisibilityTest extends TestCase
             'selection',
             'firm_name',
             'email_id',
+            'mobile',
+            'team_size',
             'sales_remarks',
             'ca_name',
-            'team_size',
             'last_activity',
-            'mobile',
             'call_log',
             'alternate_mobile',
             'city',
@@ -80,13 +80,17 @@ class CaMasterColumnVisibilityTest extends TestCase
         $this->assertStringContainsString("crm.ca_masters.visible_columns.v1", $js);
         $this->assertStringContainsString('CAM_COLUMN_FORCE_SHOW_MIGRATIONS', $js);
         $this->assertStringContainsString('2026_07_email_sales_remarks_v3', $js);
+        $this->assertStringContainsString('2026_08_mobile_team_size_contact_v1', $js);
         $this->assertStringContainsString('function applyCaMasterColumnForceShowMigrations', $js);
         $this->assertStringContainsString('function applyCaMasterColumnVisibility', $js);
         $this->assertStringContainsString('function restoreCaMasterDefaultColumns', $js);
         $this->assertStringContainsString('function selectAllCaMasterColumns', $js);
         $this->assertStringContainsString('Manage Columns', $js);
         $this->assertStringContainsString('cam-columns-btn', $js);
-        $this->assertStringContainsString('getElementById(\'leads-hub\')', $js);
+        $this->assertStringContainsString('function ensureLeadContactInlineUiBound', $js);
+        $this->assertStringContainsString('data-cam-inline-email', $js);
+        $this->assertStringContainsString('function openCaMasterInlineEmail', $js);
+        $this->assertStringContainsString('function canInlineEditLeadDetails', $js);
         $this->assertStringContainsString('function getCaMasterColumnVisibilityRoots', $js);
     }
 

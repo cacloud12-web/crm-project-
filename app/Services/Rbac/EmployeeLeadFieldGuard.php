@@ -21,6 +21,7 @@ class EmployeeLeadFieldGuard
         'mobile_no',
         'alternate_mobile_no',
         'email_id',
+        'sales_remarks',
         'state_id',
         'city_id',
         'team_size',
@@ -42,6 +43,10 @@ class EmployeeLeadFieldGuard
      * @var list<string>
      */
     private const ALWAYS_EDITABLE_FOR_EMPLOYEE = [
+        'mobile_no',
+        'email_id',
+        'team_size',
+        'sales_remarks',
         'alternate_mobile_no',
         'call_status',
         'demo_status',
@@ -200,7 +205,8 @@ class EmployeeLeadFieldGuard
 
     public function employeeCannotEditExistingMobile(User $user, CaMaster $lead): bool
     {
-        return $this->isEmployee($user) && $this->isLeadFieldFilled($lead, 'mobile_no');
+        // Employees may always edit mobile inline (same as super admin contact fields).
+        return false;
     }
 
     public function assertCanChangeStatus(User $user, CaMaster $lead, string $status): void

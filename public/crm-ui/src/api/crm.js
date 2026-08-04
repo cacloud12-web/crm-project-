@@ -774,6 +774,29 @@ window.CA_CRM = (function () {
     return truncatedPreviewCell(raw, 60, 'cam-email-cell', raw, 'email_id');
   }
 
+  function canInlineEditLeadDetails(lead) {
+    if (!lead || lead.is_read_only) return false;
+    if (crmCanAction('leads', 'edit') || crmCanAction('ca_master', 'edit')) return true;
+    return isEmployeeUser() && canUseLeadQuickActions(lead);
+  }
+
+  function renderCaMasterInlineEmailCell(l, canEdit) {
+    var raw = l && l.email_id != null ? String(l.email_id).trim() : '';
+    if (raw === '—') raw = '';
+    var emptyCls = raw ? '' : ' cam-cell-empty';
+    if (!canEdit) {
+      return emailIdCell(raw);
+    }
+    var partnerAttr = l.partner_id ? ' data-partner-id="' + escapeHtml(String(l.partner_id)) + '"' : '';
+    var inner = raw
+      ? truncatedPreviewCell(raw, 60, 'cam-email-cell', raw, 'email_id')
+      : '<span class="cam-cell-text cam-cell-empty cam-email-cell" data-column-value="email_id">—</span>';
+    return '<button type="button" class="cam-inline-email-btn' + emptyCls + '" data-cam-inline-email="' + escapeHtml(String(l.ca_id)) + '"' +
+      partnerAttr + ' data-email="' + escapeHtml(raw) + '" title="Edit email" aria-label="Edit email">' +
+      inner +
+    '</button>';
+  }
+
   function formatSalesRemarksDetailHtml(text) {
     var raw = text == null || text === '' ? '' : String(text).trim();
     if (!raw || raw === '—') {
@@ -6421,10 +6444,20 @@ if (otherInput) {
       return;
     }
     el.innerHTML = leads.map(function (lead) {
+      var email = lead.email_id && lead.email_id !== '—' ? String(lead.email_id) : '';
+      var mobile = formatPhoneDisplay(lead.mobile_no) || '';
+      var teamSize = lead.team_size != null && lead.team_size !== '' ? Number(lead.team_size) : 0;
+      if (isNaN(teamSize)) teamSize = 0;
+      var contactBits = [
+        email ? escapeHtml(email) : '<span class="text-amber-600">Email missing</span>',
+        mobile ? escapeHtml(mobile) : '<span class="text-amber-600">Mobile missing</span>',
+        'Team ' + teamSize,
+      ].join(' · ');
       return '<div class="emp-list-item">' +
-        '<button type="button" class="emp-list-main text-left" data-emp-open-lead="' + escapeHtml(lead.ca_id) + '">' +
+        '<button type="button" class="emp-list-main text-left" data-emp-open-lead="' + escapeHtml(lead.ca_id) + '" title="Open in Lead Management to edit email, mobile, and team size">' +
           '<strong>' + escapeHtml(lead.firm_name) + '</strong>' +
-          '<span class="text-caption text-slate-500">' + escapeHtml(lead.status) + '</span></button>' +
+          '<span class="text-caption text-slate-500">' + escapeHtml(lead.status || '—') + '</span>' +
+          '<span class="text-caption text-slate-500 emp-lead-contact-meta">' + contactBits + '</span></button>' +
         '<span class="emp-list-meta flex flex-col items-end gap-1">' +
           '<span>P' + (lead.priority_score || 1) + ' · ' + escapeHtml(formatDate(lead.assigned_date)) + '</span>' +
           '<span class="flex gap-1">' +
@@ -9446,6 +9479,7 @@ if (otherInput) {
         ensureCaMasterColumnsPopoverMounted();
       }
       ensureSalesRemarksUiBound();
+      ensureLeadContactInlineUiBound();
       renderLeadKpis();
       bindLeadsColumnFilters();
       var pipelineActive = isLeadsPipelineTabActive();
@@ -13358,8 +13392,7 @@ if (otherInput) {
     var tooltip = 'Team Size\n' + formatTeamSizeLabel(size);
     var labelFull = size === 0 ? '0' : (size === 1 ? '👥 1 Employee' : '👥 ' + size + ' Employees');
     var labelCompact = size === 0 ? '0' : '👥 ' + size;
-    var canEdit = opts.canEdit !== false && !lead.is_read_only
-      && (crmCanAction('leads', 'edit') || crmCanAction('ca_master', 'edit'));
+    var canEdit = opts.canEdit !== false && canInlineEditLeadDetails(lead);
     var inner = '<span class="cam-team-size-cell__full">' + escapeHtml(labelFull) + '</span>' +
       '<span class="cam-team-size-cell__compact">' + escapeHtml(labelCompact) + '</span>';
 
@@ -13656,6 +13689,8 @@ if (otherInput) {
   var CAM_COLUMN_FORCE_SHOW_MIGRATIONS = [
     // v3: heal layouts where Email/Sales were never inserted (or migration marked applied too early).
     { id: '2026_07_email_sales_remarks_v3', keys: ['email_id', 'sales_remarks'] },
+    // v4: ensure Mobile + Team Size stay visible for employee contact editing on Lead Management.
+    { id: '2026_08_mobile_team_size_contact_v1', keys: ['mobile', 'team_size'] },
   ];
   var CAM_COLUMN_MIGRATIONS_STORAGE_KEY = 'crm.ca_masters.column_migrations.v1';
   var _camVisibleColumnKeys = null;
@@ -14214,10 +14249,11 @@ if (otherInput) {
     var partnerGroups = resolveCaMasterPartnerGroups(l);
     var partnerCount = partnerGroups.partnerCount;
     var expandedPartners = partnerGroups.expandedPartners;
-    var canEdit = !l.is_read_only;
-    var canAssign = canEdit && !isEmployeeUser();
+    var canEdit = canInlineEditLeadDetails(l);
+    var canAssign = canEdit && !isEmployeeUser() && !l.is_read_only;
     var executiveCell = renderCaMasterExecutiveCell(l, canAssign);
     var mobileCell = renderCaMasterInlineMobileCell(l, canEdit && !l.employee_cannot_edit_mobile);
+    var emailCell = renderCaMasterInlineEmailCell(l, canEdit);
     var firmCell = renderCaMasterFirmNameCell(l, partnerCount, expandedPartners.length);
     var caLabel = l.ca_name_display || l.primary_ca_name || l.ca_name;
     var caCell = caNameCell(caLabel);
@@ -14245,15 +14281,15 @@ if (otherInput) {
     var parentRow = '<tr class="' + rowCls + '" data-lead-id="' + l.ca_id + '" data-row=\'' + data + '\'>' +
       withCamDataColumn('selection', renderInboxCheckCell(tableKey, l.ca_id)) +
       camColTd('firm_name', 'sticky-left-2 crm-td-firm cam-master-data-cell', firmCell) +
-      camColTd('email_id', 'cam-td-email cam-master-data-cell', emailIdCell(l.email_id)) +
+      camColTd('email_id', 'cam-td-email cam-master-data-cell', emailCell) +
+      camColTd('mobile', 'cam-td-mobile cam-master-data-cell', mobileCell) +
+      camColTd('team_size', 'cam-td-team-size cam-master-data-cell', teamCell) +
       camColTd('sales_remarks', 'cam-td-remarks cam-master-data-cell', salesRemarksCell(l.sales_remarks, {
-        canEdit: canEdit && (crmCanAction('leads', 'edit') || crmCanAction('ca_master', 'edit')),
+        canEdit: canEdit,
         caId: l.ca_id,
       })) +
       camColTd('ca_name', 'crm-td-ca cam-master-data-cell', caCell) +
-      camColTd('team_size', 'cam-td-team-size cam-master-data-cell', teamCell) +
       camColTd('last_activity', 'cam-td-last-activity cam-master-data-cell', renderLastActivityDisplayCell(l)) +
-      camColTd('mobile', 'cam-td-mobile cam-master-data-cell', mobileCell) +
       withCamDataColumn('call_log', renderLeadCallLogQuickCell(l)) +
       camColTd('alternate_mobile', 'cam-td-mobile cam-master-data-cell', camPhoneDisplayCell(l.alternate_mobile_no)) +
       camColTd('city', 'cam-td-geo cam-master-data-cell', compactTextCell(l.city)) +
@@ -14294,28 +14330,36 @@ if (otherInput) {
 
   function renderCaMasterPartnerChildRow(firm, partner, tableKey, canEdit) {
     var pid = partner.id;
+    var partnerLead = {
+      ca_id: firm.ca_id,
+      mobile_no: partner.mobile,
+      email_id: partner.email,
+      partner_id: pid,
+      employee_cannot_edit_mobile: false,
+      is_read_only: firm.is_read_only,
+      executive_id: firm.executive_id,
+      executive: firm.executive,
+    };
     var mobile = canEdit
-      ? renderCaMasterInlineMobileCell({
-          ca_id: firm.ca_id,
-          mobile_no: partner.mobile,
-          partner_id: pid,
-          employee_cannot_edit_mobile: false,
-        }, true)
+      ? renderCaMasterInlineMobileCell(partnerLead, true)
       : camPhoneDisplayCell(partner.mobile);
+    var email = canEdit
+      ? renderCaMasterInlineEmailCell(partnerLead, true)
+      : emailIdCell(partner.email);
     var googleCell = renderCaMasterPartnerGoogleCell(firm, partner);
     return '<tr class="cam-partner-child-row hidden" data-partner-parent="' + escapeHtml(String(firm.ca_id)) + '" data-partner-id="' + escapeHtml(String(pid || '')) + '">' +
       camColTd('selection', 'cam-partner-child-check', '') +
       camColTd('firm_name', 'sticky-left-2 crm-td-firm cam-master-data-cell cam-partner-indent', '<span class="cam-partner-child-label">Partner</span>') +
-      camColTd('email_id', 'cam-td-email cam-master-data-cell', emailIdCell(partner.email)) +
-      camColTd('sales_remarks', 'cam-td-remarks cam-master-data-cell', '<span class="cam-cell-text cam-cell-empty">—</span>') +
-      camColTd('ca_name', 'crm-td-ca cam-master-data-cell', compactTextCell(partner.ca_name)) +
+      camColTd('email_id', 'cam-td-email cam-master-data-cell', email) +
+      camColTd('mobile', 'cam-td-mobile cam-master-data-cell', mobile) +
       camColTd('team_size', 'cam-td-team-size cam-master-data-cell', renderCaMasterInlineTeamSizeCell(
-        { team_size: partner.team_size, ca_id: firm.ca_id },
+        { team_size: partner.team_size, ca_id: firm.ca_id, is_read_only: firm.is_read_only, executive_id: firm.executive_id, executive: firm.executive },
         canEdit,
         { caId: firm.ca_id, partnerId: pid },
       )) +
+      camColTd('sales_remarks', 'cam-td-remarks cam-master-data-cell', '<span class="cam-cell-text cam-cell-empty">—</span>') +
+      camColTd('ca_name', 'crm-td-ca cam-master-data-cell', compactTextCell(partner.ca_name)) +
       camColTd('last_activity', 'cam-td-last-activity cam-master-data-cell', '<span class="cam-cell-text cam-cell-mono text-slate-400" title="Membership">' + escapeHtml(partner.membership_no || '—') + '</span>') +
-      camColTd('mobile', 'cam-td-mobile cam-master-data-cell', mobile) +
       withCamDataColumn('call_log', renderLeadCallLogQuickCell(firm, partner)) +
       camColTd('alternate_mobile', 'cam-td-mobile cam-master-data-cell', camPhoneDisplayCell(partner.alternate_mobile)) +
       camColTd('city', 'cam-td-geo cam-master-data-cell', compactTextCell(firm.city)) +
@@ -14758,6 +14802,7 @@ if (otherInput) {
     ensureCaMasterColumnsPopoverMounted();
     applyCaMasterColumnVisibility(page);
     ensureSalesRemarksUiBound();
+    ensureLeadContactInlineUiBound();
 
     page.addEventListener('change', function (e) {
       if (e.target && e.target.id === 'cam-filter-pipeline-stage') {
@@ -15040,6 +15085,95 @@ if (otherInput) {
     });
   }
 
+  function openCaMasterInlineEmail(btn) {
+    if (!btn || btn.querySelector('input')) return;
+    var caId = btn.getAttribute('data-cam-inline-email');
+    if (!caId) {
+      toast('Lead not found', 'warning');
+      return;
+    }
+    var lead = getLeadRecord(caId);
+    if (isEmployeeUser() && lead && !canUseLeadQuickActions(lead)) {
+      toast('You can only edit email for leads assigned to you.', 'error');
+      return;
+    }
+    if (lead && lead.is_read_only) {
+      toast('This lead is read-only.', 'warning');
+      return;
+    }
+    var partnerId = btn.getAttribute('data-partner-id');
+    var current = btn.getAttribute('data-email') || '';
+    var original = btn.innerHTML;
+    var wrap = document.createElement('span');
+    wrap.className = 'cam-inline-email-edit';
+    wrap.innerHTML = '<input type="email" class="input-field input-field-sm cam-inline-email-input" value="' + escapeAttr(current) + '" maxlength="255" placeholder="name@example.com" aria-label="Email" />' +
+      '<button type="button" class="btn-secondary btn-xs" data-cam-email-save>Save</button>';
+    btn.innerHTML = '';
+    btn.appendChild(wrap);
+    var input = wrap.querySelector('input');
+    input.focus();
+    input.select();
+    var finished = false;
+    function restore() {
+      if (finished) return;
+      finished = true;
+      btn.innerHTML = original;
+      btn.classList.remove('is-loading');
+    }
+    function save() {
+      if (finished) return;
+      var next = String(input.value || '').trim();
+      if (next === String(current || '').trim()) {
+        restore();
+        return;
+      }
+      if (next && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(next)) {
+        toast('Enter a valid email address.', 'error');
+        input.focus();
+        return;
+      }
+      finished = true;
+      btn.classList.add('is-loading');
+      var url = partnerId
+        ? '/ca-masters/' + encodeURIComponent(caId) + '/partners/' + encodeURIComponent(partnerId)
+        : '/ca-masters/' + encodeURIComponent(caId) + '/contact';
+      var body = partnerId ? { email: next || null } : { email_id: next || null };
+      apiFetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(body),
+      })
+        .then(function () {
+          toast('Email updated.', 'success');
+          invalidateDataCaches(['leads', 'ca_masters', 'segment_counts']);
+          refreshCaMasterOrLeadsTable();
+        })
+        .catch(function (err) {
+          toast((err && err.message) || 'Email update failed.', 'error');
+          finished = false;
+          restore();
+        });
+    }
+    wrap.querySelector('[data-cam-email-save]').addEventListener('click', function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      save();
+    });
+    input.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        save();
+      }
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        restore();
+      }
+    });
+    input.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+    });
+  }
+
   function openCaMasterInlineRemarks(btn) {
     if (!btn || btn.querySelector('input, textarea')) return;
     var caId = btn.getAttribute('data-cam-inline-remarks');
@@ -15179,7 +15313,8 @@ if (otherInput) {
       })
         .then(function () {
           toast('Team size updated.', 'success');
-          renderCaMasterTable();
+          invalidateDataCaches(['leads', 'ca_masters', 'segment_counts']);
+          refreshCaMasterOrLeadsTable();
         })
         .catch(function (err) {
           toast((err && err.message) || 'Team size update failed.', 'error');
@@ -15201,6 +15336,36 @@ if (otherInput) {
       if (ev.key === 'Escape') {
         ev.preventDefault();
         restore();
+      }
+    });
+  }
+
+  function ensureLeadContactInlineUiBound() {
+    if (window._leadContactInlineUiBound) return;
+    window._leadContactInlineUiBound = true;
+    document.addEventListener('click', function (e) {
+      var emailBtn = e.target.closest('[data-cam-inline-email]');
+      if (emailBtn) {
+        if (emailBtn.querySelector('input') || e.target.closest('[data-cam-email-save]')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        openCaMasterInlineEmail(emailBtn);
+        return;
+      }
+      var mobileBtn = e.target.closest('[data-cam-inline-mobile]');
+      if (mobileBtn) {
+        if (mobileBtn.querySelector('input') || e.target.closest('[data-cam-mobile-save]')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        openCaMasterInlineMobile(mobileBtn);
+        return;
+      }
+      var teamSizeBtn = e.target.closest('[data-cam-inline-team-size]');
+      if (teamSizeBtn) {
+        if (teamSizeBtn.querySelector('input') || e.target.closest('[data-cam-team-size-save]')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        openCaMasterInlineTeamSize(teamSizeBtn);
       }
     });
   }
@@ -19488,6 +19653,7 @@ if (otherInput) {
         });
     });
     ensureSalesRemarksUiBound();
+    ensureLeadContactInlineUiBound();
 
     var leadCallLogStatus = document.getElementById('lead-call-log-status');
     if (leadCallLogStatus) {
