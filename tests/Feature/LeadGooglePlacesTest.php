@@ -346,4 +346,54 @@ class LeadGooglePlacesTest extends TestCase
         $response->assertJsonPath('data.cached', false);
         $response->assertJsonPath('data.can_refresh', true);
     }
+
+    public function test_employee_can_save_google_lookup_on_verified_assigned_lead(): void
+    {
+        $this->seed(\Database\Seeders\IndiaStatesCitiesSeeder::class);
+
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
+        $this->actingAs($employee);
+
+        $lead = $this->sampleLead([
+            'mobile_no' => '8951598421',
+            'verified_from_google' => true,
+            'google_place_id' => 'places/chij-old',
+            'google_rating' => 4.0,
+        ]);
+
+        \App\Models\LeadAssignmentEngine::query()->updateOrCreate(
+            ['ca_id' => $lead->ca_id, 'status' => 'Active'],
+            ['employee_id' => $employeeModel->employee_id, 'assigned_date' => now()->toDateString()],
+        );
+
+        $research = $this->postJson('/ca-masters/'.$lead->ca_id.'/research');
+        $research->assertOk();
+        $research->assertJsonPath('data.can_save', true);
+
+        $place = [
+            'place_id' => 'places/chij-employee-1',
+            'google_place_id' => 'places/chij-employee-1',
+            'mobile_no' => '+91 83523 13800',
+            'city_name' => 'Mumbai',
+            'state_name' => 'Maharashtra',
+            'google_rating' => 4.9,
+            'google_review_count' => 38,
+            'verified_address' => 'Mumbai, Maharashtra',
+        ];
+
+        $response = $this->postJson('/ca-masters/'.$lead->ca_id.'/research/save', [
+            'fields' => ['mobile_no', 'city_name', 'state_name', 'google_place_id', 'google_rating', 'google_review_count'],
+            'place' => $place,
+        ]);
+
+        $response->assertOk();
+        $lead->refresh()->load(['city', 'state']);
+        $this->assertSame('places/chij-employee-1', $lead->google_place_id);
+        $this->assertSame('+91 83523 13800', $lead->mobile_no);
+        $this->assertSame('Maharashtra', $lead->state?->state_name);
+        $this->assertSame('Mumbai', $lead->city?->city_name);
+        $this->assertSame(4.9, (float) $lead->google_rating);
+        $this->assertTrue($lead->verified_from_google);
+    }
 }

@@ -48,6 +48,8 @@ class EmployeeLeadFieldGuard
         'team_size',
         'sales_remarks',
         'alternate_mobile_no',
+        'state_id',
+        'city_id',
         'call_status',
         'demo_status',
         'is_newly_established',

@@ -168,13 +168,52 @@
     ];
   }
 
+  function isEmployeeUser() {
+    if (deps && typeof deps.isEmployeeUser === 'function') {
+      return !!deps.isEmployeeUser();
+    }
+    var role = String((window.__CRM_USER__ && window.__CRM_USER__.crm_role) || '').toLowerCase();
+    return role === 'employee';
+  }
+
+  function employeeCanOverwriteSaveKey(saveKey) {
+    return [
+      'mobile_no',
+      'website',
+      'city_name',
+      'state_name',
+      'google_rating',
+      'google_review_count',
+      'google_place_id',
+      'address',
+      'google_maps_url',
+      'latitude',
+      'longitude',
+      'google_business_status',
+    ].indexOf(saveKey) >= 0;
+  }
+
+  function isFieldEmptyOnLead(current, saveKey) {
+    if (!current) return true;
+    if (saveKey === 'city_name') {
+      return !savedFieldValue(current, ['city_name', 'city', 'city_id']);
+    }
+    if (saveKey === 'state_name') {
+      return !savedFieldValue(current, ['state_name', 'state', 'state_id']);
+    }
+    if (saveKey === 'address') {
+      return !savedFieldValue(current, ['address', 'verified_address']);
+    }
+    return !savedFieldValue(current, [saveKey]);
+  }
+
   function fieldCanSave(saveKey) {
     if (!state.canSave) return false;
-    if (saveKey === 'address') {
-      return isFieldEmptyOnLead(state.current, 'address') && isFieldEmptyOnLead(state.current, 'verified_address');
+    if (isEmployeeUser() && employeeCanOverwriteSaveKey(saveKey)) {
+      return true;
     }
-    if (saveKey === 'city_name' || saveKey === 'state_name') {
-      return isFieldEmptyOnLead(state.current, saveKey);
+    if (saveKey === 'address') {
+      return isFieldEmptyOnLead(state.current, 'address');
     }
     return isFieldEmptyOnLead(state.current, saveKey);
   }
@@ -381,27 +420,6 @@
     if (key === 'state_name') return place.state_name || place.state || '';
     if (key === 'mobile_no') return place.mobile_no || place.phone || '';
     return place[key] == null ? '' : String(place[key]);
-  }
-
-  function isFieldEmptyOnLead(current, key) {
-    if (!current) return true;
-    var map = {
-      verified_address: current.verified_address || current.address,
-      address: current.address || current.verified_address,
-      website: current.website,
-      mobile_no: current.mobile_no,
-      city_name: current.city || current.city_name,
-      state_name: current.state || current.state_name,
-      google_place_id: current.google_place_id,
-      google_rating: current.google_rating,
-      google_review_count: current.google_review_count,
-      google_business_status: current.google_business_status,
-      google_maps_url: current.google_maps_url,
-      latitude: current.latitude,
-      longitude: current.longitude,
-    };
-    var value = map[key];
-    return value == null || String(value).trim() === '' || String(value).trim() === '—';
   }
 
   function saveFieldKeys() {
@@ -773,7 +791,9 @@
       toast('Select at least one empty field to import', 'warning');
       return;
     }
-    if (!window.confirm('Save selected Google Places details into this lead? Existing values will not be overwritten unless you are a Manager/Super Admin refreshing data.')) {
+    if (!window.confirm(isEmployeeUser()
+      ? 'Save selected Google Places details into this lead? Phone, city, state, and Google fields can be updated.'
+      : 'Save selected Google Places details into this lead? Existing values will not be overwritten unless you are a Manager/Super Admin refreshing data.')) {
       return;
     }
 

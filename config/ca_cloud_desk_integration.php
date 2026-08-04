@@ -64,4 +64,17 @@ return [
 
     'inbound_integration_token' => env('CA_CLOUD_DESK_INTEGRATION_TOKEN'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Inbound webhook (LawSeva → CRM)
+    |--------------------------------------------------------------------------
+    |
+    | LawSeva should POST new/updated tickets to:
+    |   POST {CRM_BASE_URL}/webhooks/ca-cloud-desk/tickets
+    | Header:
+    |   X-Integration-Token: {CA_CLOUD_DESK_INTEGRATION_TOKEN}
+    |   (X-Api-Key with the same token is also accepted)
+    |
+    */
+
 ];

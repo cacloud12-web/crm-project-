@@ -292,7 +292,6 @@ class LeadResearchService
             throw new InvalidArgumentException('Select at least one field to save.');
         }
 
-        $canOverwrite = $this->canRefreshGoogleData($user);
         $update = [
             'researched_at' => now(),
             'research_status' => 'Research Complete',
@@ -316,7 +315,7 @@ class LeadResearchService
             }
 
             $current = $lead->{$field} ?? null;
-            if (! $canOverwrite && filled($current)) {
+            if (filled($current) && ! $this->canOverwriteGoogleField($user, $field)) {
                 continue;
             }
 
@@ -331,16 +330,16 @@ class LeadResearchService
 
             if ($wantsState && $stateId) {
                 $currentState = $lead->state_id;
-                if ($canOverwrite || blank($currentState)) {
+                if (blank($currentState) || $this->canOverwriteGoogleField($user, 'state_id')) {
                     $update['state_id'] = $stateId;
                 }
             }
 
             if ($wantsCity && $cityId) {
                 $currentCity = $lead->city_id;
-                if ($canOverwrite || blank($currentCity)) {
+                if (blank($currentCity) || $this->canOverwriteGoogleField($user, 'city_id')) {
                     $update['city_id'] = $cityId;
-                    if (! isset($update['state_id']) && $stateId && ($canOverwrite || blank($lead->state_id))) {
+                    if (! isset($update['state_id']) && $stateId && (blank($lead->state_id) || $this->canOverwriteGoogleField($user, 'state_id'))) {
                         $update['state_id'] = $stateId;
                     }
                 }
@@ -417,22 +416,43 @@ class LeadResearchService
             return false;
         }
 
-        if ($lead->verified_from_google && $this->rbacService->roleKey($user) === 'employee') {
-            return false;
-        }
-
         return true;
     }
 
     public function assertCanSaveGoogleData(?User $user, CaMaster $lead, bool $throw = true): void
     {
         $this->assertCanResearch($user, $lead);
+    }
 
-        if ($lead->verified_from_google && $this->rbacService->roleKey($user) === 'employee') {
-            if ($throw) {
-                throw new AuthorizationException('Verified Google data can only be updated by a Manager or Super Admin.');
-            }
+    /**
+     * Managers/super admins may overwrite any Google field; employees may overwrite
+     * contact, geo, and Google metadata on assigned leads (same working fields as Edit Firm).
+     */
+    public function canOverwriteGoogleField(?User $user, string $field): bool
+    {
+        if ($this->canRefreshGoogleData($user)) {
+            return true;
         }
+
+        if (! $user || $this->rbacService->roleKey($user) !== 'employee') {
+            return false;
+        }
+
+        return in_array($field, [
+            'mobile_no',
+            'website',
+            'state_id',
+            'city_id',
+            'google_place_id',
+            'google_rating',
+            'google_review_count',
+            'google_business_status',
+            'google_maps_url',
+            'latitude',
+            'longitude',
+            'verified_address',
+            'address',
+        ], true);
     }
 
     /**
@@ -578,6 +598,12 @@ class LeadResearchService
             'mobile_no' => $lead->mobile_no,
             'address' => $lead->address,
             'website' => $lead->website,
+            'city' => $lead->city?->city_name,
+            'city_name' => $lead->city?->city_name,
+            'city_id' => $lead->city_id,
+            'state' => $lead->state?->state_name,
+            'state_name' => $lead->state?->state_name,
+            'state_id' => $lead->state_id,
             'google_place_id' => $lead->google_place_id,
             'verified_address' => $lead->verified_address,
             'google_rating' => $lead->google_rating,

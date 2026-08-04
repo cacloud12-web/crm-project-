@@ -2279,6 +2279,7 @@ if (otherInput) {
       toast: toast,
       escapeHtml: escapeHtml,
       icons: icons,
+      isEmployeeUser: isEmployeeUser,
       onSaved: function (lead) {
         mergeLeadIntoPools(lead);
         if (document.getElementById('leads-data-table')) renderLeadsTable();
@@ -5383,7 +5384,8 @@ if (otherInput) {
   ];
 
   var EMPLOYEE_ALWAYS_EDITABLE_FIELDS = [
-    'alternate_mobile_no', 'is_newly_established', 'status', 'source_id', 'team_size',
+    'mobile_no', 'email_id', 'sales_remarks', 'alternate_mobile_no',
+    'is_newly_established', 'status', 'source_id', 'team_size',
     'state_id', 'city_id',
   ];
 
@@ -18855,6 +18857,7 @@ if (otherInput) {
 
     if (editingId && isEmployeeUser()) {
       (window._leadLockedFields || []).forEach(function (fieldName) {
+        if (EMPLOYEE_ALWAYS_EDITABLE_FIELDS.indexOf(fieldName) >= 0) return;
         fd.delete(fieldName);
       });
     }

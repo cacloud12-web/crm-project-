@@ -323,7 +323,7 @@ class CrmFeatureEnhancementsTest extends TestCase
         $this->assertSame('Pending Research', $lead->research_status);
     }
 
-    public function test_employee_can_fill_empty_email_once_then_locked(): void
+    public function test_employee_can_update_email_on_assigned_lead(): void
     {
         $employee = CrmTestAccounts::employeeUser();
         $employeeModel = CrmTestAccounts::employee();
@@ -335,24 +335,17 @@ class CrmFeatureEnhancementsTest extends TestCase
             ['employee_id' => $employeeModel->employee_id, 'assigned_date' => now()->toDateString()],
         );
 
-        $lead->update(['email_id' => null]);
+        $lead->update(['email_id' => 'employee-filled@gmail.com']);
 
         $this->putJson('/ca-masters/'.$lead->ca_id, [
-            'email_id' => 'employee-filled@gmail.com',
+            'email_id' => 'employee-updated@gmail.com',
         ])->assertOk();
 
         $lead->refresh();
-        $this->assertSame('employee-filled@gmail.com', $lead->email_id);
-
-        $this->putJson('/ca-masters/'.$lead->ca_id, [
-            'email_id' => 'hacked@gmail.com',
-        ])->assertOk();
-
-        $lead->refresh();
-        $this->assertSame('employee-filled@gmail.com', $lead->email_id);
+        $this->assertSame('employee-updated@gmail.com', $lead->email_id);
     }
 
-    public function test_employee_can_fill_empty_primary_mobile_once_then_locked(): void
+    public function test_employee_can_update_primary_mobile_on_assigned_lead(): void
     {
         $employee = CrmTestAccounts::employeeUser();
         $employeeModel = CrmTestAccounts::employee();
@@ -364,21 +357,14 @@ class CrmFeatureEnhancementsTest extends TestCase
             ['employee_id' => $employeeModel->employee_id, 'assigned_date' => now()->toDateString()],
         );
 
-        $lead->update(['mobile_no' => null]);
-
-        $this->putJson('/ca-masters/'.$lead->ca_id, [
-            'mobile_no' => '9123456780',
-        ])->assertOk();
-
-        $lead->refresh();
-        $this->assertSame('9123456780', $lead->mobile_no);
+        $lead->update(['mobile_no' => '9123456780']);
 
         $this->putJson('/ca-masters/'.$lead->ca_id, [
             'mobile_no' => '9876543210',
         ])->assertOk();
 
         $lead->refresh();
-        $this->assertSame('9123456780', $lead->mobile_no);
+        $this->assertSame('9876543210', $lead->mobile_no);
     }
 
     public function test_employee_cannot_change_assigned_executive(): void
@@ -427,8 +413,47 @@ class CrmFeatureEnhancementsTest extends TestCase
         $this->assertContains('ca_name', $locked);
         $this->assertNotContains('status', $locked);
         $this->assertNotContains('source_id', $locked);
+        $this->assertNotContains('state_id', $locked);
+        $this->assertNotContains('city_id', $locked);
         $this->assertContains('executive_id', $locked);
         $this->assertNotContains('alternate_mobile_no', $locked);
+    }
+
+    public function test_employee_can_update_state_city_and_alternate_mobile(): void
+    {
+        $employee = CrmTestAccounts::employeeUser();
+        $employeeModel = CrmTestAccounts::employee();
+        $this->actingAs($employee);
+
+        $lead = CaMaster::query()->whereNotNull('state_id')->whereNotNull('city_id')->firstOrFail();
+        $otherState = \App\Models\State::query()
+            ->where('state_id', '!=', $lead->state_id)
+            ->whereHas('cities')
+            ->firstOrFail();
+        $otherCity = \App\Models\City::query()
+            ->where('state_id', $otherState->state_id)
+            ->where('is_active', true)
+            ->firstOrFail();
+
+        LeadAssignmentEngine::query()->updateOrCreate(
+            ['ca_id' => $lead->ca_id, 'status' => 'Active'],
+            ['employee_id' => $employeeModel->employee_id, 'assigned_date' => now()->toDateString()],
+        );
+
+        $lead->update([
+            'alternate_mobile_no' => '9000000001',
+        ]);
+
+        $this->putJson('/ca-masters/'.$lead->ca_id, [
+            'state_id' => $otherState->state_id,
+            'city_id' => $otherCity->city_id,
+            'alternate_mobile_no' => '9123456789',
+        ])->assertOk();
+
+        $lead->refresh();
+        $this->assertSame((int) $otherState->state_id, (int) $lead->state_id);
+        $this->assertSame((int) $otherCity->city_id, (int) $lead->city_id);
+        $this->assertSame('9123456789', $lead->alternate_mobile_no);
     }
 
     public function test_employee_can_update_status_and_source_on_assigned_lead(): void
