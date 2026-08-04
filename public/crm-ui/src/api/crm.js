@@ -379,7 +379,7 @@ window.CA_CRM = (function () {
     if (parsed.pagination && parsed.pagination.per_page != null) {
       var allowed = (window.CA_LISTING_SEARCH.LISTING_PER_PAGE_OPTIONS && CA_LISTING_SEARCH.LISTING_PER_PAGE_OPTIONS[key])
         || (window.CATablePagination && CATablePagination.PER_PAGE_OPTIONS)
-        || [10, 25, 50, 100];
+        || [10, 25, 50, 100, 200, 500, 1000];
       var nextPerPage = window.CATablePagination && CATablePagination.normalizePerPage
         ? CATablePagination.normalizePerPage(parsed.pagination.per_page, allowed)
         : parseInt(parsed.pagination.per_page, 10) || 10;
