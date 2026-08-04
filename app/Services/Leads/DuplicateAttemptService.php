@@ -100,7 +100,7 @@ class DuplicateAttemptService
 
         return [
             'match_type' => 'potential_duplicate',
-            'message' => 'Potential duplicate — similar number exists in CRM.',
+            'message' => 'Similar number warning — a close mobile number already exists in CRM.',
             'prefix' => $prefix,
             'existing_lead' => [
                 'ca_id' => (int) $match->ca_id,

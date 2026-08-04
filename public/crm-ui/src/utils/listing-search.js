@@ -3,14 +3,16 @@
   'use strict';
 
   var DEFAULT_PER_PAGE = 10;
-  var DEFAULT_PER_PAGE_OPTIONS = [10, 25, 50, 100, 200, 500, 1000];
+  // Must match config/listing.php allowed_per_page / max_per_page.
+  // Offering sizes the API rejects (e.g. 200→clamped to 10) makes pagination look broken on live.
+  var DEFAULT_PER_PAGE_OPTIONS = [10, 25, 50, 100];
   var LISTING_PER_PAGE_OPTIONS = {
-    ca_masters: [10, 25, 50, 100, 200, 500, 1000],
-    follow_ups: [10, 25, 50, 100, 200, 500, 1000],
+    ca_masters: [10, 25, 50, 100],
+    follow_ups: [10, 25, 50, 100],
     support_tickets: [10, 25, 50, 100, 200, 500, 1000],
     sales_list: [10, 25, 50, 100, 200, 500, 1000],
-    lead_assignments: [10, 25, 50, 100, 200, 500, 1000],
-    employees: [10, 25, 50, 100, 200, 500, 1000],
+    lead_assignments: [10, 25, 50, 100],
+    employees: [10, 25, 50, 100],
   };
 
   var REGISTRY = {
@@ -135,7 +137,8 @@
     var perPageOptions = LISTING_PER_PAGE_OPTIONS[key]
       || (window.CATablePagination && CATablePagination.PER_PAGE_OPTIONS)
       || DEFAULT_PER_PAGE_OPTIONS;
-    var perPage = state.per_page || pagination.per_page || DEFAULT_PER_PAGE;
+    // Prefer the server-resolved size so UI stays aligned after API clamping.
+    var perPage = pagination.per_page || state.per_page || DEFAULT_PER_PAGE;
     if (window.CATablePagination && CATablePagination.normalizePerPage) {
       perPage = CATablePagination.normalizePerPage(perPage, perPageOptions);
     } else {

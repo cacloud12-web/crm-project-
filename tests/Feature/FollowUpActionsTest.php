@@ -81,23 +81,18 @@ class FollowUpActionsTest extends TestCase
         $manager = CrmTestAccounts::manager();
         $this->actingAs($manager);
 
-        foreach ([10, 25, 50, 100, 200] as $size) {
+        foreach ([10, 25, 50, 100] as $size) {
             $this->getJson('/follow-ups?per_page='.$size)
                 ->assertOk()
                 ->assertJsonPath('data.pagination.per_page', $size);
         }
 
-        $this->getJson('/follow-ups?per_page=500')
-            ->assertOk()
-            ->assertJsonPath('data.pagination.per_page', 10);
-
-        $this->getJson('/follow-ups?per_page=1000')
-            ->assertOk()
-            ->assertJsonPath('data.pagination.per_page', 10);
-
-        $this->getJson('/follow-ups?per_page=7')
-            ->assertOk()
-            ->assertJsonPath('data.pagination.per_page', 10);
+        // Sizes outside allowed_per_page fall back to default (10).
+        foreach ([7, 200, 500, 1000] as $invalidSize) {
+            $this->getJson('/follow-ups?per_page='.$invalidSize)
+                ->assertOk()
+                ->assertJsonPath('data.pagination.per_page', 10);
+        }
     }
 
     public function test_employee_can_view_own_follow_up(): void

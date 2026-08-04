@@ -343,6 +343,7 @@ window.CA_CRM = (function () {
 
   function listingPaginationSlot(key) {
     var slots = {
+      ca_masters: 'ca-master-pagination-slot',
       employees: 'employees-pagination-slot',
       follow_ups: 'followups-pagination-slot',
       activity_logs: 'activity-pagination-slot',
@@ -361,6 +362,14 @@ window.CA_CRM = (function () {
       support_tickets: 'tickets-pagination-slot',
     };
     var id = slots[key];
+    if (key === 'ca_masters') {
+      if (document.getElementById('leads-pagination-slot') && !document.querySelector('.cam-page')) {
+        return 'leads-pagination-slot';
+      }
+      if (document.getElementById('ca-master-pagination-slot')) {
+        return 'ca-master-pagination-slot';
+      }
+    }
     return id && document.getElementById(id) ? id : null;
   }
 
@@ -370,7 +379,7 @@ window.CA_CRM = (function () {
     if (parsed.pagination && parsed.pagination.per_page != null) {
       var allowed = (window.CA_LISTING_SEARCH.LISTING_PER_PAGE_OPTIONS && CA_LISTING_SEARCH.LISTING_PER_PAGE_OPTIONS[key])
         || (window.CATablePagination && CATablePagination.PER_PAGE_OPTIONS)
-        || [10, 25, 50, 100, 200, 500, 1000];
+        || [10, 25, 50, 100];
       var nextPerPage = window.CATablePagination && CATablePagination.normalizePerPage
         ? CATablePagination.normalizePerPage(parsed.pagination.per_page, allowed)
         : parseInt(parsed.pagination.per_page, 10) || 10;
@@ -5249,6 +5258,8 @@ if (otherInput) {
 
   var leadDuplicateCheckTimer = null;
   window._leadDuplicateBlocked = false;
+  window._leadSimilarWarningActive = false;
+  window._leadSimilarSkipConfirmed = false;
 
   function formatDuplicateDate(value) {
     if (!value) return '-';
@@ -5259,6 +5270,25 @@ if (otherInput) {
     }
   }
 
+  function setLeadDuplicateWarningTone(box, tone) {
+    if (!box) return;
+    box.classList.remove(
+      'border-red-200', 'bg-red-50', 'text-red-800',
+      'border-amber-200', 'bg-amber-50', 'text-amber-900'
+    );
+    if (tone === 'amber') {
+      box.classList.add('border-amber-200', 'bg-amber-50', 'text-amber-900');
+    } else {
+      box.classList.add('border-red-200', 'bg-red-50', 'text-red-800');
+    }
+  }
+
+  function clearLeadSimilarWarningState() {
+    window._leadSimilarWarningActive = false;
+    window._leadSimilarSkipConfirmed = false;
+    window._lastPotentialAttemptId = null;
+  }
+
   function renderLeadDuplicateWarning(duplicate, potential) {
     var box = document.getElementById('form-lead-duplicate-warning');
     var submitBtn = document.getElementById('add-lead-submit-btn');
@@ -5266,12 +5296,28 @@ if (otherInput) {
 
     if (potential && potential.existing_lead) {
       var pLead = potential.existing_lead;
+      var similarNumber = potential.existing_number || pLead.mobile_no || '—';
+      setLeadDuplicateWarningTone(box, 'amber');
       box.innerHTML =
-        '<p class="font-semibold text-amber-700 mb-1">Potential Duplicate — similar number exists</p>' +
-        '<p class="text-sm text-amber-800">Prefix matches existing lead <strong>' + escapeHtml(pLead.firm_name || pLead.ca_name || 'Lead') + '</strong> (' + escapeHtml(potential.existing_number || pLead.mobile_no || '—') + ').</p>' +
-        '<p class="text-caption text-amber-700 mt-1">This attempt is logged for manager review. You may still save if the number is unique.</p>';
+        '<p class="font-semibold text-amber-800 mb-1">Similar number warning</p>' +
+        '<p class="text-sm text-amber-900">A close number already exists for <strong>' +
+          escapeHtml(pLead.firm_name || pLead.ca_name || 'Lead') +
+          '</strong> (' + escapeHtml(similarNumber) + '). Only the last few digits differ.</p>' +
+        '<p class="text-caption text-amber-800 mt-1">This is a warning only — not a hard duplicate block. Confirm below to skip and save.</p>' +
+        '<label class="mt-2 flex items-start gap-2 text-sm text-amber-950 cursor-pointer">' +
+          '<input type="checkbox" id="lead-similar-skip-confirm" class="mt-0.5 rounded border-amber-400" />' +
+          '<span>Skip warning &amp; save this entry anyway</span>' +
+        '</label>';
       box.classList.remove('hidden');
       window._leadDuplicateBlocked = false;
+      window._leadSimilarWarningActive = true;
+      window._leadSimilarSkipConfirmed = false;
+      var skipBox = document.getElementById('lead-similar-skip-confirm');
+      if (skipBox) {
+        skipBox.addEventListener('change', function () {
+          window._leadSimilarSkipConfirmed = !!skipBox.checked;
+        });
+      }
       if (submitBtn) submitBtn.disabled = false;
       return;
     }
@@ -5279,15 +5325,19 @@ if (otherInput) {
     if (!duplicate || !duplicate.existing_lead) {
       box.classList.add('hidden');
       box.innerHTML = '';
+      setLeadDuplicateWarningTone(box, 'red');
       window._leadDuplicateBlocked = false;
+      clearLeadSimilarWarningState();
       if (submitBtn) submitBtn.disabled = false;
       return;
     }
 
     var lead = duplicate.existing_lead;
+    clearLeadSimilarWarningState();
+    setLeadDuplicateWarningTone(box, 'red');
     box.innerHTML =
       '<p class="font-semibold text-red-700 mb-1">' + escapeHtml(duplicate.title || 'Duplicate Number Found') + '</p>' +
-      '<p class="text-sm text-red-800">This attempt has been logged for manager review.</p>' +
+      '<p class="text-sm text-red-800">This exact number already exists. Saving is blocked until you use a different number.</p>' +
       '<p><strong>CA Name:</strong> ' + escapeHtml(lead.ca_name || '—') + '</p>' +
       '<p><strong>Firm Name:</strong> ' + escapeHtml(lead.firm_name || '—') + '</p>' +
       '<p><strong>Added by:</strong> ' + escapeHtml(lead.added_by || '—') + '</p>' +
@@ -5307,8 +5357,10 @@ if (otherInput) {
       if (box) {
         box.classList.add('hidden');
         box.innerHTML = '';
+        setLeadDuplicateWarningTone(box, 'red');
       }
       window._leadDuplicateBlocked = false;
+      clearLeadSimilarWarningState();
       if (document.getElementById('add-lead-submit-btn')) {
         document.getElementById('add-lead-submit-btn').disabled = false;
       }
@@ -5324,6 +5376,7 @@ if (otherInput) {
     return apiFetch(url).then(function (body) {
       var data = body.data || {};
       if (data.potential_duplicate) {
+        window._lastPotentialAttemptId = data.potential_attempt_id || null;
         renderLeadDuplicateWarning(null, data.potential_duplicate);
       } else {
         renderLeadDuplicateWarning(null);
@@ -5339,6 +5392,7 @@ if (otherInput) {
       return null;
     }).catch(function (error) {
       if (error.status === 409 && error.duplicate) {
+        clearLeadSimilarWarningState();
         renderLeadDuplicateWarning(error.duplicate);
         return error.duplicate;
       }
@@ -18838,6 +18892,12 @@ if (otherInput) {
     if (!form || form.dataset.formPurpose !== 'lead' || !isLeadModalOpen()) return;
     if (window._leadDuplicateBlocked) {
       toast('This phone number already exists. Resolve the duplicate before saving.', 'warning');
+      return;
+    }
+    if (window._leadSimilarWarningActive && !window._leadSimilarSkipConfirmed) {
+      toast('A similar number was found. Tick “Skip warning & save this entry anyway” to continue.', 'warning');
+      var skipConfirm = document.getElementById('lead-similar-skip-confirm');
+      if (skipConfirm) skipConfirm.focus();
       return;
     }
 

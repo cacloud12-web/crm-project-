@@ -385,21 +385,30 @@
       slot.innerHTML = '';
       return;
     }
-    if (window.CATablePagination && typeof window.CATablePagination.render === 'function') {
-      window.CATablePagination.render(slot, {
-        page: p.current_page || state.page,
-        perPage: p.per_page || state.perPage,
-        total: p.total,
-        lastPage: p.last_page || 1,
-        onPage: function (page) {
-          state.page = page;
-          loadTickets();
-        },
-        onPerPage: function (perPage) {
-          state.perPage = perPage;
-          state.page = 1;
-          loadTickets();
-        },
+    if (window.CATablePagination && typeof window.CATablePagination.renderInto === 'function') {
+      if (!window._ticketsPaginationRegistered) {
+        window._ticketsPaginationRegistered = true;
+        CATablePagination.register('tickets-page', {
+          onPageChange: function (page) {
+            state.page = page;
+            loadTickets();
+          },
+          onPerPageChange: function (perPage) {
+            state.perPage = perPage;
+            state.page = 1;
+            loadTickets();
+          },
+        });
+      }
+      if (p.per_page) state.perPage = Number(p.per_page) || state.perPage;
+      CATablePagination.renderInto(slot, {
+        pagination: p,
+        scope: 'tickets-page',
+        perPage: state.perPage,
+        perPageOptions: (window.CA_LISTING_SEARCH && CA_LISTING_SEARCH.LISTING_PER_PAGE_OPTIONS
+          && CA_LISTING_SEARCH.LISTING_PER_PAGE_OPTIONS.support_tickets)
+          || [10, 25, 50, 100, 200, 500, 1000],
+        showPerPage: true,
       });
       return;
     }
