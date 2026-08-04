@@ -4,14 +4,16 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | CA Cloud Desk integration (placeholders — no invented endpoints)
+    | CA Cloud Desk / LawSeva external auth APIs (tickets)
     |--------------------------------------------------------------------------
     |
-    | Real URL paths and response fields must come from the CA Cloud Desk
-    | developer. Empty values mean the integration is not configured.
+    | Auth: shared secret in header X-Api-Key (env EXTERNAL_AUTH_KEY or
+    | CA_CLOUD_DESK_API_TOKEN). Do not send JWT / Authorization Bearer.
     |
-    | This layer is provider-ready: when official docs arrive, fill the env
-    | values and implement response mapping in CaCloudDeskHttpClient.
+    | Documented paths (admin_settings):
+    |   GET  /seva-api/v1/admin_settings/auth_organizations/
+    |   GET  /seva-api/v1/admin_settings/auth_employee/?organization=&username=
+    |   POST /seva-api/v1/admin_settings/auth_ticket/
     |
     */
 
@@ -19,11 +21,37 @@ return [
 
     'base_url' => env('CA_CLOUD_DESK_BASE_URL'),
 
-    'api_token' => env('CA_CLOUD_DESK_API_TOKEN'),
+    // Shared secret for X-Api-Key. Prefer EXTERNAL_AUTH_KEY; fall back to CA_CLOUD_DESK_API_TOKEN.
+    'api_token' => env('EXTERNAL_AUTH_KEY', env('CA_CLOUD_DESK_API_TOKEN')),
 
-    'lookup_endpoint' => env('CA_CLOUD_DESK_LOOKUP_ENDPOINT'),
+    'api_key_header' => env('CA_CLOUD_DESK_API_KEY_HEADER', 'X-Api-Key'),
 
-    'verify_endpoint' => env('CA_CLOUD_DESK_VERIFY_ENDPOINT'),
+    // Official LawSeva external auth endpoints (relative to base_url unless absolute).
+    'organizations_endpoint' => env(
+        'CA_CLOUD_DESK_ORGANIZATIONS_ENDPOINT',
+        '/seva-api/v1/admin_settings/auth_organizations/',
+    ),
+
+    'employee_endpoint' => env(
+        'CA_CLOUD_DESK_EMPLOYEE_ENDPOINT',
+        '/seva-api/v1/admin_settings/auth_employee/',
+    ),
+
+    'ticket_endpoint' => env(
+        'CA_CLOUD_DESK_TICKET_ENDPOINT',
+        '/seva-api/v1/admin_settings/auth_ticket/',
+    ),
+
+    // Backward-compatible aliases used by earlier scaffolding / isConfigured checks.
+    'lookup_endpoint' => env(
+        'CA_CLOUD_DESK_LOOKUP_ENDPOINT',
+        env('CA_CLOUD_DESK_ORGANIZATIONS_ENDPOINT', '/seva-api/v1/admin_settings/auth_organizations/'),
+    ),
+
+    'verify_endpoint' => env(
+        'CA_CLOUD_DESK_VERIFY_ENDPOINT',
+        env('CA_CLOUD_DESK_EMPLOYEE_ENDPOINT', '/seva-api/v1/admin_settings/auth_employee/'),
+    ),
 
     'timeout' => (int) env('CA_CLOUD_DESK_TIMEOUT', 20),
 

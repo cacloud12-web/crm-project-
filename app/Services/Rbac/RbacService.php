@@ -381,6 +381,11 @@ class RbacService
             return ['module' => 'employees', 'permission' => 'edit'];
         }
 
+        // Demo-provider picker for follow-ups — employees need this without Employees module access.
+        if ($path === 'employees/demo-providers') {
+            return ['module' => 'followups', 'permission' => 'schedule_demo'];
+        }
+
         if (str_starts_with($path, 'admin/db-health')) {
             return ['module' => 'admin', 'permission' => 'manage_settings'];
         }

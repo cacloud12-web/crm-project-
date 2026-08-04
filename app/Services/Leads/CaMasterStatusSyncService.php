@@ -23,6 +23,9 @@ class CaMasterStatusSyncService
             return;
         }
 
+        if (! array_key_exists('last_activity_at', $extra)) {
+            $extra['last_activity_at'] = now();
+        }
         $lead->update(array_merge(['status' => $status], $extra));
         $this->forgetCaches();
     }

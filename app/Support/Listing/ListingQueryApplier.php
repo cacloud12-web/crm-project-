@@ -440,22 +440,13 @@ class ListingQueryApplier
         $table = $query->getModel()->getTable();
 
         if ($sortBy === 'last_activity_at') {
-            $query->orderByRaw(
-                '(SELECT MAX(v) FROM (
-                    SELECT called_at AS v FROM call_logs WHERE call_logs.ca_id = '.$table.'.ca_id
-                    UNION ALL SELECT created_at FROM follow_up_histories WHERE follow_up_histories.ca_id = '.$table.'.ca_id
-                    UNION ALL SELECT updated_at FROM follow_ups WHERE follow_ups.ca_id = '.$table.'.ca_id AND follow_ups.deleted_at IS NULL
-                    UNION ALL SELECT action_at FROM lead_actions WHERE lead_actions.ca_id = '.$table.'.ca_id
-                    UNION ALL SELECT assigned_at FROM assignment_histories WHERE assignment_histories.ca_id = '.$table.'.ca_id
-                    UNION ALL SELECT COALESCE(reply_received_at, sent_at, created_at) FROM email_logs WHERE email_logs.ca_id = '.$table.'.ca_id
-                    UNION ALL SELECT COALESCE(received_at, created_at) FROM email_inbound_messages WHERE email_inbound_messages.ca_id = '.$table.'.ca_id
-                    UNION ALL SELECT COALESCE(sent_at, delivered_at, created_at) FROM wa_message_logs WHERE wa_message_logs.ca_id = '.$table.'.ca_id
-                    UNION ALL SELECT COALESCE(sent_at, delivered_at, created_at) FROM sms_logs WHERE sms_logs.ca_id = '.$table.'.ca_id
-                    UNION ALL SELECT recorded_at FROM lead_quality_histories WHERE lead_quality_histories.ca_id = '.$table.'.ca_id
-                    UNION ALL SELECT created_at FROM ca_masters AS cm WHERE cm.ca_id = '.$table.'.ca_id
-                    UNION ALL SELECT updated_at FROM ca_masters AS cm2 WHERE cm2.ca_id = '.$table.'.ca_id
-                )) '.$sortDir
-            );
+            // Prefer denormalized column (indexed). Fall back to updated_at — never the
+            // old per-row 12-table UNION, which timed out on ~100k+ ca_masters rows.
+            if (SchemaMemo::hasColumn($table, 'last_activity_at')) {
+                $query->orderBy($table.'.last_activity_at', $sortDir);
+            } else {
+                $query->orderBy($table.'.updated_at', $sortDir);
+            }
 
             return;
         }

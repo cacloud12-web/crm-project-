@@ -88,6 +88,7 @@ class CaMaster extends Model
         'last_viewed_at',
         'locked_by',
         'locked_at',
+        'last_activity_at',
     ];
 
     protected function casts(): array
@@ -113,6 +114,7 @@ class CaMaster extends Model
             'last_viewed_at' => 'datetime',
             'researched_at' => 'datetime',
             'locked_at' => 'datetime',
+            'last_activity_at' => 'datetime',
         ];
     }
 

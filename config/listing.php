@@ -2,8 +2,8 @@
 
 return [
     'default_per_page' => 10,
-    'max_per_page' => 1000,
-    'max_all' => 1000,
+    'max_per_page' => 100,
+    'max_all' => 100,
 
     'ca_masters' => [
         'table' => 'ca_masters',
@@ -11,9 +11,9 @@ return [
         'employee_scope' => 'assigned_active_leads',
         'default_sort' => 'created_at',
         'default_sort_dir' => 'desc',
-        'max_per_page' => 1000,
-        'allowed_per_page' => [10, 25, 50, 100, 200, 500, 1000],
-        'max_all' => 1000,
+        'max_per_page' => 100,
+        'allowed_per_page' => [10, 25, 50, 100],
+        'max_all' => 100,
         'sortable' => ['ca_id', 'firm_name', 'ca_name', 'email_id', 'sales_remarks', 'status', 'rating', 'team_size', 'created_at', 'updated_at', 'team_members_count', 'last_activity_at'],
         'search_columns' => ['firm_name', 'ca_name', 'mobile_no', 'alternate_mobile_no', 'email_id', 'sales_remarks', 'gst_no'],
         'search_relations' => [
@@ -85,8 +85,8 @@ return [
         'primary_key' => 'followup_id',
         'employee_scope' => 'employee_id',
         'default_per_page' => 10,
-        'max_per_page' => 1000,
-        'allowed_per_page' => [10, 25, 50, 100, 200, 500, 1000],
+        'max_per_page' => 100,
+        'allowed_per_page' => [10, 25, 50, 100],
         'default_sort' => 'created_at',
         'default_sort_dir' => 'desc',
         'sortable' => ['followup_id', 'followup_type', 'status', 'scheduled_date', 'next_followup_date', 'created_at'],

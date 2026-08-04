@@ -179,7 +179,28 @@ class EmployeeDemoAssignmentTest extends TestCase
         $this->assertNotContains($large->employee_id, $smallOnly);
     }
 
-    public function test_demo_scheduled_follow_up_saves_provider_and_link(): void
+    public function test_employee_can_load_demo_providers_by_team_size(): void
+    {
+        $this->actingAs(CrmTestAccounts::employeeUser());
+        $ts = (string) microtime(true);
+
+        $provider = Employee::query()->create([
+            'name' => 'Emp Visible Provider '.$ts,
+            'email_id' => "emp.visible.{$ts}@test.local",
+            'status' => 'Active',
+            'work_type' => 'demo_provider',
+            'demo_meeting_link' => 'https://meet.example.com/emp-visible',
+            'demo_min_team_size' => 1,
+            'demo_max_team_size' => 50,
+            'active_for_demo' => true,
+        ]);
+
+        $response = $this->getJson('/employees/demo-providers?team_size=8')->assertOk();
+        $ids = collect($response->json('data'))->pluck('employee_id')->all();
+        $this->assertContains($provider->employee_id, $ids);
+    }
+
+        public function test_demo_scheduled_follow_up_saves_provider_and_link(): void
     {
         $this->actingAsAdmin();
         $ts = (string) microtime(true);

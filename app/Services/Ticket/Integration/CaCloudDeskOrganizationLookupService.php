@@ -27,13 +27,18 @@ class CaCloudDeskOrganizationLookupService implements OrganizationLookupServiceI
             return false;
         }
 
-        foreach (['base_url', 'api_token', 'lookup_endpoint', 'verify_endpoint'] as $key) {
+        foreach (['base_url', 'api_token'] as $key) {
             if (! filled(config("ca_cloud_desk_integration.{$key}"))) {
                 return false;
             }
         }
 
-        return true;
+        $hasOrgs = filled(config('ca_cloud_desk_integration.organizations_endpoint'))
+            || filled(config('ca_cloud_desk_integration.lookup_endpoint'));
+        $hasEmployee = filled(config('ca_cloud_desk_integration.employee_endpoint'))
+            || filled(config('ca_cloud_desk_integration.verify_endpoint'));
+
+        return $hasOrgs && $hasEmployee;
     }
 
     public function lookupByMobile(string $mobileNumber, ?User $user = null): array
@@ -275,9 +280,20 @@ class CaCloudDeskOrganizationLookupService implements OrganizationLookupServiceI
             $payloadName = $this->organizationNameFromPayload($lookup, $remoteOrgNumber);
             $orgName = $payloadName ?: $remoteOrgName;
 
+            $payload = is_array($lookup->organizations_payload) ? $lookup->organizations_payload : [];
+            if (isset($remote['partner_id']) && $remote['partner_id']) {
+                $payload['_lawseva'] = [
+                    'partner_id' => (int) $remote['partner_id'],
+                    'partner_name' => $remote['partner_name'] ?? null,
+                    'partner_email' => $remote['partner_email'] ?? null,
+                    'partner_phone' => $remote['partner_phone'] ?? null,
+                ];
+            }
+
             $lookup->forceFill([
                 'organization_number' => $remoteOrgNumber,
                 'organization_name' => $orgName,
+                'organizations_payload' => $payload,
                 'verification_status' => 'verified',
                 'verified_email' => $email,
                 'verified_at' => now(),

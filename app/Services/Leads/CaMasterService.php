@@ -413,7 +413,11 @@ class CaMasterService
         $executiveId = $this->extractExecutiveId($data);
 
         $lead = DB::transaction(function () use ($caMaster, $data) {
-            $caMaster->update($this->normalize($data, $caMaster));
+            $payload = $this->normalize($data, $caMaster);
+            if (! array_key_exists('last_activity_at', $payload)) {
+                $payload['last_activity_at'] = now();
+            }
+            $caMaster->update($payload);
             $lead = $caMaster->fresh(['city', 'state', 'sourceLead', 'lockedByEmployee']);
             $this->duplicateLeadDetection->syncLeadPhones($lead);
 
@@ -464,7 +468,7 @@ class CaMasterService
         }
 
         $before = $this->auditSnapshot($caMaster);
-        $caMaster->update(['status' => $status]);
+        $caMaster->update(['status' => $status, 'last_activity_at' => now()]);
         $lead = $caMaster->fresh(['city', 'state', 'sourceLead']);
 
         if (in_array($status, config('crm_duplicates.wrong_number_statuses', []), true)) {

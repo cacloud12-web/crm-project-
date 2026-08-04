@@ -295,6 +295,7 @@ class CaMasterPartnersAndStatusFilterTest extends TestCase
         $options = config('crm_statuses.master_data_filter');
         $this->assertIsArray($options);
         $this->assertContains('New', $options);
+        $this->assertContains('Demo Scheduled', $options);
         $this->assertContains('Purchased', $options);
         $this->assertContains('Left in between', $options);
         $this->assertSame('New', $options[0]);

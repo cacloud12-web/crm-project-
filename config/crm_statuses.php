@@ -5,6 +5,7 @@ return [
         'New',
         'Interested',
         'Thinking',
+        'Demo Scheduled',
         'Purchasing',
         'Purchased',
         'Not Interested',

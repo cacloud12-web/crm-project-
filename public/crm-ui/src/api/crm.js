@@ -16795,7 +16795,8 @@ if (otherInput) {
 
   function canEditFollowupTeamSizeField() {
     var role = (window.__CRM_USER__ || {}).role;
-    return role === 'super_admin' || role === 'manager';
+    // Employees schedule demos too — they must set team size / pick a provider.
+    return role === 'super_admin' || role === 'admin' || role === 'manager' || role === 'employee';
   }
 
   function canEditFollowupDemoProviderField() {

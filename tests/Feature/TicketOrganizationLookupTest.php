@@ -34,8 +34,11 @@ class TicketOrganizationLookupTest extends TestCase
             'ca_cloud_desk_integration.enabled' => true,
             'ca_cloud_desk_integration.base_url' => 'https://example.invalid',
             'ca_cloud_desk_integration.api_token' => 'test-token',
-            'ca_cloud_desk_integration.lookup_endpoint' => '/placeholder-lookup',
-            'ca_cloud_desk_integration.verify_endpoint' => '/placeholder-verify',
+            'ca_cloud_desk_integration.organizations_endpoint' => '/seva-api/v1/admin_settings/auth_organizations/',
+            'ca_cloud_desk_integration.employee_endpoint' => '/seva-api/v1/admin_settings/auth_employee/',
+            'ca_cloud_desk_integration.ticket_endpoint' => '/seva-api/v1/admin_settings/auth_ticket/',
+            'ca_cloud_desk_integration.lookup_endpoint' => '/seva-api/v1/admin_settings/auth_organizations/',
+            'ca_cloud_desk_integration.verify_endpoint' => '/seva-api/v1/admin_settings/auth_employee/',
         ]);
     }
 
