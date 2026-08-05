@@ -45,12 +45,17 @@ trait ResolvesFollowUpDemoFields
         $link = array_key_exists('meeting_link', $data)
             ? ($data['meeting_link'] !== '' ? (string) $data['meeting_link'] : null)
             : $existing?->meeting_link;
+        $explicitMeetingLink = array_key_exists('meeting_link', $data)
+            && trim((string) ($data['meeting_link'] ?? '')) !== '';
 
         if ($providerEmployeeId) {
             $employee = Employee::query()->where('employee_id', $providerEmployeeId)->first();
             if ($employee && app(DemoProviderEligibilityService::class)->isDemoCapableWorkType($employee->work_type)) {
                 $provider = $employee->name;
-                if ($existing === null || $teamSizeChanged || array_key_exists('demo_provider_employee_id', $data) || ! $link) {
+                if (
+                    ! $explicitMeetingLink
+                    && ($existing === null || $teamSizeChanged || array_key_exists('demo_provider_employee_id', $data) || ! $link)
+                ) {
                     $empLink = trim((string) ($employee->demo_meeting_link ?? ''));
                     if ($empLink !== '') {
                         $link = $empLink;

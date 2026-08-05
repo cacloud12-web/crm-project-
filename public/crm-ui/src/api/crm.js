@@ -1715,6 +1715,7 @@ window.CA_CRM = (function () {
   function renderLeadCallLogContext(lead) {
     var wrap = document.getElementById('lead-call-log-context');
     var hidden = document.getElementById('lead-call-log-ca-id');
+    window._leadCallLogLead = lead || null;
     if (!wrap || !hidden) return;
     if (!lead) {
       hidden.value = '';
@@ -1763,6 +1764,138 @@ window.CA_CRM = (function () {
     if (input) input.classList.toggle('is-invalid', !!message);
   }
 
+  function callDemoFieldIds(prefix) {
+    return {
+      team: prefix + '-team-size',
+      provider: prefix + '-demo-provider',
+      providerName: prefix + '-demo-provider-name',
+      providerHint: prefix + '-demo-provider-hint',
+      meetingLink: prefix + '-meeting-link',
+    };
+  }
+
+  function setCallDemoProviderHint(prefix, message, isError) {
+    var hint = document.getElementById(callDemoFieldIds(prefix).providerHint);
+    if (!hint) return;
+    if (!message) {
+      hint.textContent = '';
+      hint.classList.add('hidden');
+      hint.classList.remove('text-red-600');
+      return;
+    }
+    hint.textContent = message;
+    hint.classList.remove('hidden');
+    hint.classList.toggle('text-red-600', !!isError);
+  }
+
+  function applyCallDemoProviderLink(prefix) {
+    var ids = callDemoFieldIds(prefix);
+    var providerSel = document.getElementById(ids.provider);
+    var nameInput = document.getElementById(ids.providerName);
+    var linkInput = document.getElementById(ids.meetingLink);
+    if (!providerSel) return;
+    var opt = providerSel.options[providerSel.selectedIndex];
+    var link = opt ? (opt.getAttribute('data-meeting-link') || '') : '';
+    var name = opt ? (opt.getAttribute('data-name') || opt.textContent || '') : '';
+    if (nameInput) nameInput.value = providerSel.value ? String(name).split(' — ')[0] : '';
+    if (linkInput && (linkInput.dataset.autoFilled === '1' || !linkInput.value)) {
+      linkInput.value = link;
+      linkInput.dataset.autoFilled = '1';
+    }
+  }
+
+  function loadCallDemoProviders(prefix, preferredEmployeeId) {
+    var ids = callDemoFieldIds(prefix);
+    var teamInput = document.getElementById(ids.team);
+    var providerSel = document.getElementById(ids.provider);
+    if (!teamInput || !providerSel) return;
+    var n = parseInt(teamInput.value, 10);
+    providerSel.innerHTML = '<option value="">Select demo provider</option>';
+    setCallDemoProviderHint(prefix, '');
+    if (!n || n < 1) {
+      setCallDemoProviderHint(prefix, 'Enter a team size to load eligible demo providers.', false);
+      return;
+    }
+    apiFetch('/employees/demo-providers?team_size=' + encodeURIComponent(n))
+      .then(function (res) {
+        var options = (res && res.data) ? res.data : (Array.isArray(res) ? res : []);
+        if (!options.length) {
+          setCallDemoProviderHint(prefix, 'No active demo provider matches this team size.', true);
+          applyCallDemoProviderLink(prefix);
+          return;
+        }
+        options.forEach(function (item) {
+          var option = document.createElement('option');
+          option.value = String(item.employee_id);
+          option.textContent = item.label || (item.name + ' — ' + item.demo_min_team_size + ' to ' + item.demo_max_team_size);
+          option.setAttribute('data-meeting-link', item.demo_meeting_link || '');
+          option.setAttribute('data-name', item.name || '');
+          providerSel.appendChild(option);
+        });
+        var preferred = preferredEmployeeId != null ? String(preferredEmployeeId) : '';
+        if (preferred && providerSel.querySelector('option[value="' + preferred + '"]')) {
+          providerSel.value = preferred;
+        } else if (options.length === 1) {
+          providerSel.value = String(options[0].employee_id);
+        }
+        applyCallDemoProviderLink(prefix);
+      })
+      .catch(function () {
+        setCallDemoProviderHint(prefix, 'Unable to load demo providers.', true);
+      });
+  }
+
+  function getCallDemoLeadContext(prefix) {
+    if (prefix === 'lead-call-log') return window._leadCallLogLead || null;
+    if (prefix === 'call-outcome') return window._callOutcomeLead || null;
+    return null;
+  }
+
+  function populateCallDemoFieldsFromLead(prefix, preferredEmployeeId) {
+    var ids = callDemoFieldIds(prefix);
+    var teamInput = document.getElementById(ids.team);
+    var linkInput = document.getElementById(ids.meetingLink);
+    if (!teamInput) return;
+    var lead = getCallDemoLeadContext(prefix);
+    var leadTeam = lead && lead.team_size != null && lead.team_size !== ''
+      ? parseInt(lead.team_size, 10)
+      : null;
+    if ((!teamInput.value || !parseInt(teamInput.value, 10)) && leadTeam > 0) {
+      teamInput.value = String(leadTeam);
+    }
+    if (linkInput) {
+      linkInput.dataset.autoFilled = '1';
+      linkInput.dataset.userEdited = '';
+    }
+    loadCallDemoProviders(prefix, preferredEmployeeId);
+  }
+
+  function bindCallDemoFieldEvents(prefix) {
+    var ids = callDemoFieldIds(prefix);
+    var teamInput = document.getElementById(ids.team);
+    var providerInput = document.getElementById(ids.provider);
+    var linkInput = document.getElementById(ids.meetingLink);
+    if (teamInput && !teamInput._callDemoBound) {
+      teamInput._callDemoBound = true;
+      teamInput.addEventListener('input', function () { loadCallDemoProviders(prefix); });
+      teamInput.addEventListener('change', function () { loadCallDemoProviders(prefix); });
+    }
+    if (providerInput && !providerInput._callDemoBound) {
+      providerInput._callDemoBound = true;
+      providerInput.addEventListener('change', function () {
+        if (linkInput) linkInput.dataset.autoFilled = '1';
+        applyCallDemoProviderLink(prefix);
+      });
+    }
+    if (linkInput && !linkInput._callDemoBound) {
+      linkInput._callDemoBound = true;
+      linkInput.addEventListener('input', function () {
+        linkInput.dataset.userEdited = '1';
+        linkInput.dataset.autoFilled = '0';
+      });
+    }
+  }
+
   function syncLeadCallLogFields() {
     var status = (document.getElementById('lead-call-log-status') || {}).value || '';
     var otherWrap = document.getElementById('lead-call-log-other-status-wrap');
@@ -1796,14 +1929,21 @@ if (otherInput) {
     if (demoWrap) {
       demoWrap.classList.toggle('hidden', status !== 'Demo Scheduled');
       if (status !== 'Demo Scheduled') {
-        ['lead-call-log-demo-date', 'lead-call-log-demo-time', 'lead-call-log-meeting-link'].forEach(function (id) {
+        ['lead-call-log-demo-date', 'lead-call-log-demo-time', 'lead-call-log-meeting-link', 'lead-call-log-team-size', 'lead-call-log-demo-provider', 'lead-call-log-demo-provider-name'].forEach(function (id) {
           var el = document.getElementById(id);
           if (!el) return;
           if (id === 'lead-call-log-demo-time') el.value = '10:00';
+          else if (id === 'lead-call-log-demo-provider') el.innerHTML = '<option value="">Select demo provider</option>';
           else el.value = '';
         });
+        setCallDemoProviderHint('lead-call-log', '');
         setLeadCallLogError('demo_date', '');
         setLeadCallLogError('demo_time', '');
+        setLeadCallLogError('team_size', '');
+        setLeadCallLogError('demo_provider_employee_id', '');
+        setLeadCallLogError('meeting_link', '');
+      } else {
+        populateCallDemoFieldsFromLead('lead-call-log');
       }
     }
   }
@@ -1823,6 +1963,16 @@ if (otherInput) {
     if (status === 'Demo Scheduled') {
       if (!(payload.demo_date || '').trim()) errors.push({ field: 'demo_date', message: 'Demo date is required.' });
       if (!(payload.demo_time || '').trim()) errors.push({ field: 'demo_time', message: 'Demo time is required.' });
+      var teamSize = parseInt(payload.team_size, 10);
+      if (!teamSize || teamSize < 1) errors.push({ field: 'team_size', message: 'Team size is required.' });
+      if (!(payload.demo_provider_employee_id || '').trim()) {
+        errors.push({ field: 'demo_provider_employee_id', message: 'Please select a demo provider.' });
+      }
+      applyCallDemoProviderLink('lead-call-log');
+      payload = Object.fromEntries(new FormData(form).entries());
+      if (!(payload.meeting_link || '').trim()) {
+        errors.push({ field: 'meeting_link', message: 'Meeting link is required.' });
+      }
     }
 
     if (status === 'Follow-up Required' && !(payload.next_followup_date || '').trim()) {
@@ -1841,6 +1991,10 @@ if (otherInput) {
     if (payload.demo_date && payload.demo_time) {
       payload.demo_at = payload.demo_date + ' ' + payload.demo_time;
     }
+    if (payload.team_size) payload.team_size = parseInt(payload.team_size, 10);
+    if (payload.demo_provider_employee_id) {
+      payload.demo_provider_employee_id = parseInt(payload.demo_provider_employee_id, 10);
+    }
     return payload;
   }
 
@@ -1856,6 +2010,9 @@ if (otherInput) {
           demo_date: payload.demo_date,
           demo_time: payload.demo_time,
           demo_at: payload.demo_at,
+          team_size: payload.team_size || null,
+          demo_provider_employee_id: payload.demo_provider_employee_id || null,
+          demo_provider_name: payload.demo_provider_name || '',
           meeting_link: payload.meeting_link || '',
         }),
       });
@@ -13251,15 +13408,25 @@ if (otherInput) {
     if (!modal || !form) return;
     form.reset();
     clearCallOutcomeErrors(form);
+    window._callOutcomeLead = null;
     var idEl = document.getElementById('call-outcome-followup-id');
     var caEl = document.getElementById('call-outcome-ca-id');
     if (idEl) idEl.value = followupId || '';
     if (caEl) caEl.value = caId || '';
     syncCallOutcomeFields();
+    bindCallDemoFieldEvents('call-outcome');
     openModal(modal);
     var statusEl = document.getElementById('call-outcome-select');
     if (statusEl) statusEl.focus();
     iconsIn(modal);
+    if (caId) {
+      fetchLeadForFollowup(caId).then(function (lead) {
+        window._callOutcomeLead = lead || null;
+        if ((document.getElementById('call-outcome-select') || {}).value === 'Demo Scheduled') {
+          populateCallDemoFieldsFromLead('call-outcome');
+        }
+      }).catch(function () { /* ignore */ });
+    }
   }
 
   function clearCallOutcomeErrors(form) {
@@ -13283,6 +13450,8 @@ if (otherInput) {
         : field === 'next_followup_date' ? 'call-outcome-followup-date'
         : field === 'demo_date' ? 'call-outcome-demo-date'
         : field === 'demo_time' ? 'call-outcome-demo-time'
+        : field === 'team_size' ? 'call-outcome-team-size'
+        : field === 'demo_provider_employee_id' ? 'call-outcome-demo-provider'
         : field === 'meeting_link' ? 'call-outcome-meeting-link'
         : ''
     ));
@@ -13308,15 +13477,21 @@ if (otherInput) {
     if (demoWrap) {
       demoWrap.classList.toggle('hidden', outcome !== 'Demo Scheduled');
       if (outcome !== 'Demo Scheduled') {
-        ['call-outcome-demo-date', 'call-outcome-demo-time', 'call-outcome-meeting-link'].forEach(function (id) {
+        ['call-outcome-demo-date', 'call-outcome-demo-time', 'call-outcome-meeting-link', 'call-outcome-team-size', 'call-outcome-demo-provider', 'call-outcome-demo-provider-name'].forEach(function (id) {
           var el = document.getElementById(id);
           if (!el) return;
           if (id === 'call-outcome-demo-time') el.value = '10:00';
+          else if (id === 'call-outcome-demo-provider') el.innerHTML = '<option value="">Select demo provider</option>';
           else el.value = '';
         });
+        setCallDemoProviderHint('call-outcome', '');
         setCallOutcomeError('demo_date', '');
         setCallOutcomeError('demo_time', '');
+        setCallOutcomeError('team_size', '');
+        setCallOutcomeError('demo_provider_employee_id', '');
         setCallOutcomeError('meeting_link', '');
+      } else {
+        populateCallDemoFieldsFromLead('call-outcome');
       }
     }
   }
@@ -13333,6 +13508,16 @@ if (otherInput) {
     if (outcome === 'Demo Scheduled') {
       if (!(payload.demo_date || '').trim()) errors.push({ field: 'demo_date', message: 'Demo date is required.' });
       if (!(payload.demo_time || '').trim()) errors.push({ field: 'demo_time', message: 'Demo time is required.' });
+      var teamSize = parseInt(payload.team_size, 10);
+      if (!teamSize || teamSize < 1) errors.push({ field: 'team_size', message: 'Team size is required.' });
+      if (!(payload.demo_provider_employee_id || '').trim()) {
+        errors.push({ field: 'demo_provider_employee_id', message: 'Please select a demo provider.' });
+      }
+      applyCallDemoProviderLink('call-outcome');
+      payload = Object.fromEntries(new FormData(form).entries());
+      if (!(payload.meeting_link || '').trim()) {
+        errors.push({ field: 'meeting_link', message: 'Meeting link is required.' });
+      }
     }
 
     if (outcome === 'Follow-up Required') {
@@ -13355,6 +13540,10 @@ if (otherInput) {
 
     if (outcome === 'Demo Scheduled') {
       payload.demo_at = payload.demo_date + ' ' + payload.demo_time;
+      if (payload.team_size) payload.team_size = parseInt(payload.team_size, 10);
+      if (payload.demo_provider_employee_id) {
+        payload.demo_provider_employee_id = parseInt(payload.demo_provider_employee_id, 10);
+      }
     }
 
     return payload;
@@ -19635,6 +19824,8 @@ if (otherInput) {
             demo_date: 'demo_date',
             demo_time: 'demo_time',
             demo_at: 'demo_date',
+            team_size: 'team_size',
+            demo_provider_employee_id: 'demo_provider_employee_id',
             meeting_link: 'meeting_link',
           };
           var focused = false;
@@ -19745,6 +19936,8 @@ if (otherInput) {
         syncLeadCallLogFields();
       });
     }
+    bindCallDemoFieldEvents('lead-call-log');
+    bindCallDemoFieldEvents('call-outcome');
 
     var outcomeSelect = document.getElementById('call-outcome-select');
     if (outcomeSelect) {

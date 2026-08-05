@@ -20,6 +20,8 @@ use App\Services\FollowUp\FollowUpHistoryService;
 use App\Services\Leads\CaMasterStatusSyncService;
 use App\Services\Leads\LeadQualityHistoryService;
 use App\Services\Demo\DemoAvailabilityService;
+use App\Services\DemoConfirmation\DemoConfirmationService;
+use App\Services\FollowUp\Concerns\ResolvesFollowUpDemoFields;
 use App\Services\Rbac\EmployeeDataScopeService;
 use App\Services\Rbac\RbacService;
 use Illuminate\Support\Carbon;
@@ -28,6 +30,8 @@ use InvalidArgumentException;
 
 class LeadWorkflowService
 {
+    use ResolvesFollowUpDemoFields;
+
     public function __construct(
         private readonly EmployeeDataScopeService $employeeDataScope,
         private readonly FollowUpHistoryService $historyService,
@@ -38,6 +42,7 @@ class LeadWorkflowService
         private readonly CrmCacheService $cacheService,
         private readonly RbacService $rbacService,
         private readonly CaMasterStatusSyncService $statusSyncService,
+        private readonly DemoConfirmationService $demoConfirmationService,
     ) {}
 
     /**
@@ -191,17 +196,28 @@ class LeadWorkflowService
         $employeeId = $this->resolveEmployeeId($data, $actor, $caId);
 
         $demoAt = $this->resolveDemoAt($data);
-        $meetingLink = trim((string) ($data['meeting_link'] ?? ''));
-
         $lead = CaMaster::query()->findOrFail($caId);
-        $teamSize = isset($data['team_size']) ? (int) $data['team_size'] : (int) ($lead->team_size ?? 0);
+
+        $demoFieldInput = array_merge($data, [
+            'ca_id' => $caId,
+            'followup_type' => 'Demo Scheduled',
+            'scheduled_date' => $demoAt->toDateTimeString(),
+        ]);
+        if (! array_key_exists('notes', $data) && array_key_exists('remarks', $data)) {
+            $demoFieldInput['remarks'] = $data['remarks'];
+        }
+
+        $existingFollowUp = $this->findDemoFollowUpToUpsert($caId, $data);
+        $demoFields = $this->resolveFollowUpDemoFields($demoFieldInput, $existingFollowUp);
+        $meetingLink = trim((string) ($demoFields['meeting_link'] ?? $data['meeting_link'] ?? ''));
+        $teamSize = (int) ($demoFields['team_size'] ?? $data['team_size'] ?? $lead->team_size ?? 0);
 
         if (empty($data['skip_conflict_check'])) {
             $availability = app(DemoAvailabilityService::class);
             $provider = $availability->resolveProvider(
                 isset($data['demo_provider_id']) ? (int) $data['demo_provider_id'] : null,
                 $teamSize > 0 ? $teamSize : null,
-                $data['demo_provider_name'] ?? null,
+                $demoFields['demo_provider_name'] ?? ($data['demo_provider_name'] ?? null),
             );
             if ($provider) {
                 $check = $availability->checkConflict(array_merge($data, [
@@ -215,29 +231,60 @@ class LeadWorkflowService
             }
         }
 
-        $followUp = $this->createFollowUp([
-            'ca_id' => $caId,
-            'employee_id' => $employeeId,
-            'followup_type' => 'Demo Scheduled',
-            'remarks' => $data['notes'] ?? 'Demo scheduled',
-            'scheduled_date' => $demoAt->toDateTimeString(),
-            'status' => 'Pending',
-            'priority' => 'High',
-            'source' => 'workflow_demo',
-            'is_auto_generated' => false,
-        ]);
+        $created = false;
+        if ($existingFollowUp) {
+            $previousScheduledDate = $existingFollowUp->scheduled_date?->copy();
+            $previousFollowupType = (string) $existingFollowUp->followup_type;
+            $existingFollowUp->fill([
+                'employee_id' => $employeeId ?: $existingFollowUp->employee_id,
+                'followup_type' => 'Demo Scheduled',
+                'remarks' => $data['notes'] ?? $data['remarks'] ?? $existingFollowUp->remarks ?? 'Demo scheduled',
+                'scheduled_date' => $demoAt->toDateTimeString(),
+                'status' => in_array((string) $existingFollowUp->status, ['Completed', 'Cancelled'], true)
+                    ? 'Pending'
+                    : ($existingFollowUp->status ?: 'Pending'),
+                'priority' => 'High',
+                'team_size' => $demoFields['team_size'],
+                'demo_provider_name' => $demoFields['demo_provider_name'],
+                'demo_provider_employee_id' => $demoFields['demo_provider_employee_id'],
+                'meeting_link' => $meetingLink !== '' ? $meetingLink : $demoFields['meeting_link'],
+            ]);
+            $existingFollowUp->save();
+            $followUp = $existingFollowUp->fresh(['caMaster', 'employee']);
+            $this->demoConfirmationService->handleFollowUpUpdated(
+                $followUp,
+                $previousScheduledDate,
+                $previousFollowupType,
+            );
+        } else {
+            $followUp = $this->createFollowUp([
+                'ca_id' => $caId,
+                'employee_id' => $employeeId,
+                'followup_type' => 'Demo Scheduled',
+                'remarks' => $data['notes'] ?? $data['remarks'] ?? 'Demo scheduled',
+                'scheduled_date' => $demoAt->toDateTimeString(),
+                'status' => 'Pending',
+                'priority' => 'High',
+                'source' => 'workflow_demo',
+                'is_auto_generated' => false,
+                'team_size' => $demoFields['team_size'],
+                'demo_provider_name' => $demoFields['demo_provider_name'],
+                'demo_provider_employee_id' => $demoFields['demo_provider_employee_id'],
+                'meeting_link' => $meetingLink !== '' ? $meetingLink : $demoFields['meeting_link'],
+            ]);
+            $created = true;
+            $this->demoConfirmationService->handleFollowUpCreated($followUp);
+        }
 
-        $schedule = DemoSchedule::query()->create([
-            'ca_id' => $caId,
-            'employee_id' => $employeeId,
-            'followup_id' => $followUp->followup_id,
-            'call_log_id' => $data['call_log_id'] ?? null,
+        $schedule = $this->upsertDemoScheduleForFollowUp($followUp, [
             'demo_at' => $demoAt,
-            'meeting_link' => $meetingLink !== '' ? $meetingLink : '',
-            'status' => DemoSchedule::STATUS_SCHEDULED,
-            'customer_name' => $lead->ca_name,
-            'firm_name' => $lead->firm_name,
-            'created_by_user_id' => $actor?->id,
+            'meeting_link' => $followUp->meeting_link ?: $meetingLink,
+            'team_size' => $demoFields['team_size'],
+            'demo_provider_name' => $demoFields['demo_provider_name'],
+            'call_log_id' => $data['call_log_id'] ?? null,
+            'employee_id' => $employeeId,
+            'actor_id' => $actor?->id,
+            'lead' => $lead,
         ]);
 
         $lead->update([
@@ -254,15 +301,18 @@ class LeadWorkflowService
 
         $this->historyService->record(
             $caId,
-            'Demo Scheduled',
+            $created ? 'Demo Scheduled' : 'Demo Rescheduled',
             $followUp->followup_id,
             $employeeId,
             'Demo Scheduled',
-            $data['notes'] ?? null,
+            $data['notes'] ?? $data['remarks'] ?? null,
             [
                 'demo_schedule_id' => $schedule->id,
                 'demo_at' => $demoAt->toIso8601String(),
                 'meeting_link' => $schedule->meeting_link,
+                'team_size' => $demoFields['team_size'],
+                'demo_provider_employee_id' => $demoFields['demo_provider_employee_id'],
+                'demo_provider_name' => $demoFields['demo_provider_name'],
             ],
         );
 
@@ -272,8 +322,80 @@ class LeadWorkflowService
 
         return [
             'demo_schedule' => $schedule->fresh(['employee', 'lead']),
-            'follow_up' => $followUp,
+            'follow_up' => $followUp->fresh(['caMaster', 'employee']),
+            'created' => $created,
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function findDemoFollowUpToUpsert(int $caId, array $data): ?FollowUp
+    {
+        if (! empty($data['followup_id'])) {
+            $byId = FollowUp::query()->where('followup_id', (int) $data['followup_id'])->first();
+            if ($byId) {
+                return $byId;
+            }
+        }
+
+        return FollowUp::query()
+            ->where('ca_id', $caId)
+            ->where('followup_type', 'Demo Scheduled')
+            ->whereNotIn('status', ['Completed', 'Cancelled', 'Done'])
+            ->orderByDesc('followup_id')
+            ->first();
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function upsertDemoScheduleForFollowUp(FollowUp $followUp, array $payload): DemoSchedule
+    {
+        $existing = DemoSchedule::query()
+            ->where('followup_id', $followUp->followup_id)
+            ->whereDoesntHave('result')
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $existing) {
+            $existing = DemoSchedule::query()
+                ->where('ca_id', $followUp->ca_id)
+                ->whereDoesntHave('result')
+                ->where(function ($q) use ($followUp) {
+                    $q->whereNull('followup_id')->orWhere('followup_id', $followUp->followup_id);
+                })
+                ->orderByDesc('id')
+                ->first();
+        }
+
+        $lead = $payload['lead'] ?? CaMaster::query()->find($followUp->ca_id);
+        $attrs = [
+            'ca_id' => $followUp->ca_id,
+            'employee_id' => $payload['employee_id'] ?? $followUp->employee_id,
+            'followup_id' => $followUp->followup_id,
+            'demo_at' => $payload['demo_at'],
+            'meeting_link' => (string) ($payload['meeting_link'] ?? $followUp->meeting_link ?? ''),
+            'status' => DemoSchedule::STATUS_SCHEDULED,
+            'team_size' => $payload['team_size'] ?? $followUp->team_size,
+            'demo_provider_name' => $payload['demo_provider_name'] ?? $followUp->demo_provider_name,
+            'customer_name' => $lead?->ca_name,
+            'firm_name' => $lead?->firm_name,
+        ];
+        if (! empty($payload['call_log_id'])) {
+            $attrs['call_log_id'] = $payload['call_log_id'];
+        }
+
+        if ($existing) {
+            $existing->fill($attrs);
+            $existing->save();
+
+            return $existing->fresh();
+        }
+
+        $attrs['created_by_user_id'] = $payload['actor_id'] ?? auth()->id();
+
+        return DemoSchedule::query()->create($attrs);
     }
 
     /**
@@ -350,8 +472,21 @@ class LeadWorkflowService
             ->first();
 
         if ($existing) {
-            if ($followUp->meeting_link && $existing->meeting_link === '') {
-                $existing->update(['meeting_link' => $followUp->meeting_link]);
+            $updates = [];
+            if ($followUp->scheduled_date) {
+                $updates['demo_at'] = Carbon::parse($followUp->scheduled_date);
+            }
+            if ($followUp->meeting_link) {
+                $updates['meeting_link'] = $followUp->meeting_link;
+            }
+            if ($followUp->team_size) {
+                $updates['team_size'] = $followUp->team_size;
+            }
+            if ($followUp->demo_provider_name) {
+                $updates['demo_provider_name'] = $followUp->demo_provider_name;
+            }
+            if ($updates !== []) {
+                $existing->update($updates);
             }
 
             $lead = CaMaster::query()->find($followUp->ca_id);
@@ -363,7 +498,7 @@ class LeadWorkflowService
                 );
             }
 
-            return $existing;
+            return $existing->fresh();
         }
 
         $openForLead = DemoSchedule::query()
@@ -376,8 +511,14 @@ class LeadWorkflowService
             $openForLead->update([
                 'followup_id' => $followUp->followup_id,
                 'meeting_link' => $followUp->meeting_link ?: $openForLead->meeting_link,
+                'demo_at' => $followUp->scheduled_date
+                    ? Carbon::parse($followUp->scheduled_date)
+                    : $openForLead->demo_at,
+                'team_size' => $followUp->team_size ?: $openForLead->team_size,
+                'demo_provider_name' => $followUp->demo_provider_name ?: $openForLead->demo_provider_name,
             ]);
 
+            $lead = CaMaster::query()->find($followUp->ca_id);
             if ($lead) {
                 $this->statusSyncService->apply(
                     $lead,
@@ -788,6 +929,10 @@ class LeadWorkflowService
             'next_followup_date' => $data['next_followup_date'] ?? null,
             'status' => $data['status'] ?? 'Pending',
             'priority' => $data['priority'] ?? 'Normal',
+            'team_size' => $data['team_size'] ?? null,
+            'demo_provider_name' => $data['demo_provider_name'] ?? null,
+            'demo_provider_employee_id' => $data['demo_provider_employee_id'] ?? null,
+            'meeting_link' => $data['meeting_link'] ?? null,
             'parent_followup_id' => $data['parent_followup_id'] ?? null,
             'sequence_step' => $data['sequence_step'] ?? null,
             'is_auto_generated' => (bool) ($data['is_auto_generated'] ?? false),

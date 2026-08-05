@@ -60,6 +60,9 @@ class FollowUpAutomationController extends Controller
                     'demo_date' => $data['demo_date'] ?? null,
                     'demo_time' => $data['demo_time'] ?? null,
                     'meeting_link' => $data['meeting_link'] ?? '',
+                    'team_size' => $data['team_size'] ?? null,
+                    'demo_provider_employee_id' => $data['demo_provider_employee_id'] ?? null,
+                    'demo_provider_name' => $data['demo_provider_name'] ?? null,
                     'notes' => $data['remarks'] ?? null,
                 ]);
 
@@ -70,7 +73,8 @@ class FollowUpAutomationController extends Controller
                         : null,
                     'demo_schedule' => $demo['demo_schedule'],
                     'outcome' => 'Demo Scheduled',
-                ], 'Demo scheduled');
+                    'created' => (bool) ($demo['created'] ?? true),
+                ], ! empty($demo['created']) ? 'Demo scheduled' : 'Demo schedule updated');
             }
 
             $result = $this->workflowService->recordCall([

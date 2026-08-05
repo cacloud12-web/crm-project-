@@ -1031,9 +1031,23 @@
               <p class="ca-field-error hidden" data-error-for="demo_time"></p>
             </div>
           </div>
+          <div class="ca-field" data-field="team_size">
+            <label class="form-label" for="call-outcome-team-size">Team Size</label>
+            <input name="team_size" type="number" min="1" step="1" id="call-outcome-team-size" class="input-field" placeholder="Auto from lead" />
+            <p class="ca-field-error hidden" data-error-for="team_size"></p>
+          </div>
+          <div class="ca-field" data-field="demo_provider_employee_id">
+            <label class="form-label" for="call-outcome-demo-provider">Demo Provider</label>
+            <select name="demo_provider_employee_id" id="call-outcome-demo-provider" class="input-field">
+              <option value="">Select demo provider</option>
+            </select>
+            <p id="call-outcome-demo-provider-hint" class="text-caption text-slate-500 mt-1 hidden"></p>
+            <input type="hidden" name="demo_provider_name" id="call-outcome-demo-provider-name" value="" />
+            <p class="ca-field-error hidden" data-error-for="demo_provider_employee_id"></p>
+          </div>
           <div class="ca-field" data-field="meeting_link">
-            <label class="form-label" for="call-outcome-meeting-link">Meeting / Training Link <span class="text-caption text-slate-400 font-normal">(Optional)</span></label>
-            <input name="meeting_link" id="call-outcome-meeting-link" type="url" class="input-field" placeholder="https://…" />
+            <label class="form-label" for="call-outcome-meeting-link">Meeting / Training Link</label>
+            <input name="meeting_link" id="call-outcome-meeting-link" type="url" class="input-field" placeholder="Auto from selected provider" />
             <p class="ca-field-error hidden" data-error-for="meeting_link"></p>
           </div>
         </div>
@@ -1145,9 +1159,24 @@
               <p class="ca-field-error hidden" data-error-for="demo_time"></p>
             </div>
           </div>
+          <div class="ca-field" data-field="team_size">
+            <label class="form-label" for="lead-call-log-team-size">Team Size</label>
+            <input name="team_size" type="number" min="1" step="1" id="lead-call-log-team-size" class="input-field" placeholder="Auto from lead" />
+            <p class="ca-field-error hidden" data-error-for="team_size"></p>
+          </div>
+          <div class="ca-field" data-field="demo_provider_employee_id">
+            <label class="form-label" for="lead-call-log-demo-provider">Demo Provider</label>
+            <select name="demo_provider_employee_id" id="lead-call-log-demo-provider" class="input-field">
+              <option value="">Select demo provider</option>
+            </select>
+            <p id="lead-call-log-demo-provider-hint" class="text-caption text-slate-500 mt-1 hidden"></p>
+            <input type="hidden" name="demo_provider_name" id="lead-call-log-demo-provider-name" value="" />
+            <p class="ca-field-error hidden" data-error-for="demo_provider_employee_id"></p>
+          </div>
           <div class="ca-field" data-field="meeting_link">
-            <label class="form-label" for="lead-call-log-meeting-link">Meeting Link <span class="text-caption text-slate-400 font-normal">(Optional)</span></label>
-            <input name="meeting_link" id="lead-call-log-meeting-link" type="url" class="input-field" placeholder="https://…" />
+            <label class="form-label" for="lead-call-log-meeting-link">Meeting Link</label>
+            <input name="meeting_link" id="lead-call-log-meeting-link" type="url" class="input-field" placeholder="Auto from selected provider" />
+            <p class="ca-field-error hidden" data-error-for="meeting_link"></p>
           </div>
         </div>
       </form>

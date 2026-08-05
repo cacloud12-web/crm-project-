@@ -63,6 +63,90 @@ class FollowUpDemoFieldsTest extends TestCase
         $this->deleteJson('/ca-masters/'.$lead->ca_id)->assertOk();
     }
 
+    public function test_call_outcome_demo_scheduled_copies_demo_fields_into_follow_up(): void
+    {
+        $admin = CrmTestAccounts::admin();
+        $this->actingAs($admin);
+
+        $provider = $this->createEligibleProvider('Call Log Provider', 1, 20, 'https://meet.example.com/call-log');
+        $lead = $this->createLeadWithTeamSize(5);
+        $demoAt = now()->addDays(2)->setTime(11, 0);
+
+        $response = $this->postJson('/follow-ups/call-outcome', [
+            'ca_id' => $lead->ca_id,
+            'outcome' => 'Demo Scheduled',
+            'remarks' => 'Booked on call',
+            'demo_date' => $demoAt->toDateString(),
+            'demo_time' => $demoAt->format('H:i'),
+            'team_size' => 5,
+            'demo_provider_employee_id' => $provider->employee_id,
+            'meeting_link' => 'https://meet.example.com/call-log',
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('data.outcome', 'Demo Scheduled')
+            ->assertJsonPath('data.next_follow_up.team_size', 5)
+            ->assertJsonPath('data.next_follow_up.demo_provider_employee_id', $provider->employee_id)
+            ->assertJsonPath('data.next_follow_up.demo_provider_name', 'Call Log Provider')
+            ->assertJsonPath('data.next_follow_up.meeting_link', 'https://meet.example.com/call-log');
+
+        $followUpId = $response->json('data.next_follow_up.followup_id');
+        $this->assertNotNull($followUpId);
+        $this->assertDatabaseHas('follow_ups', [
+            'followup_id' => $followUpId,
+            'followup_type' => 'Demo Scheduled',
+            'team_size' => 5,
+            'demo_provider_employee_id' => $provider->employee_id,
+            'meeting_link' => 'https://meet.example.com/call-log',
+        ]);
+        $this->assertDatabaseHas('demo_schedules', [
+            'followup_id' => $followUpId,
+            'meeting_link' => 'https://meet.example.com/call-log',
+            'team_size' => 5,
+        ]);
+
+        $second = $this->postJson('/follow-ups/call-outcome', [
+            'ca_id' => $lead->ca_id,
+            'outcome' => 'Demo Scheduled',
+            'remarks' => 'Rescheduled on call',
+            'demo_date' => $demoAt->copy()->addDay()->toDateString(),
+            'demo_time' => '14:00',
+            'team_size' => 8,
+            'demo_provider_employee_id' => $provider->employee_id,
+            'meeting_link' => 'https://meet.example.com/call-log-updated',
+        ])->assertOk();
+
+        $this->assertSame($followUpId, $second->json('data.next_follow_up.followup_id'));
+        $this->assertDatabaseHas('follow_ups', [
+            'followup_id' => $followUpId,
+            'team_size' => 8,
+            'meeting_link' => 'https://meet.example.com/call-log-updated',
+        ]);
+        $this->assertSame(1, FollowUp::query()->where('ca_id', $lead->ca_id)->where('followup_type', 'Demo Scheduled')->count());
+
+        $this->deleteJson('/ca-masters/'.$lead->ca_id)->assertOk();
+    }
+
+    public function test_call_outcome_demo_scheduled_requires_team_size_and_provider(): void
+    {
+        $admin = CrmTestAccounts::admin();
+        $this->actingAs($admin);
+
+        $lead = $this->createLeadWithTeamSize(null);
+        $demoAt = now()->addDays(1)->setTime(10, 0);
+
+        $this->postJson('/follow-ups/call-outcome', [
+            'ca_id' => $lead->ca_id,
+            'outcome' => 'Demo Scheduled',
+            'remarks' => 'Missing demo fields',
+            'demo_date' => $demoAt->toDateString(),
+            'demo_time' => $demoAt->format('H:i'),
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors(['team_size', 'demo_provider_employee_id', 'meeting_link']);
+
+        $this->deleteJson('/ca-masters/'.$lead->ca_id)->assertOk();
+    }
+
     public function test_changing_team_size_recalculates_provider_and_link(): void
     {
         $admin = CrmTestAccounts::admin();
