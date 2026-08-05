@@ -20233,6 +20233,23 @@ if (otherInput) {
         if (pageId === 'assignment') {
           focusAssignmentSectionFromDashboard();
         }
+        if (window._assignmentHubTab === 'demos') {
+          window._assignmentHubTab = '';
+          document.querySelectorAll('.ca-tab[data-tab-group="assign-hub"]').forEach(function (t) {
+            var on = t.dataset.tab === 'demos';
+            t.classList.toggle('active', on);
+            t.classList.toggle('is-active', on);
+            t.setAttribute('aria-selected', on ? 'true' : 'false');
+          });
+          document.querySelectorAll('.ca-tab-panel[data-tab-group="assign-hub"]').forEach(function (p) {
+            p.classList.toggle('active', p.dataset.panel === 'demos');
+          });
+        }
+        if (document.querySelector('.ca-tab-panel[data-panel="demos"][data-tab-group="assign-hub"].active')
+            && window.CrmDemoCalendarPage
+            && typeof window.CrmDemoCalendarPage.init === 'function') {
+          window.CrmDemoCalendarPage.init();
+        }
         icons();
       }
       paintEmployeesAssignmentPage();

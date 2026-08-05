@@ -14953,6 +14953,14 @@ body.rw-open {
 .assign-daily-target-status--no_target { background: #f8fafc; color: #94a3b8; }
 
 .demo-calendar-card { overflow: hidden; }
+
+.assign-demo-schedule-wrap {
+  margin-bottom: 0;
+}
+
+.assign-demo-schedule-wrap .dcp-page {
+  min-height: calc(100vh - 12rem);
+}
 .demo-cal-head { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
 .demo-cal-head__actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .demo-cal-view-tabs { display: inline-flex; gap: 0.25rem; background: #f1f5f9; padding: 0.2rem; border-radius: 9999px; }

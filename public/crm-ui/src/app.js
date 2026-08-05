@@ -613,6 +613,20 @@
       }
       if (tabId === 'team' && window.CA_CRM) CA_CRM.onPage('employees');
       if (tabId === 'performance' && window.CA_CRM) CA_CRM.onPage('employees');
+      if (group === 'assign-hub' && tabId === 'demos') {
+        window._assignmentHubTab = 'demos';
+        if (window.CrmDemoCalendarPage && typeof window.CrmDemoCalendarPage.init === 'function') {
+          window.CrmDemoCalendarPage.init();
+        }
+        icons();
+      }
+      if (group === 'assign-hub' && tabId === 'assign' && window.CA_CRM) {
+        window._assignmentHubTab = 'assign';
+        CA_CRM.onPage('assignment');
+      }
+      if (group === 'assign-hub' && tabId === 'team') {
+        window._assignmentHubTab = 'team';
+      }
       if (tabId === 'activity' && group === 'reports-hub') {
         if (window.CA_CRM && CA_CRM.initActivityLogsPage) CA_CRM.initActivityLogsPage();
         else renderActivityTimeline();
@@ -1351,7 +1365,13 @@
 
   function initHeaderActions() {
     document.getElementById('calendar-btn')?.addEventListener('click', function () {
-      navigateTo(this.dataset.page || 'demo-calendar');
+      var target = this.dataset.page || 'demo-calendar';
+      if (target === 'demo-calendar' || target === 'demos') {
+        window._assignmentHubTab = 'demos';
+        navigateTo('assignment');
+        return;
+      }
+      navigateTo(target);
     });
     initSettingsMenu();
     initProfileMenu();
