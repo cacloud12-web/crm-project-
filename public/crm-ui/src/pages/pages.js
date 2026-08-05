@@ -1517,17 +1517,10 @@ window.CAPages = (function () {
         { label: 'Actions', colCls: 'crm-col-actions', thCls: 'crm-th-actions', sticky: 'right' },
       ], [], { tbodyId: 'employees-data-table', tableId: 'employees-table', paginationId: 'employees-pagination-slot', enterprise: true, inbox: true, inboxKey: 'employees-data-table', inboxModule: 'employees' });
 
-    var demosBody = '<div class="assign-demo-schedule-wrap">' + demoCalendarPage() + '</div>';
-
     return hdr('Assignment', null, null, assignmentPageHeroActions()) +
-      tabs([
-        { id: 'assign', label: 'Assignments', icon: 'user-check' },
-        { id: 'team', label: 'Team', icon: 'users' },
-        { id: 'demos', label: 'Demo Schedule', icon: 'presentation' },
-      ], activeTab, 'assign-hub') +
+      tabs([{ id: 'assign', label: 'Assignments', icon: 'user-check' }, { id: 'team', label: 'Team', icon: 'users' }], activeTab, 'assign-hub') +
       panel('assign', activeTab === 'assign', assignBody, 'assign-hub') +
-      panel('team', activeTab === 'team', teamBody, 'assign-hub') +
-      panel('demos', activeTab === 'demos', demosBody, 'assign-hub');
+      panel('team', activeTab === 'team', teamBody, 'assign-hub');
   }
 
   /* ─── Follow Ups ─── */
