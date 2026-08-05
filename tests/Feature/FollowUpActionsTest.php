@@ -61,6 +61,47 @@ class FollowUpActionsTest extends TestCase
             ->assertJsonPath('data.mobile_no', $followUp->caMaster?->mobile_no);
     }
 
+    public function test_follow_ups_list_includes_city_from_related_lead(): void
+    {
+        $manager = CrmTestAccounts::manager();
+        $this->actingAs($manager);
+
+        $followUp = FollowUp::query()
+            ->with(['caMaster.city:city_id,city_name'])
+            ->whereHas('caMaster', function ($query) {
+                $query->where(function ($inner) {
+                    $inner->whereNotNull('city_id')
+                        ->orWhere(function ($ocr) {
+                            $ocr->whereNotNull('ocr_city_text')->where('ocr_city_text', '!=', '');
+                        });
+                });
+            })
+            ->first();
+
+        if (! $followUp) {
+            $this->markTestSkipped('No follow-ups with lead city in database');
+        }
+
+        $expectedCity = trim((string) ($followUp->caMaster?->city?->city_name ?? ''));
+        if ($expectedCity === '') {
+            $expectedCity = trim((string) ($followUp->caMaster?->ocr_city_text ?? ''));
+        }
+
+        $response = $this->getJson('/follow-ups?per_page=50');
+        $response->assertOk();
+
+        $items = collect($response->json('data.items') ?? []);
+        $match = $items->firstWhere('followup_id', $followUp->followup_id);
+
+        $this->assertNotNull($match, 'Expected follow-up in listing response');
+        $this->assertArrayHasKey('city', $match);
+        $this->assertSame($expectedCity !== '' ? $expectedCity : null, $match['city']);
+
+        $this->getJson('/follow-ups/'.$followUp->followup_id)
+            ->assertOk()
+            ->assertJsonPath('data.city', $expectedCity !== '' ? $expectedCity : null);
+    }
+
     public function test_manager_can_view_single_follow_up(): void
     {
         $manager = CrmTestAccounts::manager();

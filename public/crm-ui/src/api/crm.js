@@ -13080,6 +13080,7 @@ if (otherInput) {
       '<td class="crm-td-status">' + compactTextCell(f.followup_type) + outcomeBadge + rescheduled + '</td>' +
       '<td class="sticky-left-2 crm-td-firm font-medium">' + firmNameCell(f.firm_name) + '</td>' +
       '<td class="crm-td-mobile">' + camPhoneCell(f.mobile_no) + '</td>' +
+      '<td class="crm-td-geo">' + compactTextCell(f.city || f.city_name) + '</td>' +
       '<td class="crm-td-person">' + compactTextCell(f.executive || f.employee_name) + '</td>' +
       '<td class="crm-td-remarks">' + compactTextCell(remarksText) + '</td>' +
       '<td class="crm-td-date"><span class="cam-cell-text cam-cell-mono">' + escapeHtml(formatDateTime(f.scheduled_date)) + '</span></td>' +
@@ -13110,7 +13111,7 @@ if (otherInput) {
     var row = el.querySelector('tr[data-followup-id="' + followupId + '"]');
     if (row) row.remove();
     if (!el.querySelector('tr[data-followup-id]')) {
-      el.innerHTML = '<tr><td colspan="10" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
+      el.innerHTML = '<tr><td colspan="11" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
     }
     renderFollowupKpis();
   }
@@ -13124,7 +13125,7 @@ if (otherInput) {
     }
     var followups = pageFollowups || window.realFollowUps || [];
     rebuildFollowupIndex(followups);
-    el.innerHTML = followups.length ? followups.map(buildFollowupRowHtml).join('') : '<tr><td colspan="10" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
+    el.innerHTML = followups.length ? followups.map(buildFollowupRowHtml).join('') : '<tr><td colspan="11" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
     bindCrmRowActions(el);
     syncInboxChecks('followups-data-table');
     iconsIn(el);

@@ -28,6 +28,8 @@ class FollowUpResource extends JsonResource
             'reschedule_reason' => $this->reschedule_reason,
             'firm_name' => $this->caMaster?->firm_name,
             'mobile_no' => $this->caMaster?->mobile_no,
+            'city' => $this->resolveLeadCityName(),
+            'city_name' => $this->resolveLeadCityName(),
             'executive' => $this->employee?->name,
             'employee_name' => $this->employee?->name,
             'remarks' => $this->remarks,
@@ -37,5 +39,17 @@ class FollowUpResource extends JsonResource
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];
+    }
+
+    private function resolveLeadCityName(): ?string
+    {
+        $fromMaster = trim((string) ($this->caMaster?->city?->city_name ?? ''));
+        if ($fromMaster !== '') {
+            return $fromMaster;
+        }
+
+        $ocrText = trim((string) ($this->caMaster?->ocr_city_text ?? ''));
+
+        return $ocrText !== '' ? $ocrText : null;
     }
 }

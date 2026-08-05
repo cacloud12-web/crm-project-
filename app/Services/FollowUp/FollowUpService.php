@@ -67,7 +67,8 @@ class FollowUpService
     private function listingRelations(): array
     {
         return [
-            'caMaster:ca_id,firm_name,mobile_no',
+            'caMaster:ca_id,firm_name,mobile_no,city_id,ocr_city_text',
+            'caMaster.city:city_id,city_name',
             'employee:employee_id,name',
         ];
     }

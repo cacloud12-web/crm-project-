@@ -1567,6 +1567,7 @@ window.CAPages = (function () {
           { label: 'Type', colCls: 'crm-col-status', thCls: 'crm-th-status' },
           { label: 'Firm', colCls: 'crm-col-firm', thCls: 'crm-th-firm', sticky: 'left' },
           { label: 'Mobile Number', colCls: 'crm-col-mobile', thCls: 'crm-th-mobile' },
+          { label: 'City', colCls: 'crm-col-geo', thCls: 'crm-th-geo' },
           { label: 'Employee', colCls: 'crm-col-person', thCls: 'crm-th-person' },
           { label: 'Remarks', colCls: 'crm-col-remarks', thCls: 'crm-th-remarks' },
           { label: 'Scheduled', colCls: 'crm-col-date', thCls: 'crm-th-date' },
