@@ -50,6 +50,55 @@
     return Math.max(0, Math.min(per, remaining));
   }
 
+  /** Keep the current page number when rows-per-page changes; clamp to the new last page. */
+  function pageAfterPerPageChange(currentPage, newPerPage, total) {
+    var page = Math.max(1, parseInt(currentPage, 10) || 1);
+    var per = Math.max(1, parseInt(newPerPage, 10) || DEFAULT_PER_PAGE);
+    var tot = Math.max(0, parseInt(total, 10) || 0);
+    var last = tot > 0 ? Math.max(1, Math.ceil(tot / per)) : 1;
+    return Math.min(page, last);
+  }
+
+  function clampPage(page, lastPage) {
+    var last = Math.max(1, parseInt(lastPage, 10) || 1);
+    var n = parseInt(page, 10);
+    if (isNaN(n) || n < 1) return 1;
+    return Math.min(n, last);
+  }
+
+  function readWrapPage(wrap) {
+    if (!wrap) return 1;
+    var input = wrap.querySelector('.crm-table-pagination__page');
+    if (input && input.value != null && String(input.value).trim() !== '') {
+      return parseInt(input.value, 10) || 1;
+    }
+    return parseInt(wrap.getAttribute('data-current-page'), 10) || 1;
+  }
+
+  function readWrapTotal(wrap) {
+    if (!wrap) return 0;
+    return parseInt(wrap.getAttribute('data-total'), 10) || 0;
+  }
+
+  function readWrapLastPage(wrap) {
+    if (!wrap) return 1;
+    return Math.max(1, parseInt(wrap.getAttribute('data-last-page'), 10) || 1);
+  }
+
+  function goToPage(wrap, page) {
+    if (!wrap) return;
+    var listingKey = wrap.getAttribute('data-listing');
+    if (listingKey && window.CA_LISTING_SEARCH) {
+      CA_LISTING_SEARCH.setState(listingKey, { page: page });
+      CA_LISTING_SEARCH.reload(listingKey);
+      return;
+    }
+    var scope = wrap.getAttribute('data-pagination-scope');
+    if (scope && _scopeHandlers[scope] && typeof _scopeHandlers[scope].onPageChange === 'function') {
+      _scopeHandlers[scope].onPageChange(page, wrap);
+    }
+  }
+
   function register(scope, handlers) {
     if (!scope) return;
     _scopeHandlers[scope] = handlers || {};
@@ -89,13 +138,16 @@
       (wrapId ? ' id="' + esc(wrapId) + '"' : '') +
       (listingKey ? ' data-listing="' + esc(listingKey) + '"' : '') +
       (scope ? ' data-pagination-scope="' + esc(scope) + '"' : '') +
+      ' data-current-page="' + current + '"' +
+      ' data-last-page="' + last + '"' +
+      ' data-total="' + total + '"' +
       '>' +
       perPageHtml +
       '<div class="crm-table-pagination__center" role="navigation" aria-label="Table pagination">' +
         '<button type="button" class="crm-table-pagination__nav" data-pagination-nav="prev" data-page="' + prevPage + '" aria-label="Previous page"' + (current <= 1 ? ' disabled' : '') + '>' +
           '<i data-lucide="chevron-left" class="h-4 w-4" aria-hidden="true"></i>' +
         '</button>' +
-        '<span class="crm-table-pagination__page" aria-current="page">' + current + '</span>' +
+        '<input type="number" class="crm-table-pagination__page" aria-label="Go to page" aria-current="page" min="1" max="' + last + '" step="1" value="' + current + '" inputmode="numeric" title="Type a page number and press Enter">' +
         '<span class="crm-table-pagination__of">of ' + last + '</span>' +
         '<button type="button" class="crm-table-pagination__nav" data-pagination-nav="next" data-page="' + nextPage + '" aria-label="Next page"' + (current >= last ? ' disabled' : '') + '>' +
           '<i data-lucide="chevron-right" class="h-4 w-4" aria-hidden="true"></i>' +
@@ -157,6 +209,19 @@
     return slot;
   }
 
+  function commitPageInput(input) {
+    if (!input || input.disabled) return;
+    var wrap = input.closest('.crm-table-pagination');
+    if (!wrap) return;
+    var last = readWrapLastPage(wrap);
+    var current = parseInt(wrap.getAttribute('data-current-page'), 10) || 1;
+    var next = clampPage(input.value, last);
+    input.value = String(next);
+    if (next === current) return;
+    wrap.setAttribute('data-current-page', String(next));
+    goToPage(wrap, next);
+  }
+
   function initDelegated() {
     if (document._tablePaginationDelegated) return;
     document._tablePaginationDelegated = true;
@@ -170,20 +235,37 @@
       var page = parseInt(nav.getAttribute('data-page'), 10);
       if (!page) return;
 
-      var listingKey = wrap.getAttribute('data-listing');
-      if (listingKey && window.CA_LISTING_SEARCH) {
-        CA_LISTING_SEARCH.setState(listingKey, { page: page });
-        CA_LISTING_SEARCH.reload(listingKey);
-        return;
-      }
+      goToPage(wrap, page);
+    });
 
-      var scope = wrap.getAttribute('data-pagination-scope');
-      if (scope && _scopeHandlers[scope] && typeof _scopeHandlers[scope].onPageChange === 'function') {
-        _scopeHandlers[scope].onPageChange(page, wrap);
+    document.addEventListener('keydown', function (e) {
+      var input = e.target.closest && e.target.closest('.crm-table-pagination__page');
+      if (!input) return;
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitPageInput(input);
+        input.blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        var wrap = input.closest('.crm-table-pagination');
+        input.value = String(wrap ? (parseInt(wrap.getAttribute('data-current-page'), 10) || 1) : 1);
+        input.blur();
       }
     });
 
+    document.addEventListener('focusin', function (e) {
+      var input = e.target.closest && e.target.closest('.crm-table-pagination__page');
+      if (!input || input.tagName !== 'INPUT') return;
+      try { input.select(); } catch (_) { /* ignore */ }
+    });
+
     document.addEventListener('change', function (e) {
+      var pageInput = e.target.closest && e.target.closest('.crm-table-pagination__page');
+      if (pageInput && pageInput.tagName === 'INPUT') {
+        commitPageInput(pageInput);
+        return;
+      }
+
       var sel = e.target.closest('.crm-table-pagination__per-page');
       if (!sel) return;
       var wrap = sel.closest('.crm-table-pagination');
@@ -200,14 +282,18 @@
       var perPage = normalizePerPage(sel.value, optionList);
       sel.value = String(perPage);
 
+      var currentPage = readWrapPage(wrap);
+      var total = readWrapTotal(wrap);
+      var nextPage = pageAfterPerPageChange(currentPage, perPage, total);
+
       if (listingKey && window.CA_LISTING_SEARCH) {
-        CA_LISTING_SEARCH.setState(listingKey, { page: 1, per_page: perPage });
+        CA_LISTING_SEARCH.setState(listingKey, { page: nextPage, per_page: perPage });
         CA_LISTING_SEARCH.reload(listingKey);
         return;
       }
 
       if (scope && _scopeHandlers[scope] && typeof _scopeHandlers[scope].onPerPageChange === 'function') {
-        _scopeHandlers[scope].onPerPageChange(perPage, wrap);
+        _scopeHandlers[scope].onPerPageChange(perPage, wrap, { page: nextPage, total: total });
       }
     });
   }
@@ -217,6 +303,7 @@
     PER_PAGE_OPTIONS: PER_PAGE_OPTIONS,
     FOLLOWUP_PER_PAGE_OPTIONS: FOLLOWUP_PER_PAGE_OPTIONS,
     normalizePerPage: normalizePerPage,
+    pageAfterPerPageChange: pageAfterPerPageChange,
     visibleCount: visibleCount,
     renderHtml: renderHtml,
     renderInto: renderInto,

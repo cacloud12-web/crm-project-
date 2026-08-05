@@ -393,9 +393,13 @@
             state.page = page;
             loadTickets();
           },
-          onPerPageChange: function (perPage) {
+          onPerPageChange: function (perPage, _wrap, meta) {
             state.perPage = perPage;
-            state.page = 1;
+            state.page = (meta && meta.page)
+              ? Math.max(1, parseInt(meta.page, 10) || 1)
+              : (window.CATablePagination && CATablePagination.pageAfterPerPageChange
+                ? CATablePagination.pageAfterPerPageChange(state.page, state.perPage, (state.pagination && state.pagination.total) || 0)
+                : state.page);
             loadTickets();
           },
         });

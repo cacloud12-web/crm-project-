@@ -12435,18 +12435,22 @@ if (otherInput) {
         }
         loadFollowupActivityTimeline({ reset: false, page: followupActivityPage });
       },
-      onPerPageChange: function (perPage) {
+      onPerPageChange: function (perPage, _wrap, meta) {
         if (followupActivityLoading) return;
         var allowed = (window.CATablePagination && CATablePagination.FOLLOWUP_PER_PAGE_OPTIONS) || [10, 25, 50, 100, 200];
         followupActivityPageSize = (window.CATablePagination && CATablePagination.normalizePerPage)
           ? CATablePagination.normalizePerPage(perPage, allowed)
           : (allowed.indexOf(perPage) >= 0 ? perPage : 10);
-        followupActivityPage = 1;
+        followupActivityPage = (meta && meta.page)
+          ? Math.max(1, parseInt(meta.page, 10) || 1)
+          : (window.CATablePagination && CATablePagination.pageAfterPerPageChange
+            ? CATablePagination.pageAfterPerPageChange(followupActivityPage, followupActivityPageSize, followupActivityTotal)
+            : followupActivityPage);
         if (followupActivityIsDemo) {
           renderFollowupActivityDemoPage();
           return;
         }
-        loadFollowupActivityTimeline({ reset: true });
+        loadFollowupActivityTimeline({ reset: false, page: followupActivityPage });
       },
     });
   }
@@ -26376,10 +26380,14 @@ if (otherInput) {
         employeeImportsState.filesPage = Math.max(1, parseInt(page, 10) || 1);
         loadEmployeeImportsFiles();
       },
-      onPerPageChange: function (perPage) {
+      onPerPageChange: function (perPage, _wrap, meta) {
         if (employeeImportsState.filesLoading) return;
         employeeImportsState.filesPerPage = Math.max(10, Math.min(100, parseInt(perPage, 10) || 25));
-        employeeImportsState.filesPage = 1;
+        employeeImportsState.filesPage = (meta && meta.page)
+          ? Math.max(1, parseInt(meta.page, 10) || 1)
+          : (window.CATablePagination && CATablePagination.pageAfterPerPageChange
+            ? CATablePagination.pageAfterPerPageChange(employeeImportsState.filesPage, employeeImportsState.filesPerPage, employeeImportsState.filesTotal)
+            : employeeImportsState.filesPage);
         loadEmployeeImportsFiles();
       },
     });
@@ -26506,10 +26514,14 @@ if (otherInput) {
         employeeImportsState.page = Math.max(1, parseInt(page, 10) || 1);
         loadEmployeeImportsList();
       },
-      onPerPageChange: function (perPage) {
+      onPerPageChange: function (perPage, _wrap, meta) {
         if (employeeImportsState.loading) return;
         employeeImportsState.perPage = Math.max(10, Math.min(100, parseInt(perPage, 10) || 25));
-        employeeImportsState.page = 1;
+        employeeImportsState.page = (meta && meta.page)
+          ? Math.max(1, parseInt(meta.page, 10) || 1)
+          : (window.CATablePagination && CATablePagination.pageAfterPerPageChange
+            ? CATablePagination.pageAfterPerPageChange(employeeImportsState.page, employeeImportsState.perPage, employeeImportsState.total)
+            : employeeImportsState.page);
         loadEmployeeImportsList();
       },
     });
