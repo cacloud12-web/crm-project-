@@ -133,6 +133,34 @@ class LeadWorkflowTest extends TestCase
         $this->assertStringContainsString('[Remark ·', (string) $lead->sales_remarks);
     }
 
+    public function test_call_can_be_saved_without_call_note(): void
+    {
+        $this->actingAsAdmin();
+        $lead = $this->createLead();
+        $employee = $this->createEmployee();
+
+        LeadAssignmentEngine::query()->create([
+            'ca_id' => $lead->ca_id,
+            'employee_id' => $employee->employee_id,
+            'assigned_date' => now()->toDateString(),
+            'assignment_type' => 'Manual',
+            'status' => 'Active',
+        ]);
+
+        $this->postJson('/workflow/calls', [
+            'ca_id' => $lead->ca_id,
+            'employee_id' => $employee->employee_id,
+            'call_status' => 'Connected',
+            'call_note' => '',
+        ])->assertOk();
+
+        $this->assertDatabaseHas('call_logs', [
+            'ca_id' => $lead->ca_id,
+            'call_status' => 'Connected',
+            'call_note' => '',
+        ]);
+    }
+
     public function test_connected_call_with_next_date_creates_follow_up(): void
     {
         $this->actingAsAdmin();

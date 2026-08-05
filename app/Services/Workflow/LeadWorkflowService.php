@@ -72,9 +72,6 @@ class LeadWorkflowService
         }
 
         $note = trim((string) ($data['call_note'] ?? $data['remarks'] ?? ''));
-        if ($note === '') {
-            throw new InvalidArgumentException('Call note is required.');
-        }
 
         $calledAt = ! empty($data['called_at'])
             ? Carbon::parse($data['called_at'])

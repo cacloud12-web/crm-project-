@@ -1818,7 +1818,6 @@ if (otherInput) {
 
     if (!caId) errors.push({ field: 'call_status', message: 'Lead is required.' });
     if (!status) errors.push({ field: 'call_status', message: 'Please select a call status.' });
-    if (!note) errors.push({ field: 'call_note', message: 'Call note is required.' });
     if (!(payload.called_at || '').trim()) errors.push({ field: 'called_at', message: 'Call date and time are required.' });
 
     if (status === 'Demo Scheduled') {
@@ -13322,7 +13321,6 @@ if (otherInput) {
     var remarks = (payload.remarks || '').trim();
 
     if (!outcome) errors.push({ field: 'outcome', message: 'Please select a call status.' });
-    if (!remarks) errors.push({ field: 'remarks', message: 'Call note is required.' });
 
     if (outcome === 'Demo Scheduled') {
       if (!(payload.demo_date || '').trim()) errors.push({ field: 'demo_date', message: 'Demo date is required.' });

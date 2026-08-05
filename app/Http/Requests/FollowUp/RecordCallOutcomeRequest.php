@@ -47,7 +47,7 @@ class RecordCallOutcomeRequest extends FormRequest
             'ca_id' => 'required_without:followup_id|integer|exists:ca_masters,ca_id',
             'employee_id' => 'nullable|integer|exists:employees,employee_id',
             'outcome' => ['required', 'string', Rule::in(self::OUTCOMES)],
-            'remarks' => 'required|string|max:2000',
+            'remarks' => 'nullable|string|max:2000',
             'next_followup_date' => ($isFollowUp ? 'required' : 'nullable').'|date',
             'next_followup_time' => 'nullable|date_format:H:i',
             'demo_date' => ($isDemo ? 'required' : 'nullable').'|date',
@@ -61,7 +61,6 @@ class RecordCallOutcomeRequest extends FormRequest
     {
         return [
             'outcome.required' => 'Please select a call status.',
-            'remarks.required' => 'Call note is required.',
             'next_followup_date.required' => 'Follow-up date is required.',
             'demo_date.required' => 'Demo date is required.',
             'demo_time.required' => 'Demo time is required.',
