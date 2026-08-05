@@ -1982,7 +1982,7 @@ window.CAPages = (function () {
         '<div class="card p-5"><p class="text-caption text-slate-500">Role definitions are managed in Settings → Roles &amp; Permissions.</p></div>') +
       panel('performance', false,
         '<div id="leaderboard" class="card p-5 mb-4"></div>' +
-        '<div class="card overflow-hidden"><div class="overflow-x-auto"><table class="ca-table w-full"><thead><tr><th>Employee</th><th>Daily Calls</th><th>Demos</th><th>Conversion</th><th>Revenue</th><th>Target %</th></tr></thead><tbody id="employees-performance-table"><tr><td colspan="6" class="text-center text-slate-500 p-4">Loading performance data…</td></tr></tbody></table></div></div>');
+        '<div class="card overflow-hidden"><div class="overflow-x-auto"><table class="ca-table w-full"><thead><tr><th>Employee</th><th>Daily Calls</th><th>Demos</th><th>Leads</th><th>Assigned/Target</th><th>Target %</th></tr></thead><tbody id="employees-performance-table"><tr><td colspan="6" class="text-center text-slate-500 p-4">Loading performance data…</td></tr></tbody></table></div></div>');
   }
 
   function bulkPage() {

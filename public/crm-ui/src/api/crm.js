@@ -15807,10 +15807,22 @@ if (otherInput) {
     var badges = ['trophy', 'medal', 'award'];
     el.innerHTML = '<h3 class="text-card-heading mb-4 flex items-center gap-2"><i data-lucide="trophy" class="h-5 w-5 text-amber-500"></i> Team Leaderboard</h3>' +
       execs.map(function (e, i) {
-        return '<div class="flex items-center gap-4 p-3 rounded-xl hover:bg-slate-50 cursor-pointer team-row" data-employee-id="' + e.employee_id + '">' +
+        var achieved = Number(e.achieved_leads) || 0;
+        var target = Number(e.target_leads) || 0;
+        var pct = target > 0 ? Math.min(100, Math.round((achieved / target) * 100)) : 0;
+        var city = (e.city && e.city !== '—') ? e.city : 'No city';
+        return '<div class="flex items-center gap-4 p-3 rounded-xl hover:bg-slate-50 cursor-pointer team-row" data-employee-id="' + escapeHtml(String(e.employee_id || '')) + '">' +
           '<div class="flex h-8 w-8 items-center justify-center rounded-full bg-brand-50 text-brand"><i data-lucide="' + (badges[i] || 'user') + '" class="h-4 w-4"></i></div>' +
-          '<div class="flex-1"><p class="font-semibold">' + e.name + '</p><p class="text-caption text-slate-500">' + (e.city || '—') + ' · ' + (e.achieved_leads || 0) + ' leads</p></div>' +
-          '<div class="text-right"><p class="font-bold">' + (e.revenue || '—') + '</p><p class="text-caption text-emerald-600">' + (e.conversion || '—') + '</p></div></div>';
+          '<div class="flex-1 min-w-0">' +
+            '<p class="font-semibold truncate">' + escapeHtml(e.name || 'Employee') + '</p>' +
+            '<p class="text-caption text-slate-500">' + escapeHtml(city) + ' · ' + achieved + ' leads</p>' +
+          '</div>' +
+          '<div class="text-right shrink-0" style="min-width:5.5rem">' +
+            '<p class="font-bold text-slate-800">' + achieved + '/' + (target || '—') + '</p>' +
+            '<div class="ca-progress mt-1" title="Target progress"><div class="ca-progress-bar" style="width:' + pct + '%"></div></div>' +
+            '<p class="text-caption text-emerald-600 mt-0.5">' + pct + '% of target</p>' +
+          '</div>' +
+        '</div>';
       }).join('');
     icons();
   }
@@ -15824,13 +15836,15 @@ if (otherInput) {
       return;
     }
     el.innerHTML = execs.map(function (e) {
-      var targetPct = e.target_leads ? Math.round(((e.achieved_leads || 0) / e.target_leads) * 100) : 0;
+      var achieved = Number(e.achieved_leads) || 0;
+      var target = Number(e.target_leads) || 0;
+      var targetPct = target > 0 ? Math.round((achieved / target) * 100) : 0;
       return '<tr class="ca-table-row">' +
         '<td class="font-medium">' + escapeHtml(e.name) + '</td>' +
         '<td>' + escapeHtml(String(e.daily_calls || 0)) + '</td>' +
         '<td>' + escapeHtml(String(e.demos || e.demo_count || 0)) + '</td>' +
-        '<td>' + escapeHtml(e.conversion || '—') + '</td>' +
-        '<td>' + escapeHtml(e.revenue || '—') + '</td>' +
+        '<td>' + escapeHtml(String(achieved)) + '</td>' +
+        '<td>' + escapeHtml(String(achieved + '/' + (target || '—'))) + '</td>' +
         '<td>' + escapeHtml(String(targetPct) + '%') + '</td>' +
       '</tr>';
     }).join('');
