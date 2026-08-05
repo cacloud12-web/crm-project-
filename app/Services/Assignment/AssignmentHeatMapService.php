@@ -213,9 +213,9 @@ class AssignmentHeatMapService
         if ($role === 'manager') {
             $query->where(function ($q) {
                 $q->whereNull('role')
-                    ->orWhere('role', 'ilike', '%executive%')
-                    ->orWhere('role', 'ilike', '%employee%')
-                    ->orWhere('role', 'ilike', '%sales%');
+                    ->orWhereRaw("LOWER(COALESCE(role, '')) LIKE ?", ['%executive%'])
+                    ->orWhereRaw("LOWER(COALESCE(role, '')) LIKE ?", ['%employee%'])
+                    ->orWhereRaw("LOWER(COALESCE(role, '')) LIKE ?", ['%sales%']);
             });
         }
 

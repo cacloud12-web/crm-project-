@@ -10290,7 +10290,7 @@ if (otherInput) {
     var qs = Object.keys(params).filter(function (key) { return params[key]; }).map(function (key) {
       return encodeURIComponent(key) + '=' + encodeURIComponent(params[key]);
     }).join('&');
-    return apiFetch('/assignment-dashboard/heat-map' + (qs ? ('?' + qs) : ''))
+    return apiFetch('/assignment-dashboard/heat-map' + (qs ? ('?' + qs) : ''), { timeoutMs: 45000 })
       .then(function (body) {
         var data = body.data || {};
         populateAssignmentHeatMapFilters(data.filter_options || {});
@@ -10652,21 +10652,22 @@ if (otherInput) {
   function loadYearlyEmployeeTargets() {
     var params = yearlyTargetQueryParams();
     var qs = Object.keys(params).map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); }).join('&');
-    return Promise.all([
-      apiFetch('/yearly-employee-targets/summary?' + qs),
-      apiFetch('/yearly-employee-targets?' + qs),
-    ]).then(function (results) {
-      var summaryData = results[0].data || {};
-      var listData = results[1].data || {};
+    // summary already includes items — avoid a second heavy list request that can hang on live.
+    return apiFetch('/yearly-employee-targets/summary?' + qs, { timeoutMs: 45000 }).then(function (body) {
+      var summaryData = body.data || {};
       yearlyEmployeeTargetsState.summary = summaryData;
-      yearlyEmployeeTargetsState.items = listData.items || summaryData.items || [];
+      yearlyEmployeeTargetsState.items = summaryData.items || [];
       yearlyEmployeeTargetsState.targetWorkingDays = summaryData.target_working_days || yearlyEmployeeTargetsState.targetWorkingDays;
       populateYearlyTargetEmployeeFilter();
       renderYearlyEmployeeTargetsSummary(summaryData.cards || {});
       renderYearlyEmployeeTargetsTable(yearlyEmployeeTargetsState.items);
-    }).catch(function () {
+    }).catch(function (error) {
       var tbody = document.getElementById('assign-yearly-targets-table');
-      if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="text-center text-slate-500 py-4 text-sm">Unable to load yearly targets.</td></tr>';
+      if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center text-slate-500 py-4 text-sm">' +
+          escapeHtml((error && error.message) || 'Unable to load yearly targets.') +
+          '</td></tr>';
+      }
     });
   }
 
@@ -10683,6 +10684,8 @@ if (otherInput) {
     if (openBtn) openBtn.classList.toggle('hidden', !canEditYearlyEmployeeTargets());
     var year = (document.getElementById('assign-yearly-target-year') || {}).value || new Date().getFullYear();
     return fetchYearlyTargetWorkingDays(year).then(function () {
+      return loadYearlyEmployeeTargets();
+    }).catch(function () {
       return loadYearlyEmployeeTargets();
     });
   }
@@ -20206,8 +20209,10 @@ if (otherInput) {
         renderAssignmentHistoryTable();
         renderAssignmentKpis();
         populateAssignmentExecutiveFilter();
+        // /employees (Team) uses assignmentPage() HTML, which includes heat map + yearly targets.
+        // Always init those widgets; previously they stayed on "Loading…" forever on Team.
+        initAssignmentPage();
         if (pageId === 'assignment') {
-          initAssignmentPage();
           focusAssignmentSectionFromDashboard();
         }
         icons();
