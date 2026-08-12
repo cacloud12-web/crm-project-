@@ -17,6 +17,7 @@ class EmployeeAttendanceService
 {
     public function __construct(
         private readonly RbacService $rbacService,
+        private readonly AttendanceLeadGrantService $leadGrantService,
     ) {}
 
     public function assertCanManage(?User $user): void
@@ -189,6 +190,9 @@ class EmployeeAttendanceService
             );
         });
 
+        $leadGrant = $this->leadGrantService->grantForAttendance($record, $marker);
+        $record->refresh();
+
         return [
             'id' => $record->id,
             'employee_id' => $record->employee_id,
@@ -197,6 +201,8 @@ class EmployeeAttendanceService
             'status_label' => $this->statusLabel($record->status),
             'marked_by' => $record->marked_by,
             'remarks' => $record->remarks,
+            'auto_leads_granted' => (int) ($record->auto_leads_granted ?? 0),
+            'lead_grant' => $leadGrant,
         ];
     }
 
@@ -237,9 +243,10 @@ class EmployeeAttendanceService
         }
 
         $updated = 0;
-        DB::transaction(function () use ($allowed, $day, $status, $marker, &$updated) {
+        $records = [];
+        DB::transaction(function () use ($allowed, $day, $status, $marker, &$updated, &$records) {
             foreach ($allowed as $employeeId) {
-                $this->upsertAttendance(
+                $records[] = $this->upsertAttendance(
                     (int) $employeeId,
                     $day->toDateString(),
                     $status,
@@ -249,9 +256,18 @@ class EmployeeAttendanceService
             }
         });
 
+        $leadGrants = [];
+        foreach ($records as $record) {
+            $leadGrants[] = array_merge(
+                ['employee_id' => (int) $record->employee_id],
+                $this->leadGrantService->grantForAttendance($record, $marker),
+            );
+        }
+
         return [
             'updated' => $updated,
             'summary' => $this->summary($marker, $day->toDateString()),
+            'lead_grants' => $leadGrants,
         ];
     }
 

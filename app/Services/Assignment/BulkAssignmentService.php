@@ -107,6 +107,7 @@ class BulkAssignmentService
 
             $employee = $employees->get($pick['employee_id']);
             $isDuplicate = $owner && (int) $owner['employee_id'] === (int) $pick['employee_id'];
+            $rowReason = $mode === 'manual' ? $reason : ($pick['reason'] ?? $reason);
 
             $plan[] = $this->planRow(
                 $lead,
@@ -115,7 +116,7 @@ class BulkAssignmentService
                 $employee->name,
                 $mode,
                 $assignmentType,
-                $pick['reason'] ?? $reason,
+                $rowReason,
                 $isDuplicate ? 'duplicate' : ($preview ? 'preview' : 'pending'),
                 $isDuplicate ? 'duplicate_assignment: lead already assigned to this executive' : null,
             );

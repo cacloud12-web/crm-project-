@@ -27,6 +27,7 @@ class EmployeeAttendance extends Model
         'status',
         'marked_by',
         'remarks',
+        'auto_leads_granted',
     ];
 
     protected function casts(): array

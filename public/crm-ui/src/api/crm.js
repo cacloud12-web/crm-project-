@@ -7468,7 +7468,12 @@ if (otherInput) {
       }),
     }).then(function (body) {
       applyAttendanceMarkLocally(employeeId, body.data || { status: status });
-      toast('Attendance saved.', 'success');
+      var grant = body.data && body.data.lead_grant;
+      if (grant && grant.granted > 0) {
+        toast('Attendance saved — ' + grant.granted + ' unassigned lead' + (grant.granted === 1 ? '' : 's') + ' assigned.', 'success');
+      } else {
+        toast('Attendance saved.', 'success');
+      }
     }).catch(function (err) {
       toast(err.message || 'Unable to save attendance.', 'error');
     }).finally(function () {
@@ -7496,7 +7501,13 @@ if (otherInput) {
       }),
     }).then(function (body) {
       var updated = body.data && body.data.updated != null ? body.data.updated : ids.length;
-      toast('Updated attendance for ' + updated + ' employee(s).', 'success');
+      var grants = (body.data && body.data.lead_grants) ? body.data.lead_grants : [];
+      var totalGranted = grants.reduce(function (sum, row) { return sum + (row.granted || 0); }, 0);
+      if (totalGranted > 0) {
+        toast('Updated attendance for ' + updated + ' employee(s) — ' + totalGranted + ' leads assigned.', 'success');
+      } else {
+        toast('Updated attendance for ' + updated + ' employee(s).', 'success');
+      }
       if (body.data && body.data.summary) {
         attendanceUiState.summary = body.data.summary;
         paintAttendanceSummary(body.data.summary);
