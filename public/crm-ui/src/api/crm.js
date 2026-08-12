@@ -12,16 +12,96 @@ window.CA_CRM = (function () {
 
   var API_MSG = 'Backend API required — data saved in demo mode only.';
 
-  function icons() {
-    if (typeof lucide !== 'undefined') lucide.createIcons();
+  function icons(root) {
+    scheduleLucideIcons(root || null);
   }
+
+  var _lucideIconRaf = null;
+  var _lucideIconRoots = [];
+
+  /**
+   * Lucide's default createIcons() walks the *entire* document and rebuilds every
+   * icon. Tables/toasts call icons() dozens of times per interaction → multi-second
+   * main-thread freezes. Only paint unreplaced [data-lucide] nodes, rAF-batched.
+   */
+  function scheduleLucideIcons(root) {
+    if (typeof lucide === 'undefined') return;
+    if (root && root.nodeType === 1) {
+      _lucideIconRoots.push(root);
+    } else {
+      _lucideIconRoots.push(document);
+    }
+    if (_lucideIconRaf) return;
+    var raf = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : function (fn) { return setTimeout(fn, 16); };
+    _lucideIconRaf = raf(function () {
+      _lucideIconRaf = null;
+      var roots = _lucideIconRoots;
+      _lucideIconRoots = [];
+      var hasDocument = false;
+      for (var i = 0; i < roots.length; i++) {
+        if (roots[i] === document || roots[i] === document.body || roots[i] === document.documentElement) {
+          hasDocument = true;
+          break;
+        }
+      }
+      if (hasDocument) {
+        paintLucideIcons(document);
+        return;
+      }
+      for (var j = 0; j < roots.length; j++) {
+        paintLucideIcons(roots[j]);
+      }
+    });
+  }
+
+  function paintLucideIcons(root) {
+    if (typeof lucide === 'undefined' || !root) return;
+    var scope = root.querySelectorAll ? root : document;
+    var candidates;
+    try {
+      candidates = scope.querySelectorAll('[data-lucide]');
+    } catch (e) {
+      return;
+    }
+    if (!candidates.length) return;
+    var nodes = [];
+    for (var i = 0; i < candidates.length; i++) {
+      var el = candidates[i];
+      // Already painted by a previous pass.
+      if (el.getElementsByTagName('svg').length) continue;
+      nodes.push(el);
+    }
+    if (!nodes.length) return;
+    try {
+      lucide.createIcons({ nodes: nodes });
+    } catch (e1) {
+      try {
+        if (root !== document && root.nodeType === 1) {
+          lucide.createIcons({ root: root });
+        }
+      } catch (e2) {
+        /* ignore — avoid full-document fallback storm */
+      }
+    }
+  }
+
+  // Shared by app.js toasts / shell so both paths use the same cheap painter.
+  window.__crmPaintIcons = scheduleLucideIcons;
 
   function iconsIn(root) {
     if (window.CAActionDropdown && typeof window.CAActionDropdown.iconsIn === 'function') {
-      window.CAActionDropdown.iconsIn(root || document);
-      return;
+      // Prefer scoped paint on already-open menus, still skip repainted nodes.
+      try {
+        paintLucideIcons(root || document);
+        return;
+      } catch (e) {
+        window.CAActionDropdown.iconsIn(root || document);
+        return;
+      }
     }
-    icons();
+    scheduleLucideIcons(root || document);
   }
 
   function toast(msg, type) {
@@ -3003,7 +3083,23 @@ if (otherInput) {
     return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   }
 
+  // Hard caps to prevent Chrome "Aw, Snap! Out of Memory" after multi-save sessions.
+  var MAX_CACHED_LEADS = 150;
+  var MAX_CACHED_ASSIGNMENTS = 300;
+  var MAX_NOTIFICATION_CACHE = 80;
+  var MAX_SELECT_LEADS = 100;
+
+  function capArray(list, max) {
+    if (!Array.isArray(list) || list.length <= max) return list || [];
+    return list.slice(0, max);
+  }
+
   function mapLeadRecord(l) {
+    // Intentionally omit partners array from client cache — expandable rows fetch on demand.
+    // Full partner payloads on every listing row were a primary OOM driver.
+    var partnerCount = l.partner_count != null
+      ? Number(l.partner_count)
+      : (Array.isArray(l.partners) ? l.partners.length : 0);
     return {
       ca_id: String(l.ca_id),
       firm_name: l.firm_name || '—',
@@ -3011,7 +3107,9 @@ if (otherInput) {
       mobile_no: l.mobile_no || '—',
       alternate_mobile_no: l.alternate_mobile_no || '—',
       email_id: l.email_id || '—',
-      sales_remarks: l.sales_remarks && String(l.sales_remarks).trim() !== '' ? l.sales_remarks : '—',
+      sales_remarks: l.sales_remarks && String(l.sales_remarks).trim() !== ''
+        ? String(l.sales_remarks).slice(0, 2000)
+        : '—',
       gst_no: l.gst_no || '—',
       state: l.state || l.state_name || '—',
       state_id: l.state_id ? String(l.state_id) : null,
@@ -3019,8 +3117,8 @@ if (otherInput) {
       city_id: l.city_id ? String(l.city_id) : null,
       team_size: l.team_size != null && l.team_size !== '' ? Number(l.team_size) : 0,
       primary_ca_name: l.primary_ca_name || l.ca_name || '',
-      partner_count: l.partner_count != null ? Number(l.partner_count) : (Array.isArray(l.partners) ? l.partners.length : null),
-      partners: Array.isArray(l.partners) ? l.partners : [],
+      partner_count: partnerCount,
+      partners: [],
       existing_software: l.existing_software || '—',
       website: l.website || '—',
       rating: l.rating || 1,
@@ -3032,15 +3130,17 @@ if (otherInput) {
       master_pipeline_stage: l.master_pipeline_stage || mapStatusToMasterPipelineStage(l.status),
       executive_id: l.executive_id ? String(l.executive_id) : null,
       executive: l.executive || l.executive_name || l.employee_name || (l.executive_id ? 'Assigned' : 'Unassigned'),
-      team_members: l.team_members || {
-        count: l.team_members_count != null ? l.team_members_count : (l.team_member_names && l.team_member_names.length ? l.team_member_names.length : 0),
-        names: l.team_member_names || [],
+      team_members: {
+        count: l.team_members_count != null
+          ? l.team_members_count
+          : ((l.team_members && l.team_members.count) || (l.team_member_names && l.team_member_names.length) || 0),
+        names: (l.team_member_names || (l.team_members && l.team_members.names) || []).slice(0, 8),
         lead_owner_id: l.lead_owner_id != null ? l.lead_owner_id : (l.executive_id || null),
       },
       team_members_count: l.team_members_count != null
         ? l.team_members_count
         : ((l.team_members && l.team_members.count) || (l.team_member_names && l.team_member_names.length) || 0),
-      team_member_names: l.team_member_names || (l.team_members && l.team_members.names) || [],
+      team_member_names: (l.team_member_names || (l.team_members && l.team_members.names) || []).slice(0, 8),
       lead_owner_id: l.lead_owner_id != null ? l.lead_owner_id : (l.team_members && l.team_members.lead_owner_id),
       last_activity: l.last_activity || null,
       last_activity_at: l.last_activity_at || (l.last_activity && l.last_activity.occurred_at) || null,
@@ -3268,9 +3368,9 @@ if (otherInput) {
       if (callback) callback();
       return;
     }
-    apiFetch('/ca-masters?per_page=100&sort_by=firm_name&sort_dir=asc')
+    apiFetch('/ca-masters?per_page=' + encodeURIComponent(MAX_SELECT_LEADS) + '&sort_by=firm_name&sort_dir=asc')
       .then(function (body) {
-        window._selectLeads = unwrapList(body).map(mapLeadRecord);
+        window._selectLeads = capArray(unwrapList(body).map(mapLeadRecord), MAX_SELECT_LEADS);
         window._selectLeadsLoaded = true;
         if (!realLeadsLoaded || !window.realLeads || !window.realLeads.length) {
           window.realLeads = window._selectLeads.slice();
@@ -3379,15 +3479,22 @@ if (otherInput) {
     if (keys.indexOf('leads') >= 0) {
       realLeadsLoaded = false;
       kanbanLeadsLoaded = false;
+      // Drop full-list clones — leaving realLeads while marking not-loaded caused unbounded
+      // growth on each save (Chrome OOM after a handful of employee adds).
+      window.realLeads = [];
       window.kanbanLeads = [];
       window._listingLeadsPage = [];
+      window._selectLeads = [];
       window._selectLeadsLoaded = false;
     }
     if (keys.indexOf('employees') >= 0) {
       realEmployeesLoaded = false;
       window._selectEmployeesLoaded = false;
     }
-    if (keys.indexOf('assignments') >= 0) realAssignmentsLoaded = false;
+    if (keys.indexOf('assignments') >= 0) {
+      realAssignmentsLoaded = false;
+      window.realAssignments = [];
+    }
     if (keys.indexOf('followups') >= 0) realFollowUpsLoaded = false;
     if (keys.indexOf('masters') >= 0) masterDataLoaded = false;
     if (keys.indexOf('ca_masters') >= 0 || keys.indexOf('leads') >= 0) {
@@ -3454,14 +3561,15 @@ if (otherInput) {
 
   function loadLeadsFromDatabase(callback) {
     var gen = ++_leadsLoadGeneration;
-    return apiFetch('/ca-masters' + listingAllQuery('ca_masters'))
+    // Never fetch all=1 for in-memory catalog (up to 1000 full resources → OOM).
+    return apiFetch('/ca-masters?per_page=' + encodeURIComponent(MAX_CACHED_LEADS) + '&sort_by=created_at&sort_dir=desc')
       .then(function (body) {
         if (gen !== _leadsLoadGeneration) return;
-        window.realLeads = unwrapList(body).map(mapLeadRecord);
-        window.kanbanLeads = window.realLeads.slice();
-        kanbanLeadsLoaded = true;
+        window.realLeads = capArray(unwrapList(body).map(mapLeadRecord), MAX_CACHED_LEADS);
+        window.kanbanLeads = [];
+        kanbanLeadsLoaded = false;
         realLeadsLoaded = true;
-        window._selectLeads = window.realLeads.slice();
+        window._selectLeads = capArray(window.realLeads.slice(0, MAX_SELECT_LEADS), MAX_SELECT_LEADS);
         window._selectLeadsLoaded = true;
         if (realAssignmentsLoaded) enrichLeadsWithAssignments();
         if (callback) callback();
@@ -3540,10 +3648,11 @@ if (otherInput) {
 
   function loadAssignmentsFromDatabase(callback) {
     var gen = ++_assignmentsLoadGeneration;
-    return apiFetch('/lead-assignments' + listingAllQuery('lead_assignments'))
+    // Active only + hard cap — never all=1 dump of historical assignments.
+    return apiFetch('/lead-assignments?status=Active&per_page=' + encodeURIComponent(MAX_CACHED_ASSIGNMENTS) + '&sort_by=created_at&sort_dir=desc')
       .then(function (body) {
         if (gen !== _assignmentsLoadGeneration) return;
-        window.realAssignments = unwrapList(body);
+        window.realAssignments = capArray(unwrapList(body), MAX_CACHED_ASSIGNMENTS);
         realAssignmentsLoaded = true;
         if (realLeadsLoaded) enrichLeadsWithAssignments();
         if (callback) callback();
@@ -3557,9 +3666,9 @@ if (otherInput) {
   }
 
   function loadFollowUpsFromDatabase(callback) {
-    apiFetch('/follow-ups' + listingAllQuery('follow_ups'))
+    apiFetch('/follow-ups?per_page=150&sort_by=created_at&sort_dir=desc')
       .then(function (body) {
-        window.realFollowUps = unwrapList(body);
+        window.realFollowUps = capArray(unwrapList(body), 150);
         realFollowUpsLoaded = true;
         if (callback) callback();
       })
@@ -4144,7 +4253,7 @@ if (otherInput) {
   }
 
   function enrichLeadsWithAssignments() {
-    if (!window.realLeads || !window.realAssignments) return;
+    if (!window.realLeads || !window.realLeads.length || !window.realAssignments || !window.realAssignments.length) return;
     var latestByCa = {};
     window.realAssignments.forEach(function (a) {
       if (a.status && String(a.status).toLowerCase() !== 'active') return;
@@ -4153,21 +4262,20 @@ if (otherInput) {
         latestByCa[caId] = a;
       }
     });
-    window.realLeads = window.realLeads.map(function (lead) {
+    // Mutate in place — avoid cloning the entire catalog on every save.
+    window.realLeads.forEach(function (lead) {
       var asgn = latestByCa[String(lead.ca_id)];
       var hasNamedExecutive = lead.executive && lead.executive !== 'Unassigned' && lead.executive !== '—' && lead.executive !== 'Assigned';
-      if (hasNamedExecutive && lead.executive_id) return lead;
+      if (hasNamedExecutive && lead.executive_id) return;
       if (!asgn) {
         if (lead.executive_id && !hasNamedExecutive) {
-          return Object.assign({}, lead, { executive: lead.executive || 'Assigned' });
+          lead.executive = lead.executive || 'Assigned';
         }
-        return lead;
+        return;
       }
-      return Object.assign({}, lead, {
-        executive_id: String(asgn.employee_id),
-        executive: asgn.executive || asgn.employee_name || lead.executive || 'Assigned',
-        assignment_type: asgn.assignment_type || lead.assignment_type,
-      });
+      lead.executive_id = String(asgn.employee_id);
+      lead.executive = asgn.executive || asgn.employee_name || lead.executive || 'Assigned';
+      lead.assignment_type = asgn.assignment_type || lead.assignment_type;
     });
   }
 
@@ -4195,28 +4303,50 @@ if (otherInput) {
 
   function upsertLeadInCache(mappedLead) {
     if (!mappedLead || !mappedLead.ca_id) return;
-    var leads = window.realLeads || [];
+    var slim = Object.assign({}, mappedLead, { partners: [] });
+    var leads = Array.isArray(window.realLeads) ? window.realLeads : [];
     var idx = leads.findIndex(function (l) { return String(l.ca_id) === String(mappedLead.ca_id); });
     if (idx >= 0) {
-      leads[idx] = Object.assign({}, leads[idx], mappedLead);
+      leads[idx] = Object.assign({}, leads[idx], slim);
     } else {
-      leads.unshift(mappedLead);
+      leads.unshift(slim);
     }
-    window.realLeads = leads;
-    window._selectLeads = leads.slice();
-    window._selectLeadsLoaded = true;
+    window.realLeads = capArray(leads, MAX_CACHED_LEADS);
+    if (window._selectLeadsLoaded && Array.isArray(window._selectLeads)) {
+      var sIdx = window._selectLeads.findIndex(function (l) { return String(l.ca_id) === String(mappedLead.ca_id); });
+      if (sIdx >= 0) {
+        window._selectLeads[sIdx] = Object.assign({}, window._selectLeads[sIdx], slim);
+      } else {
+        window._selectLeads.unshift(slim);
+        window._selectLeads = capArray(window._selectLeads, MAX_SELECT_LEADS);
+      }
+    }
     realLeadsLoaded = true;
-    if (window._listingLeadsPage) {
+    if (window._listingLeadsPage && window._listingLeadsPage.length) {
       var pageIdx = window._listingLeadsPage.findIndex(function (l) { return String(l.ca_id) === String(mappedLead.ca_id); });
       if (pageIdx >= 0) {
-        window._listingLeadsPage[pageIdx] = Object.assign({}, window._listingLeadsPage[pageIdx], mappedLead);
+        window._listingLeadsPage[pageIdx] = Object.assign({}, window._listingLeadsPage[pageIdx], slim);
+      } else {
+        window._listingLeadsPage.unshift(slim);
+        var pageSize = 25;
+        try {
+          if (window.CA_LISTING_SEARCH) {
+            pageSize = parseInt(CA_LISTING_SEARCH.getState('ca_masters').per_page, 10) || 25;
+          }
+        } catch (e) { /* ignore */ }
+        if (window._listingLeadsPage.length > pageSize) {
+          window._listingLeadsPage = window._listingLeadsPage.slice(0, pageSize);
+        }
       }
+    } else {
+      window._listingLeadsPage = [slim];
     }
-    if (window.kanbanLeads) {
+    if (window.kanbanLeads && window.kanbanLeads.length) {
       var kanbanIdx = window.kanbanLeads.findIndex(function (l) { return String(l.ca_id) === String(mappedLead.ca_id); });
       if (kanbanIdx >= 0) {
-        window.kanbanLeads[kanbanIdx] = Object.assign({}, window.kanbanLeads[kanbanIdx], mappedLead);
+        window.kanbanLeads[kanbanIdx] = Object.assign({}, window.kanbanLeads[kanbanIdx], slim);
       }
+      window.kanbanLeads = capArray(window.kanbanLeads, MAX_CACHED_LEADS * 2);
     }
   }
 
@@ -4244,14 +4374,22 @@ if (otherInput) {
         renderLeadKpis();
       }
     }
+    // Prefer local page paint after saves (reloadListing=false) to avoid multi-MB JSON + DOM churn.
     if (document.getElementById('leads-data-table')) {
-      if (window.CA_LISTING_SEARCH && options.reloadListing !== false) {
+      if (window.CA_LISTING_SEARCH && options.reloadListing === true) {
         reloadListing('ca_masters');
       } else {
-        renderLeadsTable();
+        renderLeadsTable(window._listingLeadsPage || undefined);
       }
     }
-    if (document.getElementById('kanban-board')) {
+    if (document.getElementById('ca-master-data-table') && (isCamAllFirmsTabActive() || !isCamPipelineTabActive())) {
+      if (window.CA_LISTING_SEARCH && options.reloadListing === true) {
+        reloadListing('ca_masters');
+      } else if (window._listingLeadsPage) {
+        renderCaMasterTable(window._listingLeadsPage, 'ca-master-data-table');
+      }
+    }
+    if (document.getElementById('kanban-board') && options.reloadListing === true) {
       renderKanbanFromData();
     }
     var selId = CAData.getSelectedLeadId();
@@ -4293,16 +4431,43 @@ if (otherInput) {
   function applyLeadMutationSuccess(body, options) {
     options = options || {};
     var mapped = mergeLeadFromApiResponse(body);
-    invalidateDataCaches(options.cacheKeys || ['metrics', 'assignments']);
+    var cacheKeys = (options.cacheKeys || ['metrics', 'assignments']).slice();
+    // Save responses already include executive fields — keep in-memory assignments to
+    // avoid an all=1 /lead-assignments fetch after every edit.
+    var skipAssignmentReload = mapped && options.reloadAssignments === false;
+    if (skipAssignmentReload) {
+      cacheKeys = cacheKeys.filter(function (key) { return key !== 'assignments'; });
+    }
+    invalidateDataCaches(cacheKeys);
+
     if (mapped) {
       upsertLeadInCache(mapped);
+      var needsAssignmentReload = !skipAssignmentReload && (
+        options.reloadAssignments === true
+        || !realAssignmentsLoaded
+        || (!mapped.executive_id && !mapped.executive && !mapped.executive_name)
+      );
+
+      var finishMutationUi = function () {
+        enrichLeadsWithAssignments();
+        // Default: do not force segment-count + dashboard recompute after every field edit.
+        // That cold path is multi-second on large master tables.
+        refreshLeadsUi({
+          invalidateMetrics: options.invalidateMetrics === true,
+          reloadListing: options.reloadListing,
+        });
+        if (options.toast) toast(options.toast, 'success');
+        if (options.callback) options.callback(mapped);
+        return mapped;
+      };
+
+      if (!needsAssignmentReload) {
+        return Promise.resolve(finishMutationUi());
+      }
+
       return new Promise(function (resolve) {
         loadAssignmentsFromDatabase(function () {
-          enrichLeadsWithAssignments();
-          refreshLeadsUi({ invalidateMetrics: true, reloadListing: options.reloadListing });
-          if (options.toast) toast(options.toast, 'success');
-          if (options.callback) options.callback(mapped);
-          resolve(mapped);
+          resolve(finishMutationUi());
         });
       });
     }
@@ -19162,18 +19327,25 @@ if (otherInput) {
         window._editingLeadId = '';
         closeModal(document.getElementById('modal-add-lead'));
         resetLeadForm();
-        window._leadSegmentFilter = 'all';
-        if (window.CA_LISTING_SEARCH) {
-          CA_LISTING_SEARCH.setState('ca_masters', { page: 1, filters: {}, search: '' });
+        // Keep current filters/search so edit/save does not force a heavy unfiltered reload.
+        // New leads only: jump to page 1 (sort is usually newest first).
+        if (!editingId && window.CA_LISTING_SEARCH) {
+          CA_LISTING_SEARCH.setState('ca_masters', { page: 1 });
         }
         return applyLeadMutationSuccess(body, {
           toast: editingId ? 'Lead updated successfully' : 'Lead added successfully.',
-          cacheKeys: ['metrics', 'leads', 'assignments', 'employee_dashboard'],
+          // Do NOT wipe the leads catalog on every save — that cleared arrays then
+          // re-fetched multi-page datasets and leaked memory into Chrome OOM.
+          cacheKeys: editingId ? [] : ['metrics', 'employee_dashboard'],
+          reloadAssignments: false,
+          // Paint local page only; full listing reload on every employee add was OOM + lag.
+          reloadListing: false,
+          invalidateMetrics: !editingId,
           callback: function () {
-            if (document.getElementById('mgr-kpi-sections')) {
-              renderManagerDashboard();
+            if (window._currentPageId === 'dashboard') {
+              if (isEmployeeUser()) renderEmployeeDashboard();
+              else renderManagerDashboard();
             }
-            renderMasterTables();
           },
         });
       })
@@ -20704,18 +20876,15 @@ if (otherInput) {
   }
 
   var bulkAssignmentState = {
-    selectedBatchId: null,
-    selectedBatch: null,
+    poolSelected: true,
+    poolSummary: null,
     selectedEmployeeIds: {},
-    batchPage: 1,
     employeePage: 1,
-    batchItems: [],
     employeeItems: [],
-    batchPagination: {},
     employeePagination: {},
     previewSummary: null,
-    batchesLoading: false,
-    batchesRequestSeq: 0,
+    poolLoading: false,
+    poolRequestSeq: 0,
     employeesLoading: false,
     employeeSearchTimer: null,
   };
@@ -20726,9 +20895,19 @@ if (otherInput) {
     });
   }
 
+  function bulkAssignReadLimit() {
+    var el = document.getElementById('bulk-assign-pool-limit');
+    var max = (bulkAssignmentState.poolSummary && bulkAssignmentState.poolSummary.assign_max) || 5000;
+    var n = el ? parseInt(el.value, 10) : 1000;
+    if (isNaN(n) || n < 1) n = 1;
+    return Math.min(max, n);
+  }
+
   function bulkAssignMatchingLeadCount() {
-    if (!bulkAssignmentState.selectedBatch) return 0;
-    return bulkAssignmentState.selectedBatch.matching_leads || 0;
+    var summary = bulkAssignmentState.poolSummary;
+    if (!summary) return 0;
+    var matching = Number(summary.matching_leads || summary.unassigned_total || 0);
+    return Math.min(matching, bulkAssignReadLimit());
   }
 
   function bulkAssignBatchFilterParams() {
@@ -20736,26 +20915,25 @@ if (otherInput) {
     var stateId = (document.getElementById('bulk-assign-batch-state') || {}).value || '';
     var cityId = (document.getElementById('bulk-assign-batch-city') || {}).value || '';
     var sourceId = (document.getElementById('bulk-assign-batch-source') || {}).value || '';
-    var assignment = (document.getElementById('bulk-assign-batch-assignment') || {}).value || '';
     if (stateId) params.state_id = stateId;
     if (cityId) params.city_id = cityId;
     if (sourceId) params.source_id = sourceId;
-    if (assignment) params.assignment = assignment;
+    params.assignment = 'unassigned';
     return params;
   }
 
   function bulkAssignHasActiveFilters() {
     var filters = bulkAssignBatchFilterParams();
-    return !!(filters.state_id || filters.city_id || filters.source_id || filters.assignment);
+    return !!(filters.state_id || filters.city_id || filters.source_id);
   }
 
   function bulkAssignUpdateCounts() {
     var leadCount = bulkAssignMatchingLeadCount();
     var empCount = bulkAssignSelectedEmployeeIds().length;
-    var batch = bulkAssignmentState.selectedBatch;
+    var pool = bulkAssignmentState.poolSummary;
     var batchSummary = document.getElementById('bulk-assign-summary-batch');
     if (batchSummary) {
-      batchSummary.innerHTML = 'Selected Batch: <strong>' + escapeHtml(batch ? (batch.batch_name || batch.file_name || 'Batch') : 'None') + '</strong>';
+      batchSummary.innerHTML = 'Selected Pool: <strong>' + escapeHtml((pool && pool.label) || 'Unassigned Leads') + '</strong>';
     }
     var leadSummary = document.getElementById('bulk-assign-summary-leads');
     if (leadSummary) {
@@ -20772,7 +20950,7 @@ if (otherInput) {
   function bulkAssignUpdateActionButtons(leadCount, empCount) {
     leadCount = leadCount ?? bulkAssignMatchingLeadCount();
     empCount = empCount ?? bulkAssignSelectedEmployeeIds().length;
-    var ready = !!bulkAssignmentState.selectedBatchId && leadCount > 0 && empCount > 0;
+    var ready = !!bulkAssignmentState.poolSelected && leadCount > 0 && empCount > 0;
     var loadingEl = document.getElementById('bulk-assign-loading');
     var isLoading = loadingEl && !loadingEl.classList.contains('hidden');
     ['bulk-assign-preview-btn', 'bulk-assign-confirm-btn'].forEach(function (id) {
@@ -20832,24 +21010,22 @@ if (otherInput) {
     return map[reason] || (reason || '—').replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
   }
 
-  function bulkAssignBatchCardHtml(batch) {
-    var selected = String(bulkAssignmentState.selectedBatchId) === String(batch.bulk_action_id);
-    return '<div class="bulk-assign-batch-card' + (selected ? ' is-selected' : '') + '" data-batch-id="' + batch.bulk_action_id + '">' +
+  function bulkAssignPoolCardHtml(summary) {
+    var matching = Number((summary && summary.matching_leads) || 0);
+    var willAssign = Math.min(matching, bulkAssignReadLimit());
+    var truncated = matching > willAssign;
+    return '<div class="bulk-assign-batch-card is-selected">' +
       '<div class="bulk-assign-batch-body">' +
-        '<p class="bulk-assign-batch-name">' + escapeHtml(batch.batch_name || batch.file_name || 'Import batch') + '</p>' +
+        '<p class="bulk-assign-batch-name">' + escapeHtml((summary && summary.label) || 'Unassigned Leads') + '</p>' +
         '<div class="bulk-assign-batch-grid">' +
-          '<div><span class="bulk-assign-batch-label">Total Leads</span><strong>' + (batch.total_leads || 0) + '</strong></div>' +
-          '<div><span class="bulk-assign-batch-label">Unassigned</span><strong>' + (batch.unassigned_leads || 0) + '</strong></div>' +
-          '<div><span class="bulk-assign-batch-label">Assigned</span><strong>' + (batch.assigned_leads || 0) + '</strong></div>' +
-          '<div><span class="bulk-assign-batch-label">Matching</span><strong>' + (batch.matching_leads || 0) + '</strong></div>' +
+          '<div><span class="bulk-assign-batch-label">Unassigned (filters)</span><strong>' + matching.toLocaleString() + '</strong></div>' +
+          '<div><span class="bulk-assign-batch-label">This run</span><strong>' + willAssign.toLocaleString() + '</strong></div>' +
         '</div>' +
-        '<p class="bulk-assign-batch-meta">Source: ' + escapeHtml(batch.source || 'Bulk Import') + '</p>' +
-        '<p class="bulk-assign-batch-meta">Imported By: ' + escapeHtml(batch.imported_by || '—') + '</p>' +
-        '<p class="bulk-assign-batch-meta">Imported At: ' + escapeHtml(batch.imported_at_label || '—') + '</p>' +
+        '<p class="bulk-assign-batch-meta">Only leads with no active assignment are included.</p>' +
+        (truncated
+          ? '<p class="bulk-assign-batch-meta">Showing first ' + willAssign.toLocaleString() + ' of ' + matching.toLocaleString() + '. Run again for the rest.</p>'
+          : '') +
       '</div>' +
-      '<button type="button" class="btn-secondary btn-sm bulk-assign-batch-select-btn" data-batch-id="' + batch.bulk_action_id + '">' +
-        (selected ? 'Selected' : 'Select Batch') +
-      '</button>' +
     '</div>';
   }
 
@@ -20902,116 +21078,56 @@ if (otherInput) {
     });
   }
 
-  function bulkAssignSelectBatch(batch) {
-    if (!batch) return;
-    bulkAssignmentState.selectedBatchId = String(batch.bulk_action_id);
-    bulkAssignmentState.selectedBatch = batch;
-    bulkAssignUpdateCounts();
-    bulkAssignInvalidatePreview();
-    var listEl = document.getElementById('bulk-assign-batches-list');
-    if (listEl) {
-      listEl.querySelectorAll('.bulk-assign-batch-card').forEach(function (card) {
-        var isSelected = String(card.dataset.batchId) === bulkAssignmentState.selectedBatchId;
-        card.classList.toggle('is-selected', isSelected);
-        var btn = card.querySelector('.bulk-assign-batch-select-btn');
-        if (btn) btn.textContent = isSelected ? 'Selected' : 'Select Batch';
-      });
-    }
-  }
-
-  function bulkAssignClearBatchSelection() {
-    bulkAssignmentState.selectedBatchId = null;
-    bulkAssignmentState.selectedBatch = null;
-    loadBulkAssignBatches(bulkAssignmentState.batchPage || 1);
-    bulkAssignUpdateCounts();
-    bulkAssignInvalidatePreview();
-  }
-
-  function loadBulkAssignBatches(page) {
-    bulkAssignmentState.batchPage = page || bulkAssignmentState.batchPage || 1;
-    var requestSeq = ++bulkAssignmentState.batchesRequestSeq;
-    bulkAssignmentState.batchesLoading = true;
-    var list = document.getElementById('bulk-assign-batches-list');
+  function loadBulkAssignPool() {
+    var requestSeq = ++bulkAssignmentState.poolRequestSeq;
+    bulkAssignmentState.poolLoading = true;
+    var list = document.getElementById('bulk-assign-pool-card');
     if (list && !list.querySelector('.bulk-assign-batch-card')) {
-      list.innerHTML = '<div class="bulk-assign-skeleton">Loading import batches…</div>';
+      list.innerHTML = '<div class="bulk-assign-skeleton">Loading unassigned leads…</div>';
     }
     var params = new URLSearchParams(Object.assign({
-      page: String(bulkAssignmentState.batchPage),
-      per_page: '10',
+      limit: String(bulkAssignReadLimit()),
     }, bulkAssignBatchFilterParams()));
-    var preservedEmployees = Object.assign({}, bulkAssignmentState.selectedEmployeeIds);
-    apiFetch('/lead-assignments/bulk/batches?' + params.toString())
+    apiFetch('/lead-assignments/bulk/pool?' + params.toString())
       .then(function (body) {
-        if (requestSeq !== bulkAssignmentState.batchesRequestSeq) return;
-        var data = body.data || {};
-        bulkAssignmentState.batchItems = data.items || [];
-        bulkAssignmentState.batchPagination = data.pagination || {};
-        bulkAssignmentState.selectedEmployeeIds = preservedEmployees;
-
-        if (bulkAssignmentState.selectedBatchId) {
-          var selected = bulkAssignmentState.batchItems.find(function (item) {
-            return String(item.bulk_action_id) === String(bulkAssignmentState.selectedBatchId);
-          });
-          if (selected) {
-            bulkAssignmentState.selectedBatch = selected;
-          } else if (Number(bulkAssignmentState.batchPage) === 1) {
-            bulkAssignmentState.selectedBatchId = null;
-            bulkAssignmentState.selectedBatch = null;
-          }
-        }
-
-        var listEl = document.getElementById('bulk-assign-batches-list');
+        if (requestSeq !== bulkAssignmentState.poolRequestSeq) return;
+        bulkAssignmentState.poolSummary = body.data || null;
+        bulkAssignmentState.poolSelected = true;
+        var listEl = document.getElementById('bulk-assign-pool-card');
         if (!listEl) return;
-        if (!bulkAssignmentState.batchItems.length) {
+        var matching = Number((bulkAssignmentState.poolSummary && bulkAssignmentState.poolSummary.matching_leads) || 0);
+        if (!matching) {
           listEl.innerHTML = bulkAssignHasActiveFilters()
-            ? '<div class="bulk-assign-empty">No lead batches found matching your filters.</div>'
-            : '<div class="bulk-assign-empty">No import batches found. Import leads first, then assign by batch.</div>';
+            ? '<div class="bulk-assign-empty">No unassigned leads match your filters.</div>'
+            : '<div class="bulk-assign-empty">No unassigned leads available.</div>';
         } else {
-          listEl.innerHTML = bulkAssignmentState.batchItems.map(bulkAssignBatchCardHtml).join('');
+          listEl.innerHTML = bulkAssignPoolCardHtml(bulkAssignmentState.poolSummary);
         }
-        bulkAssignRenderPagination('bulk-assign-batches-pagination', bulkAssignmentState.batchPagination, 'batches');
-        bindBulkAssignBatchCards(listEl);
+        var hint = document.getElementById('bulk-assign-pool-limit-hint');
+        var max = (bulkAssignmentState.poolSummary && bulkAssignmentState.poolSummary.assign_max) || 5000;
+        var limitEl = document.getElementById('bulk-assign-pool-limit');
+        if (limitEl) {
+          limitEl.max = String(max);
+        }
+        if (hint) {
+          hint.textContent = 'Oldest unassigned leads first (by ID). Max ' + Number(max).toLocaleString() + ' per run.';
+        }
         bulkAssignUpdateCounts();
       })
       .catch(function (err) {
-        if (requestSeq !== bulkAssignmentState.batchesRequestSeq) return;
-        var listEl = document.getElementById('bulk-assign-batches-list');
-        if (listEl) listEl.innerHTML = '<div class="bulk-assign-empty text-rose-600">' + escapeHtml(err.message || 'Failed to load batches') + '</div>';
+        if (requestSeq !== bulkAssignmentState.poolRequestSeq) return;
+        var listEl = document.getElementById('bulk-assign-pool-card');
+        if (listEl) listEl.innerHTML = '<div class="bulk-assign-empty text-rose-600">' + escapeHtml(err.message || 'Failed to load unassigned pool') + '</div>';
       })
       .finally(function () {
-        if (requestSeq === bulkAssignmentState.batchesRequestSeq) {
-          bulkAssignmentState.batchesLoading = false;
+        if (requestSeq === bulkAssignmentState.poolRequestSeq) {
+          bulkAssignmentState.poolLoading = false;
         }
       });
   }
 
-  function bindBulkAssignBatchCards(root) {
-    if (!root) return;
-    root.querySelectorAll('.bulk-assign-batch-select-btn').forEach(function (btn) {
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        var id = String(btn.dataset.batchId);
-        var batch = bulkAssignmentState.batchItems.find(function (item) {
-          return String(item.bulk_action_id) === id;
-        });
-        if (!batch) return;
-        if (bulkAssignmentState.selectedBatchId === id) {
-          bulkAssignClearBatchSelection();
-          return;
-        }
-        bulkAssignSelectBatch(batch);
-      });
-    });
-    root.querySelectorAll('.bulk-assign-batch-card').forEach(function (card) {
-      card.addEventListener('click', function (e) {
-        if (e.target.closest('.bulk-assign-batch-select-btn')) return;
-        var id = String(card.dataset.batchId);
-        var batch = bulkAssignmentState.batchItems.find(function (item) {
-          return String(item.bulk_action_id) === id;
-        });
-        if (batch) bulkAssignSelectBatch(batch);
-      });
-    });
+  function loadBulkAssignBatches() {
+    loadBulkAssignPool();
   }
 
   function loadBulkAssignEmployees(page) {
@@ -21114,16 +21230,16 @@ if (otherInput) {
 
     var sourceSel = document.getElementById('bulk-assign-batch-source');
     if (sourceSel) sourceSel.value = '';
-    var assignmentSel = document.getElementById('bulk-assign-batch-assignment');
-    if (assignmentSel) assignmentSel.value = '';
+    var limitEl = document.getElementById('bulk-assign-pool-limit');
+    if (limitEl) limitEl.value = '1000';
 
     bulkAssignInvalidatePreview();
-    loadBulkAssignBatches(1);
+    loadBulkAssignPool();
   }
 
   function initBulkAssignmentPanel() {
     if (document.getElementById('bulk-assignment-panel')?._bulkAssignInit) {
-      loadBulkAssignBatches(1);
+      loadBulkAssignPool();
       loadBulkAssignEmployees(1);
       bulkAssignUpdateCounts();
       icons();
@@ -21134,7 +21250,7 @@ if (otherInput) {
     panel._bulkAssignInit = true;
 
     populateBulkAssignFilters();
-    loadBulkAssignBatches(1);
+    loadBulkAssignPool();
     loadBulkAssignEmployees(1);
     bulkAssignUpdateCounts();
 
@@ -21193,21 +21309,30 @@ if (otherInput) {
       });
     }
 
-    ['bulk-assign-batch-state', 'bulk-assign-batch-city', 'bulk-assign-batch-source', 'bulk-assign-batch-assignment'].forEach(function (id) {
+    ['bulk-assign-batch-state', 'bulk-assign-batch-city', 'bulk-assign-batch-source'].forEach(function (id) {
       var el = document.getElementById(id);
       if (el && !el._bulkAssignBound) {
         el._bulkAssignBound = true;
         el.addEventListener('change', function () {
-          loadBulkAssignBatches(1);
+          loadBulkAssignPool();
           bulkAssignInvalidatePreview();
         });
       }
     });
 
-    var clearBatch = document.getElementById('bulk-assign-batch-clear');
-    if (clearBatch && !clearBatch._bulkAssignBound) {
-      clearBatch._bulkAssignBound = true;
-      clearBatch.addEventListener('click', bulkAssignClearBatchSelection);
+    var limitEl = document.getElementById('bulk-assign-pool-limit');
+    if (limitEl && !limitEl._bulkAssignBound) {
+      limitEl._bulkAssignBound = true;
+      limitEl.addEventListener('change', function () {
+        if (bulkAssignmentState.poolSummary) {
+          var listEl = document.getElementById('bulk-assign-pool-card');
+          if (listEl && Number(bulkAssignmentState.poolSummary.matching_leads || 0) > 0) {
+            listEl.innerHTML = bulkAssignPoolCardHtml(bulkAssignmentState.poolSummary);
+          }
+        }
+        bulkAssignUpdateCounts();
+        bulkAssignInvalidatePreview();
+      });
     }
 
     var resetFilters = document.getElementById('bulk-assign-filters-reset');
@@ -21248,15 +21373,16 @@ if (otherInput) {
     };
     var filters = bulkAssignBatchFilterParams();
     var payload = {
-      bulk_action_id: bulkAssignmentState.selectedBatchId ? parseInt(bulkAssignmentState.selectedBatchId, 10) : null,
+      pool: 'unassigned',
+      limit: bulkAssignReadLimit(),
       employee_ids: employeeIds,
       assignment_mode: assignmentMode,
       reason: reasonSel ? reasonSel.value : (reasonMap[assignmentMode] || 'ROUND_ROBIN'),
+      assignment: 'unassigned',
     };
     if (filters.state_id) payload.state_id = parseInt(filters.state_id, 10);
     if (filters.city_id) payload.city_id = parseInt(filters.city_id, 10);
     if (filters.source_id) payload.source_id = parseInt(filters.source_id, 10);
-    if (filters.assignment) payload.assignment = filters.assignment;
     return payload;
   }
 
@@ -21296,12 +21422,8 @@ if (otherInput) {
 
   function bulkAssignValidatePayload() {
     var payload = getBulkAssignmentPayload();
-    if (!payload.bulk_action_id) {
-      toast('Please select an import batch.', 'warning');
-      return null;
-    }
     if (!bulkAssignMatchingLeadCount()) {
-      toast('No leads match the selected batch and filters.', 'warning');
+      toast('No unassigned leads match the selected filters.', 'warning');
       return null;
     }
     if (!payload.employee_ids.length) {
@@ -21331,8 +21453,7 @@ if (otherInput) {
     var assignCount = bulkAssignPendingCount(summary);
     var text = document.getElementById('bulk-assign-confirm-text');
     if (text) {
-      var batchName = bulkAssignmentState.selectedBatch ? (bulkAssignmentState.selectedBatch.batch_name || bulkAssignmentState.selectedBatch.file_name) : 'batch';
-      text.innerHTML = 'Assign <strong>' + assignCount + '</strong> lead' + (assignCount === 1 ? '' : 's') + ' from <strong>' + escapeHtml(batchName || 'batch') + '</strong>?<br><br>' +
+      text.innerHTML = 'Assign <strong>' + assignCount + '</strong> unassigned lead' + (assignCount === 1 ? '' : 's') + '?<br><br>' +
         'Mode: <strong>' + escapeHtml(bulkAssignModeLabel(payload.assignment_mode)) + '</strong><br>' +
         'Employees: <strong>' + payload.employee_ids.length + '</strong>';
     }
@@ -21372,13 +21493,12 @@ if (otherInput) {
           bulkAssignmentState.previewSummary = null;
           var total = (summary.assigned_rows || 0) + (summary.reassigned_rows || 0);
           toast(total + ' leads assigned successfully', 'success');
-          bulkAssignClearBatchSelection();
           bulkAssignmentState.selectedEmployeeIds = {};
           bulkAssignUpdateCounts();
           realAssignmentsLoaded = false;
           realLeadsLoaded = false;
           invalidateDataCaches(['metrics', 'segment_counts', 'leads', 'assignments', 'employee_dashboard']);
-          loadBulkAssignBatches(1);
+          loadBulkAssignPool();
           loadBulkAssignEmployees(1);
           reloadLeadDataAfterMutation({ cacheKeys: ['metrics', 'leads', 'assignments', 'employee_dashboard'] });
         }
@@ -23226,13 +23346,13 @@ if (otherInput) {
     return apiFetch('/notifications')
       .then(function (body) {
         var data = body.data || {};
-        notificationsCache = data.notifications || [];
+        notificationsCache = capArray(data.notifications || [], MAX_NOTIFICATION_CACHE);
         notificationsUnreadCount = data.unread_count || 0;
         notificationsLatestId = notificationsCache.reduce(function (max, item) {
           var id = parseInt(item.notification_id, 10) || 0;
           return id > max ? id : max;
         }, 0);
-        notificationPollIntervalMs = (data.poll_interval_seconds || 30) * 1000;
+        notificationPollIntervalMs = Math.max(30000, (data.poll_interval_seconds || 45) * 1000);
         return data;
       });
   }
@@ -23249,11 +23369,12 @@ if (otherInput) {
         var id = parseInt(item.notification_id, 10) || 0;
         if (id > notificationsLatestId) notificationsLatestId = id;
       });
+      notificationsCache = capArray(notificationsCache, MAX_NOTIFICATION_CACHE);
       notificationsUnreadCount = data.unread_count || 0;
       if (typeof data.latest_id === 'number' && data.latest_id > notificationsLatestId) {
         notificationsLatestId = data.latest_id;
       }
-      notificationPollIntervalMs = (data.poll_interval_seconds || 30) * 1000;
+      notificationPollIntervalMs = Math.max(30000, (data.poll_interval_seconds || 45) * 1000);
       return data;
     });
   }
@@ -26163,9 +26284,6 @@ if (otherInput) {
     window.icons = icons;
     if (window.CATablePagination) {
       CATablePagination.init();
-      CATablePagination.register('bulk-assign-batches', {
-        onPageChange: function (page) { loadBulkAssignBatches(page); },
-      });
       CATablePagination.register('bulk-assign-employees', {
         onPageChange: function (page) { loadBulkAssignEmployees(page); },
       });
@@ -26212,6 +26330,8 @@ if (otherInput) {
     if (key === 'ca_masters') {
       var leads = items.map(mapLeadRecord);
       window._listingLeadsPage = leads;
+      // Listing page is source of truth — do not append into unbounded realLeads.
+      window.realLeads = capArray(leads.slice(), MAX_CACHED_LEADS);
       realLeadsLoaded = true;
       enrichLeadsWithAssignments();
       if (document.getElementById('leads-data-table')) renderLeadsTable(leads);

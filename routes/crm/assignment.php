@@ -61,6 +61,7 @@ Route::middleware(['auth', 'rbac'])->group(function () {
     Route::resource('daily-employee-targets', DailyEmployeeTargetController::class)
         ->middleware('spa.browser:assignment');
     Route::get('lead-assignments/bulk/batches', [BulkAssignmentController::class, 'batches']);
+    Route::get('lead-assignments/bulk/pool', [BulkAssignmentController::class, 'pool']);
     Route::get('lead-assignments/bulk/leads', [BulkAssignmentController::class, 'leads']);
     Route::get('lead-assignments/bulk/leads/ids', [BulkAssignmentController::class, 'leadIds']);
     Route::get('lead-assignments/bulk/employees', [BulkAssignmentController::class, 'employees']);

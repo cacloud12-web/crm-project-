@@ -46,8 +46,14 @@ class CaMasterService
 
     public function search(array $params = []): array
     {
+        $query = CaMaster::query()->with($this->listingRelations());
+        // Count only — never hydrate all partner rows for every list page (OOM risk in the browser).
+        if (\App\Support\Database\SchemaMemo::hasTable('ca_master_partners')) {
+            $query->withCount('partners');
+        }
+
         return $this->searchListing(
-            CaMaster::query()->with($this->listingRelations()),
+            $query,
             $params,
             'ca_masters',
         );
@@ -55,8 +61,13 @@ class CaMasterService
 
     public function list(): Collection
     {
+        $query = CaMaster::query()->with($this->listingRelations());
+        if (\App\Support\Database\SchemaMemo::hasTable('ca_master_partners')) {
+            $query->withCount('partners');
+        }
+
         return $this->listAllFromSearch(
-            CaMaster::query()->with($this->listingRelations()),
+            $query,
             [],
             'ca_masters',
         );
@@ -185,6 +196,9 @@ class CaMasterService
             $stageQuery = (clone $baseQuery)
                 ->with($this->listingRelations())
                 ->whereIn('status', $statuses);
+            if (\App\Support\Database\SchemaMemo::hasTable('ca_master_partners')) {
+                $stageQuery->withCount('partners');
+            }
             ListingQueryApplier::applyColumnProjection($stageQuery, $config);
 
             $items = $items->merge(
@@ -238,18 +252,14 @@ class CaMasterService
     {
         // activeTeamAssignments alone covers executive + team (avoids duplicate
         // lead_assignment_engines query from also eager-loading activeAssignment).
-        $relations = [
+        // Deliberately omit partners — list cells only need partner_count (withCount).
+        return [
             'city:city_id,city_name',
             'state:state_id,state_name',
             'sourceLead:source_id,source_name',
             'createdByEmployee:employee_id,name',
             'activeTeamAssignments.employee:employee_id,name,role,status',
         ];
-        if (\App\Support\Database\SchemaMemo::hasTable('ca_master_partners')) {
-            $relations[] = 'partners:id,ca_id,ca_name,membership_no,mobile,alternate_mobile,email,team_size,designation,is_primary,status,sequence_no';
-        }
-
-        return $relations;
     }
 
     public function find(int|string $id): CaMaster
@@ -385,7 +395,7 @@ class CaMasterService
             afterValue: mb_substr($remark, 0, 200),
         );
 
-        $this->invalidateDashboardCache();
+        $this->invalidateDashboardCache(false);
         $this->cacheService->forgetMasterListings();
 
         return $lead;
@@ -409,12 +419,18 @@ class CaMasterService
         $data = $this->duplicateLeadDetection->applyNormalizedFields($data, $caMaster);
 
         $before = $this->auditSnapshot($caMaster);
+        $beforeIsNewlyEstablished = (bool) $caMaster->is_newly_established;
+        $beforeIsVerified = (bool) $caMaster->is_verified;
+        $beforeVerificationStatus = (string) ($caMaster->verification_status ?? '');
         $this->duplicateLeadDetection->assertNoDuplicatesForSave($data, $caMaster, $user);
         $executiveId = $this->extractExecutiveId($data);
 
         $lead = DB::transaction(function () use ($caMaster, $data) {
             $payload = $this->normalize($data, $caMaster);
-            if (! array_key_exists('last_activity_at', $payload)) {
+            if (
+                ! array_key_exists('last_activity_at', $payload)
+                && \App\Support\Database\SchemaMemo::hasColumn('ca_masters', 'last_activity_at')
+            ) {
                 $payload['last_activity_at'] = now();
             }
             $caMaster->update($payload);
@@ -447,7 +463,13 @@ class CaMasterService
             afterValue: $this->auditSnapshot($lead),
         );
 
-        $this->invalidateDashboardCache();
+        // Heavy segment/dashboard COUNT caches only when funnel-affecting fields change.
+        // Plain contact/firm edits used to wipe them on every save → multi-second freezes.
+        $segmentSensitive = ((string) ($before['status'] ?? '')) !== ((string) ($lead->status ?? ''))
+            || $beforeIsNewlyEstablished !== (bool) $lead->is_newly_established
+            || $beforeIsVerified !== (bool) $lead->is_verified
+            || $beforeVerificationStatus !== ((string) ($lead->verification_status ?? ''));
+        $this->invalidateDashboardCache($segmentSensitive);
 
         $this->duplicateAttemptService->resolveOnLeadSave(
             $this->employeeDataScope->resolveEmployeeId($user),
@@ -545,7 +567,7 @@ class CaMasterService
             afterValue: $this->contactSnapshot($lead),
         );
 
-        $this->invalidateDashboardCache();
+        $this->invalidateDashboardCache(false);
 
         return $lead;
     }
@@ -970,9 +992,24 @@ class CaMasterService
         $this->cacheService->forgetMasterListings();
     }
 
-    private function invalidateDashboardCache(): void
+    /**
+     * @param  bool  $segmentSensitive  When false, skip wiping org-wide COUNT caches
+     *                                  (segment/pipeline/dashboard) that take 1s+ to rebuild.
+     */
+    private function invalidateDashboardCache(bool $segmentSensitive = true): void
     {
         $scopeKey = $this->employeeDataScope->cacheScopeKey();
+        $employeeId = $this->employeeDataScope->scopedEmployeeId(auth()->user());
+
+        if (! $segmentSensitive) {
+            // Lightweight field edits: keep segment/pipeline/dashboard aggregates.
+            if ($employeeId) {
+                $this->cacheService->forgetDailyEmployeeTargets($employeeId);
+            }
+
+            return;
+        }
+
         $this->cacheService->forgetDashboardMetrics('org');
         $this->cacheService->forgetLeadSegmentCounts('org');
         $this->cacheService->forgetPipelineStageCounts('org');
@@ -982,7 +1019,6 @@ class CaMasterService
             $this->cacheService->forgetLeadSegmentCounts($scopeKey);
             $this->cacheService->forgetPipelineStageCounts($scopeKey);
         }
-        $employeeId = $this->employeeDataScope->scopedEmployeeId(auth()->user());
         if ($employeeId) {
             $this->cacheService->forgetDailyEmployeeTargets($employeeId);
             $this->cacheService->forgetYearlyEmployeeTargets($employeeId);

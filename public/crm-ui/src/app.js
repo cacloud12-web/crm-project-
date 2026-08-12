@@ -4,8 +4,23 @@
 
   var USE_DEMO_FALLBACKS = window.CRM_USE_DEMO_FALLBACKS === true;
 
-  function icons() {
-    if (typeof lucide !== 'undefined') lucide.createIcons();
+  function icons(root) {
+    if (typeof window.CA_CRM === 'object' && window.CA_CRM && typeof window.__crmPaintIcons === 'function') {
+      window.__crmPaintIcons(root);
+      return;
+    }
+    // Mirror CA_CRM icon path: never full-document Lucide rescans on every toast/render.
+    if (typeof lucide === 'undefined') return;
+    var scope = (root && root.querySelectorAll) ? root : document;
+    var candidates = scope.querySelectorAll('[data-lucide]');
+    var nodes = [];
+    for (var i = 0; i < candidates.length; i++) {
+      if (!candidates[i].getElementsByTagName('svg').length) nodes.push(candidates[i]);
+    }
+    if (!nodes.length) return;
+    try {
+      lucide.createIcons({ nodes: nodes });
+    } catch (e) { /* skip */ }
   }
 
   const state = {

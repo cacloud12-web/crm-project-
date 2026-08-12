@@ -104,6 +104,17 @@ class AppServiceProvider extends ServiceProvider
             }
 
             $connection->setQueryGrammar(new SqliteGrammar($connection));
+            // Local SQLite often holds 100k+ master rows in one 900MB+ file. WAL +
+            // normal sync cut multi-second stalls on write/edit paths.
+            try {
+                $connection->getPdo()->exec('PRAGMA journal_mode=WAL');
+                $connection->getPdo()->exec('PRAGMA synchronous=NORMAL');
+                $connection->getPdo()->exec('PRAGMA temp_store=MEMORY');
+                $connection->getPdo()->exec('PRAGMA cache_size=-64000');
+                $connection->getPdo()->exec('PRAGMA mmap_size=268435456');
+            } catch (\Throwable) {
+                // pragma support varies; fail open
+            }
             UsersTableSchema::ensureSoftDeletesColumn();
         });
     }

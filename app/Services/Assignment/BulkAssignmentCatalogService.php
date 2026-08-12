@@ -164,6 +164,73 @@ class BulkAssignmentCatalogService
         ];
     }
 
+    /**
+     * Summary for the Bulk Assignment "Unassigned leads" pool (filters + counts, no row dump).
+     *
+     * @param  array<string, mixed>  $params
+     * @return array<string, mixed>
+     */
+    public function poolSummary(array $params): array
+    {
+        $params = $this->sanitizeFilterParams($params);
+        $params['assignment'] = 'unassigned';
+
+        $limit = (int) ($params['limit'] ?? 1000);
+        $maxLimit = $this->poolAssignMax();
+        $limit = min($maxLimit, max(1, $limit));
+
+        $matching = (clone $this->filteredLeadsQuery($params, '', 'all'))->count('ca_masters.ca_id');
+
+        return [
+            'pool' => 'unassigned',
+            'label' => 'Unassigned Leads',
+            'unassigned_total' => $matching,
+            'matching_leads' => $matching,
+            'assign_limit' => $limit,
+            'assign_max' => $maxLimit,
+            'will_assign' => min($matching, $limit),
+            'truncated' => $matching > $limit,
+            'filters' => [
+                'state_id' => $params['state_id'],
+                'city_id' => $params['city_id'],
+                'source_id' => $params['source_id'],
+            ],
+        ];
+    }
+
+    /**
+     * Resolve CA IDs for an assignment pool (currently: unassigned only).
+     *
+     * @param  array<string, mixed>  $params
+     * @return list<int>
+     */
+    public function resolvePoolLeadIds(string $pool, array $params = [], ?int $limit = null): array
+    {
+        $pool = strtolower(trim($pool));
+        if ($pool !== 'unassigned') {
+            throw new InvalidArgumentException('Unsupported lead pool. Use pool=unassigned.');
+        }
+
+        $params = $this->sanitizeFilterParams($params);
+        $params['assignment'] = 'unassigned';
+
+        $max = $this->poolAssignMax();
+        $limit = $limit === null ? $max : min($max, max(1, $limit));
+
+        return $this->filteredLeadsQuery($params, '', 'all')
+            ->orderBy('ca_masters.ca_id')
+            ->limit($limit)
+            ->pluck('ca_masters.ca_id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+    }
+
+    public function poolAssignMax(): int
+    {
+        return min(10000, max(100, (int) config('listing.bulk_assign_pool_max', 5000)));
+    }
+
     public function sanitizeFilterParams(array $params): array
     {
         $assignment = strtolower(trim((string) ($params['assignment'] ?? '')));

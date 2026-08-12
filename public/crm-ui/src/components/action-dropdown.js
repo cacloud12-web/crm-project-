@@ -36,7 +36,11 @@
 
   function iconsIn(root) {
     if (typeof lucide === 'undefined' || !root) return;
-    var nodes = root.querySelectorAll ? root.querySelectorAll('[data-lucide]') : [];
+    var nodes = [];
+    var candidates = root.querySelectorAll ? root.querySelectorAll('[data-lucide]') : [];
+    for (var i = 0; i < candidates.length; i++) {
+      if (!candidates[i].getElementsByTagName('svg').length) nodes.push(candidates[i]);
+    }
     if (!nodes.length) return;
     try {
       lucide.createIcons({ nodes: nodes });

@@ -382,9 +382,52 @@ class CaMasterResource extends JsonResource
             return $cached;
         }
 
-        $summaries = app(LeadActivityTimelineService::class)->summariesForCaIds([(int) $this->ca_id]);
+        // Single-record responses (create/update/show): use denormalized column instead of
+        // the multi-table activity UNION that listings prep in batch via prepareCollection().
+        if (filled($this->last_activity_at)) {
+            return $this->summaryFromLastActivityAt($this->last_activity_at);
+        }
 
-        return $summaries[(int) $this->ca_id] ?? null;
+        if (filled($this->updated_at)) {
+            return $this->summaryFromLastActivityAt($this->updated_at);
+        }
+
+        return null;
+    }
+
+    /**
+     * Lightweight last-activity payload for non-list responses (same keys as timeline summary).
+     *
+     * @param  \DateTimeInterface|string  $occurredAt
+     * @return array<string, mixed>
+     */
+    private function summaryFromLastActivityAt(mixed $occurredAt): array
+    {
+        $at = \Carbon\Carbon::parse($occurredAt);
+        $now = now();
+        $days = (int) $at->copy()->startOfDay()->diffInDays($now->copy()->startOfDay());
+
+        $relative = match (true) {
+            $days <= 0 => 'Today',
+            $days === 1 => 'Yesterday',
+            $days <= 7 => $days.'d ago',
+            $days <= 30 => (int) ceil($days / 7).'w ago',
+            default => (int) ceil($days / 30).'mo ago',
+        };
+
+        return [
+            'occurred_at' => $at->toIso8601String(),
+            'type' => 'lead',
+            'label' => 'Activity',
+            'icon' => 'activity',
+            'employee_name' => null,
+            'note' => '',
+            'relative_label' => $relative,
+            'time_label' => $at->format('h:i A'),
+            'date_label' => $at->format('d M Y'),
+            'age_bucket' => $days <= 0 ? 'today' : ($days === 1 ? 'yesterday' : 'older'),
+            'emoji' => '',
+        ];
     }
 
     private function resolvePrimaryCaName(): string

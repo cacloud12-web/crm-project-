@@ -15,9 +15,11 @@ class BulkAssignmentRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'ca_ids' => 'required_without:bulk_action_id|array|min:1',
+            'ca_ids' => 'required_without_all:bulk_action_id,pool|array|min:1',
             'ca_ids.*' => 'integer|exists:ca_masters,ca_id',
-            'bulk_action_id' => 'required_without:ca_ids|integer|exists:bulk_actions,bulk_action_id',
+            'bulk_action_id' => 'required_without_all:ca_ids,pool|integer|exists:bulk_actions,bulk_action_id',
+            'pool' => 'required_without_all:ca_ids,bulk_action_id|string|in:unassigned',
+            'limit' => 'nullable|integer|min:1|max:10000',
             'state_id' => 'nullable|integer',
             'city_id' => 'nullable|integer',
             'source_id' => 'nullable|integer',

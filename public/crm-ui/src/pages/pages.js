@@ -1045,7 +1045,7 @@ window.CAPages = (function () {
           '</div>' +
         '</div>' +
         '<div id="bulk-assign-selection-summary" class="bulk-assign-selection-summary flex flex-wrap items-center gap-3 mb-4 px-4 py-3 rounded-lg bg-slate-50 border border-slate-200">' +
-          '<span id="bulk-assign-summary-batch" class="text-body font-medium text-slate-700">Selected Batch: <strong>None</strong></span>' +
+          '<span id="bulk-assign-summary-batch" class="text-body font-medium text-slate-700">Selected Pool: <strong>Unassigned Leads</strong></span>' +
           '<span class="text-slate-300 hidden sm:inline">|</span>' +
           '<span id="bulk-assign-summary-leads" class="text-body font-medium text-slate-700">Leads to Assign: <strong>0</strong></span>' +
           '<span class="text-slate-300 hidden sm:inline">|</span>' +
@@ -1054,10 +1054,9 @@ window.CAPages = (function () {
         '<div class="grid xl:grid-cols-2 gap-4 mb-4">' +
           '<div class="bulk-assign-card">' +
             '<div class="bulk-assign-card-head">' +
-              '<h4 class="bulk-assign-card-title">Available Lead Batches</h4>' +
+              '<h4 class="bulk-assign-card-title">Unassigned Leads</h4>' +
               '<div class="flex flex-wrap gap-2">' +
                 actSecondary('Reset Filters', 'id="bulk-assign-filters-reset"', 'rotate-ccw') +
-                actSecondary('Clear Selection', 'id="bulk-assign-batch-clear"', 'x') +
               '</div>' +
             '</div>' +
             '<div class="grid sm:grid-cols-3 gap-2 mb-3">' +
@@ -1067,9 +1066,12 @@ window.CAPages = (function () {
               '</div>' +
               '<select class="input-field" id="bulk-assign-batch-source"><option value="">Any Source</option></select>' +
             '</div>' +
-            '<div class="mb-3"><select class="input-field" id="bulk-assign-batch-assignment"><option value="">All Leads</option><option value="unassigned">Unassigned Only</option><option value="assigned">Assigned Only</option></select></div>' +
-            '<div id="bulk-assign-batches-list" class="bulk-assign-scroll-list"><div class="bulk-assign-skeleton">Loading import batches…</div></div>' +
-            '<div class="crm-table-footer bulk-assign-pagination" id="bulk-assign-batches-pagination"></div>' +
+            '<div class="mb-3">' +
+              '<label class="form-label" for="bulk-assign-pool-limit">How many to assign</label>' +
+              '<input type="number" class="input-field" id="bulk-assign-pool-limit" min="1" max="5000" value="1000" step="1" />' +
+              '<p class="text-caption text-slate-500 mt-1" id="bulk-assign-pool-limit-hint">Oldest unassigned leads first (by ID). Max 5,000 per run.</p>' +
+            '</div>' +
+            '<div id="bulk-assign-pool-card" class="bulk-assign-scroll-list"><div class="bulk-assign-skeleton">Loading unassigned leads…</div></div>' +
           '</div>' +
           '<div class="bulk-assign-card">' +
             '<div class="bulk-assign-card-head">' +

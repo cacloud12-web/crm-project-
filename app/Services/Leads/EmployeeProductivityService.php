@@ -168,46 +168,59 @@ class EmployeeProductivityService
     }
 
     /**
+     * Inclusive day bounds for index-friendly range predicates (avoids WHERE DATE(col) = …).
+     *
+     * @return array{0: Carbon, 1: Carbon}
+     */
+    private function dayBounds(string $dateString): array
+    {
+        $day = Carbon::parse($dateString)->startOfDay();
+
+        return [$day->copy(), $day->copy()->endOfDay()];
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function computeDailyMetrics(int $employeeId, Carbon $date): array
     {
         $dateString = $date->toDateString();
+        [$start, $end] = $this->dayBounds($dateString);
 
         $uniqueLeads = CaMaster::query()
             ->countableInStatistics()
             ->where('created_by_employee_id', $employeeId)
-            ->whereDate('created_at', $dateString)
+            ->whereBetween('created_at', [$start, $end])
             ->count();
 
         $duplicateAttempts = DuplicateAttempt::query()
             ->where('employee_id', $employeeId)
-            ->whereDate('created_at', $dateString)
+            ->whereBetween('created_at', [$start, $end])
             ->count();
 
         if ($duplicateAttempts === 0) {
             $duplicateAttempts = DuplicateAttemptLog::query()
                 ->where('employee_id', $employeeId)
-                ->whereDate('attempted_at', $dateString)
+                ->whereBetween('attempted_at', [$start, $end])
                 ->count();
         }
 
         $wrongNumbers = LeadQualityHistory::query()
             ->where('employee_id', $employeeId)
             ->where('event_type', LeadQualityHistoryService::EVENT_WRONG_NUMBER)
-            ->whereDate('recorded_at', $dateString)
+            ->whereBetween('recorded_at', [$start, $end])
             ->count();
 
         $verifiedLeads = CaMaster::query()
             ->where('verified_by', $employeeId)
             ->where('is_verified', true)
-            ->whereDate('updated_at', $dateString)
+            ->whereBetween('updated_at', [$start, $end])
             ->count();
 
         $followupsCompleted = FollowUp::query()
             ->where('employee_id', $employeeId)
             ->whereIn('status', self::COMPLETED_FOLLOWUP_STATUSES)
-            ->whereDate('updated_at', $dateString)
+            ->whereBetween('updated_at', [$start, $end])
             ->count();
 
         $smsFailed = $this->communicationFailuresForDay(SmsLog::query(), 'sms_status', $employeeId, $dateString);
@@ -219,7 +232,7 @@ class EmployeeProductivityService
         $leadsAssigned = LeadAssignmentEngine::query()
             ->where('employee_id', $employeeId)
             ->where('status', 'Active')
-            ->whereDate('assigned_date', $dateString)
+            ->whereBetween('assigned_date', [$start, $end])
             ->count();
 
         $target = $this->resolveDailyTarget($employeeId, $dateString);
@@ -234,7 +247,7 @@ class EmployeeProductivityService
 
         $followupTotal = FollowUp::query()
             ->where('employee_id', $employeeId)
-            ->whereDate('scheduled_date', $dateString)
+            ->whereBetween('scheduled_date', [$start->toDateString(), $end->toDateString()])
             ->count();
 
         $followupCompletionPct = $followupTotal > 0
@@ -243,6 +256,8 @@ class EmployeeProductivityService
 
         $commAttempts = $smsFailed + $whatsappFailed + $emailFailed + max(1, $uniqueLeads);
         $commSuccessPct = round(max(0, 100 - (($communicationFailures / $commAttempts) * 100)), 1);
+
+        $approvals = $this->approvalCountsForEmployee($employeeId, $dateString);
 
         return [
             'employee_id' => $employeeId,
@@ -268,8 +283,8 @@ class EmployeeProductivityService
             'followup_completion_pct' => $followupCompletionPct,
             'communication_success_pct' => $commSuccessPct,
             'total_leads_added' => $uniqueLeads,
-            'rejected_leads' => $this->approvalCountsForEmployee($employeeId, $dateString)['rejected'],
-            'approved_leads' => $this->approvalCountsForEmployee($employeeId, $dateString)['approved'],
+            'rejected_leads' => $approvals['rejected'],
+            'approved_leads' => $approvals['approved'],
         ];
     }
 
@@ -442,9 +457,11 @@ class EmployeeProductivityService
 
     private function communicationFailuresForDay($query, string $statusColumn, int $employeeId, string $dateString): int
     {
+        [$start, $end] = $this->dayBounds($dateString);
+
         return (clone $query)
             ->where('employee_id', $employeeId)
-            ->whereDate('created_at', $dateString)
+            ->whereBetween('created_at', [$start, $end])
             ->whereIn($statusColumn, ['Failed', 'failed', 'Skipped', 'Bounced'])
             ->count();
     }
@@ -454,7 +471,7 @@ class EmployeeProductivityService
         $target = DB::table('lead_assignment_engines')
             ->where('employee_id', $employeeId)
             ->where('status', 'Active')
-            ->whereDate('assigned_date', '<=', $dateString)
+            ->where('assigned_date', '<=', Carbon::parse($dateString)->endOfDay())
             ->sum('target_leads');
 
         return max(0, (int) $target);
@@ -471,9 +488,11 @@ class EmployeeProductivityService
             return ['approved' => 0, 'rejected' => 0];
         }
 
+        [$start, $end] = $this->dayBounds($dateString);
+
         $base = ApprovalRequest::query()
             ->where('requested_by_user_id', $userId)
-            ->whereDate('created_at', $dateString);
+            ->whereBetween('created_at', [$start, $end]);
 
         return [
             'approved' => (clone $base)->where('status', 'approved')->count(),

@@ -4,6 +4,8 @@ return [
     'default_per_page' => 10,
     'max_per_page' => 1000,
     'max_all' => 1000,
+    /** Max leads resolved per Bulk Assignment unassigned-pool run */
+    'bulk_assign_pool_max' => 5000,
 
     'ca_masters' => [
         'table' => 'ca_masters',

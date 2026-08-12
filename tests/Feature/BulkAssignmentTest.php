@@ -179,6 +179,80 @@ class BulkAssignmentTest extends TestCase
         $preview->assertOk()->assertJsonPath('data.total_leads', 1);
     }
 
+    public function test_unassigned_pool_summary_and_assignment(): void
+    {
+        $this->actingAsAdmin();
+        $state = State::query()->firstOrFail();
+        $city = City::query()->where('state_id', $state->state_id)->firstOrFail();
+        $employeeA = $this->createEmployee('Pool Exec A', $city->city_id);
+        $employeeB = $this->createEmployee('Pool Exec B', $city->city_id);
+        $source = \App\Models\SourceLead::query()->firstOrCreate([
+            'source_name' => 'Bulk Pool Unassigned '.uniqid(),
+        ]);
+
+        $leadA = $this->createLead($city->city_id, $state->state_id, 'pool-a');
+        $leadB = $this->createLead($city->city_id, $state->state_id, 'pool-b');
+        $leadC = $this->createLead($city->city_id, $state->state_id, 'pool-c');
+        $leadA->update(['source_id' => $source->source_id]);
+        $leadB->update(['source_id' => $source->source_id]);
+        $leadC->update(['source_id' => $source->source_id]);
+
+        LeadAssignmentEngine::query()->create([
+            'ca_id' => $leadC->ca_id,
+            'employee_id' => $employeeA->employee_id,
+            'status' => 'Active',
+            'assigned_date' => now()->toDateString(),
+            'assignment_type' => 'Manual',
+            'reason' => 'MANUAL_ASSIGN',
+        ]);
+
+        $this->getJson('/lead-assignments/bulk/pool?limit=10&source_id='.$source->source_id)
+            ->assertOk()
+            ->assertJsonPath('data.pool', 'unassigned')
+            ->assertJsonPath('data.matching_leads', 2)
+            ->assertJsonPath('data.will_assign', 2)
+            ->assertJsonStructure(['success', 'data' => [
+                'pool',
+                'matching_leads',
+                'will_assign',
+                'assign_limit',
+                'assign_max',
+            ]]);
+
+        $preview = $this->postJson('/lead-assignments/bulk', [
+            'pool' => 'unassigned',
+            'limit' => 10,
+            'source_id' => $source->source_id,
+            'employee_ids' => [$employeeA->employee_id, $employeeB->employee_id],
+            'assignment_mode' => 'round_robin',
+            'preview' => true,
+        ]);
+        $preview->assertOk()
+            ->assertJsonPath('data.preview', true)
+            ->assertJsonPath('data.total_leads', 2);
+
+        $this->postJson('/lead-assignments/bulk', [
+            'pool' => 'unassigned',
+            'limit' => 10,
+            'source_id' => $source->source_id,
+            'employee_ids' => [$employeeA->employee_id, $employeeB->employee_id],
+            'assignment_mode' => 'round_robin',
+            'preview' => false,
+        ])->assertOk();
+
+        $assignedCount = LeadAssignmentEngine::query()
+            ->whereIn('ca_id', [$leadA->ca_id, $leadB->ca_id])
+            ->where('status', 'Active')
+            ->count();
+        $this->assertSame(2, $assignedCount);
+
+        $this->assertDatabaseHas('lead_assignment_engines', [
+            'ca_id' => $leadC->ca_id,
+            'employee_id' => $employeeA->employee_id,
+            'status' => 'Active',
+        ]);
+    }
+
     public function test_manual_bulk_assignment_preview_and_confirm(): void
     {
         $this->actingAsAdmin();

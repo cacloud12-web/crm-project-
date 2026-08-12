@@ -47,19 +47,34 @@ class BulkAssignmentController extends Controller
         return ApiResponse::success($data, 'Bulk assignment batches loaded');
     }
 
+    public function pool(Request $request): JsonResponse
+    {
+        $data = $this->catalogService->poolSummary($request->query());
+
+        return ApiResponse::success($data, 'Unassigned lead pool loaded');
+    }
+
     public function store(BulkAssignmentRequest $request): JsonResponse
     {
         try {
             $preview = (bool) $request->boolean('preview');
             $data = $request->validated();
+            $filterParams = array_intersect_key($data, array_flip([
+                'state_id',
+                'city_id',
+                'source_id',
+                'assignment',
+            ]));
 
-            if (! empty($data['bulk_action_id'])) {
-                $filterParams = array_intersect_key($data, array_flip([
-                    'state_id',
-                    'city_id',
-                    'source_id',
-                    'assignment',
-                ]));
+            if (! empty($data['pool'])) {
+                $limit = isset($data['limit']) ? (int) $data['limit'] : null;
+                $data['ca_ids'] = $this->catalogService->resolvePoolLeadIds(
+                    (string) $data['pool'],
+                    $filterParams,
+                    $limit,
+                );
+                unset($data['pool'], $data['limit'], $data['state_id'], $data['city_id'], $data['source_id'], $data['assignment']);
+            } elseif (! empty($data['bulk_action_id'])) {
                 $data['ca_ids'] = $this->catalogService->resolveBatchLeadIds(
                     (int) $data['bulk_action_id'],
                     $filterParams,
@@ -68,7 +83,7 @@ class BulkAssignmentController extends Controller
             }
 
             if (empty($data['ca_ids'])) {
-                return ApiResponse::error('No leads match the selected batch and filters.', 422);
+                return ApiResponse::error('No unassigned leads match the selected filters.', 422);
             }
 
             $summary = $this->bulkAssignmentService->execute($data, $preview);
