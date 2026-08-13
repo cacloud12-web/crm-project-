@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Services\Activity\ActivityLogService;
 use App\Services\Concerns\SearchesListings;
 use App\Services\Rbac\EmployeeDataScopeService;
+use App\Services\Ticket\Integration\CaCloudDeskOutboundTicketService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -23,6 +24,7 @@ class SupportTicketService
         private readonly TicketNumberService $ticketNumberService,
         private readonly TicketStatusHistoryService $statusHistoryService,
         private readonly TicketNotificationPreparationService $notificationPreparationService,
+        private readonly CaCloudDeskOutboundTicketService $outboundTicketService,
     ) {}
 
     public function search(array $params = [], ?User $user = null): array
@@ -82,7 +84,7 @@ class SupportTicketService
         $assignedTo = $this->resolveAssignedEmployeeId($data, $user, true);
         $verification = $this->resolveVerifiedOrganization($data, $user);
 
-        return DB::transaction(function () use ($data, $user, $assignedTo, $verification) {
+        $ticket = DB::transaction(function () use ($data, $user, $assignedTo, $verification) {
             $identifiers = $this->ticketNumberService->allocate();
 
             $ticket = SupportTicket::create([
@@ -119,8 +121,12 @@ class SupportTicketService
             $this->logActivity('Ticket Created', $ticket, null, $this->summarySnapshot($ticket));
             $this->notificationPreparationService->prepareForTicketCreated($ticket, $user);
 
-            return $ticket->load($this->detailRelations());
+            return $ticket;
         });
+
+        $ticket = $this->outboundTicketService->pushAfterCrmCreate($ticket);
+
+        return $ticket->load($this->detailRelations());
     }
 
     public function update(SupportTicket $ticket, array $data, ?User $user = null): SupportTicket

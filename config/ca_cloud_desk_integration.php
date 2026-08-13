@@ -66,6 +66,26 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Outbound ticket category mapping (CRM → LawSeva auth_ticket)
+    |--------------------------------------------------------------------------
+    |
+    | CRM problem_type values (config/crm_tickets.php): issue, improvement, new_feature
+    | LawSeva auth_ticket.category accepts a free-form string (e.g. "Reports",
+    | "Add Document Template"). Inbound webhook heuristically maps LawSeva category
+    | → problem_type; outbound uses this explicit map. Override via env if LawSeva
+    | expects different labels.
+    |
+    */
+    'problem_type_category_map' => [
+        'issue' => env('CA_CLOUD_DESK_CATEGORY_ISSUE', 'Issue'),
+        'improvement' => env('CA_CLOUD_DESK_CATEGORY_IMPROVEMENT', 'Improvement'),
+        'new_feature' => env('CA_CLOUD_DESK_CATEGORY_NEW_FEATURE', 'New Feature'),
+    ],
+
+    'default_category' => env('CA_CLOUD_DESK_DEFAULT_CATEGORY', 'Issue'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Inbound webhook (LawSeva → CRM)
     |--------------------------------------------------------------------------
     |

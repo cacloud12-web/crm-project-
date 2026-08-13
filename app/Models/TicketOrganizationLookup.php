@@ -52,4 +52,11 @@ class TicketOrganizationLookup extends Model
     {
         return $this->verification_status === 'verified' && filled($this->verified_email);
     }
+
+    public function lawsevaPartnerId(): ?int
+    {
+        $partnerId = data_get($this->organizations_payload, '_lawseva.partner_id');
+
+        return $partnerId !== null && $partnerId !== '' ? (int) $partnerId : null;
+    }
 }

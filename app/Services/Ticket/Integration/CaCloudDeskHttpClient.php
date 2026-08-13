@@ -264,6 +264,16 @@ class CaCloudDeskHttpClient implements OrganizationLookupRemoteClientInterface
                 0,
                 $e,
             );
+        } catch (RequestException $e) {
+            $response = $e->response;
+            if ($response === null) {
+                throw new CaCloudDeskIntegrationException(
+                    'CA Cloud Desk request failed.',
+                    502,
+                    0,
+                    $e,
+                );
+            }
         }
 
         if ($response->successful()) {
