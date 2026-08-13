@@ -366,7 +366,7 @@
         '<td class="ticket-desc-cell" title="' + esc(row.description || '') + '">' + desc + '</td>' +
         '<td>' + priorityBadge(row.priority) + '</td>' +
         '<td>' + statusBadge(row.status) + '</td>' +
-        '<td>' + esc(row.assigned_to_name || '—') + '</td>' +
+        '<td>' + esc(row.created_by_name || row.raised_by_name || '—') + '</td>' +
         '<td>' + esc(row.source_system || '—') + '</td>' +
         '<td>' + esc(row.sync_status || '—') + '</td>' +
         '<td class="crm-td-date">' + formatDate(row.created_at) + '</td>' +
@@ -558,6 +558,11 @@
     };
     var orgSelect = document.getElementById('ticket-create-org-select');
     if (orgSelect) orgSelect.innerHTML = '<option value="">Search organizations first</option>';
+    var orgSearch = document.getElementById('ticket-create-org-search');
+    if (orgSearch) {
+      orgSearch.value = '';
+      orgSearch.disabled = true;
+    }
     setOrgFields('', '', '');
     setCreateEnabled(false);
     setVerifyEnabled(false);
@@ -626,25 +631,21 @@
         var orgs = data.organizations || data.items || [];
         state.verification.organizations = orgs;
         state.verification.correlationId = data.correlation_id || null;
-        var select = document.getElementById('ticket-create-org-select');
+        var orgSearch = document.getElementById('ticket-create-org-search');
+        if (orgSearch) {
+          orgSearch.value = '';
+          orgSearch.disabled = !orgs.length;
+        }
+        renderOrgSelectOptions('');
         if (!orgs.length) {
-          if (select) select.innerHTML = '<option value="">No organizations found</option>';
           if (msg) {
             msg.textContent = 'No organizations linked to this mobile number.';
             msg.className = 'text-caption text-amber-600 mt-1';
           }
           return;
         }
-        if (select) {
-          select.innerHTML = '<option value="">Select organization</option>' + orgs.map(function (o, idx) {
-            var num = o.organization_number || o.number || '';
-            var name = o.organization_name || o.name || '';
-            return '<option value="' + idx + '" data-number="' + esc(num) + '" data-name="' + esc(name) + '">' +
-              esc(num + (name ? ' — ' + name : '')) + '</option>';
-          }).join('');
-        }
         if (msg) {
-          msg.textContent = 'Select an organization, then click Verify Organization.';
+          msg.textContent = 'Search or select an organization, then click Verify Organization.';
           msg.className = 'text-caption text-emerald-600 mt-1';
         }
       })
@@ -659,10 +660,45 @@
         toast(text, 'warning');
         var select = document.getElementById('ticket-create-org-select');
         if (select) select.innerHTML = '<option value="">Lookup unavailable</option>';
+        var orgSearch = document.getElementById('ticket-create-org-search');
+        if (orgSearch) {
+          orgSearch.value = '';
+          orgSearch.disabled = true;
+        }
       })
       .finally(function () {
         setBusy(btn, false);
       });
+  }
+
+  function renderOrgSelectOptions(query) {
+    var select = document.getElementById('ticket-create-org-select');
+    if (!select) return;
+    var orgs = state.verification.organizations || [];
+    var q = (query || '').trim().toLowerCase();
+    if (!orgs.length) {
+      select.innerHTML = '<option value="">No organizations found</option>';
+      return;
+    }
+    var html = '<option value="">Select organization</option>';
+    var shown = 0;
+    orgs.forEach(function (o, idx) {
+      var num = String(o.organization_number || o.number || '');
+      var name = String(o.organization_name || o.name || '');
+      var label = num + (name ? ' — ' + name : '');
+      if (q && label.toLowerCase().indexOf(q) === -1) return;
+      shown++;
+      html += '<option value="' + idx + '" data-number="' + esc(num) + '" data-name="' + esc(name) + '">' +
+        esc(label) + '</option>';
+    });
+    if (!shown) html += '<option value="" disabled>No matching organization</option>';
+    select.innerHTML = html;
+  }
+
+  function onOrgSearchInput() {
+    var orgSearch = document.getElementById('ticket-create-org-search');
+    renderOrgSelectOptions(orgSearch ? orgSearch.value : '');
+    onOrgSelected();
   }
 
   function onOrgSelected() {
@@ -1250,6 +1286,17 @@
       });
     }
 
+    var toggleBtn = document.getElementById('ticket-filter-toggle');
+    var moreWrap = document.getElementById('ticket-filters-more');
+    if (toggleBtn && moreWrap) {
+      toggleBtn.addEventListener('click', function () {
+        var open = moreWrap.classList.toggle('hidden') === false;
+        toggleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        toggleBtn.classList.toggle('is-active', open);
+        if (window.icons) icons();
+      });
+    }
+
     var resetBtn = document.getElementById('ticket-filter-reset');
     if (resetBtn) {
       resetBtn.addEventListener('click', function () {
@@ -1301,6 +1348,9 @@
 
     var orgSelect = document.getElementById('ticket-create-org-select');
     if (orgSelect) orgSelect.addEventListener('change', onOrgSelected);
+
+    var orgSearch = document.getElementById('ticket-create-org-search');
+    if (orgSearch) orgSearch.addEventListener('input', onOrgSearchInput);
 
     var resetBtn = document.getElementById('ticket-create-reset');
     if (resetBtn) resetBtn.addEventListener('click', resetCreateForm);

@@ -829,12 +829,13 @@
         </div>
 
         <div>
-          <label class="form-label" for="ticket-create-org-select">Organization</label>
+          <label class="form-label" for="ticket-create-org-search">Organization</label>
+          <input type="search" id="ticket-create-org-search" class="input-field mb-2" placeholder="Search organization name…" autocomplete="off" disabled />
           <div class="flex gap-2">
-            <select id="ticket-create-org-select" class="input-field flex-1">
+            <select id="ticket-create-org-select" class="input-field flex-1" size="8">
               <option value="">Search organizations first</option>
             </select>
-            <button type="button" class="btn-secondary shrink-0" id="ticket-org-verify-btn" disabled>
+            <button type="button" class="btn-secondary shrink-0 self-start" id="ticket-org-verify-btn" disabled>
               <i data-lucide="shield-check" class="h-4 w-4"></i> Verify Organization
             </button>
           </div>
