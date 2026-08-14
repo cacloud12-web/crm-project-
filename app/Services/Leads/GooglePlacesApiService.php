@@ -86,13 +86,16 @@ class GooglePlacesApiService
 
         $resourceId = $this->normalizePlaceResourceId($placeId);
         $timeout = (int) config('crm_research.timeout_seconds', 8);
+        // Encode only the place token — keep the "places/" path segment unencoded.
+        $idToken = str_starts_with($resourceId, 'places/') ? substr($resourceId, 7) : $resourceId;
+        $detailsUrl = rtrim((string) config('crm_research.places_new_details_url'), '/').'/places/'.rawurlencode($idToken);
 
         try {
             $response = Http::timeout($timeout)
                 ->withHeaders($this->placesRequestHeaders(
                     (string) config('crm_research.places_new_details_field_mask')
                 ))
-                ->get(rtrim((string) config('crm_research.places_new_details_url'), '/').'/'.rawurlencode($resourceId));
+                ->get($detailsUrl);
         } catch (ConnectionException $exception) {
             return [
                 'status' => 'NETWORK_ERROR',

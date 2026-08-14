@@ -31,6 +31,7 @@
     apiError: null,
     apiRecommendation: null,
     apiGoogleReason: null,
+    selectingPlaceId: null,
     el: null,
   };
 
@@ -377,7 +378,7 @@
       return '<article class="rw-result-card' +
         (selected ? ' rw-result-card--selected' : '') +
         (isBest ? ' rw-result-card--best' : '') +
-        '" data-place-id="' + esc(placeId) + '">' +
+        '" data-rw-action="select-place" data-place-id="' + esc(placeId) + '" role="button" tabindex="0" aria-pressed="' + (selected ? 'true' : 'false') + '">' +
         '<div class="rw-result-card__main">' +
           '<div class="rw-result-card__top">' +
             '<h4 class="rw-result-card__title" title="' + esc(place.business_name || 'Unnamed business') + '">' +
@@ -393,7 +394,8 @@
             '<span class="rw-result-card__item rw-result-card__item--web"><i data-lucide="globe" class="h-3 w-3"></i>' + websiteHtml + '</span>' +
           '</div>' +
         '</div>' +
-        '<button type="button" class="btn-primary btn-sm rw-result-card__select" data-rw-action="select-place" data-place-id="' + esc(placeId) + '">' +
+        '<button type="button" class="btn-primary btn-sm rw-result-card__select" data-rw-action="select-place" data-place-id="' + esc(placeId) + '"' +
+          (selected ? ' disabled' : '') + '>' +
           (selected ? 'Selected' : 'Select') +
         '</button>' +
       '</article>';
@@ -855,21 +857,65 @@
       });
   }
 
+  function findResultByPlaceId(placeId) {
+    var id = String(placeId || '');
+    if (!id) return null;
+    var results = state.results || [];
+    for (var i = 0; i < results.length; i++) {
+      var row = results[i] || {};
+      var rowId = String(row.place_id || row.google_place_id || '');
+      if (rowId && rowId === id) return row;
+    }
+    return null;
+  }
+
+  function selectPlaceLocally(placeId) {
+    var local = findResultByPlaceId(placeId);
+    if (!local) return false;
+    state.place = Object.assign({}, local, {
+      place_id: local.place_id || local.google_place_id || placeId,
+      google_place_id: local.google_place_id || local.place_id || placeId,
+    });
+    state.sourceNote = 'Selected CA firm — ready to save';
+    updatePanels();
+    return true;
+  }
+
   function selectPlace(placeId) {
     if (!state.leadId || !placeId) return;
+    if (state.selectingPlaceId === placeId) return;
+    var currentId = state.place && (state.place.place_id || state.place.google_place_id);
+    if (currentId && String(currentId) === String(placeId)) return;
+
     var apiFetch = deps && deps.apiFetch;
     if (typeof apiFetch !== 'function') return;
+
+    // Switch selection immediately so alternate matches are usable even while details load.
+    selectPlaceLocally(placeId);
+    state.selectingPlaceId = placeId;
+
     apiFetch('/ca-masters/' + encodeURIComponent(state.leadId) + '/research/select', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ place_id: placeId }),
     })
       .then(function (body) {
-        applyResearchPayload(body.data || {});
+        var data = body.data || {};
+        // Keep the existing multi-match list if the API returns a shorter list.
+        if ((!data.results || data.results.length < (state.results || []).length) && (state.results || []).length > 1) {
+          data.results = state.results;
+          data.multiple_results = true;
+        }
+        applyResearchPayload(data);
         toast('Google place selected', 'success');
       })
       .catch(function (err) {
-        toast((err && err.message) || 'Unable to load place details', 'error');
+        // Local selection already applied — keep it so the employee can still save from list data.
+        toast((err && err.message) || 'Place selected from search results. Some details may be incomplete.', 'warning');
+        updatePanels();
+      })
+      .finally(function () {
+        if (state.selectingPlaceId === placeId) state.selectingPlaceId = null;
       });
   }
 
@@ -900,7 +946,24 @@
     state.apiRecommendation = apiMeta.recommendation;
     state.apiGoogleReason = apiMeta.reason;
     state.place = data.place || state.place || leadToSavedPlace(state.current);
-    state.results = data.results || (state.place ? [state.place] : []);
+    var incomingResults = Array.isArray(data.results) ? data.results : null;
+    if (incomingResults && incomingResults.length) {
+      // Prefer keeping the broader match list when a select response returns only the chosen place.
+      if (incomingResults.length === 1 && (state.results || []).length > 1 && data.multiple_results !== true) {
+        var selected = state.place || incomingResults[0];
+        var selectedId = String((selected && (selected.place_id || selected.google_place_id)) || '');
+        state.results = (state.results || []).map(function (row) {
+          var rowId = String((row && (row.place_id || row.google_place_id)) || '');
+          return selectedId && rowId === selectedId ? Object.assign({}, row, selected) : row;
+        });
+      } else {
+        state.results = incomingResults;
+      }
+    } else if (state.place) {
+      state.results = state.results && state.results.length ? state.results : [state.place];
+    } else {
+      state.results = [];
+    }
     state.current = data.current || state.current;
     state.cached = !!data.cached;
     state.canRefresh = !!data.can_refresh;

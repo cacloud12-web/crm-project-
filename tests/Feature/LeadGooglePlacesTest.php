@@ -396,4 +396,73 @@ class LeadGooglePlacesTest extends TestCase
         $this->assertSame(4.9, (float) $lead->google_rating);
         $this->assertTrue($lead->verified_from_google);
     }
+
+    public function test_selecting_alternate_place_keeps_all_search_results(): void
+    {
+        $this->actingAsAdmin();
+        $lead = $this->sampleLead([
+            'firm_name' => 'KAMLESH PANJWANI & CO',
+            'ca_name' => 'PANJWANI KAMLESH',
+            'city_id' => null,
+        ]);
+
+        Http::fake([
+            'places.googleapis.com/v1/places:searchText' => Http::response([
+                'places' => [
+                    [
+                        'id' => 'places/chij-best',
+                        'displayName' => ['text' => 'Harshit Panjwani & Associates - Chartered Accountants'],
+                        'formattedAddress' => 'Ahmedabad, Gujarat, India',
+                        'rating' => 4.5,
+                        'businessStatus' => 'OPERATIONAL',
+                    ],
+                    [
+                        'id' => 'places/chij-alt',
+                        'displayName' => ['text' => 'P S PANJWANI & ASSOCIATES'],
+                        'formattedAddress' => 'Ahmedabad, Gujarat, India',
+                        'rating' => 4.0,
+                        'businessStatus' => 'OPERATIONAL',
+                    ],
+                ],
+            ], 200),
+            'places.googleapis.com/v1/places/chij-alt' => Http::response([
+                'id' => 'places/chij-alt',
+                'displayName' => ['text' => 'P S PANJWANI & ASSOCIATES'],
+                'formattedAddress' => 'Ahmedabad, Gujarat, India',
+                'nationalPhoneNumber' => '9876500000',
+                'websiteUri' => 'https://pspanjwani.example',
+                'rating' => 4.0,
+                'userRatingCount' => 8,
+                'businessStatus' => 'OPERATIONAL',
+                'googleMapsUri' => 'https://maps.google.com/?cid=alt',
+                'location' => ['latitude' => 23.02, 'longitude' => 72.57],
+            ], 200),
+        ]);
+
+        $lookup = $this->postJson('/ca-masters/'.$lead->ca_id.'/research');
+        $lookup->assertOk();
+        $lookup->assertJsonPath('data.multiple_results', true);
+        $this->assertCount(2, $lookup->json('data.results'));
+
+        $select = $this->postJson('/ca-masters/'.$lead->ca_id.'/research/select', [
+            'place_id' => 'places/chij-alt',
+        ]);
+        $select->assertOk();
+        $select->assertJsonPath('data.place.place_id', 'places/chij-alt');
+        $select->assertJsonPath('data.place.business_name', 'P S PANJWANI & ASSOCIATES');
+        $select->assertJsonPath('data.multiple_results', true);
+        $this->assertCount(2, $select->json('data.results'));
+
+        $resultIds = collect($select->json('data.results'))
+            ->map(fn ($row) => $row['place_id'] ?? $row['google_place_id'] ?? null)
+            ->all();
+        $this->assertContains('places/chij-best', $resultIds);
+        $this->assertContains('places/chij-alt', $resultIds);
+
+        Http::assertSent(function ($request) {
+            return $request->method() === 'GET'
+                && str_contains($request->url(), '/v1/places/chij-alt')
+                && ! str_contains($request->url(), 'places%2F');
+        });
+    }
 }

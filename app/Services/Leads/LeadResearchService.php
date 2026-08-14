@@ -228,12 +228,17 @@ class LeadResearchService
         }
 
         $lead->loadMissing(['city', 'state']);
-        $scored = $this->scoreResults([$details['place']], $lead);
-        $place = $scored[0] ?? $details['place'];
+        $scoredSelected = $this->scoreResults([$details['place']], $lead);
+        $place = $scoredSelected[0] ?? $details['place'];
+        $selectedId = (string) ($place['place_id'] ?? $place['google_place_id'] ?? $placeId);
 
         $cache = is_array($lead->google_places_cache) ? $lead->google_places_cache : [];
+        $existingResults = is_array($cache['results'] ?? null) ? $cache['results'] : [];
+        $results = $this->mergeSelectedPlaceIntoResults($existingResults, $place, $selectedId);
+
         $cache['place'] = $place;
-        $cache['selected_place_id'] = $place['place_id'] ?? $placeId;
+        $cache['results'] = $results;
+        $cache['selected_place_id'] = $selectedId;
         $cache['fetched_at'] = now()->toIso8601String();
         $lead->google_places_cache = $cache;
         $lead->save();
@@ -245,7 +250,8 @@ class LeadResearchService
             'can_save' => $this->canSaveGoogleData($user, $lead),
             'query' => $this->buildQuery($lead),
             'place' => $place,
-            'results' => $scored,
+            'results' => $results,
+            'multiple_results' => count($results) > 1,
             'source' => 'google_places',
             'api_status' => 'OK',
             'current' => $this->currentLeadSnapshot($lead->fresh(['city', 'state'])),
@@ -254,6 +260,41 @@ class LeadResearchService
         $this->logResearch($lead, $user, $payload['query'], $payload, 'select', null, $ipAddress);
 
         return $payload;
+    }
+
+    /**
+     * Keep the original multi-match list so users can switch between options.
+     *
+     * @param  list<array<string, mixed>>  $existingResults
+     * @param  array<string, mixed>  $selectedPlace
+     * @return list<array<string, mixed>>
+     */
+    private function mergeSelectedPlaceIntoResults(array $existingResults, array $selectedPlace, string $selectedId): array
+    {
+        if ($existingResults === []) {
+            return [$selectedPlace];
+        }
+
+        $merged = [];
+        $replaced = false;
+        foreach ($existingResults as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $rowId = (string) ($row['place_id'] ?? $row['google_place_id'] ?? '');
+            if ($rowId !== '' && $rowId === $selectedId) {
+                $merged[] = array_merge($row, $selectedPlace);
+                $replaced = true;
+            } else {
+                $merged[] = $row;
+            }
+        }
+
+        if (! $replaced) {
+            array_unshift($merged, $selectedPlace);
+        }
+
+        return array_values($merged);
     }
 
     /**
