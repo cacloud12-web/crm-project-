@@ -6172,6 +6172,7 @@ if (otherInput) {
       assignmentStatus: btn.getAttribute('data-assignment-status') || '',
       assignmentType: btn.getAttribute('data-assignment-type') || '',
       assignmentPanel: btn.getAttribute('data-assignment-panel') || '',
+      assignedDateToday: btn.hasAttribute('data-assigned-date-today'),
       commLogStatus: btn.getAttribute('data-comm-log-status') || '',
       consentTab: btn.getAttribute('data-consent-tab') || '',
       workflowTab: btn.getAttribute('data-workflow-tab') || '',
@@ -6247,6 +6248,9 @@ if (otherInput) {
     }
     if (intent.employeeName) {
       filters.executive = intent.employeeName;
+    }
+    if (intent.assignedDateToday) {
+      filters.assigned_date = todayIsoDate();
     }
     if (intent.leadView) {
       window._pendingLeadView = intent.leadView;
@@ -6345,6 +6349,7 @@ if (otherInput) {
     if (card.commLogStatus) attrs += ' data-comm-log-status="' + escapeHtml(card.commLogStatus) + '"';
     if (card.workflowTab) attrs += ' data-workflow-tab="' + escapeHtml(card.workflowTab) + '"';
     if (card.consentTab) attrs += ' data-consent-tab="' + escapeHtml(card.consentTab) + '"';
+    if (card.assignedDateToday) attrs += ' data-assigned-date-today="1"';
     var accent = card.accent || (card.key || 'default').replace(/_/g, '-');
     return '<button type="button" class="mgr-kpi-card dash-kpi-card dash-kpi-card--premium dash-kpi-card--nav"' +
       ' data-accent="' + escapeHtml(accent) + '"' + attrs +
@@ -6443,7 +6448,7 @@ if (otherInput) {
       title: 'Leads',
       cards: [
         { icon: 'users', label: 'My Leads', key: 'my_leads', nav: 'leads', leadFilter: 'all', source: 'summary', desc: 'All leads assigned to you' },
-        { icon: 'user-check', label: 'Assigned Leads', key: 'assigned_leads_today', nav: 'leads', leadFilter: 'all', source: 'today', desc: 'Your assigned leads' },
+        { icon: 'user-check', label: 'Assigned Leads', key: 'assigned_leads_today', nav: 'leads', leadFilter: 'all', assignedDateToday: true, source: 'today', desc: 'Your assigned leads for today' },
         { icon: 'sparkles', label: 'New Leads', key: 'new_leads', nav: 'leads', leadFilter: 'status_new', source: 'summary', desc: 'Your New status leads' },
         { icon: 'flame', label: 'Hot Leads', key: 'hot_leads', nav: 'leads', leadFilter: 'hot', source: 'summary', desc: 'Your Hot leads' },
         { icon: 'thermometer', label: 'Warm Leads', key: 'warm_leads', nav: 'leads', leadFilter: 'warm', source: 'summary', desc: 'Your Warm leads' },
@@ -9733,9 +9738,14 @@ if (otherInput) {
     document.querySelectorAll('.crm-col-filter-input[data-col-filter-group="ca_masters"]').forEach(function (input) {
       input.value = '';
     });
+    document.querySelectorAll('.crm-col-date-nav__value[data-col-filter-group="ca_masters"]').forEach(function (input) {
+      input.value = isEmployeeUser() ? todayIsoDate() : '';
+    });
+    syncCaMasterDateNavLabels(document);
     window._leadSegmentFilter = 'all';
     if (window.CA_LISTING_SEARCH) {
-      CA_LISTING_SEARCH.setState('ca_masters', { page: 1, search: '', filters: {} });
+      var resetFilters = isEmployeeUser() ? { assigned_date: todayIsoDate() } : {};
+      CA_LISTING_SEARCH.setState('ca_masters', { page: 1, search: '', filters: resetFilters });
     }
     syncCamStageFilterBarVisibility();
     if (isCamPipelineTabActive()) loadKanbanLeads();
@@ -9868,7 +9878,11 @@ if (otherInput) {
     if (!isEmployeeUser()) return 'No leads yet. Click Add Lead to create one.';
     var filterValue = readLeadsPipelineStageFilter();
     if (filterValue) return 'No leads match the selected status filter.';
-    if (Object.keys(readCaMasterColumnFilters()).length > 0) {
+    var colFilters = readCaMasterColumnFilters();
+    if (colFilters.assigned_date) {
+      return 'No leads assigned to you on ' + formatDate(colFilters.assigned_date) + '.';
+    }
+    if (Object.keys(colFilters).length > 0) {
       return 'No leads match your current filters.';
     }
     if (window.CA_LISTING_SEARCH && String(CA_LISTING_SEARCH.getState('ca_masters').search || '').trim()) {
@@ -9937,6 +9951,7 @@ if (otherInput) {
     var hub = document.getElementById('leads-hub');
     if (!hub || hub._leadsColFilterBound) return;
     hub._leadsColFilterBound = true;
+    bindCaMasterColumnDateNav(hub);
     var timer = null;
     hub.addEventListener('change', function (e) {
       if (e.target && e.target.id === 'leads-filter-pipeline-stage') {
@@ -9972,6 +9987,7 @@ if (otherInput) {
       var page = document.getElementById('leads-hub');
       if (page) {
         bindCaMasterColumnsUi(page);
+        bindCaMasterColumnDateNav(page);
         ensureCaMasterColumnsPopoverMounted();
       }
       ensureSalesRemarksUiBound();
@@ -9979,6 +9995,8 @@ if (otherInput) {
     ensureFollowupInlineUiBound();
       renderLeadKpis();
       bindLeadsColumnFilters();
+      ensureEmployeeTodayAssignedDateFilter();
+      syncAssignedDateNavFromListingState();
       var pipelineActive = isLeadsPipelineTabActive();
       var allActive = isLeadsAllTabActive();
       var finishHub = function () {
@@ -14358,6 +14376,8 @@ if (otherInput) {
     { id: '2026_07_email_sales_remarks_v3', keys: ['email_id', 'sales_remarks'] },
     // v4: ensure Mobile + Team Size stay visible for employee contact editing on Lead Management.
     { id: '2026_08_mobile_team_size_contact_v1', keys: ['mobile', 'team_size'] },
+    // v5: Assigned Leads column with date filter for today's assignments.
+    { id: '2026_08_assigned_leads_column_v1', keys: ['assigned_leads'] },
   ];
   var CAM_COLUMN_MIGRATIONS_STORAGE_KEY = 'crm.ca_masters.column_migrations.v1';
   var _camVisibleColumnKeys = null;
@@ -14964,6 +14984,7 @@ if (otherInput) {
       camColTd('source', 'cam-td-source cam-master-data-cell', compactTextCell(l.source)) +
       camColTd('rating', 'cam-td-rating cam-master-data-cell', '<span class="cam-cell-rating cam-master-display-text" title="' + (l.rating || 0) + ' stars">' + stars(l.rating) + '</span>') +
       camColTd('status', 'cam-td-status cam-master-data-cell', '<span class="cam-cell-badge">' + statusBadge(l.status) + '</span>') +
+      camColTd('assigned_leads', 'crm-td-date cam-col-assigned-leads cam-master-data-cell', '<span class="cam-cell-text cam-cell-mono cam-master-display-text" title="' + escapeAttr(l.assigned_date || '') + '">' + escapeHtml(formatDate(l.assigned_date)) + '</span>') +
       camColTd('employee', 'cam-td-person cam-master-data-cell', executiveCell) +
       camColTd('created_by', 'cam-td-person cam-master-data-cell', compactTextCell(l.created_by)) +
       camColTd('updated_at', 'crm-td-date cam-master-data-cell', '<span class="cam-cell-text cam-cell-mono text-slate-500 cam-master-display-text" title="' + escapeHtml(l.updated || formatRelativeDate(l.updated_at)) + '">' + escapeHtml(l.updated || formatRelativeDate(l.updated_at)) + '</span>') +
@@ -15034,6 +15055,7 @@ if (otherInput) {
       camColTd('source', 'cam-td-source cam-master-data-cell', '') +
       camColTd('rating', 'cam-td-rating cam-master-data-cell', '') +
       camColTd('status', 'cam-td-status cam-master-data-cell', '') +
+      camColTd('assigned_leads', 'crm-td-date cam-col-assigned-leads cam-master-data-cell', '') +
       camColTd('employee', 'cam-td-person cam-master-data-cell', '') +
       camColTd('created_by', 'cam-td-person cam-master-data-cell', '') +
       camColTd('updated_at', 'crm-td-date cam-master-data-cell', '') +
@@ -15432,6 +15454,136 @@ if (otherInput) {
       .catch(function () { setText('cam-stat-ocr-conflict', '—'); });
   }
 
+  function todayIsoDate() {
+    return toDateInputValue(new Date());
+  }
+
+  function shiftIsoDate(iso, days) {
+    if (!iso) return todayIsoDate();
+    var d = new Date(iso + 'T12:00:00');
+    if (isNaN(d.getTime())) return todayIsoDate();
+    d.setDate(d.getDate() + days);
+    return toDateInputValue(d);
+  }
+
+  function formatColDateNavLabel(iso) {
+    return iso ? formatDate(iso) : 'Select date';
+  }
+
+  function openColDateNavPicker(nav) {
+    if (!nav) return;
+    var input = nav.querySelector('.crm-col-date-nav__value');
+    if (!input) return;
+    if (typeof input.showPicker === 'function') {
+      try {
+        input.showPicker();
+        return;
+      } catch (err) { /* fall through */ }
+    }
+    var label = nav.querySelector('[data-date-nav="pick"]');
+    if (label) {
+      var rect = label.getBoundingClientRect();
+      input.style.position = 'fixed';
+      input.style.left = rect.left + 'px';
+      input.style.top = rect.top + 'px';
+      input.style.width = Math.max(rect.width, 120) + 'px';
+      input.style.height = Math.max(rect.height, 28) + 'px';
+      input.style.opacity = '0.01';
+      input.style.pointerEvents = 'auto';
+      input.style.zIndex = '9999';
+    }
+    input.focus({ preventScroll: true });
+    input.click();
+    window.setTimeout(function () {
+      input.removeAttribute('style');
+    }, 400);
+  }
+
+  function syncCaMasterDateNavLabels(root) {
+    root = root || document;
+    root.querySelectorAll('.crm-col-date-nav').forEach(function (nav) {
+      var input = nav.querySelector('.crm-col-date-nav__value');
+      var label = nav.querySelector('[data-date-nav-label]');
+      if (label && input) label.textContent = formatColDateNavLabel(input.value);
+    });
+  }
+
+  function syncAssignedDateNavFromListingState() {
+    var filters = window.CA_LISTING_SEARCH ? (CA_LISTING_SEARCH.getState('ca_masters').filters || {}) : {};
+    var iso = filters.assigned_date || '';
+    document.querySelectorAll('.crm-col-date-nav[data-col-date-nav="assigned_date"] .crm-col-date-nav__value').forEach(function (input) {
+      input.value = iso;
+    });
+    syncCaMasterDateNavLabels(document);
+  }
+
+  function ensureEmployeeTodayAssignedDateFilter() {
+    if (!isEmployeeUser() || !window.CA_LISTING_SEARCH) return false;
+    var state = CA_LISTING_SEARCH.getState('ca_masters');
+    var filters = Object.assign({}, state.filters || {});
+    if (filters.assigned_date) {
+      syncAssignedDateNavFromListingState();
+      return false;
+    }
+    filters.assigned_date = todayIsoDate();
+    CA_LISTING_SEARCH.setState('ca_masters', { page: 1, filters: filters });
+    syncAssignedDateNavFromListingState();
+    return true;
+  }
+
+  function applyCaMasterDateNavListingFilters() {
+    if (document.getElementById('leads-hub')) {
+      if (window.CA_LISTING_SEARCH) {
+        CA_LISTING_SEARCH.setState('ca_masters', { page: 1, filters: buildLeadsListingFilters() });
+        reloadListing('ca_masters');
+      } else {
+        renderLeadsTable();
+      }
+      return;
+    }
+    applyCaMasterListingFilters();
+  }
+
+  function bindCaMasterColumnDateNav(scope) {
+    var roots = [];
+    if (scope) roots.push(scope);
+    else {
+      var leadsHub = document.getElementById('leads-hub');
+      var camHub = document.getElementById('cam-hub');
+      if (leadsHub) roots.push(leadsHub);
+      if (camHub) roots.push(camHub);
+    }
+    roots.forEach(function (root) {
+      if (!root || root._camDateNavBound) return;
+      root._camDateNavBound = true;
+      root.addEventListener('click', function (e) {
+        var pickBtn = e.target.closest('[data-date-nav="pick"]');
+        if (pickBtn) {
+          openColDateNavPicker(pickBtn.closest('.crm-col-date-nav'));
+          return;
+        }
+        var btn = e.target.closest('.crm-col-date-nav__btn[data-date-nav]');
+        if (!btn) return;
+        var nav = btn.closest('.crm-col-date-nav');
+        if (!nav) return;
+        var input = nav.querySelector('.crm-col-date-nav__value');
+        if (!input) return;
+        var delta = btn.getAttribute('data-date-nav') === 'prev' ? -1 : 1;
+        var next = shiftIsoDate(input.value || todayIsoDate(), delta);
+        input.value = next;
+        syncCaMasterDateNavLabels(root);
+        applyCaMasterDateNavListingFilters();
+      });
+      root.addEventListener('change', function (e) {
+        var input = e.target.closest('.crm-col-date-nav__value[data-col-filter-group="ca_masters"]');
+        if (!input) return;
+        syncCaMasterDateNavLabels(root);
+        applyCaMasterDateNavListingFilters();
+      });
+    });
+    syncCaMasterDateNavLabels(scope || document);
+  }
+
   function readCaMasterColumnFilters() {
     var filters = {};
     var activePanel = document.querySelector('.ca-tab-panel[data-tab-group="cam-view"][data-panel="all"].active')
@@ -15439,6 +15591,11 @@ if (otherInput) {
       || document.querySelector('.ca-tab-panel[data-tab-group="main"].active');
     var root = activePanel || document;
     root.querySelectorAll('.crm-col-filter-input[data-col-filter-group="ca_masters"]').forEach(function (input) {
+      var key = input.getAttribute('data-col-filter');
+      var value = (input.value || '').trim();
+      if (key && value) filters[key] = value;
+    });
+    root.querySelectorAll('.crm-col-date-nav__value[data-col-filter-group="ca_masters"]').forEach(function (input) {
       var key = input.getAttribute('data-col-filter');
       var value = (input.value || '').trim();
       if (key && value) filters[key] = value;
@@ -15466,6 +15623,7 @@ if (otherInput) {
     if (page._camInit) return;
     page._camInit = true;
     bindCaMasterColumnsUi(page);
+    bindCaMasterColumnDateNav(page);
     ensureCaMasterColumnsPopoverMounted();
     applyCaMasterColumnVisibility(page);
     ensureSalesRemarksUiBound();

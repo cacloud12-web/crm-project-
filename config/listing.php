@@ -40,6 +40,7 @@ return [
             'gst_no' => 'ilike',
             'source' => 'source_name',
             'executive' => 'executive_name',
+            'assigned_date' => 'assignment_assigned_date',
             'team_size' => 'team_size_search',
             'existing_software' => 'exact',
             'is_newly_established' => 'boolean',

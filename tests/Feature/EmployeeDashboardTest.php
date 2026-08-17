@@ -335,6 +335,56 @@ class EmployeeDashboardTest extends TestCase
         }
     }
 
+    public function test_employee_leads_listing_filters_by_assigned_date(): void
+    {
+        $user = $this->employeeUser();
+        $employee = CrmTestAccounts::employee();
+        $this->actingAs($user);
+
+        $todayLead = CaMaster::query()->create([
+            'firm_name' => 'Assigned Today '.uniqid('', true),
+            'ca_name' => 'CA Today',
+            'status' => 'New',
+        ]);
+        $yesterdayLead = CaMaster::query()->create([
+            'firm_name' => 'Assigned Yesterday '.uniqid('', true),
+            'ca_name' => 'CA Yesterday',
+            'status' => 'New',
+        ]);
+
+        LeadAssignmentEngine::query()->create([
+            'ca_id' => $todayLead->ca_id,
+            'employee_id' => $employee->employee_id,
+            'status' => 'Active',
+            'assigned_date' => now()->toDateString(),
+            'assignment_type' => 'Manual',
+        ]);
+        LeadAssignmentEngine::query()->create([
+            'ca_id' => $yesterdayLead->ca_id,
+            'employee_id' => $employee->employee_id,
+            'status' => 'Active',
+            'assigned_date' => now()->subDay()->toDateString(),
+            'assignment_type' => 'Manual',
+        ]);
+
+        $today = now()->toDateString();
+        $response = $this->getJson('/ca-masters?all=1&assigned_date='.$today)->assertOk();
+        $items = $response->json('data.items') ?? $response->json('data') ?? [];
+        if (isset($items['data'])) {
+            $items = $items['data'];
+        }
+
+        $ids = collect($items)->pluck('ca_id')->map(fn ($id) => (int) $id)->all();
+        $this->assertContains((int) $todayLead->ca_id, $ids);
+        $this->assertNotContains((int) $yesterdayLead->ca_id, $ids);
+
+        foreach ($items as $item) {
+            if ((int) ($item['ca_id'] ?? 0) === (int) $todayLead->ca_id) {
+                $this->assertSame($today, $item['assigned_date'] ?? null);
+            }
+        }
+    }
+
     public function test_orphan_employee_user_gets_profile_and_dashboard(): void
     {
         $email = 'orphan-employee-'.uniqid('', true).'@test.local';

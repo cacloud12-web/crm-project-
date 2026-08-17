@@ -48,6 +48,11 @@ class CaMasterResource extends JsonResource
     private static array $executiveByCaId = [];
 
     /**
+     * @var array<int, string|null>
+     */
+    private static array $assignedDateByCaId = [];
+
+    /**
      * @var array<int, array<string, mixed>>
      */
     private static array $lastActivityByCaId = [];
@@ -65,6 +70,7 @@ class CaMasterResource extends JsonResource
         $collection = $leads instanceof Collection ? $leads : collect($leads);
         if ($collection->isEmpty()) {
             self::$executiveByCaId = [];
+            self::$assignedDateByCaId = [];
             self::$lastActivityByCaId = [];
             self::$ocrGeoByCaId = [];
 
@@ -80,6 +86,7 @@ class CaMasterResource extends JsonResource
 
         if ($caIds === []) {
             self::$executiveByCaId = [];
+            self::$assignedDateByCaId = [];
             self::$lastActivityByCaId = [];
             self::$ocrGeoByCaId = [];
 
@@ -93,19 +100,36 @@ class CaMasterResource extends JsonResource
             && ($first->relationLoaded('activeTeamAssignments') || $first->relationLoaded('activeAssignment'))
         ) {
             self::$executiveByCaId = [];
+            self::$assignedDateByCaId = [];
         } else {
-            self::$executiveByCaId = \App\Models\LeadAssignmentEngine::query()
+            $employeeId = auth()->user()
+                ? app(\App\Services\Rbac\EmployeeDataScopeService::class)->scopedEmployeeId(auth()->user())
+                : null;
+
+            $assignmentQuery = \App\Models\LeadAssignmentEngine::query()
                 ->with('employee:employee_id,name')
                 ->whereIn('ca_id', $caIds)
                 ->where('status', 'Active')
-                ->orderByDesc('assignment_id')
-                ->get()
-                ->unique('ca_id')
+                ->orderByDesc('assignment_id');
+
+            if ($employeeId) {
+                $assignmentQuery->where('employee_id', $employeeId);
+            }
+
+            $assignments = $assignmentQuery->get()->unique('ca_id');
+
+            self::$executiveByCaId = $assignments
                 ->mapWithKeys(fn ($assignment) => [
                     (int) $assignment->ca_id => [
                         'id' => $assignment->employee_id ? (int) $assignment->employee_id : null,
                         'name' => $assignment->employee?->name,
                     ],
+                ])
+                ->all();
+
+            self::$assignedDateByCaId = $assignments
+                ->mapWithKeys(fn ($assignment) => [
+                    (int) $assignment->ca_id => $assignment->assigned_date?->toDateString(),
                 ])
                 ->all();
         }
@@ -291,6 +315,7 @@ class CaMasterResource extends JsonResource
             'executive' => $this->when($request->user() !== null, fn () => $executive['name']),
             'executive_name' => $this->when($request->user() !== null, fn () => $executive['name']),
             'employee_name' => $this->when($request->user() !== null, fn () => $executive['name']),
+            'assigned_date' => $this->when($request->user() !== null, fn () => $this->resolveAssignedDate()),
             'team_members' => $this->when($request->user() !== null, fn () => $teamMembers),
             'team_members_count' => $this->when($request->user() !== null, fn () => $teamMembers['count']),
             'team_member_names' => $this->when($request->user() !== null, fn () => $teamMembers['names']),
@@ -349,6 +374,30 @@ class CaMasterResource extends JsonResource
         }
 
         return ['id' => null, 'name' => null];
+    }
+
+    private function resolveAssignedDate(): ?string
+    {
+        $employeeId = auth()->user()
+            ? app(\App\Services\Rbac\EmployeeDataScopeService::class)->scopedEmployeeId(auth()->user())
+            : null;
+
+        if ($this->relationLoaded('activeTeamAssignments')) {
+            $assignments = $this->activeTeamAssignments;
+            if ($employeeId) {
+                $mine = $assignments->firstWhere('employee_id', $employeeId);
+
+                return $mine?->assigned_date?->toDateString();
+            }
+
+            return $assignments->first()?->assigned_date?->toDateString();
+        }
+
+        if ($this->relationLoaded('activeAssignment')) {
+            return $this->activeAssignment?->assigned_date?->toDateString();
+        }
+
+        return self::$assignedDateByCaId[(int) $this->ca_id] ?? null;
     }
 
     /**

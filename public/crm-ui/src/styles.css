@@ -10070,6 +10070,85 @@ body.rw-open {
   box-sizing: border-box;
 }
 
+.crm-col-date-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0.12rem 0.2rem;
+  border-radius: 6px;
+  background: #4CB4D4;
+  box-sizing: border-box;
+  position: relative;
+}
+
+.crm-col-date-nav__value {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.crm-col-date-nav__btn {
+  flex: 0 0 auto;
+  width: 1.35rem;
+  height: 1.35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.crm-col-date-nav__btn:hover {
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.crm-col-date-nav__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0.1rem 0.35rem;
+  border: none;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.crm-col-date-nav__label:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.crm-col-date-nav__label-text {
+  pointer-events: none;
+}
+
 .cam-hub--compact .crm-table tbody td {
   padding: var(--crm-table-cell-py, 8px) var(--crm-table-cell-px, 12px);
   font-size: var(--crm-font-size-body);

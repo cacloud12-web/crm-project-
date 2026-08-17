@@ -307,6 +307,7 @@ class ListingQueryApplier
                 'executive_name' => $query->whereHas('activeAssignment.employee', function (Builder $q) use ($value) {
                     self::whereIlike($q, 'name', '%'.addcslashes((string) $value, '%_\\').'%');
                 }),
+                'assignment_assigned_date' => self::applyAssignmentAssignedDate($query, (string) $value),
                 'team_size_search' => self::applyTeamSizeSearch($query, $value),
                 'employee_name' => $query->whereHas('employee', function (Builder $q) use ($value) {
                     self::whereIlike($q, 'name', '%'.addcslashes((string) $value, '%_\\').'%');
@@ -325,6 +326,18 @@ class ListingQueryApplier
     private static function applyLeadTag(Builder $query, string $tag): void
     {
         $query->whereJsonContains('lead_tags', $tag);
+    }
+
+    private static function applyAssignmentAssignedDate(Builder $query, string $value): void
+    {
+        $date = trim($value);
+        if ($date === '' || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            return;
+        }
+
+        $query->whereHas('leadAssignments', function (Builder $q) use ($date) {
+            $q->where('status', 'Active')->whereDate('assigned_date', $date);
+        });
     }
 
     private static function applyTeamSizeSearch(Builder $query, mixed $value): void

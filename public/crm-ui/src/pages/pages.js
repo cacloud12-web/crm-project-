@@ -570,6 +570,19 @@ window.CAPages = (function () {
         ' data-crm-date-input data-allow-past data-hide-preview' +
         (c.filterAttrs ? ' ' + c.filterAttrs : '') +
         ' aria-label="' + escapeAttr(ariaLabel) + '" />';
+    } else if (filterType === 'date-nav') {
+      var navKey = c.filterKey || c.key || '';
+      var navId = c.filterId ? ' id="' + c.filterId + '"' : '';
+      control = '<div class="crm-col-date-nav" data-col-date-nav="' + escapeAttr(navKey) + '"' + groupAttr + '>' +
+        '<button type="button" class="crm-col-date-nav__btn" data-date-nav="prev" aria-label="Previous day">&lt;</button>' +
+        '<button type="button" class="crm-col-date-nav__label" data-date-nav="pick" aria-label="' + escapeAttr(ariaLabel) + '">' +
+          '<span class="crm-col-date-nav__label-text" data-date-nav-label aria-live="polite">Select date</span>' +
+        '</button>' +
+        '<input type="date" class="crm-col-filter-input crm-col-date-nav__value"' + navId + keyAttr + groupAttr +
+          ' data-allow-past data-skip-crm-datepicker tabindex="-1" aria-hidden="true"' +
+          (c.filterAttrs ? ' ' + c.filterAttrs : '') + ' value="" />' +
+        '<button type="button" class="crm-col-date-nav__btn" data-date-nav="next" aria-label="Next day">&gt;</button>' +
+      '</div>';
     } else if (filterType === 'number') {
       var numberId = c.filterId ? ' id="' + c.filterId + '"' : '';
       control = '<input type="number" class="' + inputCls + '"' + numberId + keyAttr + groupAttr +
@@ -810,6 +823,7 @@ window.CAPages = (function () {
       { key: 'source', label: 'Source', required: false, defaultVisible: true, filterKey: 'source', filterPlaceholder: 'search', colCls: 'crm-col-source', thCls: 'crm-th-source' },
       { key: 'rating', label: 'Rating', required: false, defaultVisible: true, colCls: 'crm-col-rating', thCls: 'crm-th-rating' },
       { key: 'status', label: 'Status', required: false, defaultVisible: true, filterKey: 'status', filterType: 'select', filterOptionsHtml: caMasterStatusFilterOptionsHtml('All Status'), colCls: 'crm-col-status', thCls: 'crm-th-status' },
+      { key: 'assigned_leads', label: 'Assigned Leads', required: false, defaultVisible: true, filterKey: 'assigned_date', filterType: 'date-nav', colCls: 'crm-col-date cam-col-assigned-leads', thCls: 'crm-th-date cam-th-assigned-leads' },
       { key: 'employee', label: 'Employee', required: false, defaultVisible: true, filterKey: 'executive', filterPlaceholder: 'search', colCls: 'crm-col-person', thCls: 'crm-th-person', permission: 'assignment' },
       { key: 'created_by', label: 'Created By', required: false, defaultVisible: true, colCls: 'crm-col-person', thCls: 'crm-th-person' },
       { key: 'updated_at', label: 'Updated', required: false, defaultVisible: true, colCls: 'crm-col-date', thCls: 'crm-th-date' },

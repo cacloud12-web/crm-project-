@@ -259,6 +259,7 @@ class CaMasterService
             'sourceLead:source_id,source_name',
             'createdByEmployee:employee_id,name',
             'activeTeamAssignments.employee:employee_id,name,role,status',
+            'activeTeamAssignments:assignment_id,ca_id,employee_id,assigned_date,status',
         ];
     }
 
