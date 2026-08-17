@@ -5,6 +5,7 @@ namespace App\Http\Requests\FollowUp;
 use App\Http\Requests\Concerns\PreparesFollowUpDemoFields;
 use App\Http\Requests\Concerns\SanitizesUserText;
 use App\Http\Requests\Concerns\ValidatesFollowUpEmployeeDemoProvider;
+use App\Http\Requests\Concerns\ValidatesFollowUpRemarksOnlyType;
 use App\Http\Requests\Concerns\ValidatesFollowUpSchedule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -15,6 +16,7 @@ class UpdateFollowUpRequest extends FormRequest
     use PreparesFollowUpDemoFields;
     use SanitizesUserText;
     use ValidatesFollowUpEmployeeDemoProvider;
+    use ValidatesFollowUpRemarksOnlyType;
     use ValidatesFollowUpSchedule;
 
     public function authorize(): bool

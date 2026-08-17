@@ -53,6 +53,7 @@ class CaMasterStatusSyncService
             'Demo Scheduled' => 'Demo Scheduled',
             'Demo Completed' => 'Demo Completed',
             'Follow Up Reminder' => 'Follow Up Reminder',
+            'Not Interested' => 'Not Interested',
             default => null,
         };
     }

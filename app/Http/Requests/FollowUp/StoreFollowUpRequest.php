@@ -5,6 +5,7 @@ namespace App\Http\Requests\FollowUp;
 use App\Http\Requests\Concerns\PreparesFollowUpDemoFields;
 use App\Http\Requests\Concerns\SanitizesUserText;
 use App\Http\Requests\Concerns\ValidatesFollowUpEmployeeDemoProvider;
+use App\Http\Requests\Concerns\ValidatesFollowUpRemarksOnlyType;
 use App\Http\Requests\Concerns\ValidatesFollowUpSchedule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -15,6 +16,7 @@ class StoreFollowUpRequest extends FormRequest
     use PreparesFollowUpDemoFields;
     use SanitizesUserText;
     use ValidatesFollowUpEmployeeDemoProvider;
+    use ValidatesFollowUpRemarksOnlyType;
     use ValidatesFollowUpSchedule;
 
     public function authorize(): bool
@@ -35,7 +37,11 @@ class StoreFollowUpRequest extends FormRequest
             'employee_id' => 'nullable|exists:employees,employee_id',
             'followup_type' => ['required', 'string', 'max:255', Rule::in(config('crm_followups.types', []))],
             'remarks' => 'nullable|string',
-            'scheduled_date' => 'required|date',
+            'scheduled_date' => [
+                Rule::requiredIf(fn () => ! $this->isRemarksOnlyFollowUpType()),
+                'nullable',
+                'date',
+            ],
             'next_followup_date' => 'nullable|date',
             'status' => ['nullable', 'string', 'max:255', Rule::in(config('crm_followups.statuses', []))],
             'priority' => 'nullable|string|in:Low,Normal,High,Urgent',

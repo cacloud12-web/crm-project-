@@ -2766,6 +2766,45 @@ if (otherInput) {
       });
   }
 
+  function buildLeadResearchOpenOptions(leadId, lead, researchLead, opts) {
+    opts = opts || {};
+    var googleQuery = buildLeadGoogleSearchQuery(researchLead);
+    var mapsQuery = buildLeadGoogleMapsQuery(researchLead);
+    var savedPlace = opts.partnerCaName ? null : leadToResearchPlace(lead);
+    var savedMapsUrl = opts.partnerCaName ? null : (lead.google_maps_url
+      || (lead.latitude != null && lead.longitude != null
+        ? 'https://www.google.com/maps?q=' + lead.latitude + ',' + lead.longitude
+        : null));
+
+    return {
+      leadId: leadId,
+      lead: researchLead,
+      googleQuery: googleQuery,
+      mapsQuery: mapsQuery,
+      place: savedPlace,
+      results: savedPlace ? [savedPlace] : [],
+      current: researchLead,
+      cached: !!savedPlace,
+      mapsExternal: savedMapsUrl,
+      mapsEmbed: savedMapsUrl
+        ? (String(savedMapsUrl).indexOf('output=embed') >= 0
+          ? savedMapsUrl
+          : savedMapsUrl + (String(savedMapsUrl).indexOf('?') >= 0 ? '&' : '?') + 'output=embed')
+        : null,
+      sourceNote: savedPlace
+        ? 'Loading saved Google data…'
+        : (opts.partnerCaName
+          ? ('Searching Google Places for partner ' + opts.partnerCaName + '…')
+          : 'Loading Google Places results…'),
+      deps: researchWorkspaceDeps(),
+    };
+  }
+
+  function prefetchLeadGoogleFieldsIfNeeded(leadId, lead) {
+    if (!leadId || leadHasSavedGoogleData(lead)) return;
+    ensureLeadWithGoogleFields(leadId, lead).catch(function () {});
+  }
+
   function openLeadResearch(leadId, opts) {
     opts = opts || {};
     if (!window.CA_RESEARCH_WORKSPACE) {
@@ -2795,63 +2834,23 @@ if (otherInput) {
       return;
     }
     var googleQuery = buildLeadGoogleSearchQuery(researchLead);
-    var mapsQuery = buildLeadGoogleMapsQuery(researchLead);
     _leadResearchOpening[openingKey] = true;
 
-    ensureLeadWithGoogleFields(leadId, lead).then(function (resolvedLead) {
-      lead = resolvedLead || lead;
-      if (opts.partnerCaName) {
-        researchLead = Object.assign({}, lead, {
-          ca_name: opts.partnerCaName,
-          primary_ca_name: opts.partnerCaName,
-        });
-        googleQuery = buildLeadGoogleSearchQuery(researchLead);
-        mapsQuery = buildLeadGoogleMapsQuery(researchLead);
-      }
-      var savedPlace = opts.partnerCaName ? null : leadToResearchPlace(lead);
-      var savedMapsUrl = opts.partnerCaName ? null : (lead.google_maps_url
-        || (lead.latitude != null && lead.longitude != null
-          ? 'https://www.google.com/maps?q=' + lead.latitude + ',' + lead.longitude
-          : null));
+    CA_RESEARCH_WORKSPACE.open(buildLeadResearchOpenOptions(leadId, lead, researchLead, opts));
+    prefetchLeadGoogleFieldsIfNeeded(leadId, lead);
 
-      CA_RESEARCH_WORKSPACE.open({
-        leadId: leadId,
-        lead: researchLead,
-        googleQuery: googleQuery,
-        mapsQuery: mapsQuery,
-        place: savedPlace,
-        results: savedPlace ? [savedPlace] : [],
-        current: researchLead,
-        cached: !!savedPlace,
-        mapsExternal: savedMapsUrl,
-        mapsEmbed: savedMapsUrl
-          ? (String(savedMapsUrl).indexOf('output=embed') >= 0
-            ? savedMapsUrl
-            : savedMapsUrl + (String(savedMapsUrl).indexOf('?') >= 0 ? '&' : '?') + 'output=embed')
-          : null,
-        sourceNote: savedPlace
-          ? 'Loading saved Google data…'
-          : (opts.partnerCaName
-            ? ('Searching Google Places for partner ' + opts.partnerCaName + '…')
-            : 'Loading Google Places results…'),
-        deps: researchWorkspaceDeps(),
+    runLeadResearchLookup(leadId, researchLead, googleQuery)
+      .then(function (payload) {
+        CA_RESEARCH_WORKSPACE.setResearchData(payload);
+      })
+      .catch(function (err) {
+        CA_RESEARCH_WORKSPACE.setSourceError(
+          friendlyResearchError(err),
+        );
+      })
+      .finally(function () {
+        delete _leadResearchOpening[openingKey];
       });
-
-      runLeadResearchLookup(leadId, researchLead, googleQuery)
-        .then(function (payload) {
-          CA_RESEARCH_WORKSPACE.setResearchData(payload);
-        })
-        .catch(function (err) {
-          CA_RESEARCH_WORKSPACE.setSourceError(
-            friendlyResearchError(err),
-          );
-        })
-        .finally(function () {
-          delete _leadResearchOpening[openingKey];
-        });
-    }).catch(function () {
-      delete _leadResearchOpening[openingKey];
-    });
   }
 
   function ensureLeadQuickPanelsDelegated() {
@@ -13985,6 +13984,7 @@ if (otherInput) {
     if (isFollowupDemoScheduledType(followup.followup_type)) {
       populateFollowupDemoFieldsFromLead(followup.demo_provider_employee_id || null);
     }
+    syncFollowupFormByType();
   }
 
   function openFollowupFormForEdit(followupId) {
@@ -17654,6 +17654,10 @@ if (otherInput) {
     return String(type || '').trim() === 'Demo Scheduled';
   }
 
+  function isFollowupRemarksOnlyType(type) {
+    return String(type || '').trim() === 'Not Interested';
+  }
+
   function getFollowupSelectedLeadTeamSize() {
     var lead = getFollowupContextLead();
     if (!lead || lead.team_size == null || lead.team_size === '') return null;
@@ -17797,16 +17801,32 @@ if (otherInput) {
     applyFollowupDemoFieldsAccess(true);
   }
 
-  function toggleFollowupDemoFields() {
+  function syncFollowupFormByType() {
     var form = document.getElementById('form-followup');
     var typeSel = form && form.elements.followup_type;
-    var wrap = document.getElementById('followup-demo-fields-wrap');
-    if (!typeSel || !wrap) return;
-    var isDemo = isFollowupDemoScheduledType(typeSel.value);
-    wrap.classList.toggle('hidden', !isDemo);
-    if (isDemo) {
-      populateFollowupDemoFieldsFromLead(window._followupDemoProviderEmployeeId || null);
+    if (!typeSel) return;
+    var type = typeSel.value;
+    var remarksOnly = isFollowupRemarksOnlyType(type);
+    var isDemo = isFollowupDemoScheduledType(type);
+    var scheduledWrap = document.getElementById('followup-scheduled-wrap');
+    var priorityWrap = document.getElementById('followup-priority-wrap');
+    var rescheduleWrap = document.getElementById('followup-reschedule-reason-wrap');
+    var demoWrap = document.getElementById('followup-demo-fields-wrap');
+    var scheduledInput = document.getElementById('form-followup-scheduled-date');
+
+    if (scheduledWrap) scheduledWrap.classList.toggle('hidden', remarksOnly);
+    if (priorityWrap) priorityWrap.classList.toggle('hidden', remarksOnly);
+    if (rescheduleWrap) rescheduleWrap.classList.toggle('hidden', remarksOnly);
+    if (demoWrap) demoWrap.classList.toggle('hidden', !isDemo);
+    if (scheduledInput) {
+      if (remarksOnly) scheduledInput.removeAttribute('required');
+      else scheduledInput.setAttribute('required', 'required');
     }
+    if (isDemo) populateFollowupDemoFieldsFromLead(window._followupDemoProviderEmployeeId || null);
+  }
+
+  function toggleFollowupDemoFields() {
+    syncFollowupFormByType();
   }
 
   function bindFollowupDemoFieldEvents() {
@@ -20102,6 +20122,14 @@ if (otherInput) {
       var url = editingId ? '/follow-ups/' + encodeURIComponent(editingId) : '/follow-ups';
       var method = editingId ? 'PUT' : 'POST';
       var payload = Object.fromEntries(fd.entries());
+      var remarksOnly = isFollowupRemarksOnlyType(payload.followup_type);
+
+      if (remarksOnly) {
+        delete payload.scheduled_date;
+        delete payload.priority;
+        delete payload.reschedule_reason;
+        payload.status = 'Completed';
+      } else {
       var scheduleCheck = validateFollowUpScheduledAt(payload.scheduled_date);
       if (!scheduleCheck.valid && !editingId) {
         toast(scheduleCheck.message || 'Please select a future date and time.', 'error');
@@ -20123,6 +20151,7 @@ if (otherInput) {
           if (wrap) wrap.classList.remove('hidden');
           return;
         }
+      }
       }
 
       if (isFollowupDemoScheduledType(payload.followup_type)) {
@@ -20476,6 +20505,8 @@ if (otherInput) {
       fuScheduled.addEventListener('change', function () {
         var wrap = document.getElementById('followup-reschedule-reason-wrap');
         if (!wrap || !window._editingFollowUpId) return;
+        var typeSel = document.getElementById('form-followup')?.elements?.followup_type;
+        if (typeSel && isFollowupRemarksOnlyType(typeSel.value)) return;
         var changed = window._followupOriginalScheduled && fuScheduled.value !== window._followupOriginalScheduled;
         wrap.classList.toggle('hidden', !changed);
       });

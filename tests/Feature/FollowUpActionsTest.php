@@ -281,4 +281,33 @@ class FollowUpActionsTest extends TestCase
             'remarks' => 'Manager scheduled follow-up',
         ])->assertCreated();
     }
+
+    public function test_update_to_not_interested_requires_only_remarks(): void
+    {
+        $manager = CrmTestAccounts::manager();
+        $this->actingAs($manager);
+
+        $followUp = FollowUp::query()
+            ->whereNotIn('status', ['Completed', 'Closed', 'Done'])
+            ->where('followup_type', '!=', 'Not Interested')
+            ->first();
+
+        if (! $followUp) {
+            $this->markTestSkipped('No open follow-up available for update test');
+        }
+
+        $this->putJson('/follow-ups/'.$followUp->followup_id, [
+            'followup_type' => 'Not Interested',
+            'remarks' => 'Customer declined',
+        ])->assertOk()
+            ->assertJsonPath('data.followup_type', 'Not Interested')
+            ->assertJsonPath('data.status', 'Completed')
+            ->assertJsonPath('data.remarks', 'Customer declined');
+
+        $this->assertDatabaseHas('follow_ups', [
+            'followup_id' => $followUp->followup_id,
+            'followup_type' => 'Not Interested',
+            'status' => 'Completed',
+        ]);
+    }
 }

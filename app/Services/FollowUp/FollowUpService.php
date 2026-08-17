@@ -77,6 +77,11 @@ class FollowUpService
     {
         app(EmployeeDataScopeService::class)->ensureCanAccessCaMaster((int) $data['ca_id']);
 
+        if (($data['followup_type'] ?? '') === 'Not Interested') {
+            $data['status'] = $data['status'] ?? 'Completed';
+            $data['scheduled_date'] = $data['scheduled_date'] ?? now()->toDateTimeString();
+        }
+
         $demoFields = $this->resolveFollowUpDemoFields($data);
 
         $followUp = FollowUp::create([
@@ -216,6 +221,12 @@ class FollowUpService
         $previousScheduledDate = $followUp->scheduled_date?->copy();
         $previousFollowupType = $followUp->followup_type;
         $rescheduleReason = $data['reschedule_reason'] ?? null;
+        $nextType = (string) ($data['followup_type'] ?? $followUp->followup_type);
+
+        if ($nextType === 'Not Interested') {
+            $data['status'] = 'Completed';
+            unset($data['scheduled_date'], $data['priority'], $data['reschedule_reason']);
+        }
 
         $newScheduled = isset($data['scheduled_date'])
             ? Carbon::parse($data['scheduled_date'])

@@ -947,7 +947,7 @@
         </div>
         <div><label class="form-label">Follow-up Type</label><select name="followup_type" class="input-field"><option>Call Status</option><option>Demo Scheduled</option><option>Demo Completed</option><option>Details Shared</option><option>Negotiation</option><option>Not Interested</option><option>Follow Up Reminder</option><option>Follow Up Scheduled</option></select></div>
         <div><label class="form-label">Remarks</label><textarea name="remarks" class="input-field" rows="2" placeholder="Discussion notes…"></textarea></div>
-        <div>
+        <div id="followup-scheduled-wrap">
           <label class="form-label" for="form-followup-scheduled-date">Scheduled Date &amp; Time</label>
           <input name="scheduled_date" type="text" id="form-followup-scheduled-date" class="input-field" data-crm-datetime-input data-preview-prefix="Scheduled for" data-placeholder="Select Date &amp; Time" data-minute-increment="15" data-picker-prefer-above="true" data-hide-calendar-preview="true" autocomplete="off" required />
         </div>
@@ -969,7 +969,7 @@
             <input name="meeting_link" type="url" id="form-followup-meeting-link" class="input-field" placeholder="Auto from selected provider" />
           </div>
         </div>
-        <div><label class="form-label">Priority</label><select name="priority" class="input-field"><option>Normal</option><option>Low</option><option>High</option><option>Urgent</option></select></div>
+        <div id="followup-priority-wrap"><label class="form-label">Priority</label><select name="priority" class="input-field"><option>Normal</option><option>Low</option><option>High</option><option>Urgent</option></select></div>
         <div id="followup-reschedule-reason-wrap" class="hidden"><label class="form-label">Reschedule Reason</label><textarea name="reschedule_reason" class="input-field" rows="2" placeholder="Required when changing scheduled date…"></textarea></div>
       </form>
       <div class="ca-modal-footer">
