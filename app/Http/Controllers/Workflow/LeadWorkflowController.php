@@ -26,6 +26,7 @@ class LeadWorkflowController extends Controller
 
             return ApiResponse::success([
                 'call_log' => $result['call_log'],
+                'lead' => $result['lead'] ?? null,
                 'next_follow_up' => $result['next_follow_up']
                     ? new FollowUpResource($result['next_follow_up'])
                     : null,

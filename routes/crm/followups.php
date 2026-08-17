@@ -21,6 +21,8 @@ Route::middleware(['auth', 'rbac'])->group(function () {
         ->middleware('spa.browser:followups');
     Route::post('follow-ups', [FollowUpController::class, 'store'])
         ->middleware(['spa.browser:followups', 'throttle:follow-up']);
+    Route::patch('follow-ups/{follow_up}/next-date', [FollowUpController::class, 'setNextFollowUpDate'])
+        ->middleware(['spa.browser:followups', 'throttle:follow-up']);
     Route::put('follow-ups/{follow_up}', [FollowUpController::class, 'update'])
         ->middleware(['spa.browser:followups', 'throttle:follow-up']);
     Route::patch('follow-ups/{follow_up}', [FollowUpController::class, 'update'])

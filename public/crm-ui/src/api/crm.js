@@ -236,6 +236,7 @@ window.CA_CRM = (function () {
   var masterDataLoaded = false;
   var dashboardMetricsLoaded = false;
   var dashboardMetricsPromise = null;
+  var dashboardMetricsPromiseEndpoint = null;
   var dashboardMetricsRequestSeq = 0;
   var _leadsLoadGeneration = 0;
   var _assignmentsLoadGeneration = 0;
@@ -246,6 +247,7 @@ window.CA_CRM = (function () {
   var LISTING_PAGE_CACHE_KEYS = ['ca_masters', 'follow_ups', 'sales_list', 'lead_assignments', 'employees'];
   var employeeDashboardLoaded = false;
   var employeeDashboardPromise = null;
+  var employeeDashboardPromiseEndpoint = null;
   var employeeDashboardData = null;
   var leadSegmentCounts = null;
   var leadSegmentCountsLoaded = false;
@@ -2112,6 +2114,56 @@ if (otherInput) {
     });
   }
 
+  function mergeCallLogLeadPatch(caId, leadPatch) {
+    if (!caId || !leadPatch) return null;
+    var existing = getLeadRecord(caId) || { ca_id: caId };
+    return mapLeadRecord(Object.assign({}, existing, leadPatch, { ca_id: caId }));
+  }
+
+  function scheduleCallLogMetricsRefresh() {
+    setTimeout(function () {
+      var needsMetrics = document.getElementById('leads-kpi-strip')
+        || document.getElementById('followup-kpi-strip')
+        || document.getElementById('mgr-workflow-panel')
+        || document.getElementById('emp-demo-schedule');
+      if (!needsMetrics) return;
+      dashboardMetricsLoaded = false;
+      dashboardMetricsPromise = null;
+      leadSegmentCountsLoaded = false;
+      leadSegmentCountsPromise = null;
+      if (document.getElementById('leads-kpi-strip')) {
+        loadLeadSegmentCounts(function () { renderLeadKpis(); }, { background: true });
+      }
+      if (document.getElementById('followup-kpi-strip') || document.getElementById('followups-data-table')) {
+        loadDashboardMetricsFromDatabase(function () { renderFollowupKpis(); }, { background: true });
+      }
+      if (typeof loadEmployeeWorkflowLists === 'function') loadEmployeeWorkflowLists();
+      if (typeof loadManagerWorkflowLists === 'function') {
+        workflowListsData = null;
+        loadManagerWorkflowLists();
+      }
+    }, 50);
+  }
+
+  function applyCallLogSaveSuccess(body, caId) {
+    var data = body && body.data ? body.data : {};
+    var mapped = mergeCallLogLeadPatch(caId, data.lead);
+    if (mapped) upsertLeadInCache(mapped);
+    if (data.next_follow_up) {
+      upsertFollowupInCache(data.next_follow_up);
+      realFollowUpsLoaded = false;
+    }
+    refreshLeadsUi({ invalidateMetrics: false, reloadListing: false });
+    var onFollowups = !!document.getElementById('followups-data-table');
+    refreshFollowupsPage({
+      reload: onFollowups && !!data.next_follow_up,
+      calendar: !!document.getElementById('followup-calendar'),
+      metrics: false,
+      timelineSilent: true,
+    });
+    scheduleCallLogMetricsRefresh();
+  }
+
   function openLeadCallLogModal(leadId, opts) {
     opts = opts || {};
     if (!leadId) {
@@ -3459,6 +3511,7 @@ if (otherInput) {
     if (keys.indexOf('metrics') >= 0) {
       dashboardMetricsLoaded = false;
       dashboardMetricsPromise = null;
+      dashboardMetricsPromiseEndpoint = null;
       window.dashboardMetrics = null;
       window._camSegmentCountsLoaded = false;
       clearDashboardMetricsCache();
@@ -3471,6 +3524,7 @@ if (otherInput) {
     if (keys.indexOf('employee_dashboard') >= 0 || keys.indexOf('metrics') >= 0) {
       employeeDashboardLoaded = false;
       employeeDashboardPromise = null;
+      employeeDashboardPromiseEndpoint = null;
       employeeDashboardData = null;
     }
     if (keys.indexOf('employee_dashboard') >= 0 && keys.indexOf('metrics') < 0) {
@@ -4362,6 +4416,7 @@ if (otherInput) {
     if (options.invalidateMetrics) {
       dashboardMetricsLoaded = false;
       dashboardMetricsPromise = null;
+      dashboardMetricsPromiseEndpoint = null;
       leadSegmentCountsLoaded = false;
       leadSegmentCounts = null;
     }
@@ -4689,7 +4744,17 @@ if (otherInput) {
     if (role === 'employee' && crmUser.id) {
       scope = role + '_' + crmUser.id;
     }
-    return 'crm_dashboard_metrics_v2_' + scope;
+    var empId = 'all';
+    if (role !== 'employee') {
+      empId = String(getDashboardEmployeeFilterId() || 'all');
+    }
+    var datePart = 'today';
+    if (role !== 'employee') {
+      var df = getDashboardDateFilter();
+      datePart = df.preset || 'today';
+      if (datePart === 'custom') datePart += '_' + (df.from || '') + '_' + (df.to || '');
+    }
+    return 'crm_dashboard_metrics_v3_' + scope + '_' + empId + '_' + datePart;
   }
 
   function readDashboardMetricsCache() {
@@ -4727,8 +4792,18 @@ if (otherInput) {
   }
 
   function clearDashboardMetricsCache() {
-    try { sessionStorage.removeItem(dashboardCacheStorageKey()); } catch (e) { /* ignore */ }
-    try { localStorage.removeItem(dashboardCacheStorageKey()); } catch (e) { /* ignore */ }
+    ['sessionStorage', 'localStorage'].forEach(function (name) {
+      try {
+        var store = window[name];
+        if (!store) return;
+        var keys = [];
+        for (var i = 0; i < store.length; i++) {
+          var k = store.key(i);
+          if (k && k.indexOf('crm_dashboard_metrics_') === 0) keys.push(k);
+        }
+        keys.forEach(function (k) { store.removeItem(k); });
+      } catch (e) { /* ignore */ }
+    });
   }
 
   function mapDashboardLeadSummary(lead) {
@@ -4774,8 +4849,17 @@ if (otherInput) {
     if (banner) banner.classList.add('hidden');
   }
 
-  function paintDashboardLoadingShell() {
-    paintDashboardInstantShell(true);
+  function paintDashboardRefreshingBadge(on) {
+    var badge = document.querySelector('#mgr-top-header .manager-role-badge');
+    if (!badge) return;
+    var crmUser = window.__CRM_USER__ || {};
+    var roleLabel = crmUser.role_label || crmUser.role || 'User';
+    if (on) {
+      badge.innerHTML = '<i data-lucide="loader-2" class="h-3.5 w-3.5 animate-spin"></i> Refreshing';
+    } else {
+      badge.innerHTML = '<i data-lucide="layout-dashboard" class="h-3.5 w-3.5"></i> ' + escapeHtml(roleLabel);
+    }
+    iconsIn(badge);
   }
 
   function paintDashboardInstantShell(showSpinner) {
@@ -4796,7 +4880,7 @@ if (otherInput) {
         '<div class="mgr-top-left">' +
           '<span class="manager-role-badge">' + badgeIcon + '</span>' +
           '<h1 class="text-page-title mgr-greeting">' + escapeHtml(greetingLine) + '</h1>' +
-          '<p class="mgr-top-meta text-slate-400">' + escapeHtml(dateStr) + ' · updating metrics</p>' +
+          '<p class="mgr-top-meta">' + escapeHtml(dateStr) + '</p>' +
         '</div>' +
         managerDashboardFiltersHtml();
     }
@@ -4818,7 +4902,7 @@ if (otherInput) {
         '<div class="mgr-top-left">' +
           '<span class="manager-role-badge"><i data-lucide="briefcase" class="h-3.5 w-3.5"></i> ' + escapeHtml(roleBadge) + '</span>' +
           '<h1 class="text-page-title mgr-greeting">' + escapeHtml(dashboardGreetingText(greeting, crmUser.name, roleBadge)) + '</h1>' +
-          '<p class="mgr-top-meta text-slate-400">' + escapeHtml(dateStr) + ' · ' + escapeHtml(timeStr) + ' · updating metrics</p>' +
+          '<p class="mgr-top-meta">' + escapeHtml(dateStr) + ' · ' + escapeHtml(timeStr) + '</p>' +
         '</div>';
     }
     iconsIn(document.querySelector('.emp-dashboard') || document);
@@ -4930,16 +5014,14 @@ if (otherInput) {
     var isEmployee = isEmployeeUser();
     var filterEmployeeId = options.employeeId !== undefined ? options.employeeId : getDashboardEmployeeFilterId();
     var dateFilter = options.dateFilter || getDashboardDateFilter();
-    var isDefaultFilters = !filterEmployeeId && (!dateFilter.preset || dateFilter.preset === 'today');
     var endpoint = isEmployee
       ? '/dashboard/employee'
       : ('/dashboard/metrics' + buildDashboardMetricsQuery(filterEmployeeId, dateFilter));
 
-    // Default org-wide "today" views may use cache; filtered views always fetch live.
-    if (!options.force && !options.background && isDefaultFilters) {
+    if (!options.force && !options.background) {
       var cached = readDashboardMetricsCache();
       if (cached && cached.data) {
-        window.dashboardMetrics = isEmployee ? cached.data : cached.data;
+        window.dashboardMetrics = cached.data;
         window.__dashboardUpdatedAt = cached.savedAt || Date.now();
         if (isEmployee) {
           employeeDashboardData = cached.data;
@@ -4949,7 +5031,6 @@ if (otherInput) {
         }
         var metrics = isEmployee ? mapEmployeeDashboardToLeadMetrics(cached.data) : cached.data;
         if (callback) callback(metrics, null, { fromCache: true });
-        // Only background-refresh when cache is older than half TTL to avoid duplicate cold builds.
         var cacheAge = Date.now() - (cached.savedAt || 0);
         if (cacheAge >= (DASHBOARD_CACHE_TTL_MS / 2)) {
           loadDashboardMetricsFromDatabase(function (freshMetrics, err, meta) {
@@ -4968,22 +5049,26 @@ if (otherInput) {
               }
             }
             if (document.getElementById('leads-kpi-strip')) renderLeadKpis();
-          }, { force: true, background: true });
+          }, { force: true, background: true, employeeId: filterEmployeeId, dateFilter: dateFilter });
         }
         return;
       }
     }
 
-    if (!options.background && dashboardMetricsLoaded && window.dashboardMetrics && !options.force && isDefaultFilters) {
-      var current = isEmployee ? mapEmployeeDashboardToLeadMetrics(employeeDashboardData || window.dashboardMetrics) : window.dashboardMetrics;
-      if (callback) callback(current, null, { fromCache: true });
-      return;
+    if (!options.background && !options.force && dashboardMetricsLoaded && window.dashboardMetrics) {
+      var dr = window.dashboardMetrics.date_range || {};
+      var matchesDate = (dr.preset || 'today') === (dateFilter.preset || 'today');
+      var matchesEmp = String(window.dashboardMetrics.filter_employee_id || '') === String(filterEmployeeId || '');
+      if ((isEmployee && employeeDashboardData) || (!isEmployee && matchesDate && matchesEmp)) {
+        var current = isEmployee ? mapEmployeeDashboardToLeadMetrics(employeeDashboardData || window.dashboardMetrics) : window.dashboardMetrics;
+        if (callback) callback(current, null, { fromCache: true });
+        return;
+      }
     }
 
     var activePromise = isEmployee ? employeeDashboardPromise : dashboardMetricsPromise;
-    // Reuse in-flight requests only for non-forced loads so filter changes (e.g. Clear)
-    // always fetch the correct employee / organization payload.
-    if (activePromise && !options.force) {
+    var activeEndpoint = isEmployee ? employeeDashboardPromiseEndpoint : dashboardMetricsPromiseEndpoint;
+    if (activePromise && activeEndpoint === endpoint && (!options.force || options.background)) {
       activePromise.then(function (data) {
         if (!data) {
           if (callback) callback(null, new Error('Unable to load dashboard'));
@@ -5002,7 +5087,7 @@ if (otherInput) {
       .then(function (body) {
         if (requestSeq !== dashboardMetricsRequestSeq) return null;
         var data = body.data || {};
-        if (isDefaultFilters) writeDashboardMetricsCache(data);
+        writeDashboardMetricsCache(data);
         hideDashboardLoadError();
         if (isEmployee) {
           employeeDashboardData = data;
@@ -5017,26 +5102,32 @@ if (otherInput) {
       })
       .catch(function (err) {
         if (requestSeq !== dashboardMetricsRequestSeq) return null;
-        if (!options.background) {
-          window.dashboardMetrics = null;
-          dashboardMetricsLoaded = true;
-        }
         if (isEmployee) {
-          employeeDashboardData = null;
           employeeDashboardLoaded = true;
+        } else {
+          dashboardMetricsLoaded = true;
         }
         throw err;
       })
       .finally(function () {
         if (isEmployee) {
-          if (employeeDashboardPromise === fetchPromise) employeeDashboardPromise = null;
+          if (employeeDashboardPromise === fetchPromise) {
+            employeeDashboardPromise = null;
+            employeeDashboardPromiseEndpoint = null;
+          }
         } else if (dashboardMetricsPromise === fetchPromise) {
           dashboardMetricsPromise = null;
+          dashboardMetricsPromiseEndpoint = null;
         }
       });
 
-    if (isEmployee) employeeDashboardPromise = fetchPromise;
-    else dashboardMetricsPromise = fetchPromise;
+    if (isEmployee) {
+      employeeDashboardPromise = fetchPromise;
+      employeeDashboardPromiseEndpoint = endpoint;
+    } else {
+      dashboardMetricsPromise = fetchPromise;
+      dashboardMetricsPromiseEndpoint = endpoint;
+    }
 
     fetchPromise.then(function (data) {
       if (requestSeq !== dashboardMetricsRequestSeq) return;
@@ -5986,6 +6077,7 @@ if (otherInput) {
       employeeDashboardLoaded = false;
       employeeDashboardData = null;
       employeeDashboardPromise = null;
+      employeeDashboardPromiseEndpoint = null;
     }
     if (employeeDashboardLoaded && employeeDashboardData && !forceRefresh) {
       if (callback) callback(employeeDashboardData);
@@ -6010,6 +6102,7 @@ if (otherInput) {
       })
       .finally(function () {
         employeeDashboardPromise = null;
+        employeeDashboardPromiseEndpoint = null;
       });
     employeeDashboardPromise.then(function (data) {
       if (callback) callback(data);
@@ -6435,6 +6528,7 @@ if (otherInput) {
             employeeDashboardLoaded = false;
             employeeDashboardData = null;
             employeeDashboardPromise = null;
+            employeeDashboardPromiseEndpoint = null;
             clearDashboardMetricsCache();
             renderEmployeeDashboard();
           });
@@ -6487,7 +6581,7 @@ if (otherInput) {
       paintEmployeeDashboard(employeeDashboardData);
       if (window.CA_RBAC && typeof CA_RBAC.enforce === 'function') CA_RBAC.enforce();
       icons();
-    }, { force: true, background: !!painted });
+    }, { force: false });
   }
 
   function paintEmployeeDashboard(data) {
@@ -6974,8 +7068,7 @@ if (otherInput) {
   function renderManagerDashboard() {
     var filterEmployeeId = getDashboardEmployeeFilterId();
     var dateFilter = getDashboardDateFilter();
-    var isDefaultFilters = !filterEmployeeId && (!dateFilter.preset || dateFilter.preset === 'today');
-    var cached = isDefaultFilters ? readDashboardMetricsCache() : null;
+    var cached = readDashboardMetricsCache();
     var painted = false;
 
     if (cached && cached.data) {
@@ -6984,19 +7077,21 @@ if (otherInput) {
       paintManagerDashboard(buildDashboardDisplayMetrics(cached.data));
       renderDashboardCharts(cached.data.reports);
       painted = true;
-    } else if (window.dashboardMetrics && isDefaultFilters) {
+    } else if (window.dashboardMetrics) {
       paintManagerDashboard(buildDashboardDisplayMetrics(window.dashboardMetrics));
       renderDashboardCharts(window.dashboardMetrics.reports);
       painted = true;
-    } else if (!isDefaultFilters) {
-      paintDashboardInstantShell(true);
     } else {
       paintDashboardInstantShell(false);
     }
 
     loadDashboardMetricsFromDatabase(function onManagerDashboardMetrics(metrics, error, meta) {
       if (meta && meta.background) return;
-      if (meta && meta.fromCache && painted) return;
+      if (meta && meta.fromCache && painted) {
+        paintDashboardRefreshingBadge(false);
+        return;
+      }
+      paintDashboardRefreshingBadge(false);
       if (error && !window.dashboardMetrics) {
         if (recoverDashboardEmployeeFilterError(error, onManagerDashboardMetrics, { force: true, employeeId: null, dateFilter: dateFilter })) {
           return;
@@ -7011,7 +7106,7 @@ if (otherInput) {
       paintManagerDashboard(buildDashboardDisplayMetrics(window.dashboardMetrics));
       renderDashboardCharts(window.dashboardMetrics.reports);
       if (window.CA_RBAC && typeof CA_RBAC.enforce === 'function') CA_RBAC.enforce();
-    }, { force: !isDefaultFilters, employeeId: filterEmployeeId || null, dateFilter: dateFilter });
+    }, { force: false, employeeId: filterEmployeeId || null, dateFilter: dateFilter });
   }
 
   function preloadDashboardMetrics() {
@@ -7941,6 +8036,20 @@ if (otherInput) {
   function refreshDashboardFilters() {
     var employeeId = getDashboardEmployeeFilterId();
     var dateFilter = getDashboardDateFilter();
+    var cached = readDashboardMetricsCache();
+    if (cached && cached.data) {
+      window.dashboardMetrics = cached.data;
+      paintManagerDashboard(buildDashboardDisplayMetrics(cached.data));
+      renderDashboardCharts(cached.data.reports);
+      loadDashboardMetricsFromDatabase(function (metrics, error, meta) {
+        if (error || !metrics || (meta && meta.fromCache)) return;
+        window.dashboardMetrics = metrics;
+        paintManagerDashboard(buildDashboardDisplayMetrics(metrics));
+        renderDashboardCharts(metrics.reports);
+      }, { employeeId: employeeId || null, dateFilter: dateFilter });
+      return;
+    }
+
     var dash = document.querySelector('.mgr-dashboard');
     var loading = document.getElementById('mgr-dash-filter-loading');
     if (dash) dash.classList.add('is-loading-employee');
@@ -9868,6 +9977,7 @@ if (otherInput) {
       }
       ensureSalesRemarksUiBound();
       ensureLeadContactInlineUiBound();
+    ensureFollowupInlineUiBound();
       renderLeadKpis();
       bindLeadsColumnFilters();
       var pipelineActive = isLeadsPipelineTabActive();
@@ -12401,6 +12511,134 @@ if (otherInput) {
     return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   }
 
+  function toDateInputValue(value) {
+    if (!value) return '';
+    var d = new Date(value);
+    if (isNaN(d.getTime())) return '';
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  }
+
+  function followupTeamSizeCell(f) {
+    var size = f.team_size != null && f.team_size !== '' ? Number(f.team_size) : null;
+    var text = size != null && size > 0 ? String(size) : '—';
+    return '<td class="crm-td-numeric"><span class="cam-cell-text cam-cell-mono">' + escapeHtml(text) + '</span></td>';
+  }
+
+  function canEditFollowupInlineNextDate() {
+    return crmCanAction('followups', 'edit') || crmCanAction('followups', 'schedule_followup');
+  }
+
+  function followupNextDateCell(f) {
+    var formatted = formatDate(f.next_followup_date);
+    var canEdit = canEditFollowupInlineNextDate() && f.followup_id != null && f.followup_id !== '';
+    if (!canEdit) {
+      return '<td class="crm-td-date"><span class="cam-cell-text cam-cell-mono">' + escapeHtml(formatted === '-' ? '—' : formatted) + '</span></td>';
+    }
+    var label = formatted === '-' ? 'Set date' : formatted;
+    return '<td class="crm-td-date">' +
+      '<button type="button" class="cam-inline-next-date cam-cell-text cam-cell-mono" data-followup-inline-next-date="' + escapeAttr(String(f.followup_id)) + '" data-next-date="' + escapeAttr(toDateInputValue(f.next_followup_date)) + '" title="Set next follow-up date">' +
+      escapeHtml(label) + '</button></td>';
+  }
+
+  function openFollowupInlineNextDate(btn) {
+    if (btn.querySelector('input')) return;
+    var followupId = btn.getAttribute('data-followup-inline-next-date');
+    var current = btn.getAttribute('data-next-date') || '';
+    var original = btn.innerHTML;
+    var wrap = document.createElement('span');
+    wrap.className = 'cam-inline-next-date-edit';
+    wrap.innerHTML = '<input type="date" class="input-field input-field-sm cam-inline-next-date-input" value="' + escapeAttr(current) + '" aria-label="Next follow-up date" data-crm-date-input />' +
+      '<button type="button" class="btn-secondary btn-xs" data-followup-next-date-save title="Save"><i data-lucide="check" class="h-3 w-3"></i></button>';
+    btn.innerHTML = '';
+    btn.appendChild(wrap);
+    iconsIn(wrap);
+    if (window.CrmDateTimePicker) window.CrmDateTimePicker.syncAll(wrap);
+    var input = wrap.querySelector('input');
+    input.focus();
+    var finished = false;
+    function restore() {
+      if (finished) return;
+      finished = true;
+      btn.innerHTML = original;
+      btn.classList.remove('is-loading');
+      iconsIn(btn);
+    }
+    function save() {
+      if (finished) return;
+      var nextDate = String(input.value || '').trim();
+      if (!nextDate) {
+        toast('Please select a date.', 'warning');
+        input.focus();
+        return;
+      }
+      if (nextDate === current) {
+        restore();
+        return;
+      }
+      finished = true;
+      btn.classList.add('is-loading');
+      apiFetch('/follow-ups/' + encodeURIComponent(followupId) + '/next-date', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ next_followup_date: nextDate, next_followup_time: '10:00', create_reminder: true }),
+      })
+        .then(function (body) {
+          var data = body && body.data ? body.data : {};
+          if (data.follow_up) {
+            upsertFollowupInCache(data.follow_up);
+            updateFollowupTableRow(followupId, data.follow_up);
+          }
+          if (data.next_follow_up) {
+            upsertFollowupInCache(data.next_follow_up);
+            realFollowUpsLoaded = false;
+            if (document.getElementById('followups-data-table')) {
+              reloadListing('follow_ups');
+            }
+          }
+          toast(body.message || 'Next follow-up date saved.', 'success');
+          refreshFollowupsPage({ reload: false, calendar: true, metrics: false, timelineSilent: true });
+        })
+        .catch(function (err) {
+          toast((err && err.message) || 'Unable to save next follow-up date.', 'error');
+          finished = false;
+          btn.classList.remove('is-loading');
+          restore();
+        });
+    }
+    wrap.querySelector('[data-followup-next-date-save]').addEventListener('click', function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      save();
+    });
+    input.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        save();
+      }
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        restore();
+      }
+    });
+    input.addEventListener('click', function (ev) { ev.stopPropagation(); });
+  }
+
+  function ensureFollowupInlineUiBound() {
+    if (window._followupInlineUiBound) return;
+    window._followupInlineUiBound = true;
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-followup-inline-next-date]');
+      if (!btn) return;
+      if (btn.querySelector('input') || e.target.closest('[data-followup-next-date-save]')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openFollowupInlineNextDate(btn);
+    });
+  }
+
   function followupStatusBadge(status) {
     var map = {
       Pending: 'badge-warning',
@@ -13415,9 +13653,10 @@ if (otherInput) {
       '<td class="crm-td-mobile">' + camPhoneCell(f.mobile_no) + '</td>' +
       '<td class="crm-td-geo">' + compactTextCell(f.city || f.city_name) + '</td>' +
       '<td class="crm-td-person">' + compactTextCell(f.executive || f.employee_name) + '</td>' +
+      followupTeamSizeCell(f) +
       '<td class="crm-td-remarks">' + compactTextCell(remarksText) + '</td>' +
       '<td class="crm-td-date"><span class="cam-cell-text cam-cell-mono">' + escapeHtml(formatDateTime(f.scheduled_date)) + '</span></td>' +
-      '<td class="crm-td-date"><span class="cam-cell-text cam-cell-mono">' + escapeHtml(formatDate(f.next_followup_date)) + '</span></td>' +
+      followupNextDateCell(f) +
       '<td class="crm-td-status"><span class="cam-cell-badge">' + followupStatusBadge(f.status) + '</span></td>' +
       actionsCell +
     '</tr>';
@@ -13444,7 +13683,7 @@ if (otherInput) {
     var row = el.querySelector('tr[data-followup-id="' + followupId + '"]');
     if (row) row.remove();
     if (!el.querySelector('tr[data-followup-id]')) {
-      el.innerHTML = '<tr><td colspan="11" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
+      el.innerHTML = '<tr><td colspan="12" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
     }
     renderFollowupKpis();
   }
@@ -13458,11 +13697,12 @@ if (otherInput) {
     }
     var followups = pageFollowups || window.realFollowUps || [];
     rebuildFollowupIndex(followups);
-    el.innerHTML = followups.length ? followups.map(buildFollowupRowHtml).join('') : '<tr><td colspan="11" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
+    el.innerHTML = followups.length ? followups.map(buildFollowupRowHtml).join('') : '<tr><td colspan="12" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
     bindCrmRowActions(el);
     syncInboxChecks('followups-data-table');
     iconsIn(el);
     preloadFollowupActionData();
+    ensureFollowupInlineUiBound();
   }
 
   function setFollowupTypePanels(mode) {
@@ -15230,6 +15470,7 @@ if (otherInput) {
     applyCaMasterColumnVisibility(page);
     ensureSalesRemarksUiBound();
     ensureLeadContactInlineUiBound();
+    ensureFollowupInlineUiBound();
 
     page.addEventListener('change', function (e) {
       if (e.target && e.target.id === 'cam-filter-pipeline-stage') {
@@ -19982,15 +20223,12 @@ if (otherInput) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-        .then(function () {
+        .then(function (body) {
           closeModal(document.getElementById('modal-call-outcome'));
           form.reset();
           clearCallOutcomeErrors(form);
           syncCallOutcomeFields();
-          invalidateDataCaches(['metrics', 'followups']);
-          refreshFollowupsPage({ reload: true, calendar: true });
-          if (typeof loadEmployeeWorkflowLists === 'function') loadEmployeeWorkflowLists();
-          if (typeof loadManagerWorkflowLists === 'function') loadManagerWorkflowLists();
+          applyCallLogSaveSuccess(body, parseInt(payload.ca_id, 10));
           toast('Call outcome saved.', 'success');
         })
         .catch(function (error) {
@@ -20082,16 +20320,12 @@ if (otherInput) {
       if (submitBtn) submitBtn.disabled = true;
 
       submitLeadCallLog(payload)
-        .then(function () {
+        .then(function (body) {
           closeModal(document.getElementById('modal-lead-call-log'));
           form.reset();
           clearLeadCallLogErrors(form);
           syncLeadCallLogFields();
-          invalidateDataCaches(['metrics', 'followups', 'segment_counts', 'leads', 'ca_masters']);
-          refreshCaMasterOrLeadsTable();
-          refreshFollowupsPage({ reload: true, calendar: true });
-          if (typeof loadEmployeeWorkflowLists === 'function') loadEmployeeWorkflowLists();
-          if (typeof loadManagerWorkflowLists === 'function') loadManagerWorkflowLists();
+          applyCallLogSaveSuccess(body, parseInt(payload.ca_id, 10));
           toast('Call log saved.', 'success');
         })
         .catch(function (error) {
@@ -20111,6 +20345,7 @@ if (otherInput) {
     });
     ensureSalesRemarksUiBound();
     ensureLeadContactInlineUiBound();
+    ensureFollowupInlineUiBound();
 
     var leadCallLogStatus = document.getElementById('lead-call-log-status');
     if (leadCallLogStatus) {
@@ -20539,8 +20774,10 @@ if (otherInput) {
     if (pageId === 'dashboard') {
       dashboardMetricsLoaded = false;
       dashboardMetricsPromise = null;
+      dashboardMetricsPromiseEndpoint = null;
       employeeDashboardLoaded = false;
       employeeDashboardPromise = null;
+      employeeDashboardPromiseEndpoint = null;
       clearDashboardMetricsCache();
       if (isEmployeeUser()) renderEmployeeDashboard();
       else renderManagerDashboard();

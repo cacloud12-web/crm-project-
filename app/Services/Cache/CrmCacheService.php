@@ -23,6 +23,9 @@ class CrmCacheService
     public function rememberDashboardMetrics(string $scopeKey, array $filterKey, Closure $callback): mixed
     {
         $ttl = (int) config('crm_cache.dashboard_ttl', 120);
+        if (($filterKey['preset'] ?? 'today') !== 'today') {
+            $ttl = max($ttl, 300);
+        }
         $version = $this->dashboardCacheVersion();
         $hash = md5(json_encode($filterKey));
 

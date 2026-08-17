@@ -67,7 +67,7 @@ class FollowUpService
     private function listingRelations(): array
     {
         return [
-            'caMaster:ca_id,firm_name,mobile_no,city_id,ocr_city_text',
+            'caMaster:ca_id,firm_name,mobile_no,city_id,ocr_city_text,team_size',
             'caMaster.city:city_id,city_name',
             'employee:employee_id,name',
         ];
@@ -292,6 +292,65 @@ class FollowUpService
         $this->forgetFollowUpCaches($followUp);
 
         return $followUp;
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array{follow_up: FollowUp, next_follow_up: ?FollowUp}
+     */
+    public function setNextFollowUpDate(FollowUp $followUp, array $data): array
+    {
+        $scheduled = Carbon::parse(
+            $data['next_followup_date'].' '.($data['next_followup_time'] ?? '10:00')
+        );
+
+        $followUp->update(['next_followup_date' => $scheduled]);
+
+        $createdNext = null;
+        if ($data['create_reminder'] ?? true) {
+            $openStatuses = config('followup_automation.open_statuses', ['Pending', 'Scheduled', 'Open', 'Overdue']);
+            $exists = FollowUp::query()
+                ->where('ca_id', $followUp->ca_id)
+                ->where('parent_followup_id', $followUp->followup_id)
+                ->whereDate('scheduled_date', $scheduled->toDateString())
+                ->whereIn('status', $openStatuses)
+                ->exists();
+
+            if (! $exists) {
+                $createdNext = $this->create([
+                    'ca_id' => $followUp->ca_id,
+                    'employee_id' => $followUp->employee_id,
+                    'followup_type' => 'Follow Up Reminder',
+                    'scheduled_date' => $scheduled->toDateTimeString(),
+                    'status' => 'Pending',
+                    'priority' => 'Normal',
+                    'parent_followup_id' => $followUp->followup_id,
+                    'is_auto_generated' => true,
+                    'source' => 'inline_next_date',
+                    'remarks' => trim((string) ($followUp->remarks ?? '')) !== ''
+                        ? 'Next: '.$followUp->remarks
+                        : 'Next follow-up scheduled from list',
+                ]);
+            }
+        }
+
+        $this->historyService->record(
+            $followUp->ca_id,
+            'Next Follow-up Scheduled',
+            $followUp->followup_id,
+            $followUp->employee_id,
+            null,
+            'Next follow-up on '.$scheduled->format('d M Y H:i'),
+            ['next_followup_date' => $scheduled->toIso8601String()],
+        );
+
+        $followUp = $followUp->fresh($this->listingRelations());
+        $this->forgetFollowUpCaches($followUp);
+
+        return [
+            'follow_up' => $followUp,
+            'next_follow_up' => $createdNext,
+        ];
     }
 
     public function delete(FollowUp $followUp): void

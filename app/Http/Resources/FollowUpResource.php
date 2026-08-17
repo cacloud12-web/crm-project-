@@ -16,7 +16,7 @@ class FollowUpResource extends JsonResource
             'followup_type' => $this->followup_type,
             'outcome' => $this->outcome,
             'priority' => $this->priority,
-            'team_size' => $this->team_size,
+            'team_size' => $this->resolveTeamSize(),
             'demo_provider_name' => $this->demo_provider_name,
             'demo_provider_employee_id' => $this->demo_provider_employee_id,
             'meeting_link' => $this->meeting_link,
@@ -51,5 +51,16 @@ class FollowUpResource extends JsonResource
         $ocrText = trim((string) ($this->caMaster?->ocr_city_text ?? ''));
 
         return $ocrText !== '' ? $ocrText : null;
+    }
+
+    private function resolveTeamSize(): ?int
+    {
+        if ($this->team_size !== null && (int) $this->team_size > 0) {
+            return (int) $this->team_size;
+        }
+
+        $fromLead = $this->caMaster?->team_size;
+
+        return $fromLead !== null && (int) $fromLead > 0 ? (int) $fromLead : null;
     }
 }

@@ -1063,7 +1063,7 @@ window.CAPages = (function () {
               '<div class="sc-location-pair sm:col-span-2 grid sm:grid-cols-2 gap-2">' +
                 '<select class="input-field" id="bulk-assign-batch-state" name="state_id" data-sc-role="state"><option value="">Any State</option></select>' +
                 '<select class="input-field" id="bulk-assign-batch-city" name="city_id" data-sc-role="city"><option value="">Any City</option></select>' +
-              '</div>' +
+            '</div>' +
               '<select class="input-field" id="bulk-assign-batch-source"><option value="">Any Source</option></select>' +
             '</div>' +
             '<div class="mb-3">' +
@@ -1556,7 +1556,7 @@ window.CAPages = (function () {
         '</div>' +
         '<div class="flex flex-wrap gap-2 mb-3" id="followup-type-chips">' + types.map(function (t) {
           return '<button type="button" class="ca-chip" data-fu-type="' + t + '" aria-pressed="false">' + t + '</button>';
-        }).join('') + '</div>' +
+          }).join('') + '</div>' +
         '<div id="followups-main-table-wrap">' +
         table([
           { label: 'Type', colCls: 'crm-col-status', thCls: 'crm-th-status' },
@@ -1564,6 +1564,7 @@ window.CAPages = (function () {
           { label: 'Mobile Number', colCls: 'crm-col-mobile', thCls: 'crm-th-mobile' },
           { label: 'City', colCls: 'crm-col-geo', thCls: 'crm-th-geo' },
           { label: 'Employee', colCls: 'crm-col-person', thCls: 'crm-th-person' },
+          { label: 'Team Size', colCls: 'crm-col-numeric', thCls: 'crm-th-numeric' },
           { label: 'Remarks', colCls: 'crm-col-remarks', thCls: 'crm-th-remarks' },
           { label: 'Scheduled', colCls: 'crm-col-date', thCls: 'crm-th-date' },
           { label: 'Next Follow-up', colCls: 'crm-col-date', thCls: 'crm-th-date' },
@@ -1669,26 +1670,31 @@ window.CAPages = (function () {
                 '<option value="updated_at:desc">Updated Date</option>' +
               '</select>' +
             '</div>' +
+            '<div class="flex flex-wrap gap-2">' +
+              '<button type="button" class="btn-secondary" id="ticket-filter-toggle" aria-expanded="false" aria-controls="ticket-filters-more" title="More filters">' +
+                '<i data-lucide="filter" class="h-4 w-4"></i><span>Filters</span>' +
+              '</button>' +
+              actSecondary('Reset', 'id="ticket-filter-reset"', 'rotate-ccw') +
+              actPrimary('Apply Filters', 'id="ticket-filter-apply"', 'check') +
+            '</div>' +
           '</div>' +
-          '<div class="crm-listing-filter-grid ticket-filter-grid">' +
-            '<div><label class="form-label" for="ticket-filter-problem-type">Problem Type</label><select id="ticket-filter-problem-type" class="input-field"><option value="">All problem types</option></select></div>' +
-            '<div><label class="form-label" for="ticket-filter-priority">Priority</label><select id="ticket-filter-priority" class="input-field"><option value="">All priorities</option></select></div>' +
-            '<div><label class="form-label" for="ticket-filter-status">Status</label><select id="ticket-filter-status" class="input-field"><option value="">All statuses</option></select></div>' +
-            '<div><label class="form-label" for="ticket-filter-assignee">Assigned Employee</label><select id="ticket-filter-assignee" class="input-field"><option value="">All assignees</option></select></div>' +
-            '<div><label class="form-label" for="ticket-filter-source">Source System</label><select id="ticket-filter-source" class="input-field"><option value="">All sources</option></select></div>' +
-            '<div><label class="form-label" for="ticket-filter-sync">Sync Status</label><select id="ticket-filter-sync" class="input-field"><option value="">All sync statuses</option></select></div>' +
-            '<div><label class="form-label" for="ticket-filter-ticket-number">Ticket Number</label><input type="text" id="ticket-filter-ticket-number" class="input-field" placeholder="TKT-…" /></div>' +
-            '<div><label class="form-label" for="ticket-filter-org-number">Organization Number</label><input type="text" id="ticket-filter-org-number" class="input-field" placeholder="Org number" /></div>' +
-            '<div><label class="form-label" for="ticket-filter-mobile">Mobile Number</label><input type="text" id="ticket-filter-mobile" class="input-field" placeholder="Mobile" /></div>' +
-            '<div><label class="form-label" for="ticket-filter-customer">Customer Name</label><input type="text" id="ticket-filter-customer" class="input-field" placeholder="Customer" /></div>' +
-            '<div><label class="form-label" for="ticket-filter-created-from">Created From</label><input type="date" id="ticket-filter-created-from" class="input-field" data-crm-date-input data-allow-past /></div>' +
-            '<div><label class="form-label" for="ticket-filter-created-to">Created To</label><input type="date" id="ticket-filter-created-to" class="input-field" data-crm-date-input data-allow-past /></div>' +
-            '<div><label class="form-label" for="ticket-filter-updated-from">Updated From</label><input type="date" id="ticket-filter-updated-from" class="input-field" data-crm-date-input data-allow-past /></div>' +
-            '<div><label class="form-label" for="ticket-filter-updated-to">Updated To</label><input type="date" id="ticket-filter-updated-to" class="input-field" data-crm-date-input data-allow-past /></div>' +
-          '</div>' +
-          '<div class="flex flex-wrap gap-2">' +
-            actSecondary('Reset', 'id="ticket-filter-reset"', 'rotate-ccw') +
-            actPrimary('Apply Filters', 'id="ticket-filter-apply"', 'filter') +
+          '<div id="ticket-filters-more" class="hidden space-y-3 pt-1">' +
+            '<div class="crm-listing-filter-grid ticket-filter-grid">' +
+              '<div><label class="form-label" for="ticket-filter-problem-type">Problem Type</label><select id="ticket-filter-problem-type" class="input-field"><option value="">All problem types</option></select></div>' +
+              '<div><label class="form-label" for="ticket-filter-priority">Priority</label><select id="ticket-filter-priority" class="input-field"><option value="">All priorities</option></select></div>' +
+              '<div><label class="form-label" for="ticket-filter-status">Status</label><select id="ticket-filter-status" class="input-field"><option value="">All statuses</option></select></div>' +
+              '<div><label class="form-label" for="ticket-filter-assignee">Assigned Employee</label><select id="ticket-filter-assignee" class="input-field"><option value="">All assignees</option></select></div>' +
+              '<div><label class="form-label" for="ticket-filter-source">Source System</label><select id="ticket-filter-source" class="input-field"><option value="">All sources</option></select></div>' +
+              '<div><label class="form-label" for="ticket-filter-sync">Sync Status</label><select id="ticket-filter-sync" class="input-field"><option value="">All sync statuses</option></select></div>' +
+              '<div><label class="form-label" for="ticket-filter-ticket-number">Ticket Number</label><input type="text" id="ticket-filter-ticket-number" class="input-field" placeholder="TKT-…" /></div>' +
+              '<div><label class="form-label" for="ticket-filter-org-number">Organization Number</label><input type="text" id="ticket-filter-org-number" class="input-field" placeholder="Org number" /></div>' +
+              '<div><label class="form-label" for="ticket-filter-mobile">Mobile Number</label><input type="text" id="ticket-filter-mobile" class="input-field" placeholder="Mobile" /></div>' +
+              '<div><label class="form-label" for="ticket-filter-customer">Customer Name</label><input type="text" id="ticket-filter-customer" class="input-field" placeholder="Customer" /></div>' +
+              '<div><label class="form-label" for="ticket-filter-created-from">Created From</label><input type="date" id="ticket-filter-created-from" class="input-field" data-crm-date-input data-allow-past /></div>' +
+              '<div><label class="form-label" for="ticket-filter-created-to">Created To</label><input type="date" id="ticket-filter-created-to" class="input-field" data-crm-date-input data-allow-past /></div>' +
+              '<div><label class="form-label" for="ticket-filter-updated-from">Updated From</label><input type="date" id="ticket-filter-updated-from" class="input-field" data-crm-date-input data-allow-past /></div>' +
+              '<div><label class="form-label" for="ticket-filter-updated-to">Updated To</label><input type="date" id="ticket-filter-updated-to" class="input-field" data-crm-date-input data-allow-past /></div>' +
+            '</div>' +
           '</div>' +
         '</form>' +
       '</div>';
@@ -1706,7 +1712,7 @@ window.CAPages = (function () {
       { label: 'Description', colCls: 'crm-col-remarks', thCls: 'crm-th-remarks' },
       { label: 'Priority', colCls: 'crm-col-status', thCls: 'crm-th-status' },
       { label: 'Status', colCls: 'crm-col-status', thCls: 'crm-th-status' },
-      { label: 'Assigned Employee', colCls: 'crm-col-person', thCls: 'crm-th-person' },
+      { label: 'Created By', colCls: 'crm-col-person', thCls: 'crm-th-person' },
       { label: 'Source System', colCls: 'crm-col-source', thCls: 'crm-th-source' },
       { label: 'Sync Status', colCls: 'crm-col-status', thCls: 'crm-th-status' },
       { label: 'Created Date', colCls: 'crm-col-date', thCls: 'crm-th-date' },
@@ -2122,10 +2128,10 @@ window.CAPages = (function () {
         actSecondary('Export PDF', 'data-action="export" data-export="export-report-pdf"', 'file-text') +
         '<span class="page-hero-toolbar__sep" aria-hidden="true"></span>' +
         heroIconTabs([
-          { id: 'reports', label: 'Reports', icon: 'file-text' },
-          { id: 'analytics', label: 'Analytics', icon: 'bar-chart-3' },
-          { id: 'activity', label: 'Activity', icon: 'activity' },
-          { id: 'audit', label: 'Audit', icon: 'history' },
+        { id: 'reports', label: 'Reports', icon: 'file-text' },
+        { id: 'analytics', label: 'Analytics', icon: 'bar-chart-3' },
+        { id: 'activity', label: 'Activity', icon: 'activity' },
+        { id: 'audit', label: 'Audit', icon: 'history' },
         ], activeTab, 'reports-hub')
       )) +
       panel('reports', activeTab === 'reports', reportCards, 'reports-hub') +
@@ -3018,10 +3024,10 @@ settings: {
   er: 'Configuration',
   html: settingsPage(),
 },
-};
+  };
 
-return {
-get: function (id) {
+  return {
+    get: function (id) {
       var u = window.__CRM_USER__ || {};
       if (id === 'dashboard' && u.role === 'employee') {
         return {

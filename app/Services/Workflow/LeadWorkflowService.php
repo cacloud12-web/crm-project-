@@ -70,6 +70,7 @@ class LeadWorkflowService
             $this->employeeDataScope->ensureCanAccessFollowUp($followUpId);
         }
 
+        $lead = CaMaster::query()->findOrFail($caId);
         $employeeId = $this->resolveEmployeeId($data, $actor, $caId, $current);
         $status = (string) ($data['call_status'] ?? $data['outcome'] ?? '');
         if ($status === '') {
@@ -110,7 +111,6 @@ class LeadWorkflowService
             ['call_log_id' => $callLog->id, 'called_at' => $calledAt->toIso8601String()],
         );
 
-        $lead = CaMaster::query()->findOrFail($caId);
         $leadUpdates = $this->leadUpdatesForOutcome($status);
         $salesRemarkBlock = $this->formatCallSalesRemarkBlock($status, $note, $calledAt);
         if ($salesRemarkBlock !== null) {
@@ -121,11 +121,11 @@ class LeadWorkflowService
         }
         if ($leadUpdates !== []) {
             $lead->update($leadUpdates);
-            $this->cacheService->forgetMasterListings();
         }
 
         if ($status === 'Wrong Number') {
-            $this->leadQualityHistory->markWrongNumber($lead->fresh() ?? $lead, 'Call status: Wrong Number', $actor);
+            $lead->refresh();
+            $this->leadQualityHistory->markWrongNumber($lead, 'Call status: Wrong Number', $actor);
         }
 
         $nextFollowUp = $nextFollowUp ?? null;
@@ -151,8 +151,9 @@ class LeadWorkflowService
                 'parent_followup_id' => $followUpId,
             ]);
 
+            $lead->refresh();
             $this->statusSyncService->apply(
-                $lead->fresh(),
+                $lead,
                 'Follow Up Reminder',
                 $this->statusSyncService->workflowExtrasForStatus('Follow Up Reminder'),
             );
@@ -166,12 +167,14 @@ class LeadWorkflowService
         );
 
         $this->forgetCaches($employeeId);
+        $lead->refresh();
 
         return [
             'call_log' => $callLog->fresh(['employee']),
             'completed_follow_up' => $completedFollowUp,
             'next_follow_up' => $nextFollowUp,
             'outcome' => $status,
+            'lead' => $this->leadSnapshot($lead),
         ];
     }
 
@@ -211,8 +214,10 @@ class LeadWorkflowService
         $demoFields = $this->resolveFollowUpDemoFields($demoFieldInput, $existingFollowUp);
         $meetingLink = trim((string) ($demoFields['meeting_link'] ?? $data['meeting_link'] ?? ''));
         $teamSize = (int) ($demoFields['team_size'] ?? $data['team_size'] ?? $lead->team_size ?? 0);
+        $explicitEmployeeProvider = ! empty($demoFields['demo_provider_employee_id']);
 
-        if (empty($data['skip_conflict_check'])) {
+        // Employee-selected demo providers use eligibility rules, not demo-calendar break/booking slots.
+        if (empty($data['skip_conflict_check']) && ! $explicitEmployeeProvider) {
             $availability = app(DemoAvailabilityService::class);
             $provider = $availability->resolveProvider(
                 isset($data['demo_provider_id']) ? (int) $data['demo_provider_id'] : null,
@@ -317,7 +322,6 @@ class LeadWorkflowService
         );
 
         $this->demoReminderService->scheduleForDemo($schedule->fresh(['lead', 'employee']));
-        $this->demoReminderService->processDueReminders();
         $this->forgetCaches($employeeId);
 
         return [
@@ -1054,6 +1058,22 @@ class LeadWorkflowService
         $this->cacheService->forgetPipelineStageCounts();
         $this->cacheService->forgetEmployeeRankings();
         $this->cacheService->forgetMasterListings();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function leadSnapshot(CaMaster $lead): array
+    {
+        return [
+            'ca_id' => $lead->ca_id,
+            'call_status' => $lead->call_status,
+            'status' => $lead->status,
+            'workflow_stage' => $lead->workflow_stage,
+            'demo_status' => $lead->demo_status,
+            'sales_remarks' => $lead->sales_remarks,
+            'updated_at' => $lead->updated_at?->toIso8601String(),
+        ];
     }
 
     /**

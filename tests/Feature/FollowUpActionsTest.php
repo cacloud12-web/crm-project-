@@ -61,6 +61,60 @@ class FollowUpActionsTest extends TestCase
             ->assertJsonPath('data.mobile_no', $followUp->caMaster?->mobile_no);
     }
 
+    public function test_follow_ups_list_includes_team_size_from_lead_when_missing_on_follow_up(): void
+    {
+        $manager = CrmTestAccounts::manager();
+        $this->actingAs($manager);
+
+        $followUp = FollowUp::query()
+            ->with('caMaster:ca_id,team_size')
+            ->whereNull('team_size')
+            ->whereHas('caMaster', fn ($q) => $q->whereNotNull('team_size')->where('team_size', '>', 0))
+            ->first();
+
+        if (! $followUp) {
+            $this->markTestSkipped('No follow-ups with lead team size fallback in database');
+        }
+
+        $this->getJson('/follow-ups/'.$followUp->followup_id)
+            ->assertOk()
+            ->assertJsonPath('data.team_size', (int) $followUp->caMaster?->team_size);
+    }
+
+    public function test_manager_can_set_next_follow_up_date_inline(): void
+    {
+        $manager = CrmTestAccounts::manager();
+        $this->actingAs($manager);
+
+        $followUp = FollowUp::query()
+            ->whereNotIn('status', ['Completed', 'Closed', 'Done'])
+            ->first();
+
+        if (! $followUp) {
+            $this->markTestSkipped('No open follow-ups in database');
+        }
+
+        $nextDate = now()->addDays(3)->toDateString();
+
+        $response = $this->patchJson('/follow-ups/'.$followUp->followup_id.'/next-date', [
+            'next_followup_date' => $nextDate,
+            'next_followup_time' => '10:00',
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('data.follow_up.followup_id', $followUp->followup_id)
+            ->assertJsonPath('data.next_follow_up.ca_id', $followUp->ca_id);
+
+        $followUp->refresh();
+        $this->assertSame($nextDate, $followUp->next_followup_date?->toDateString());
+
+        $this->assertDatabaseHas('follow_ups', [
+            'ca_id' => $followUp->ca_id,
+            'parent_followup_id' => $followUp->followup_id,
+            'followup_type' => 'Follow Up Reminder',
+        ]);
+    }
+
     public function test_follow_ups_list_includes_city_from_related_lead(): void
     {
         $manager = CrmTestAccounts::manager();

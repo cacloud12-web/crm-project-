@@ -147,6 +147,48 @@ class FollowUpDemoFieldsTest extends TestCase
         $this->deleteJson('/ca-masters/'.$lead->ca_id)->assertOk();
     }
 
+    public function test_call_outcome_with_employee_provider_skips_calendar_break_check(): void
+    {
+        $admin = CrmTestAccounts::admin();
+        $this->actingAs($admin);
+
+        $suffix = uniqid('dev', true);
+        $providerName = 'Dev Aggarwal '.$suffix;
+
+        DemoProvider::query()->create([
+            'name' => $providerName,
+            'default_meeting_link' => 'https://meet.example.com/dev-calendar',
+            'min_team_size' => 1,
+            'max_team_size' => 50,
+            'sort_order' => 1,
+            'is_active' => true,
+            'is_demo' => true,
+            'work_start_time' => '10:00:00',
+            'work_end_time' => '19:00:00',
+            'break_start_time' => '10:00:00',
+            'break_end_time' => '19:00:00',
+        ]);
+
+        $provider = $this->createEligibleProvider($providerName, 1, 50, 'https://meet.example.com/dev-employee');
+        $lead = $this->createLeadWithTeamSize(5);
+        $demoAt = now()->addDays(2)->setTime(11, 0);
+
+        $this->postJson('/follow-ups/call-outcome', [
+            'ca_id' => $lead->ca_id,
+            'outcome' => 'Demo Scheduled',
+            'remarks' => 'Employee provider should not hit calendar break rules',
+            'demo_date' => $demoAt->toDateString(),
+            'demo_time' => $demoAt->format('H:i'),
+            'team_size' => 5,
+            'demo_provider_employee_id' => $provider->employee_id,
+            'meeting_link' => 'https://meet.example.com/dev-employee',
+        ])->assertOk()
+            ->assertJsonPath('data.outcome', 'Demo Scheduled')
+            ->assertJsonPath('data.next_follow_up.demo_provider_name', $providerName);
+
+        $this->deleteJson('/ca-masters/'.$lead->ca_id)->assertOk();
+    }
+
     public function test_changing_team_size_recalculates_provider_and_link(): void
     {
         $admin = CrmTestAccounts::admin();

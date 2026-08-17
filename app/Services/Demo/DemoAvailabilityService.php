@@ -31,7 +31,7 @@ class DemoAvailabilityService
         if ($providerName) {
             $byName = DemoProvider::query()
                 ->where('is_active', true)
-                ->where('name', $providerName)
+                ->whereRaw('LOWER(name) = ?', [mb_strtolower($providerName)])
                 ->first();
             if ($byName) {
                 return $byName;

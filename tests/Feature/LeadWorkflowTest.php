@@ -88,6 +88,8 @@ class LeadWorkflowTest extends TestCase
             'ca_id' => $lead->ca_id,
             'call_status' => 'Connected',
         ]);
+        $response->assertJsonPath('data.lead.ca_id', $lead->ca_id);
+        $response->assertJsonPath('data.lead.call_status', 'Connected');
         $this->assertDatabaseHas('follow_up_histories', [
             'ca_id' => $lead->ca_id,
             'event_type' => 'Call Logged',

@@ -44,7 +44,7 @@ class FollowUpAutomationController extends Controller
             $outcome = (string) ($data['outcome'] ?? '');
 
             if ($outcome === 'Demo Scheduled') {
-                $this->workflowService->recordCall([
+                $call = $this->workflowService->recordCall([
                     'ca_id' => $data['ca_id'] ?? null,
                     'followup_id' => $data['followup_id'] ?? null,
                     'employee_id' => $data['employee_id'] ?? null,
@@ -72,6 +72,8 @@ class FollowUpAutomationController extends Controller
                         ? new FollowUpResource($demo['follow_up'])
                         : null,
                     'demo_schedule' => $demo['demo_schedule'],
+                    'call_log' => $call['call_log'] ?? null,
+                    'lead' => $call['lead'] ?? null,
                     'outcome' => 'Demo Scheduled',
                     'created' => (bool) ($demo['created'] ?? true),
                 ], ! empty($demo['created']) ? 'Demo scheduled' : 'Demo schedule updated');
@@ -95,6 +97,7 @@ class FollowUpAutomationController extends Controller
                     ? new FollowUpResource($result['next_follow_up'])
                     : null,
                 'call_log' => $result['call_log'],
+                'lead' => $result['lead'] ?? null,
                 'outcome' => $result['outcome'],
             ], 'Call outcome recorded');
         } catch (InvalidArgumentException $e) {

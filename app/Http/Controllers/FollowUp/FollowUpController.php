@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\FollowUp;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\FollowUp\SetFollowUpNextDateRequest;
 use App\Http\Requests\FollowUp\StoreFollowUpRequest;
 use App\Http\Requests\FollowUp\UpdateFollowUpRequest;
 use App\Http\Resources\FollowUpResource;
@@ -66,6 +67,19 @@ class FollowUpController extends Controller
             new FollowUpResource($followUp),
             'Follow-up updated successfully',
         );
+    }
+
+    public function setNextFollowUpDate(SetFollowUpNextDateRequest $request, string $id): JsonResponse
+    {
+        $followUp = $this->followUpService->find($id);
+        $result = $this->followUpService->setNextFollowUpDate($followUp, $request->validated());
+
+        return ApiResponse::success([
+            'follow_up' => new FollowUpResource($result['follow_up']),
+            'next_follow_up' => $result['next_follow_up']
+                ? new FollowUpResource($result['next_follow_up'])
+                : null,
+        ], $result['next_follow_up'] ? 'Next follow-up scheduled' : 'Next follow-up date saved');
     }
 
     public function destroy(string $id): JsonResponse
