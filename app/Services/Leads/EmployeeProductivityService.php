@@ -18,6 +18,7 @@ use App\Services\Cache\CrmCacheService;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class EmployeeProductivityService
@@ -37,6 +38,33 @@ class EmployeeProductivityService
             fn ($row) => (int) $row['employee_id'] === $employeeId,
         );
         $metrics['rank'] = $rankIndex === false ? null : $rankIndex + 1;
+        $this->persistSnapshot($employeeId, $date, $metrics);
+
+        return $metrics;
+    }
+
+    /**
+     * Fast path for employee dashboard — reuses today's snapshot when available and
+     * never cold-computes org-wide rankings (major source of dashboard latency).
+     *
+     * @return array<string, mixed>
+     */
+    public function employeeDashboardMetrics(int $employeeId, ?Carbon $date = null): array
+    {
+        $date = $date ?? now();
+        $dateString = $date->toDateString();
+
+        $log = EmployeeProductivityLog::query()
+            ->where('employee_id', $employeeId)
+            ->whereDate('log_date', $dateString)
+            ->first();
+
+        if ($log) {
+            return $this->metricsFromProductivityLog($log, $dateString);
+        }
+
+        $metrics = $this->computeDailyMetrics($employeeId, $date);
+        $metrics['rank'] = $this->cachedRankForEmployee($employeeId, $dateString);
         $this->persistSnapshot($employeeId, $date, $metrics);
 
         return $metrics;
@@ -182,6 +210,59 @@ class EmployeeProductivityService
     /**
      * @return array<string, mixed>
      */
+    /**
+     * @return array<string, mixed>
+     */
+    private function metricsFromProductivityLog(EmployeeProductivityLog $log, string $dateString): array
+    {
+        $unique = (int) $log->unique_leads_added;
+        $target = $this->resolveDailyTarget((int) $log->employee_id, $dateString);
+
+        return [
+            'employee_id' => (int) $log->employee_id,
+            'date' => $dateString,
+            'leads_assigned' => (int) $log->leads_assigned,
+            'unique_leads' => $unique,
+            'unique_leads_added' => $unique,
+            'duplicate_attempts' => (int) $log->duplicate_attempts,
+            'wrong_numbers' => (int) $log->wrong_numbers,
+            'verified_leads' => (int) $log->verified_leads,
+            'followups_completed' => (int) $log->followups_completed,
+            'sms_failed' => (int) $log->sms_failed,
+            'whatsapp_failed' => (int) $log->whatsapp_failed,
+            'email_failed' => (int) $log->email_failed,
+            'invalid_leads' => (int) $log->invalid_leads,
+            'quality_score' => (int) $log->quality_score,
+            'productivity_score' => (int) $log->quality_score,
+            'rank' => $log->rank !== null ? (int) $log->rank : $this->cachedRankForEmployee((int) $log->employee_id, $dateString),
+            'todays_target' => $target,
+            'remaining_target' => max(0, $target - $unique),
+            'productivity_pct' => $target > 0 ? round(($unique / $target) * 100, 1) : 0.0,
+            'duplicate_pct' => $this->duplicatePercentage($unique, (int) $log->duplicate_attempts),
+            'followup_completion_pct' => 0.0,
+            'communication_success_pct' => 0.0,
+            'total_leads_added' => $unique,
+            'rejected_leads' => 0,
+            'approved_leads' => 0,
+        ];
+    }
+
+    private function cachedRankForEmployee(int $employeeId, string $dateString): ?int
+    {
+        $rankings = Cache::get('crm:productivity:rankings:'.$dateString);
+        if (! is_array($rankings) || empty($rankings['by_score'])) {
+            return null;
+        }
+
+        foreach ($rankings['by_score'] as $row) {
+            if ((int) ($row['employee_id'] ?? 0) === $employeeId) {
+                return isset($row['rank']) ? (int) $row['rank'] : null;
+            }
+        }
+
+        return null;
+    }
+
     private function computeDailyMetrics(int $employeeId, Carbon $date): array
     {
         $dateString = $date->toDateString();

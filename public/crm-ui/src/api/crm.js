@@ -4904,6 +4904,19 @@ if (otherInput) {
           '<p class="mgr-top-meta">' + escapeHtml(dateStr) + ' · ' + escapeHtml(timeStr) + '</p>' +
         '</div>';
     }
+    var dashSkeleton = function (count) {
+      return Array(count).fill(0).map(function () {
+        return '<div class="dash-skeleton-card" aria-hidden="true"><span class="dash-skeleton-line dash-skeleton-line--sm"></span><span class="dash-skeleton-line dash-skeleton-line--lg"></span></div>';
+      }).join('');
+    };
+    var targetPanel = document.getElementById('emp-daily-targets-panel');
+    if (targetPanel) targetPanel.innerHTML = '<div class="dash-skeleton-block" aria-busy="true" aria-label="Loading targets">' + dashSkeleton(3) + '</div>';
+    var kpiSections = document.getElementById('emp-kpi-sections');
+    if (kpiSections) kpiSections.innerHTML = '<div class="dash-skeleton-block dash-skeleton-kpi" aria-busy="true" aria-label="Loading metrics">' + dashSkeleton(6) + '</div>';
+    ['emp-assigned-leads', 'emp-followups-list', 'emp-activity-list', 'emp-demo-schedule'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.innerHTML = '<div class="dash-skeleton-list" aria-busy="true"><span class="dash-skeleton-line"></span><span class="dash-skeleton-line"></span><span class="dash-skeleton-line dash-skeleton-line--short"></span></div>';
+    });
     iconsIn(document.querySelector('.emp-dashboard') || document);
   }
 
@@ -6622,7 +6635,7 @@ if (otherInput) {
     renderEmployeeProductivityPanel(data.productivity || {});
     renderEmployeeAttendancePanel(data.my_attendance || null);
     initEmployeeDashboardInteractions();
-    loadEmployeeWorkflowLists();
+    window.setTimeout(loadEmployeeWorkflowLists, 80);
     icons();
   }
 

@@ -70,7 +70,7 @@ class EmployeeDashboardService
         $followUpCounts = $this->followUpSummary($employeeId);
         $taskCounts = $this->taskSummary($employeeId);
         $assignmentStats = $this->assignmentStats($employeeId);
-        $productivity = $this->employeeProductivity->employeeDailyMetrics($employeeId);
+        $productivity = $this->employeeProductivity->employeeDashboardMetrics($employeeId);
         $today = now()->toDateString();
         $yearlyTarget = $this->yearlyEmployeeTargetService->currentYearForEmployee($user);
         $dailyTarget = $this->dailyEmployeeTargetService->todayForEmployee($user);
@@ -109,7 +109,7 @@ class EmployeeDashboardService
                 'pipeline_leads' => (int) ($leadCounts['pipeline'] ?? 0),
                 'converted_leads' => (int) ($leadCounts['converted'] ?? 0),
                 'lost_leads' => (int) ($leadCounts['lost'] ?? 0),
-                'conversion_pct' => $this->conversionPct($employeeId, (int) ($leadCounts['total'] ?? 0)),
+                'conversion_pct' => $this->conversionPctFromCounts($leadCounts),
                 'todays_target' => (int) ($targetProgress['today']['demo_target'] ?? 0),
                 'todays_achievement' => (int) ($targetProgress['today']['demo_achieved'] ?? 0),
                 'demos_completed_today' => $demoSnapshot['demos_completed_today'],
@@ -153,23 +153,29 @@ class EmployeeDashboardService
 
     private function leadStatusCounts(int $employeeId): array
     {
-        $query = CaMaster::query()->countableInStatistics();
-        $this->employeeDataScope->scopeCaMasterQuery($query, $employeeId);
-
+        $table = (new CaMaster)->getTable();
         $pipelineStatuses = \App\Support\CrmPipeline::pipelineSegmentStatuses();
         $pipelineList = $pipelineStatuses === []
             ? "''"
             : collect($pipelineStatuses)->map(fn ($s) => "'".str_replace("'", "''", $s)."'")->implode(',');
 
-        $row = $query
-            ->selectRaw('COUNT(*) as total')
-            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Hot'").' as hot')
-            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Warm'").' as warm')
-            ->selectRaw(SqlAggregate::countFilter('*', "status = 'Cold'").' as cold')
-            ->selectRaw(SqlAggregate::countFilter('*', "status = 'New'").' as status_new')
-            ->selectRaw(SqlAggregate::countFilter('*', "status IN ({$pipelineList})").' as pipeline')
-            ->selectRaw(SqlAggregate::countFilter('*', "status IN ('Active', 'Won') OR software_purchased = true").' as converted')
-            ->selectRaw(SqlAggregate::countFilter('*', "status IN ('Lost', 'Inactive')").' as lost')
+        $row = CaMaster::query()
+            ->countableInStatistics()
+            ->join('lead_assignment_engines as lae', function ($join) use ($employeeId, $table) {
+                $join->on($table.'.ca_id', '=', 'lae.ca_id')
+                    ->where('lae.employee_id', $employeeId)
+                    ->where('lae.status', 'Active')
+                    ->whereNull('lae.deleted_at');
+            })
+            ->selectRaw('COUNT(DISTINCT '.$table.'.ca_id) as total')
+            ->selectRaw(SqlAggregate::countFilter('DISTINCT '.$table.'.ca_id', $table.".status = 'Hot'").' as hot')
+            ->selectRaw(SqlAggregate::countFilter('DISTINCT '.$table.'.ca_id', $table.".status = 'Warm'").' as warm')
+            ->selectRaw(SqlAggregate::countFilter('DISTINCT '.$table.'.ca_id', $table.".status = 'Cold'").' as cold')
+            ->selectRaw(SqlAggregate::countFilter('DISTINCT '.$table.'.ca_id', $table.".status = 'New'").' as status_new')
+            ->selectRaw(SqlAggregate::countFilter('DISTINCT '.$table.'.ca_id', $table.".status IN ({$pipelineList})").' as pipeline')
+            ->selectRaw(SqlAggregate::countFilter('DISTINCT '.$table.'.ca_id', $table.".status IN ('Active', 'Won') OR ".$table.'.software_purchased = true').' as converted')
+            ->selectRaw(SqlAggregate::countFilter('DISTINCT '.$table.'.ca_id', $table.".status IN ('Lost', 'Inactive')").' as lost')
+            ->selectRaw(SqlAggregate::countFilter('DISTINCT '.$table.'.ca_id', $table.".status = 'Won'").' as won')
             ->first();
 
         return [
@@ -181,6 +187,7 @@ class EmployeeDashboardService
             'pipeline' => (int) ($row->pipeline ?? 0),
             'converted' => (int) ($row->converted ?? 0),
             'lost' => (int) ($row->lost ?? 0),
+            'won' => (int) ($row->won ?? 0),
         ];
     }
 
@@ -287,17 +294,14 @@ class EmployeeDashboardService
         ];
     }
 
-    private function conversionPct(int $employeeId, int $totalLeads): float
+    private function conversionPctFromCounts(array $leadCounts): float
     {
-        if ($totalLeads === 0) {
+        $total = (int) ($leadCounts['total'] ?? 0);
+        if ($total === 0) {
             return 0.0;
         }
 
-        $query = CaMaster::query()->countableInStatistics()->where('status', 'Won');
-        $this->employeeDataScope->scopeCaMasterQuery($query, $employeeId);
-        $won = (int) $query->count();
-
-        return round(($won / $totalLeads) * 100, 1);
+        return round(((int) ($leadCounts['won'] ?? 0) / $total) * 100, 1);
     }
 
     private function workingStatus(array $followUpCounts): string
@@ -462,14 +466,10 @@ class EmployeeDashboardService
 
     private function recentActivity($user, Employee $employee): array
     {
-        $performedBy = array_filter([$user->name, $user->email, $employee->name]);
+        $performedBy = array_values(array_unique(array_filter([$user->name, $user->email, $employee->name])));
 
         return ActivityLog::query()
-            ->where(function ($outer) use ($performedBy) {
-                foreach ($performedBy as $value) {
-                    $outer->orWhere('performed_by', 'ilike', '%'.$value.'%');
-                }
-            })
+            ->whereIn('performed_by', $performedBy)
             ->orderByDesc('created_at')
             ->limit(8)
             ->get(['id', 'module_name', 'action', 'description', 'performed_by', 'record_id', 'created_at'])
