@@ -14389,8 +14389,6 @@ if (otherInput) {
     { id: '2026_07_email_sales_remarks_v3', keys: ['email_id', 'sales_remarks'] },
     // v4: ensure Mobile + Team Size stay visible for employee contact editing on Lead Management.
     { id: '2026_08_mobile_team_size_contact_v1', keys: ['mobile', 'team_size'] },
-    // v5: Assigned Leads column with date filter for today's assignments.
-    { id: '2026_08_assigned_leads_column_v1', keys: ['assigned_leads'] },
   ];
   var CAM_COLUMN_MIGRATIONS_STORAGE_KEY = 'crm.ca_masters.column_migrations.v1';
   var _camVisibleColumnKeys = null;
@@ -14997,7 +14995,6 @@ if (otherInput) {
       camColTd('source', 'cam-td-source cam-master-data-cell', compactTextCell(l.source)) +
       camColTd('rating', 'cam-td-rating cam-master-data-cell', '<span class="cam-cell-rating cam-master-display-text" title="' + (l.rating || 0) + ' stars">' + stars(l.rating) + '</span>') +
       camColTd('status', 'cam-td-status cam-master-data-cell', '<span class="cam-cell-badge">' + statusBadge(l.status) + '</span>') +
-      camColTd('assigned_leads', 'crm-td-date cam-col-assigned-leads cam-master-data-cell', '<span class="cam-cell-text cam-cell-mono cam-master-display-text" title="' + escapeAttr(l.assigned_date || '') + '">' + escapeHtml(formatDate(l.assigned_date)) + '</span>') +
       camColTd('employee', 'cam-td-person cam-master-data-cell', executiveCell) +
       camColTd('created_by', 'cam-td-person cam-master-data-cell', compactTextCell(l.created_by)) +
       camColTd('updated_at', 'crm-td-date cam-master-data-cell', '<span class="cam-cell-text cam-cell-mono text-slate-500 cam-master-display-text" title="' + escapeHtml(l.updated || formatRelativeDate(l.updated_at)) + '">' + escapeHtml(l.updated || formatRelativeDate(l.updated_at)) + '</span>') +
@@ -15068,7 +15065,6 @@ if (otherInput) {
       camColTd('source', 'cam-td-source cam-master-data-cell', '') +
       camColTd('rating', 'cam-td-rating cam-master-data-cell', '') +
       camColTd('status', 'cam-td-status cam-master-data-cell', '') +
-      camColTd('assigned_leads', 'crm-td-date cam-col-assigned-leads cam-master-data-cell', '') +
       camColTd('employee', 'cam-td-person cam-master-data-cell', '') +
       camColTd('created_by', 'cam-td-person cam-master-data-cell', '') +
       camColTd('updated_at', 'crm-td-date cam-master-data-cell', '') +

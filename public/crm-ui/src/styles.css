@@ -15380,7 +15380,7 @@ body.rw-open {
 .cam-team-avail--offline { color: #64748b; }
 
 /* ─── Master Data: Last Activity column ─── */
-.crm-col-last-activity { width: 7.5rem; min-width: 7.5rem; }
+.crm-col-last-activity { width: 11.5rem; min-width: 11.5rem; }
 .cam-td-last-activity { vertical-align: middle; }
 .cam-last-activity {
   display: inline-flex; flex-direction: column; align-items: flex-start; gap: 0;
@@ -15699,7 +15699,7 @@ body.rw-open {
   .cam-team-size-cell__full { display: none; }
   .cam-team-size-cell__compact { display: inline; }
   .crm-col-team-members { width: 8rem; min-width: 8rem; }
-  .crm-col-last-activity { width: 6.75rem; min-width: 6.75rem; }
+  .crm-col-last-activity { width: 10.5rem; min-width: 10.5rem; }
   .cam-team-members-btn { font-size: 11px; padding-inline: 0.5rem; }
   .cam-last-activity__badge { font-size: 10px; }
   .cam-last-activity__time { font-size: 10px; }
