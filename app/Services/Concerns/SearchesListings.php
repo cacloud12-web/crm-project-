@@ -16,7 +16,18 @@ trait SearchesListings
         $scope = app(EmployeeDataScopeService::class);
         $params = $scope->stripScopedParams($params, $config);
         $params['_scope_key'] = $scope->cacheScopeKey();
-        $scope->applyToListing($query, $config);
+
+        // Fold assigned_date into the employee scope subquery (one EXISTS, not two).
+        $assignedDate = null;
+        if (
+            ($config['employee_scope'] ?? null) === 'assigned_active_leads'
+            && ! empty($params['assigned_date'])
+        ) {
+            $assignedDate = (string) $params['assigned_date'];
+            unset($params['assigned_date']);
+        }
+
+        $scope->applyToListing($query, $config, $assignedDate);
 
         $all = filter_var($params['all'] ?? false, FILTER_VALIDATE_BOOLEAN);
         if ($all && ($config['cacheable'] ?? false)) {

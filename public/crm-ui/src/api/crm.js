@@ -544,6 +544,9 @@ window.CA_CRM = (function () {
           try {
             body = JSON.parse(text);
           } catch (parseError) {
+            if (response.status >= 502 || response.status === 0) {
+              throw new Error('Server is busy or timed out. Please wait a moment and try again.');
+            }
             throw new Error('Something went wrong. Please try again.');
           }
         }
@@ -9754,13 +9757,12 @@ if (otherInput) {
       input.value = '';
     });
     document.querySelectorAll('.crm-col-date-nav__value[data-col-filter-group="ca_masters"]').forEach(function (input) {
-      input.value = isEmployeeUser() ? todayIsoDate() : '';
+      input.value = '';
     });
     syncCaMasterDateNavLabels(document);
     window._leadSegmentFilter = 'all';
     if (window.CA_LISTING_SEARCH) {
-      var resetFilters = isEmployeeUser() ? { assigned_date: todayIsoDate() } : {};
-      CA_LISTING_SEARCH.setState('ca_masters', { page: 1, search: '', filters: resetFilters });
+      CA_LISTING_SEARCH.setState('ca_masters', { page: 1, search: '', filters: {} });
     }
     syncCamStageFilterBarVisibility();
     if (isCamPipelineTabActive()) loadKanbanLeads();
@@ -10010,7 +10012,6 @@ if (otherInput) {
       ensureFollowupInlineUiBound();
       renderLeadKpis();
       bindLeadsColumnFilters();
-      ensureEmployeeTodayAssignedDateFilter();
       syncAssignedDateNavFromListingState();
       var pipelineActive = isLeadsPipelineTabActive();
       var allActive = isLeadsAllTabActive();
@@ -15540,17 +15541,11 @@ if (otherInput) {
   }
 
   function ensureEmployeeTodayAssignedDateFilter() {
-    if (!isEmployeeUser() || !window.CA_LISTING_SEARCH) return false;
-    var state = CA_LISTING_SEARCH.getState('ca_masters');
-    var filters = Object.assign({}, state.filters || {});
-    if (filters.assigned_date) {
-      syncAssignedDateNavFromListingState();
-      return false;
-    }
-    filters.assigned_date = todayIsoDate();
-    CA_LISTING_SEARCH.setState('ca_masters', { page: 1, filters: filters });
+    // Only sync UI from saved listing state — do not force "today" on open.
+    // Forcing assigned_date=today ran a heavy filtered COUNT on every employee open
+    // and hid all other assigned leads unless the user changed the date nav.
     syncAssignedDateNavFromListingState();
-    return true;
+    return false;
   }
 
   function applyCaMasterDateNavListingFilters() {
@@ -26987,15 +26982,24 @@ if (otherInput) {
       applyListingFetchBody(key, cachedListing.body, extra, { fromCache: true });
     }
 
-    return apiFetch(cfg.endpoint + listingPageQuery(key, extra))
-      .then(function (body) {
-        writeListingPageCache(key, extra, body);
-        return applyListingFetchBody(key, body, extra);
-      })
-      .catch(function (error) {
-        toast(error && error.message ? error.message : 'Unable to load data.', 'error');
-        return null;
-      });
+    function fetchListing(attempt) {
+      var fetchOptions = (key === 'ca_masters' && attempt === 0) ? { timeoutMs: 45000 } : {};
+      return apiFetch(cfg.endpoint + listingPageQuery(key, extra), fetchOptions)
+        .then(function (body) {
+          writeListingPageCache(key, extra, body);
+          return applyListingFetchBody(key, body, extra);
+        })
+        .catch(function (error) {
+          var message = (error && error.message) ? error.message : '';
+          if (attempt < 1 && /timed out|busy|Something went wrong|Unable to reach/i.test(message)) {
+            return fetchListing(attempt + 1);
+          }
+          toast(message || 'Unable to load data.', 'error');
+          return null;
+        });
+    }
+
+    return fetchListing(0);
   }
   /* ─── Employee Imports ─── */
 

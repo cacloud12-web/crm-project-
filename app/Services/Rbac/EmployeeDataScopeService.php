@@ -141,7 +141,7 @@ class EmployeeDataScopeService
         return $employeeId;
     }
 
-    public function applyToListing(Builder $query, array $config): void
+    public function applyToListing(Builder $query, array $config, ?string $assignedDate = null): void
     {
         $employeeId = $this->scopedEmployeeId(auth()->user());
         if ($employeeId === null) {
@@ -155,13 +155,19 @@ class EmployeeDataScopeService
         }
 
         $scope = $config['employee_scope'] ?? null;
+        $assignedDate = $this->normalizeAssignedDateFilter($assignedDate);
 
         match ($scope) {
             'assigned_active_leads' => $query->whereHas(
                 'leadAssignments',
-                fn (Builder $assignment) => $assignment
-                    ->where('employee_id', $employeeId)
-                    ->where('status', 'Active'),
+                function (Builder $assignment) use ($employeeId, $assignedDate) {
+                    $assignment
+                        ->where('employee_id', $employeeId)
+                        ->where('status', 'Active');
+                    if ($assignedDate !== null) {
+                        $assignment->whereDate('assigned_date', $assignedDate);
+                    }
+                },
             ),
             'assigned_lead_ca' => $query->whereHas(
                 'caMaster',
@@ -408,6 +414,16 @@ class EmployeeDataScopeService
         }
 
         return 'System';
+    }
+
+    private function normalizeAssignedDateFilter(?string $value): ?string
+    {
+        $date = trim((string) $value);
+        if ($date === '' || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            return null;
+        }
+
+        return $date;
     }
 
     private function applyActivityLogScope(Builder $query, ?User $user, int $employeeId): void
