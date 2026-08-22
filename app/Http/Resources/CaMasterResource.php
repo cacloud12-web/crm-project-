@@ -142,7 +142,7 @@ class CaMasterResource extends JsonResource
                     $caId = (int) (is_array($lead) ? ($lead['ca_id'] ?? 0) : $lead->ca_id);
                     $ts = is_array($lead) ? ($lead['last_activity_at'] ?? null) : $lead->last_activity_at;
 
-                    return [$caId => $ts ? ['occurred_at' => (string) $ts, 'label' => 'Activity', 'icon' => 'activity'] : null];
+                    return [$caId => self::formatLastActivitySummaryFromTimestamp($ts)];
                 })
                 ->all();
         } else {
@@ -447,24 +447,27 @@ class CaMasterResource extends JsonResource
         // Single-record responses (create/update/show): use denormalized column instead of
         // the multi-table activity UNION that listings prep in batch via prepareCollection().
         if (filled($this->last_activity_at)) {
-            return $this->summaryFromLastActivityAt($this->last_activity_at);
+            return self::formatLastActivitySummaryFromTimestamp($this->last_activity_at);
         }
 
         if (filled($this->updated_at)) {
-            return $this->summaryFromLastActivityAt($this->updated_at);
+            return self::formatLastActivitySummaryFromTimestamp($this->updated_at);
         }
 
         return null;
     }
 
     /**
-     * Lightweight last-activity payload for non-list responses (same keys as timeline summary).
+     * Lightweight last-activity payload from denormalized timestamp (list + detail).
      *
-     * @param  \DateTimeInterface|string  $occurredAt
-     * @return array<string, mixed>
+     * @return array<string, mixed>|null
      */
-    private function summaryFromLastActivityAt(mixed $occurredAt): array
+    public static function formatLastActivitySummaryFromTimestamp(mixed $occurredAt): ?array
     {
+        if (! filled($occurredAt)) {
+            return null;
+        }
+
         $at = \Carbon\Carbon::parse($occurredAt);
         $now = now();
         $days = (int) $at->copy()->startOfDay()->diffInDays($now->copy()->startOfDay());
@@ -490,6 +493,16 @@ class CaMasterResource extends JsonResource
             'age_bucket' => $days <= 0 ? 'today' : ($days === 1 ? 'yesterday' : 'older'),
             'emoji' => '',
         ];
+    }
+
+    /**
+     * @param  \DateTimeInterface|string  $occurredAt
+     * @return array<string, mixed>
+     */
+    private function summaryFromLastActivityAt(mixed $occurredAt): array
+    {
+        return self::formatLastActivitySummaryFromTimestamp($occurredAt)
+            ?? self::formatLastActivitySummaryFromTimestamp(now());
     }
 
     private function resolvePrimaryCaName(): string
