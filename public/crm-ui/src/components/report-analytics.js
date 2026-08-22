@@ -515,11 +515,11 @@ window.CrmReportAnalytics = (function () {
       var topEmp = rows[0];
       cards = [
         { icon: 'users', tone: 'blue', label: 'Employees', value: fmtNum(s.active_employees), tooltip: 'Active employees in report.' },
-        { icon: 'trophy', tone: 'green', label: 'Top Performer', value: topEmp ? topEmp.employee_name : '—', tooltip: 'Highest achieved leads.' },
-        { icon: 'target', tone: 'blue', label: 'Total Assigned', value: fmtNum(s.total_assigned_leads), tooltip: 'Active assignment count.' },
-        { icon: 'check-circle', tone: 'green', label: 'Total Achieved', value: fmtNum(sumRows(rows, 'achieved_leads')), tooltip: 'Sum of achieved leads vs target.' },
-        { icon: 'percent', tone: 'orange', label: 'Avg Conversion', value: fmtPct(s.avg_achievement_pct), tooltip: 'Average achievement % (achieved ÷ target × 100).' },
-        { icon: 'alert-circle', tone: 'red', label: 'Overdue Follow-ups', value: fmtNum(s.total_overdue_followups), tooltip: 'Overdue open follow-ups team-wide.' },
+        { icon: 'trophy', tone: 'green', label: 'Top Performer', value: topEmp ? topEmp.employee_name : '—', tooltip: 'Most demos scheduled in the selected date range.' },
+        { icon: 'target', tone: 'blue', label: 'Leads Assigned', value: fmtNum(s.total_assigned_leads), tooltip: 'Leads assigned to employees within the date range.' },
+        { icon: 'presentation', tone: 'green', label: 'Demos Scheduled', value: fmtNum(s.total_demos_scheduled != null ? s.total_demos_scheduled : sumRows(rows, 'demos_scheduled')), tooltip: 'Demo schedules created in the selected date range.' },
+        { icon: 'percent', tone: 'orange', label: 'Avg Achievement', value: fmtPct(s.avg_achievement_pct), tooltip: 'Average demo target achievement (scheduled ÷ target × 100).' },
+        { icon: 'alert-circle', tone: 'red', label: 'Overdue Follow-ups', value: fmtNum(s.total_overdue_followups), tooltip: 'Open follow-ups past due date within the range.' },
       ];
     } else if (slug === 'duplicate_productivity') {
       cards = [
@@ -606,10 +606,10 @@ window.CrmReportAnalytics = (function () {
       html += chartSection('Lost Leads', 'trending-down', paintColumnChart(rows.map(function (r) { return { label: r.month, value: r.lost_leads }; }), { color: '#ef4444' }));
       html += chartSection('Month Comparison', 'grid-3x3', paintHeatmap(rows), 'full');
     } else if (slug === 'employee_performance') {
-      html += chartSection('Target Achievement', 'trophy', paintHorizontalBars(rows, 'employee_name', 'achievement_pct', 8), 2);
-      html += chartSection('Assigned Leads', 'users', paintHorizontalBars(rows, 'employee_name', 'assigned_leads', 8));
-      html += chartSection('Demo Follow-ups', 'presentation', paintHorizontalBars(rows, 'employee_name', 'demo_followups', 8));
-      html += chartSection('Overdue Items', 'alert-circle', paintHorizontalBars(rows, 'employee_name', 'overdue_followups', 8));
+      html += chartSection('Demo Target Achievement', 'trophy', paintHorizontalBars(rows, 'employee_name', 'achievement_pct', 8), 2);
+      html += chartSection('Leads Assigned', 'users', paintHorizontalBars(rows, 'employee_name', 'assigned_leads', 8));
+      html += chartSection('Demos Scheduled', 'presentation', paintHorizontalBars(rows, 'employee_name', 'demos_scheduled', 8));
+      html += chartSection('Overdue Follow-ups', 'alert-circle', paintHorizontalBars(rows, 'employee_name', 'overdue_followups', 8));
     } else if (slug === 'city_analysis') {
       html += chartSection('Top Cities', 'map-pin', paintHorizontalBars(rows, 'city', 'total_leads', 10), 2);
       html += chartSection('Conversion by City', 'percent', paintHorizontalBars(rows.slice().sort(function (a, b) {

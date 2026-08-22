@@ -4,15 +4,19 @@ namespace App\Services\Reports;
 
 use App\Models\AssignmentHistory;
 use App\Models\CaMaster;
+use App\Models\DailyEmployeeTarget;
+use App\Models\DemoSchedule;
 use App\Models\EmailCampaign;
 use App\Models\EmailLog;
 use App\Models\Employee;
+use App\Models\EmployeeCalendarDay;
 use App\Models\FollowUp;
 use App\Models\LeadAssignmentEngine;
 use App\Models\SmsCampaign;
 use App\Models\SmsLog;
 use App\Models\WaMessageLog;
 use App\Models\WhatsAppCampaign;
+use App\Models\YearlyEmployeeTarget;
 use App\Services\Cache\CrmCacheService;
 use App\Services\Leads\EmployeeProductivityService;
 use App\Services\Rbac\EmployeeDataScopeService;
@@ -156,7 +160,7 @@ class ReportsService
             $rows[] = [
                 'section' => 'Employee Performance',
                 'metric' => $row['employee_name'],
-                'value' => $row['assigned_leads'].' leads · '.$row['achievement_pct'].'% target',
+                'value' => $row['demos_scheduled'].' demos · '.$row['achievement_pct'].'% target',
             ];
         }
 
@@ -299,65 +303,125 @@ class ReportsService
 
     private function employeePerformance(array $filters): array
     {
-        $completed = $this->quotedList(config('reports.completed_followup_statuses', []));
-        $open = $this->quotedList(config('reports.open_followup_statuses', []));
+        $from = $filters['from'];
+        $to = $filters['to'];
+        $fromDate = $from->toDateString();
+        $toDate = $to->toDateString();
 
-        $rows = Employee::query()
-            ->leftJoin('lead_assignment_engines as lae', function ($join) {
-                $join->on('lae.employee_id', '=', 'employees.employee_id')
-                    ->where('lae.status', '=', 'Active');
-            })
-            ->leftJoin('follow_ups as fu', function ($join) use ($filters) {
-                $join->on('fu.employee_id', '=', 'employees.employee_id');
-                if ($filters['from']) {
-                    $join->where('fu.scheduled_date', '>=', $filters['from']);
-                }
-                if ($filters['to']) {
-                    $join->where('fu.scheduled_date', '<=', $filters['to']);
-                }
-            })
+        $employees = Employee::query()
             ->leftJoin('cities', 'cities.city_id', '=', 'employees.city_id')
             ->when($filters['employee_id'], fn ($q) => $q->where('employees.employee_id', $filters['employee_id']))
             ->where('employees.status', 'Active')
-            ->groupBy('employees.employee_id', 'employees.name', 'employees.role', 'cities.city_name')
-            ->selectRaw('employees.employee_id')
-            ->selectRaw('employees.name as employee_name')
-            ->selectRaw('employees.role')
-            ->selectRaw("COALESCE(cities.city_name, '—') as city")
-            ->selectRaw('COUNT(DISTINCT lae.ca_id) as assigned_leads')
-            ->selectRaw('COALESCE(SUM(lae.target_leads), 0) as target_leads')
-            ->selectRaw('COALESCE(SUM(lae.achieved_leads), 0) as achieved_leads')
-            ->selectRaw('COUNT(fu.followup_id) as total_followups')
-            ->selectRaw(SqlAggregate::countFilter('fu.followup_id', 'fu.status IN ('.$completed.')').' as completed_followups')
-            ->selectRaw(SqlAggregate::countFilter('fu.followup_id', 'fu.status IN ('.$open.') AND fu.scheduled_date < CURRENT_DATE').' as overdue_followups')
-            ->selectRaw(SqlAggregate::countFilter('fu.followup_id', "fu.followup_type ILIKE '%Demo%'").' as demo_followups')
-            ->orderByDesc('achieved_leads')
-            ->get()
-            ->map(function ($row) {
-                $target = (int) $row->target_leads;
-                $achieved = (int) $row->achieved_leads;
+            ->orderBy('employees.name')
+            ->get([
+                'employees.employee_id',
+                'employees.name as employee_name',
+                'employees.role',
+                DB::raw("COALESCE(cities.city_name, '—') as city"),
+            ]);
 
-                return [
-                    'employee_id' => (int) $row->employee_id,
-                    'employee_name' => $row->employee_name,
-                    'role' => $row->role,
-                    'city' => $row->city,
-                    'assigned_leads' => (int) $row->assigned_leads,
-                    'target_leads' => $target,
-                    'achieved_leads' => $achieved,
-                    'achievement_pct' => $target ? round(($achieved / $target) * 100, 1) : 0,
-                    'total_followups' => (int) $row->total_followups,
-                    'completed_followups' => (int) $row->completed_followups,
-                    'overdue_followups' => (int) $row->overdue_followups,
-                    'demo_followups' => (int) $row->demo_followups,
-                ];
+        $employeeIds = $employees->pluck('employee_id')->map(fn ($id) => (int) $id)->all();
+
+        if ($employeeIds === []) {
+            return [
+                'slug' => 'employee_performance',
+                'label' => config('reports.reports.employee_performance.label'),
+                'summary' => [
+                    'active_employees' => 0,
+                    'total_assigned_leads' => 0,
+                    'avg_achievement_pct' => 0,
+                    'total_overdue_followups' => 0,
+                ],
+                'columns' => $this->employeePerformanceColumns(),
+                'rows' => [],
+            ];
+        }
+
+        $assignedByEmployee = LeadAssignmentEngine::query()
+            ->join('ca_masters', 'ca_masters.ca_id', '=', 'lead_assignment_engines.ca_id')
+            ->whereIn('lead_assignment_engines.employee_id', $employeeIds)
+            ->where('lead_assignment_engines.status', 'Active')
+            ->where(function ($q) {
+                $q->whereNull('ca_masters.mobile_no_type')
+                    ->orWhere('ca_masters.mobile_no_type', 'mobile');
             })
+            ->whereDate('lead_assignment_engines.assigned_date', '>=', $fromDate)
+            ->whereDate('lead_assignment_engines.assigned_date', '<=', $toDate)
+            ->selectRaw('lead_assignment_engines.employee_id')
+            ->selectRaw('COUNT(DISTINCT lead_assignment_engines.ca_id) as assigned_leads')
+            ->groupBy('lead_assignment_engines.employee_id')
+            ->pluck('assigned_leads', 'employee_id');
+
+        $demosByEmployee = DemoSchedule::query()
+            ->whereIn('employee_id', $employeeIds)
+            ->whereBetween('created_at', [$from, $to])
+            ->whereNotIn('status', [DemoSchedule::STATUS_CANCELLED])
+            ->selectRaw('employee_id')
+            ->selectRaw('COUNT(*) as demos_scheduled')
+            ->groupBy('employee_id')
+            ->pluck('demos_scheduled', 'employee_id');
+
+        $completedFollowupsByEmployee = FollowUp::query()
+            ->whereIn('employee_id', $employeeIds)
+            ->whereIn('status', config('reports.completed_followup_statuses', []))
+            ->whereBetween('updated_at', [$from, $to])
+            ->selectRaw('employee_id')
+            ->selectRaw('COUNT(*) as completed_followups')
+            ->groupBy('employee_id')
+            ->pluck('completed_followups', 'employee_id');
+
+        $overdueByEmployee = FollowUp::query()
+            ->whereIn('employee_id', $employeeIds)
+            ->whereIn('status', config('reports.open_followup_statuses', []))
+            ->whereDate('scheduled_date', '>=', $fromDate)
+            ->whereDate('scheduled_date', '<=', $toDate)
+            ->whereDate('scheduled_date', '<', now()->toDateString())
+            ->selectRaw('employee_id')
+            ->selectRaw('COUNT(*) as overdue_followups')
+            ->groupBy('employee_id')
+            ->pluck('overdue_followups', 'employee_id');
+
+        $demoTargetsByEmployee = $this->demoTargetsInRangeForEmployees($employeeIds, $fromDate, $toDate);
+
+        $rows = $employees->map(function ($employee) use (
+            $assignedByEmployee,
+            $demosByEmployee,
+            $demoTargetsByEmployee,
+            $completedFollowupsByEmployee,
+            $overdueByEmployee,
+        ) {
+            $employeeId = (int) $employee->employee_id;
+            $demosScheduled = (int) ($demosByEmployee[$employeeId] ?? 0);
+            $demoTarget = (int) ($demoTargetsByEmployee[$employeeId] ?? 0);
+
+            return [
+                'employee_id' => $employeeId,
+                'employee_name' => $employee->employee_name,
+                'role' => $employee->role,
+                'city' => $employee->city,
+                'assigned_leads' => (int) ($assignedByEmployee[$employeeId] ?? 0),
+                'target_leads' => $demoTarget,
+                'achieved_leads' => $demosScheduled,
+                'demos_scheduled' => $demosScheduled,
+                'demo_target' => $demoTarget,
+                'achievement_pct' => $demoTarget > 0
+                    ? round(($demosScheduled / $demoTarget) * 100, 1)
+                    : ($demosScheduled > 0 ? 100.0 : 0.0),
+                'total_followups' => (int) ($completedFollowupsByEmployee[$employeeId] ?? 0),
+                'completed_followups' => (int) ($completedFollowupsByEmployee[$employeeId] ?? 0),
+                'overdue_followups' => (int) ($overdueByEmployee[$employeeId] ?? 0),
+                'demo_followups' => $demosScheduled,
+            ];
+        })
+            ->sortByDesc('demos_scheduled')
             ->values()
             ->all();
 
         $summary = [
             'active_employees' => count($rows),
             'total_assigned_leads' => array_sum(array_column($rows, 'assigned_leads')),
+            'total_demos_scheduled' => array_sum(array_column($rows, 'demos_scheduled')),
+            'total_demo_target' => array_sum(array_column($rows, 'demo_target')),
             'avg_achievement_pct' => count($rows)
                 ? round(array_sum(array_column($rows, 'achievement_pct')) / count($rows), 1)
                 : 0,
@@ -368,19 +432,140 @@ class ReportsService
             'slug' => 'employee_performance',
             'label' => config('reports.reports.employee_performance.label'),
             'summary' => $summary,
-            'columns' => [
-                'employee_name' => 'Employee',
-                'city' => 'City',
-                'assigned_leads' => 'Assigned',
-                'achieved_leads' => 'Achieved',
-                'target_leads' => 'Target',
-                'achievement_pct' => 'Achievement %',
-                'completed_followups' => 'Completed Follow-ups',
-                'overdue_followups' => 'Overdue',
-                'demo_followups' => 'Demos',
-            ],
+            'columns' => $this->employeePerformanceColumns(),
             'rows' => $rows,
         ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function employeePerformanceColumns(): array
+    {
+        return [
+            'employee_name' => 'Employee',
+            'city' => 'City',
+            'demos_scheduled' => 'Demos Scheduled',
+            'demo_target' => 'Demo Target',
+            'achievement_pct' => 'Achievement %',
+            'assigned_leads' => 'Leads Assigned',
+            'completed_followups' => 'Completed Follow-ups',
+            'overdue_followups' => 'Overdue',
+        ];
+    }
+
+    /**
+     * @param  list<int>  $employeeIds
+     * @return array<int, int>
+     */
+    private function demoTargetsInRangeForEmployees(array $employeeIds, string $fromDate, string $toDate): array
+    {
+        $totals = array_fill_keys($employeeIds, 0);
+
+        $calendarDays = EmployeeCalendarDay::query()
+            ->whereIn('employee_id', $employeeIds)
+            ->where('day_type', EmployeeCalendarDay::TYPE_WORKING)
+            ->whereDate('calendar_date', '>=', $fromDate)
+            ->whereDate('calendar_date', '<=', $toDate)
+            ->get(['employee_id', 'calendar_date', 'demo_target']);
+
+        $overrides = DailyEmployeeTarget::query()
+            ->whereIn('employee_id', $employeeIds)
+            ->whereDate('target_date', '>=', $fromDate)
+            ->whereDate('target_date', '<=', $toDate)
+            ->get(['employee_id', 'target_date', 'demo_target']);
+
+        $overrideMap = [];
+        foreach ($overrides as $override) {
+            $dateString = $override->target_date instanceof Carbon
+                ? $override->target_date->toDateString()
+                : (string) $override->target_date;
+            $overrideMap[(int) $override->employee_id.'|'.$dateString] = (int) $override->demo_target;
+        }
+
+        $employeesWithCalendar = [];
+        foreach ($calendarDays as $day) {
+            $employeeId = (int) $day->employee_id;
+            $employeesWithCalendar[$employeeId] = true;
+            $dateString = $day->calendar_date instanceof Carbon
+                ? $day->calendar_date->toDateString()
+                : (string) $day->calendar_date;
+            $key = $employeeId.'|'.$dateString;
+            $totals[$employeeId] += (int) ($overrideMap[$key] ?? $day->demo_target);
+        }
+
+        foreach ($employeeIds as $employeeId) {
+            if (! empty($employeesWithCalendar[$employeeId])) {
+                continue;
+            }
+
+            $totals[$employeeId] = (int) DailyEmployeeTarget::query()
+                ->where('employee_id', $employeeId)
+                ->whereDate('target_date', '>=', $fromDate)
+                ->whereDate('target_date', '<=', $toDate)
+                ->sum('demo_target');
+        }
+
+        $yearlyTargets = YearlyEmployeeTarget::query()
+            ->whereIn('employee_id', $employeeIds)
+            ->whereBetween('target_year', [
+                (int) Carbon::parse($fromDate)->year,
+                (int) Carbon::parse($toDate)->year,
+            ])
+            ->get()
+            ->groupBy('employee_id');
+
+        foreach ($employeeIds as $employeeId) {
+            if (($totals[$employeeId] ?? 0) > 0) {
+                continue;
+            }
+
+            $yearly = $this->resolveYearlyDemoTargetForRange($yearlyTargets->get($employeeId), $fromDate, $toDate);
+            if (! $yearly) {
+                continue;
+            }
+
+            $workingDays = ! empty($employeesWithCalendar[$employeeId])
+                ? $calendarDays->where('employee_id', $employeeId)->count()
+                : $this->countStandardWorkingDaysInRange($fromDate, $toDate);
+
+            if ($workingDays > 0) {
+                $totals[$employeeId] = (int) $yearly->demo_target * $workingDays;
+            }
+        }
+
+        return $totals;
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, YearlyEmployeeTarget>|null  $targets
+     */
+    private function resolveYearlyDemoTargetForRange($targets, string $fromDate, string $toDate): ?YearlyEmployeeTarget
+    {
+        if (! $targets || $targets->isEmpty()) {
+            return null;
+        }
+
+        $fromYear = (int) Carbon::parse($fromDate)->year;
+        $toYear = (int) Carbon::parse($toDate)->year;
+
+        return $targets->first(function (YearlyEmployeeTarget $target) use ($fromYear, $toYear) {
+            $year = (int) $target->target_year;
+
+            return $year >= $fromYear && $year <= $toYear && (int) $target->demo_target > 0;
+        });
+    }
+
+    private function countStandardWorkingDaysInRange(string $fromDate, string $toDate): int
+    {
+        $count = 0;
+        foreach (\Carbon\CarbonPeriod::create($fromDate, $toDate) as $date) {
+            if (! $date->isSunday()) {
+                $count++;
+            }
+        }
+
+        return $count;
     }
 
     private function followupPerformance(array $filters): array

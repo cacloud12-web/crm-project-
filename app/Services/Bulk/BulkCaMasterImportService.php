@@ -309,8 +309,8 @@ class BulkCaMasterImportService
             $evaluation = $this->recountEvaluation($evaluation);
         } else {
             $mappedRows = $this->mappingService->applyMapping($session['rows'], $mapping, $session['headers'] ?? []);
-            $validateMobile = $this->mappingService->mobileMappingIsActive($session['headers'] ?? [], $mapping);
-            $validateAlternateMobile = $this->mappingService->alternateMobileMappingIsActive($session['headers'] ?? [], $mapping);
+        $validateMobile = $this->mappingService->mobileMappingIsActive($session['headers'] ?? [], $mapping);
+        $validateAlternateMobile = $this->mappingService->alternateMobileMappingIsActive($session['headers'] ?? [], $mapping);
             $evaluation = $this->evaluateRows(
                 $mappedRows,
                 $validateMobile,
@@ -361,7 +361,7 @@ class BulkCaMasterImportService
                 // Runs after the HTTP response — works without queue:work.
                 ProcessBulkCaMasterImportJob::dispatchAfterResponse($bulkAction->bulk_action_id);
             } else {
-                ProcessBulkCaMasterImportJob::dispatch($bulkAction->bulk_action_id);
+            ProcessBulkCaMasterImportJob::dispatch($bulkAction->bulk_action_id);
                 $this->kickBulkImportQueueWorker();
             }
 
@@ -488,7 +488,7 @@ class BulkCaMasterImportService
                 $this->dispatchImportContinuation($bulkActionId);
             }
         } else {
-            Cache::forget($this->queuedImportKey($bulkActionId));
+        Cache::forget($this->queuedImportKey($bulkActionId));
             $this->forgetImportJobState($bulkActionId);
         }
 
@@ -688,8 +688,8 @@ class BulkCaMasterImportService
                     break 2;
                 }
 
-                $rowNumber = $result['row_number'];
-                $status = $result['status'];
+            $rowNumber = $result['row_number'];
+            $status = $result['status'];
                 $action = strtolower((string) ($result['action'] ?? 'skip'));
                 $processed++;
                 $sinceProgress++;
@@ -771,44 +771,44 @@ class BulkCaMasterImportService
                         $dbWriteStartedAt = microtime(true);
                     }
                     $insertResult = $this->insertValidatedRow($result['data'], $bulkAction->bulk_action_id, true);
-                    if ($insertResult['status'] === 'inserted') {
+                if ($insertResult['status'] === 'inserted') {
                         $madeWrites = true;
-                        $inserted++;
+                    $inserted++;
                         if ($status === 'landline' || ($result['phone_category'] ?? '') === 'landline') {
                             $landlineImported++;
                         }
-                        $this->logRow($bulkAction->bulk_action_id, $rowNumber, 'Success', null);
+                    $this->logRow($bulkAction->bulk_action_id, $rowNumber, 'Success', null);
                         $flushProgress();
 
-                        continue;
-                    }
-
-                    $status = $insertResult['status'];
-                    $result['errors'] = [$insertResult['message']];
-                    $result['error_codes'] = [$insertResult['code']];
+                    continue;
                 }
 
-                match ($status) {
-                    'duplicate' => $duplicate++,
+                $status = $insertResult['status'];
+                $result['errors'] = [$insertResult['message']];
+                $result['error_codes'] = [$insertResult['code']];
+            }
+
+            match ($status) {
+                'duplicate' => $duplicate++,
                     'invalid', 'failed' => $failed++,
-                    default => $skipped++,
-                };
+                default => $skipped++,
+            };
 
-                $message = implode('; ', $result['errors'] ?? []);
-                $errors[] = [
-                    'row' => $rowNumber,
-                    'status' => $status,
-                    'code' => $result['error_codes'][0] ?? $status,
-                    'message' => $message,
-                ];
+            $message = implode('; ', $result['errors'] ?? []);
+            $errors[] = [
+                'row' => $rowNumber,
+                'status' => $status,
+                'code' => $result['error_codes'][0] ?? $status,
+                'message' => $message,
+            ];
 
-                $this->logRow(
-                    $bulkAction->bulk_action_id,
-                    $rowNumber,
-                    $this->logStatusLabel($status === 'duplicate' ? 'duplicate' : 'failed'),
-                    $message ?: null,
-                    $result['data'] ?? null,
-                );
+            $this->logRow(
+                $bulkAction->bulk_action_id,
+                $rowNumber,
+                $this->logStatusLabel($status === 'duplicate' ? 'duplicate' : 'failed'),
+                $message ?: null,
+                $result['data'] ?? null,
+            );
                 $flushProgress();
             }
             $this->flushBulkActionLogs();
@@ -900,14 +900,14 @@ class BulkCaMasterImportService
         );
 
         try {
-            $this->notificationService->importCompleted(
-                $bulkAction->file_name ?: 'Import',
-                $inserted,
-                $failed,
-                $session['total_rows'],
-                $bulkAction->bulk_action_id,
-                $bulkAction->imported_by,
-            );
+        $this->notificationService->importCompleted(
+            $bulkAction->file_name ?: 'Import',
+            $inserted,
+            $failed,
+            $session['total_rows'],
+            $bulkAction->bulk_action_id,
+            $bulkAction->imported_by,
+        );
         } catch (\Throwable $e) {
             report($e);
         }
@@ -994,7 +994,7 @@ class BulkCaMasterImportService
         try {
             foreach (array_chunk($mappedRows, self::CHUNK_SIZE, true) as $chunk) {
                 foreach ($chunk as $index => $row) {
-                    $rowNumber = $index + 2;
+            $rowNumber = $index + 2;
                     $result = $this->validateMappedRow(
                         $row,
                         $seenMobiles,
@@ -1004,8 +1004,8 @@ class BulkCaMasterImportService
                         $validateMobile,
                         $validateAlternateMobile,
                     );
-                    $result['row_number'] = $rowNumber;
-                    $result['data'] = $row;
+            $result['row_number'] = $rowNumber;
+            $result['data'] = $row;
                     $result['action'] = $result['status'] === 'duplicate' ? 'skip' : 'import';
 
                     if ($result['status'] === 'duplicate') {
@@ -1076,7 +1076,7 @@ class BulkCaMasterImportService
         if ($validateMobile && $this->hasValue($data['mobile_no'] ?? null)) {
             $phoneError = $this->phoneClassification->validateForSave($data['mobile_no'], 'mobile_no');
             if ($phoneError) {
-                return [
+            return [
                     'status' => 'invalid',
                     'errors' => ['validation_error: mobile_no — '.$phoneError],
                     'error_codes' => ['validation_error'],
@@ -1088,7 +1088,7 @@ class BulkCaMasterImportService
         if ($validateAlternateMobile && $this->hasValue($data['alternate_mobile_no'] ?? null)) {
             $altError = $this->phoneClassification->validateForSave($data['alternate_mobile_no'], 'alternate_mobile_no');
             if ($altError) {
-                return [
+            return [
                     'status' => 'invalid',
                     'errors' => ['validation_error: alternate_mobile_no — '.$altError],
                     'error_codes' => ['validation_error'],
@@ -1535,8 +1535,8 @@ class BulkCaMasterImportService
                 'city_key' => $cityKey,
                 'identity_key' => $this->identityCompositeKey($firmNameKey, $caNameKey, $cityKey),
             ]);
-            if ($dbDuplicate) {
-                return $this->duplicateResult($dbDuplicate['code'], $dbDuplicate['message']);
+        if ($dbDuplicate) {
+            return $this->duplicateResult($dbDuplicate['code'], $dbDuplicate['message']);
             }
         }
 
@@ -2198,7 +2198,7 @@ class BulkCaMasterImportService
 
         $payload = [
             'ca_name' => $this->hasValue($data['ca_name'] ?? null) ? trim((string) $data['ca_name']) : '',
-            'firm_name' => trim($data['firm_name']),
+                'firm_name' => trim($data['firm_name']),
             'membership_no' => $this->normalizeOptionalCode($data['membership_no'] ?? null),
             'frn' => $this->normalizeOptionalCode($data['frn'] ?? null),
             'address' => $this->normalizeOptionalCode($data['address'] ?? null),
@@ -2208,15 +2208,15 @@ class BulkCaMasterImportService
             'email_id' => $this->normalizeEmail($data['email_id'] ?? null),
             'sales_remarks' => $this->normalizeSalesRemarks($data['sales_remarks'] ?? null),
             'gst_no' => $this->normalizeGst($data['gst_no'] ?? null),
-            'team_size' => $data['team_size'] ?? null,
-            'team_size_id' => $teamSizeId,
-            'existing_software' => $data['existing_software'] ?? null,
-            'website' => $data['website'] ?? null,
-            'rating' => $data['rating'] ?? 1,
+                'team_size' => $data['team_size'] ?? null,
+                'team_size_id' => $teamSizeId,
+                'existing_software' => $data['existing_software'] ?? null,
+                'website' => $data['website'] ?? null,
+                'rating' => $data['rating'] ?? 1,
             'status' => $data['status'] ?? 'New',
-            'state_id' => $stateId,
-            'city_id' => $cityId,
-            'source_id' => $sourceId,
+                'state_id' => $stateId,
+                'city_id' => $cityId,
+                'source_id' => $sourceId,
         ];
 
         if ($this->hasValue($cityRaw) && Schema::hasColumn('ca_masters', 'ocr_city_text')) {

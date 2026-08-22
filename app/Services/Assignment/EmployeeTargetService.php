@@ -268,4 +268,143 @@ class EmployeeTargetService
             ];
         }, $defs);
     }
+
+    /**
+     * Demo schedule progress from when a demo target was assigned until today.
+     *
+     * @return array{target_demos: int, completed_demos: int, assigned_from: ?string}
+     */
+    public function demoProgressSinceAssignment(int $employeeId, ?int $year = null): array
+    {
+        $results = $this->demoProgressSinceAssignmentForEmployees([$employeeId], $year);
+
+        return $results[$employeeId] ?? [
+            'target_demos' => 0,
+            'completed_demos' => 0,
+            'assigned_from' => null,
+        ];
+    }
+
+    /**
+     * @param  list<int>  $employeeIds
+     * @return array<int, array{target_demos: int, completed_demos: int, assigned_from: ?string}>
+     */
+    public function demoProgressSinceAssignmentForEmployees(array $employeeIds, ?int $year = null): array
+    {
+        $year = $year ?? (int) now()->year;
+        $today = now()->toDateString();
+        $ids = array_values(array_unique(array_map('intval', $employeeIds)));
+
+        if ($ids === []) {
+            return [];
+        }
+
+        $yearlyTargets = YearlyEmployeeTarget::query()
+            ->whereIn('employee_id', $ids)
+            ->where('target_year', $year)
+            ->get()
+            ->keyBy('employee_id');
+
+        $calendarDaysByEmployee = EmployeeCalendarDay::query()
+            ->whereIn('employee_id', $ids)
+            ->where('day_type', EmployeeCalendarDay::TYPE_WORKING)
+            ->whereYear('calendar_date', $year)
+            ->whereDate('calendar_date', '<=', $today)
+            ->orderBy('calendar_date')
+            ->get(['employee_id', 'calendar_date', 'demo_target'])
+            ->groupBy('employee_id');
+
+        $dailyOverridesByEmployee = DailyEmployeeTarget::query()
+            ->whereIn('employee_id', $ids)
+            ->whereYear('target_date', $year)
+            ->whereDate('target_date', '<=', $today)
+            ->get(['employee_id', 'target_date', 'demo_target'])
+            ->groupBy('employee_id');
+
+        $firstDailyByEmployee = DailyEmployeeTarget::query()
+            ->whereIn('employee_id', $ids)
+            ->where('demo_target', '>', 0)
+            ->whereYear('target_date', $year)
+            ->orderBy('target_date')
+            ->get()
+            ->groupBy('employee_id')
+            ->map(fn ($rows) => $rows->first());
+
+        $yearStart = Carbon::create($year, 1, 1)->startOfDay();
+        $demos = DemoSchedule::query()
+            ->whereIn('employee_id', $ids)
+            ->where('created_at', '>=', $yearStart)
+            ->whereNotIn('status', [DemoSchedule::STATUS_CANCELLED])
+            ->get(['employee_id', 'created_at']);
+
+        $results = [];
+        foreach ($ids as $employeeId) {
+            $yearly = $yearlyTargets->get($employeeId);
+            $assignedFrom = null;
+            $targetTotal = 0;
+
+            if ($yearly && (int) $yearly->demo_target > 0) {
+                $assignedFrom = $yearly->created_at?->toDateString() ?? Carbon::create($year, 1, 1)->toDateString();
+                $assignedFrom = max($assignedFrom, Carbon::create($year, 1, 1)->toDateString());
+
+                $overrides = ($dailyOverridesByEmployee->get($employeeId) ?? collect())
+                    ->mapWithKeys(fn (DailyEmployeeTarget $row) => [
+                        $row->target_date instanceof Carbon
+                            ? $row->target_date->toDateString()
+                            : (string) $row->target_date => (int) $row->demo_target,
+                    ]);
+
+                foreach ($calendarDaysByEmployee->get($employeeId) ?? [] as $day) {
+                    $dateString = $day->calendar_date instanceof Carbon
+                        ? $day->calendar_date->toDateString()
+                        : (string) $day->calendar_date;
+                    if ($dateString < $assignedFrom) {
+                        continue;
+                    }
+                    $targetTotal += (int) ($overrides[$dateString] ?? $day->demo_target);
+                }
+
+                if ($targetTotal === 0) {
+                    $elapsedWorkingDays = ($calendarDaysByEmployee->get($employeeId) ?? collect())
+                        ->filter(function ($day) use ($assignedFrom) {
+                            $dateString = $day->calendar_date instanceof Carbon
+                                ? $day->calendar_date->toDateString()
+                                : (string) $day->calendar_date;
+
+                            return $dateString >= $assignedFrom;
+                        })
+                        ->count();
+                    $targetTotal = (int) $yearly->demo_target * max(0, $elapsedWorkingDays);
+                }
+            } else {
+                $firstDaily = $firstDailyByEmployee->get($employeeId);
+                if ($firstDaily) {
+                    $assignedFrom = $firstDaily->target_date instanceof Carbon
+                        ? $firstDaily->target_date->toDateString()
+                        : (string) $firstDaily->target_date;
+                    $targetTotal = (int) DailyEmployeeTarget::query()
+                        ->where('employee_id', $employeeId)
+                        ->whereDate('target_date', '>=', $assignedFrom)
+                        ->whereDate('target_date', '<=', $today)
+                        ->sum('demo_target');
+                }
+            }
+
+            $completedTotal = 0;
+            if ($assignedFrom) {
+                $completedTotal = $demos
+                    ->filter(fn (DemoSchedule $demo) => (int) $demo->employee_id === $employeeId
+                        && $demo->created_at->toDateString() >= $assignedFrom)
+                    ->count();
+            }
+
+            $results[$employeeId] = [
+                'target_demos' => $targetTotal,
+                'completed_demos' => $completedTotal,
+                'assigned_from' => $assignedFrom,
+            ];
+        }
+
+        return $results;
+    }
 }

@@ -165,4 +165,30 @@ class DemoCalendarTest extends TestCase
         $this->assertFalse($response['available']);
         $this->assertSame('Demo start time must be 10:00 AM or later.', $response['conflict']['message'] ?? null);
     }
+
+    public function test_demo_provider_can_be_deleted_from_settings(): void
+    {
+        $this->actingAsAdmin();
+
+        $provider = DemoProvider::query()->create([
+            'name' => 'Delete Me '.random_int(100, 999),
+            'default_meeting_link' => 'https://meet.google.com/test-delete',
+            'slot_duration_minutes' => 60,
+            'buffer_minutes' => 15,
+            'max_demos_per_day' => 6,
+            'work_start_time' => '10:00:00',
+            'work_end_time' => '18:00:00',
+            'break_start_time' => '13:00:00',
+            'break_end_time' => '14:00:00',
+            'working_days' => [1, 2, 3, 4, 5, 6],
+            'is_active' => true,
+            'sort_order' => 999,
+        ]);
+
+        $this->deleteJson('/demo-calendar/providers/'.$provider->id)
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertDatabaseMissing('demo_providers', ['id' => $provider->id]);
+    }
 }

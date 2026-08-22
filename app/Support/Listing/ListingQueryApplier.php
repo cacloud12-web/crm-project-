@@ -335,9 +335,27 @@ class ListingQueryApplier
             return;
         }
 
-        $query->whereHas('leadAssignments', function (Builder $q) use ($date) {
-            $q->where('status', 'Active')->whereDate('assigned_date', $date);
-        });
+        // If EmployeeDataScopeService already added a whereHas on leadAssignments,
+        // add the date condition to the existing clause instead of a second subquery.
+        $existingWheres = $query->getQuery()->wheres ?? [];
+        $merged = false;
+        foreach ($existingWheres as &$where) {
+            if (($where['type'] ?? '') === 'Exists' && isset($where['query'])) {
+                $sql = $where['query']->toSql();
+                if (str_contains($sql, 'lead_assignment_engines') && str_contains($sql, 'status')) {
+                    $where['query']->whereDate('assigned_date', $date);
+                    $merged = true;
+                    break;
+                }
+            }
+        }
+        unset($where);
+
+        if (! $merged) {
+            $query->whereHas('leadAssignments', function (Builder $q) use ($date) {
+                $q->where('status', 'Active')->whereDate('assigned_date', $date);
+            });
+        }
     }
 
     private static function applyTeamSizeSearch(Builder $query, mixed $value): void

@@ -134,7 +134,20 @@ class CaMasterResource extends JsonResource
                 ->all();
         }
 
-        self::$lastActivityByCaId = app(LeadActivityTimelineService::class)->summariesForCaIds($caIds);
+        // Use denormalized last_activity_at column when available to skip expensive 12-table UNION
+        $hasLastActivityCol = $first && is_object($first) && isset($first->last_activity_at);
+        if ($hasLastActivityCol) {
+            self::$lastActivityByCaId = $collection
+                ->mapWithKeys(function ($lead) {
+                    $caId = (int) (is_array($lead) ? ($lead['ca_id'] ?? 0) : $lead->ca_id);
+                    $ts = is_array($lead) ? ($lead['last_activity_at'] ?? null) : $lead->last_activity_at;
+
+                    return [$caId => $ts ? ['occurred_at' => (string) $ts, 'label' => 'Activity', 'icon' => 'activity'] : null];
+                })
+                ->all();
+        } else {
+            self::$lastActivityByCaId = app(LeadActivityTimelineService::class)->summariesForCaIds($caIds);
+        }
 
         $needsOcrGeo = $collection
             ->filter(function ($lead) {

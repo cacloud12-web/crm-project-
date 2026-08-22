@@ -174,6 +174,13 @@ class DemoCalendarController extends Controller
         return ApiResponse::success(new DemoProviderResource($provider), 'Demo provider created', 201);
     }
 
+    public function deleteProvider(int $providerId): JsonResponse
+    {
+        $this->providerService->delete($this->providerService->find($providerId));
+
+        return ApiResponse::success(null, 'Demo provider deleted');
+    }
+
     /**
      * @return array<string, mixed>
      */

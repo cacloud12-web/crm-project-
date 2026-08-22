@@ -44,6 +44,11 @@ class DemoProviderService
         return $provider->fresh('leaves');
     }
 
+    public function delete(DemoProvider $provider): void
+    {
+        $provider->delete();
+    }
+
     /**
      * @param  list<array{leave_date: string, reason?: string|null}>  $leaves
      */

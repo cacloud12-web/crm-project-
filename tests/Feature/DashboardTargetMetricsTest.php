@@ -154,4 +154,46 @@ class DashboardTargetMetricsTest extends TestCase
 
         $this->assertSame($before, $after);
     }
+
+    public function test_team_summary_leaderboard_uses_demo_target_progress_since_assignment(): void
+    {
+        $employee = CrmTestAccounts::employee();
+        $admin = CrmTestAccounts::admin();
+        $year = (int) now()->year;
+
+        $yearly = YearlyEmployeeTarget::query()->updateOrCreate(
+            ['employee_id' => $employee->employee_id, 'target_year' => $year],
+            [
+                'lead_target' => 2,
+                'call_target' => 5,
+                'demo_target' => 2,
+                'followup_target' => 3,
+                'annual_leave_allowance' => 12,
+            ],
+        );
+
+        app(EmployeeCalendarService::class)->regenerateForTarget($yearly);
+
+        DemoSchedule::query()->create([
+            'ca_id' => \App\Models\CaMaster::query()->value('ca_id'),
+            'employee_id' => $employee->employee_id,
+            'demo_at' => now()->addDay(),
+            'meeting_link' => 'https://meet.example.com/leaderboard-test',
+            'status' => DemoSchedule::STATUS_SCHEDULED,
+            'firm_name' => 'Leaderboard Firm',
+            'customer_name' => 'Leaderboard CA',
+        ]);
+
+        app(CrmCacheService::class)->forgetDashboardMetrics();
+
+        $this->actingAs($admin);
+        $response = $this->getJson('/dashboard/metrics')->assertOk();
+        $team = collect($response->json('data.team_summary') ?? []);
+        $row = $team->firstWhere('employee_id', $employee->employee_id);
+
+        $this->assertNotNull($row);
+        $this->assertGreaterThan(0, (int) ($row['target_demos'] ?? 0));
+        $this->assertGreaterThanOrEqual(1, (int) ($row['achieved_demos'] ?? 0));
+        $this->assertNotNull($row['demo_target_assigned_from'] ?? null);
+    }
 }

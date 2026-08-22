@@ -15,6 +15,7 @@ Route::middleware(['auth', 'rbac'])->group(function () {
     Route::get('demo-calendar/providers/settings', [DemoCalendarController::class, 'providerSettings']);
     Route::post('demo-calendar/providers', [DemoCalendarController::class, 'createProvider']);
     Route::put('demo-calendar/providers/{providerId}', [DemoCalendarController::class, 'updateProvider']);
+    Route::delete('demo-calendar/providers/{providerId}', [DemoCalendarController::class, 'deleteProvider']);
 
     Route::patch('demo-calendar/schedules/{demoSchedule}/reschedule', [DemoCalendarController::class, 'reschedule'])
         ->middleware('throttle:follow-up');

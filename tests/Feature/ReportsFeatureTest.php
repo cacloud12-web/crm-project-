@@ -77,6 +77,49 @@ class ReportsFeatureTest extends TestCase
         }
     }
 
+    public function test_employee_performance_uses_demo_activity_in_date_range(): void
+    {
+        $employee = CrmTestAccounts::employee();
+        $admin = CrmTestAccounts::admin();
+        $year = (int) now()->year;
+
+        $yearly = \App\Models\YearlyEmployeeTarget::query()->updateOrCreate(
+            ['employee_id' => $employee->employee_id, 'target_year' => $year],
+            [
+                'lead_target' => 2,
+                'call_target' => 5,
+                'demo_target' => 3,
+                'followup_target' => 3,
+                'annual_leave_allowance' => 12,
+            ],
+        );
+
+        app(\App\Services\Assignment\EmployeeCalendarService::class)->regenerateForTarget($yearly);
+
+        \App\Models\DemoSchedule::query()->create([
+            'ca_id' => \App\Models\CaMaster::query()->value('ca_id'),
+            'employee_id' => $employee->employee_id,
+            'demo_at' => now()->addDay(),
+            'meeting_link' => 'https://meet.example.com/report-test',
+            'status' => \App\Models\DemoSchedule::STATUS_SCHEDULED,
+            'firm_name' => 'Report Firm',
+            'customer_name' => 'Report CA',
+        ]);
+
+        $this->actingAs($admin);
+        $from = now()->subDays(7)->toDateString();
+        $to = now()->toDateString();
+
+        $response = $this->getJson('/reports/employee_performance?from='.$from.'&to='.$to)->assertOk();
+        $rows = collect($response->json('data.rows') ?? []);
+        $row = $rows->firstWhere('employee_id', $employee->employee_id);
+
+        $this->assertNotNull($row);
+        $this->assertGreaterThanOrEqual(1, (int) ($row['demos_scheduled'] ?? 0));
+        $this->assertGreaterThan(0, (int) ($row['demo_target'] ?? 0));
+        $this->assertGreaterThan(0, (float) ($row['achievement_pct'] ?? 0));
+    }
+
     public function test_unknown_report_slug_returns_404(): void
     {
         $this->actingAs($this->admin());

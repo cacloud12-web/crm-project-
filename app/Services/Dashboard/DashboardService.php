@@ -662,8 +662,18 @@ class DashboardService
      */
     private function teamSummary(): array
     {
+        $employees = Employee::query()
+            ->with('city:city_id,city_name')
+            ->where('status', 'Active')
+            ->orderBy('name')
+            ->get(['employee_id', 'name', 'city_id']);
+
+        $employeeIds = $employees->pluck('employee_id')->map(fn ($id) => (int) $id)->all();
+        $demoProgress = $this->employeeTargetService->demoProgressSinceAssignmentForEmployees($employeeIds);
+
         $assignmentCounts = LeadAssignmentEngine::query()
             ->join('ca_masters', 'ca_masters.ca_id', '=', 'lead_assignment_engines.ca_id')
+            ->whereIn('lead_assignment_engines.employee_id', $employeeIds)
             ->where('lead_assignment_engines.status', 'Active')
             ->where(function ($q) {
                 $q->whereNull('ca_masters.mobile_no_type')
@@ -674,23 +684,27 @@ class DashboardService
             ->groupBy('lead_assignment_engines.employee_id')
             ->pluck('assigned_count', 'employee_id');
 
-        return Employee::query()
-            ->with('city:city_id,city_name')
-            ->where('status', 'Active')
-            ->orderBy('name')
-            ->get(['employee_id', 'name', 'city_id'])
-            ->map(function (Employee $employee) use ($assignmentCounts) {
-                $achieved = (int) ($assignmentCounts->get($employee->employee_id) ?? 0);
-                $target = max(20, $achieved ?: 20);
+        return $employees
+            ->map(function (Employee $employee) use ($demoProgress, $assignmentCounts) {
+                $progress = $demoProgress[(int) $employee->employee_id] ?? [
+                    'target_demos' => 0,
+                    'completed_demos' => 0,
+                    'assigned_from' => null,
+                ];
+                $achievedLeads = (int) ($assignmentCounts->get($employee->employee_id) ?? 0);
+                $targetLeads = max(20, $achievedLeads ?: 20);
 
                 return [
                     'employee_id' => $employee->employee_id,
                     'name' => $employee->name,
                     'city' => $employee->city?->city_name,
-                    'achieved_leads' => $achieved,
-                    'target_leads' => $target,
+                    'achieved_demos' => (int) ($progress['completed_demos'] ?? 0),
+                    'target_demos' => (int) ($progress['target_demos'] ?? 0),
+                    'demo_target_assigned_from' => $progress['assigned_from'] ?? null,
+                    'achieved_leads' => $achievedLeads,
+                    'target_leads' => $targetLeads,
                     'daily_calls' => 0,
-                    'demos' => 0,
+                    'demos' => (int) ($progress['completed_demos'] ?? 0),
                 ];
             })
             ->all();

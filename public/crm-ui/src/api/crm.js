@@ -5178,10 +5178,12 @@ if (otherInput) {
           employee_id: String(employee.employee_id),
           name: employee.name || '—',
           city: employee.city || '—',
+          achieved_demos: employee.achieved_demos != null ? employee.achieved_demos : 0,
+          target_demos: employee.target_demos != null ? employee.target_demos : 0,
           achieved_leads: employee.achieved_leads || 0,
           target_leads: employee.target_leads || 20,
           daily_calls: employee.daily_calls || 0,
-          demos: employee.demos || 0,
+          demos: employee.demos != null ? employee.demos : (employee.achieved_demos || 0),
         };
       });
     }
@@ -9996,7 +9998,7 @@ if (otherInput) {
   }
 
   function renderLeadsHub() {
-    return ensureLeadsHubData(function () {
+    var doRender = function () {
       var page = document.getElementById('leads-hub');
       if (page) {
         bindCaMasterColumnsUi(page);
@@ -10005,7 +10007,7 @@ if (otherInput) {
       }
       ensureSalesRemarksUiBound();
       ensureLeadContactInlineUiBound();
-    ensureFollowupInlineUiBound();
+      ensureFollowupInlineUiBound();
       renderLeadKpis();
       bindLeadsColumnFilters();
       ensureEmployeeTodayAssignedDateFilter();
@@ -10042,7 +10044,18 @@ if (otherInput) {
       }
       renderLeadsTable();
       finishHub();
-    });
+    };
+
+    // Employees: render table immediately, load segment-counts in background
+    if (isEmployeeUser()) {
+      if (!leadSegmentCountsLoaded) {
+        loadLeadSegmentCounts(function () { renderLeadKpis(); }).catch(function () {});
+      }
+      doRender();
+      return Promise.resolve();
+    }
+
+    return ensureLeadsHubData(doRender);
   }
 
   function renderLeadsTable(pageLeads) {
@@ -16574,7 +16587,9 @@ if (otherInput) {
     var el = document.getElementById('leaderboard');
     if (!el) return;
     var execs = getDashboardExecutives().slice().sort(function (a, b) {
-      return (b.achieved_leads || 0) - (a.achieved_leads || 0);
+      var achievedA = Number(a.achieved_demos != null ? a.achieved_demos : a.achieved_leads) || 0;
+      var achievedB = Number(b.achieved_demos != null ? b.achieved_demos : b.achieved_leads) || 0;
+      return achievedB - achievedA;
     });
     if (!execs.length) {
       el.innerHTML = '<h3 class="text-card-heading mb-4 flex items-center gap-2"><i data-lucide="trophy" class="h-5 w-5 text-amber-500"></i> Team Leaderboard</h3>' +
@@ -16585,19 +16600,19 @@ if (otherInput) {
     var badges = ['trophy', 'medal', 'award'];
     el.innerHTML = '<h3 class="text-card-heading mb-4 flex items-center gap-2"><i data-lucide="trophy" class="h-5 w-5 text-amber-500"></i> Team Leaderboard</h3>' +
       execs.map(function (e, i) {
-        var achieved = Number(e.achieved_leads) || 0;
-        var target = Number(e.target_leads) || 0;
+        var achieved = Number(e.achieved_demos != null ? e.achieved_demos : e.achieved_leads) || 0;
+        var target = Number(e.target_demos != null ? e.target_demos : e.target_leads) || 0;
         var pct = target > 0 ? Math.min(100, Math.round((achieved / target) * 100)) : 0;
         var city = (e.city && e.city !== '—') ? e.city : 'No city';
         return '<div class="flex items-center gap-4 p-3 rounded-xl hover:bg-slate-50 cursor-pointer team-row" data-employee-id="' + escapeHtml(String(e.employee_id || '')) + '">' +
           '<div class="flex h-8 w-8 items-center justify-center rounded-full bg-brand-50 text-brand"><i data-lucide="' + (badges[i] || 'user') + '" class="h-4 w-4"></i></div>' +
           '<div class="flex-1 min-w-0">' +
             '<p class="font-semibold truncate">' + escapeHtml(e.name || 'Employee') + '</p>' +
-            '<p class="text-caption text-slate-500">' + escapeHtml(city) + ' · ' + achieved + ' leads</p>' +
+            '<p class="text-caption text-slate-500">' + escapeHtml(city) + ' · ' + achieved + ' demos scheduled</p>' +
           '</div>' +
           '<div class="text-right shrink-0" style="min-width:5.5rem">' +
             '<p class="font-bold text-slate-800">' + achieved + '/' + (target || '—') + '</p>' +
-            '<div class="ca-progress mt-1" title="Target progress"><div class="ca-progress-bar" style="width:' + pct + '%"></div></div>' +
+            '<div class="ca-progress mt-1" title="Demo target progress"><div class="ca-progress-bar" style="width:' + pct + '%"></div></div>' +
             '<p class="text-caption text-emerald-600 mt-0.5">' + pct + '% of target</p>' +
           '</div>' +
         '</div>';
@@ -25873,8 +25888,13 @@ if (otherInput) {
       }
       list.innerHTML = items.map(function (p) {
         return '<article class="demo-provider-settings-card" data-provider-id="' + p.id + '">' +
-          '<div class="demo-provider-settings-card__head"><h4 class="font-semibold">' + escapeHtml(p.name) + '</h4>' +
-          '<span class="badge-' + (p.is_active ? 'success' : 'neutral') + '">' + (p.is_active ? 'Active' : 'Inactive') + '</span></div>' +
+          '<div class="demo-provider-settings-card__head">' +
+            '<h4 class="font-semibold">' + escapeHtml(p.name) + '</h4>' +
+            '<div class="demo-provider-settings-card__head-actions">' +
+              '<span class="badge-' + (p.is_active ? 'success' : 'neutral') + '">' + (p.is_active ? 'Active' : 'Inactive') + '</span>' +
+              iconBtn('trash-2', 'Delete provider', 'data-delete-provider="' + p.id + '"', 'danger') +
+            '</div>' +
+          '</div>' +
           '<div class="grid sm:grid-cols-2 gap-3 mt-3 text-sm">' +
             '<label class="block">Work Start<input class="input-field mt-1" data-field="work_start_time" value="' + escapeHtml(String(p.work_start_time || '10:00:00').slice(0, 5)) + '" /></label>' +
             '<label class="block">Work End<input class="input-field mt-1" data-field="work_end_time" value="' + escapeHtml(String(p.work_end_time || '18:00:00').slice(0, 5)) + '" /></label>' +
@@ -25888,19 +25908,45 @@ if (otherInput) {
           '<button type="button" class="btn-primary btn-sm mt-4" data-save-provider="' + p.id + '">Save Provider</button>' +
         '</article>';
       }).join('');
+      iconsIn(list);
     }
 
-    apiFetch('/demo-calendar/providers/settings')
-      .then(function (body) {
-        var items = body.data || [];
-        if (items.data) items = items.data;
-        renderProviders(Array.isArray(items) ? items : []);
-      })
-      .catch(function () {
-        list.innerHTML = '<p class="text-rose-500">Unable to load demo providers.</p>';
-      });
+    function loadProviders() {
+      return apiFetch('/demo-calendar/providers/settings')
+        .then(function (body) {
+          var items = body.data || [];
+          if (items.data) items = items.data;
+          renderProviders(Array.isArray(items) ? items : []);
+        })
+        .catch(function () {
+          list.innerHTML = '<p class="text-rose-500">Unable to load demo providers.</p>';
+        });
+    }
+
+    loadProviders();
 
     list.addEventListener('click', function (e) {
+      var deleteBtn = e.target.closest('[data-delete-provider]');
+      if (deleteBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        var deleteId = deleteBtn.getAttribute('data-delete-provider');
+        var card = deleteBtn.closest('[data-provider-id]');
+        var providerName = card ? (card.querySelector('h4')?.textContent || 'this provider') : 'this provider';
+        if (!window.confirm('Delete demo provider "' + providerName + '"? This cannot be undone.')) return;
+        deleteBtn.disabled = true;
+        apiFetch('/demo-calendar/providers/' + deleteId, { method: 'DELETE' })
+          .then(function () {
+            toast('Demo provider deleted.', 'success');
+            loadProviders();
+          })
+          .catch(function (err) {
+            toast(err.message || 'Unable to delete provider.', 'error');
+            deleteBtn.disabled = false;
+          });
+        return;
+      }
+
       var btn = e.target.closest('[data-save-provider]');
       if (!btn) return;
       var card = btn.closest('[data-provider-id]');
