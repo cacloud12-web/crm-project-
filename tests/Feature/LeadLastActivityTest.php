@@ -85,8 +85,34 @@ class LeadLastActivityTest extends TestCase
 
         $this->assertNotNull($listed, 'Lead should appear in listing.');
         $this->assertSame('Today', $listed['last_activity']['relative_label'] ?? null);
+        $this->assertSame('today', $listed['last_activity']['age_bucket'] ?? null);
+        $this->assertSame('🟢', $listed['last_activity']['emoji'] ?? null);
         $this->assertNotEmpty($listed['last_activity']['time_label'] ?? null);
         $this->assertNotEmpty($listed['last_activity']['date_label'] ?? null);
+    }
+
+    public function test_ca_master_listing_uses_days_ago_labels_for_older_activity(): void
+    {
+        $this->actingAsAdmin();
+
+        $ts = (string) microtime(true);
+        $lead = CaMaster::query()->create([
+            'ca_name' => 'Older Activity CA '.$ts,
+            'firm_name' => 'Older Activity Firm '.$ts,
+            'mobile_no' => '9'.substr(str_replace('.', '', $ts), -9),
+            'state_id' => CaMaster::query()->value('state_id'),
+            'status' => 'New',
+            'last_activity_at' => now()->subDays(28),
+        ]);
+
+        $listing = $this->getJson('/ca-masters?search='.urlencode('Older Activity Firm '.$ts))->assertOk();
+        $items = $listing->json('data.items') ?? [];
+        $listed = collect($items)->firstWhere('ca_id', $lead->ca_id);
+
+        $this->assertNotNull($listed);
+        $this->assertSame('28 Days Ago', $listed['last_activity']['relative_label'] ?? null);
+        $this->assertSame('old', $listed['last_activity']['age_bucket'] ?? null);
+        $this->assertSame('🔴', $listed['last_activity']['emoji'] ?? null);
     }
 
     public function test_new_lead_falls_back_to_lead_created_activity(): void

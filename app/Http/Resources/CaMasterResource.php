@@ -469,16 +469,7 @@ class CaMasterResource extends JsonResource
         }
 
         $at = \Carbon\Carbon::parse($occurredAt);
-        $now = now();
-        $days = (int) $at->copy()->startOfDay()->diffInDays($now->copy()->startOfDay());
-
-        $relative = match (true) {
-            $days <= 0 => 'Today',
-            $days === 1 => 'Yesterday',
-            $days <= 7 => $days.'d ago',
-            $days <= 30 => (int) ceil($days / 7).'w ago',
-            default => (int) ceil($days / 30).'mo ago',
-        };
+        $age = LeadActivityTimelineService::ageMetaFor($at);
 
         return [
             'occurred_at' => $at->toIso8601String(),
@@ -487,11 +478,11 @@ class CaMasterResource extends JsonResource
             'icon' => 'activity',
             'employee_name' => null,
             'note' => '',
-            'relative_label' => $relative,
+            'relative_label' => $age['relative_label'],
             'time_label' => $at->format('h:i A'),
             'date_label' => $at->format('d M Y'),
-            'age_bucket' => $days <= 0 ? 'today' : ($days === 1 ? 'yesterday' : 'older'),
-            'emoji' => '',
+            'age_bucket' => $age['age_bucket'],
+            'emoji' => $age['emoji'],
         ];
     }
 

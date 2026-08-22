@@ -960,10 +960,13 @@ class LeadActivityTimelineService
     /**
      * @return array{age_bucket: string, relative_label: string, emoji: string}
      */
-    private function resolveAgeMeta(CarbonInterface $occurredAt): array
+    public static function ageMetaFor(mixed $occurredAt): array
     {
+        $at = $occurredAt instanceof CarbonInterface
+            ? $occurredAt
+            : Carbon::parse($occurredAt);
         $now = now();
-        $days = (int) $occurredAt->copy()->startOfDay()->diffInDays($now->copy()->startOfDay());
+        $days = (int) $at->copy()->startOfDay()->diffInDays($now->copy()->startOfDay());
 
         if ($days === 0) {
             return ['age_bucket' => 'today', 'relative_label' => 'Today', 'emoji' => '🟢'];
@@ -986,6 +989,14 @@ class LeadActivityTimelineService
             'relative_label' => $days.' Days Ago',
             'emoji' => '🔴',
         ];
+    }
+
+    /**
+     * @return array{age_bucket: string, relative_label: string, emoji: string}
+     */
+    private function resolveAgeMeta(CarbonInterface $occurredAt): array
+    {
+        return self::ageMetaFor($occurredAt);
     }
 
     private function followUpHistoryLabel(?string $eventType): string
