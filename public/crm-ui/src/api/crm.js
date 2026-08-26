@@ -12741,86 +12741,133 @@ if (otherInput) {
   }
 
   function openFollowupInlineNextDate(btn) {
-    if (btn.querySelector('input')) return;
+    if (btn.querySelector('input') || btn.querySelector('.cam-inline-next-date-edit')) return;
     var followupId = btn.getAttribute('data-followup-inline-next-date');
     var current = btn.getAttribute('data-next-date') || '';
     var original = btn.innerHTML;
     var wrap = document.createElement('span');
-    wrap.className = 'cam-inline-next-date-edit';
-    wrap.innerHTML = '<input type="date" class="input-field input-field-sm cam-inline-next-date-input" value="' + escapeAttr(current) + '" aria-label="Next follow-up date" data-crm-date-input />' +
-      '<button type="button" class="btn-secondary btn-xs" data-followup-next-date-save title="Save"><i data-lucide="check" class="h-3 w-3"></i></button>';
+    wrap.className = 'cam-inline-next-date-edit cam-inline-remarks-edit';
+    wrap.innerHTML =
+      '<input type="date" class="input-field input-field-sm cam-inline-next-date-input" value="' + escapeAttr(current) + '" aria-label="Next follow-up date" data-crm-date-input data-allow-past />' +
+      '<button type="button" class="btn-secondary btn-xs" data-followup-next-date-save>Save</button>';
     btn.innerHTML = '';
     btn.appendChild(wrap);
-    iconsIn(wrap);
-    if (window.CrmDateTimePicker) window.CrmDateTimePicker.syncAll(wrap);
-    var input = wrap.querySelector('input');
-    input.focus();
+    if (window.CrmDateTimePicker) {
+      window.CrmDateTimePicker.initAll(wrap, { force: true });
+      window.CrmDateTimePicker.syncAll(wrap);
+    }
+    var input = wrap.querySelector('input.crm-datetime-source')
+      || wrap.querySelector('input[type="date"]')
+      || wrap.querySelector('input.cam-inline-next-date-input')
+      || wrap.querySelector('input');
     var finished = false;
+    var saving = false;
+
+    function closePicker() {
+      if (window.CrmDateTimePicker && typeof window.CrmDateTimePicker.close === 'function') {
+        window.CrmDateTimePicker.close({ focus: false });
+      }
+    }
+
     function restore() {
       if (finished) return;
       finished = true;
+      closePicker();
       btn.innerHTML = original;
       btn.classList.remove('is-loading');
-      iconsIn(btn);
     }
-    function save() {
-      if (finished) return;
-      var nextDate = String(input.value || '').trim();
+
+    function applySavedFollowup(followup, fallbackIsoDate) {
+      var row = followup ? Object.assign({}, findFollowupInCache(followupId) || {}, followup) : (findFollowupInCache(followupId) || { followup_id: followupId });
+      if ((!row.next_followup_date || row.next_followup_date === '-') && fallbackIsoDate) {
+        row.next_followup_date = fallbackIsoDate;
+      }
+      upsertFollowupInCache(row);
+      updateFollowupTableRow(followupId, row);
+    }
+
+    function readSelectedDate() {
+      if (!input) return '';
+      return String(input.value || '').trim();
+    }
+
+    function save(options) {
+      options = options || {};
+      if (finished || saving) return;
+      var nextDate = readSelectedDate();
       if (!nextDate) {
-        toast('Please select a date.', 'warning');
-        input.focus();
+        if (!options.fromPicker) {
+          toast('Please select a date.', 'warning');
+        }
         return;
       }
-      if (nextDate === current) {
+      if (nextDate === current && !options.force) {
         restore();
         return;
       }
+
+      saving = true;
       finished = true;
+      closePicker();
       btn.classList.add('is-loading');
       apiFetch('/follow-ups/' + encodeURIComponent(followupId) + '/next-date', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ next_followup_date: nextDate, next_followup_time: '10:00', create_reminder: true }),
+        body: JSON.stringify({
+          next_followup_date: nextDate,
+          next_followup_time: '10:00',
+          create_reminder: true,
+        }),
       })
         .then(function (body) {
           var data = body && body.data ? body.data : {};
-          if (data.follow_up) {
-            upsertFollowupInCache(data.follow_up);
-            updateFollowupTableRow(followupId, data.follow_up);
-          }
+          var saved = data.follow_up || null;
+          applySavedFollowup(saved, nextDate + 'T10:00:00');
           if (data.next_follow_up) {
             upsertFollowupInCache(data.next_follow_up);
-            realFollowUpsLoaded = false;
-            if (document.getElementById('followups-data-table')) {
-              reloadListing('follow_ups');
-            }
           }
           toast(body.message || 'Next follow-up date saved.', 'success');
           refreshFollowupsPage({ reload: false, calendar: true, metrics: false, timelineSilent: true });
+          if (document.getElementById('followups-data-table')) {
+            realFollowUpsLoaded = false;
+            reloadListing('follow_ups');
+          }
         })
         .catch(function (err) {
           toast((err && err.message) || 'Unable to save next follow-up date.', 'error');
           finished = false;
+          saving = false;
           btn.classList.remove('is-loading');
           restore();
         });
     }
+
     wrap.querySelector('[data-followup-next-date-save]').addEventListener('click', function (ev) {
       ev.preventDefault();
       ev.stopPropagation();
-      save();
+      save({ force: true });
     });
-    input.addEventListener('keydown', function (ev) {
+
+    // Picker commits the hidden source input + closes itself, then bubbles change — auto-save.
+    wrap.addEventListener('change', function (ev) {
+      if (!ev.target || !ev.target.matches('input')) return;
+      save({ fromPicker: true });
+    });
+
+    wrap.addEventListener('keydown', function (ev) {
       if (ev.key === 'Enter') {
         ev.preventDefault();
-        save();
+        save({ force: true });
       }
       if (ev.key === 'Escape') {
         ev.preventDefault();
         restore();
       }
     });
-    input.addEventListener('click', function (ev) { ev.stopPropagation(); });
+
+    wrap.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+    });
   }
 
   function ensureFollowupInlineUiBound() {
