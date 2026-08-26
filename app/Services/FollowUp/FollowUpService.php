@@ -316,6 +316,31 @@ class FollowUpService
      */
     public function setNextFollowUpDate(FollowUp $followUp, array $data): array
     {
+        $shouldClear = filter_var($data['clear'] ?? false, FILTER_VALIDATE_BOOLEAN)
+            || ! filled($data['next_followup_date'] ?? null);
+
+        if ($shouldClear) {
+            $followUp->update(['next_followup_date' => null]);
+
+            $this->historyService->record(
+                $followUp->ca_id,
+                'Next Follow-up Cleared',
+                $followUp->followup_id,
+                $followUp->employee_id,
+                null,
+                'Next follow-up date cleared',
+                ['next_followup_date' => null],
+            );
+
+            $followUp = $followUp->fresh($this->listingRelations());
+            $this->forgetFollowUpCaches($followUp);
+
+            return [
+                'follow_up' => $followUp,
+                'next_follow_up' => null,
+            ];
+        }
+
         $scheduled = Carbon::parse(
             $data['next_followup_date'].' '.($data['next_followup_time'] ?? '10:00')
         );

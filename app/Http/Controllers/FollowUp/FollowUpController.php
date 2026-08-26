@@ -73,13 +73,17 @@ class FollowUpController extends Controller
     {
         $followUp = $this->followUpService->find($id);
         $result = $this->followUpService->setNextFollowUpDate($followUp, $request->validated());
+        $cleared = ($result['follow_up']->next_followup_date ?? null) === null
+            && ! ($result['next_follow_up'] ?? null);
 
         return ApiResponse::success([
             'follow_up' => new FollowUpResource($result['follow_up']),
             'next_follow_up' => $result['next_follow_up']
                 ? new FollowUpResource($result['next_follow_up'])
                 : null,
-        ], $result['next_follow_up'] ? 'Next follow-up scheduled' : 'Next follow-up date saved');
+        ], $cleared
+            ? 'Next follow-up date cleared'
+            : ($result['next_follow_up'] ? 'Next follow-up scheduled' : 'Next follow-up date saved'));
     }
 
     public function destroy(string $id): JsonResponse

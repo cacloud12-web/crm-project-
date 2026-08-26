@@ -655,4 +655,122 @@ class BulkAssignmentTest extends TestCase
         $this->assertArrayHasKey('city_id', $items[0]);
         $this->assertArrayHasKey('city_name', $items[0]);
     }
+
+    public function test_bulk_assign_skips_already_assigned_leads_without_allow_reassign(): void
+    {
+        $this->actingAsAdmin();
+        $state = State::query()->firstOrFail();
+        $city = City::query()->where('state_id', $state->state_id)->firstOrFail();
+        $employeeA = $this->createEmployee('Owner Exec', $city->city_id);
+        $employeeB = $this->createEmployee('Target Exec', $city->city_id);
+        $owned = $this->createLead($city->city_id, $state->state_id, 'owned');
+        $free = $this->createLead($city->city_id, $state->state_id, 'free');
+
+        LeadAssignmentEngine::query()->create([
+            'ca_id' => $owned->ca_id,
+            'employee_id' => $employeeA->employee_id,
+            'status' => 'Active',
+            'assigned_date' => now()->toDateString(),
+            'assignment_type' => 'Manual',
+            'rotation_logic_used' => 'MANUAL_ASSIGN',
+            'priority_score' => 1,
+            'target_leads' => 0,
+            'achieved_leads' => 0,
+        ]);
+
+        $response = $this->postJson('/lead-assignments/bulk', [
+            'ca_ids' => [$owned->ca_id, $free->ca_id],
+            'employee_ids' => [$employeeB->employee_id],
+            'assignment_mode' => 'manual',
+            'preview' => false,
+        ])->assertOk();
+
+        $this->assertSame(1, (int) $response->json('data.assigned_rows'));
+        $this->assertSame(0, (int) $response->json('data.reassigned_rows'));
+        $this->assertSame(1, (int) $response->json('data.failed_rows'));
+        $this->assertStringContainsString('already-assigned', (string) $response->json('message'));
+
+        $this->assertDatabaseHas('lead_assignment_engines', [
+            'ca_id' => $owned->ca_id,
+            'employee_id' => $employeeA->employee_id,
+            'status' => 'Active',
+        ]);
+        $this->assertDatabaseHas('lead_assignment_engines', [
+            'ca_id' => $free->ca_id,
+            'employee_id' => $employeeB->employee_id,
+            'status' => 'Active',
+        ]);
+    }
+
+    public function test_single_assign_rejects_already_assigned_lead(): void
+    {
+        $this->actingAsAdmin();
+        $state = State::query()->firstOrFail();
+        $city = City::query()->where('state_id', $state->state_id)->firstOrFail();
+        $employeeA = $this->createEmployee('Single Owner', $city->city_id);
+        $employeeB = $this->createEmployee('Single Target', $city->city_id);
+        $lead = $this->createLead($city->city_id, $state->state_id, 'single-owned');
+
+        LeadAssignmentEngine::query()->create([
+            'ca_id' => $lead->ca_id,
+            'employee_id' => $employeeA->employee_id,
+            'status' => 'Active',
+            'assigned_date' => now()->toDateString(),
+            'assignment_type' => 'Manual',
+            'rotation_logic_used' => 'MANUAL_ASSIGN',
+            'priority_score' => 1,
+            'target_leads' => 0,
+            'achieved_leads' => 0,
+        ]);
+
+        $this->postJson('/lead-assignments', [
+            'ca_id' => $lead->ca_id,
+            'employee_id' => $employeeB->employee_id,
+            'assignment_type' => 'Manual',
+            'reason' => 'MANUAL_ASSIGN',
+        ])->assertStatus(422);
+
+        $this->assertDatabaseHas('lead_assignment_engines', [
+            'ca_id' => $lead->ca_id,
+            'employee_id' => $employeeA->employee_id,
+            'status' => 'Active',
+        ]);
+    }
+
+    public function test_bulk_allow_reassign_moves_owned_leads(): void
+    {
+        $this->actingAsAdmin();
+        $state = State::query()->firstOrFail();
+        $city = City::query()->where('state_id', $state->state_id)->firstOrFail();
+        $employeeA = $this->createEmployee('Allow Owner', $city->city_id);
+        $employeeB = $this->createEmployee('Allow Target', $city->city_id);
+        $lead = $this->createLead($city->city_id, $state->state_id, 'allow-re');
+
+        LeadAssignmentEngine::query()->create([
+            'ca_id' => $lead->ca_id,
+            'employee_id' => $employeeA->employee_id,
+            'status' => 'Active',
+            'assigned_date' => now()->toDateString(),
+            'assignment_type' => 'Manual',
+            'rotation_logic_used' => 'MANUAL_ASSIGN',
+            'priority_score' => 1,
+            'target_leads' => 0,
+            'achieved_leads' => 0,
+        ]);
+
+        $this->postJson('/lead-assignments/bulk', [
+            'ca_ids' => [$lead->ca_id],
+            'employee_ids' => [$employeeB->employee_id],
+            'assignment_mode' => 'manual',
+            'allow_reassign' => true,
+            'preview' => false,
+        ])->assertOk()
+            ->assertJsonPath('data.reassigned_rows', 1);
+
+        $this->assertDatabaseHas('lead_assignment_engines', [
+            'ca_id' => $lead->ca_id,
+            'employee_id' => $employeeB->employee_id,
+            'status' => 'Active',
+        ]);
+    }
 }

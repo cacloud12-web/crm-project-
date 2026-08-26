@@ -45,6 +45,7 @@ class BulkAssignmentWriter
         $reassigned = 0;
         $duplicate = 0;
         $affectedEmployeeIds = [];
+        $touchedCaIds = [];
         $now = now();
         $today = $now->toDateString();
         $performer = $this->activityLogService->resolvePerformer(null);
@@ -71,6 +72,7 @@ class BulkAssignmentWriter
             &$activityRows,
             &$employeeNotifications,
             &$affectedEmployeeIds,
+            &$touchedCaIds,
         ) {
             foreach (array_chunk($rows, 200) as $chunk) {
                 foreach ($chunk as $row) {
@@ -118,6 +120,8 @@ class BulkAssignmentWriter
                         $action = 'assigned';
                     }
 
+                    $touchedCaIds[] = $caId;
+
                     $historyRows[] = [
                         'ca_id' => $caId,
                         'previous_employee_id' => $previousEmployeeId,
@@ -163,6 +167,18 @@ class BulkAssignmentWriter
                 if ($activityRows !== []) {
                     ActivityLog::query()->insert($activityRows);
                     $activityRows = [];
+                }
+            }
+
+            $touchedCaIds = array_values(array_unique($touchedCaIds));
+            if (
+                $touchedCaIds !== []
+                && \App\Support\Database\SchemaMemo::hasColumn('ca_masters', 'last_activity_at')
+            ) {
+                foreach (array_chunk($touchedCaIds, 500) as $caChunk) {
+                    CaMaster::query()->whereIn('ca_id', $caChunk)->update([
+                        'last_activity_at' => $now,
+                    ]);
                 }
             }
         });

@@ -1382,7 +1382,7 @@ window.CA_CRM = (function () {
         if (leadSelect) leadSelect.removeAttribute('required');
         if (summary) {
           summary.classList.remove('hidden');
-          summary.textContent = 'Assigning ' + leadIds.length + ' selected leads to one employee.';
+          summary.textContent = 'Assigning ' + leadIds.length + ' selected leads to one employee. Already-assigned leads will be skipped (use Reassign to move them).';
         }
         if (titleText) titleText.textContent = 'Assign ' + leadIds.length + ' Leads';
       } else {
@@ -12778,8 +12778,12 @@ if (otherInput) {
     }
 
     function applySavedFollowup(followup, fallbackIsoDate) {
-      var row = followup ? Object.assign({}, findFollowupInCache(followupId) || {}, followup) : (findFollowupInCache(followupId) || { followup_id: followupId });
-      if ((!row.next_followup_date || row.next_followup_date === '-') && fallbackIsoDate) {
+      var row = followup
+        ? Object.assign({}, findFollowupInCache(followupId) || {}, followup)
+        : (findFollowupInCache(followupId) || { followup_id: followupId });
+      if (fallbackIsoDate === null) {
+        row.next_followup_date = null;
+      } else if ((!row.next_followup_date || row.next_followup_date === '-') && fallbackIsoDate) {
         row.next_followup_date = fallbackIsoDate;
       }
       upsertFollowupInCache(row);
@@ -12795,13 +12799,15 @@ if (otherInput) {
       options = options || {};
       if (finished || saving) return;
       var nextDate = readSelectedDate();
-      if (!nextDate) {
-        if (!options.fromPicker) {
-          toast('Please select a date.', 'warning');
+      var clearing = !nextDate;
+
+      if (clearing) {
+        // Clear with no previous date — just close editor.
+        if (!current) {
+          restore();
+          return;
         }
-        return;
-      }
-      if (nextDate === current && !options.force) {
+      } else if (nextDate === current && !options.force) {
         restore();
         return;
       }
@@ -12813,20 +12819,22 @@ if (otherInput) {
       apiFetch('/follow-ups/' + encodeURIComponent(followupId) + '/next-date', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({
-          next_followup_date: nextDate,
-          next_followup_time: '10:00',
-          create_reminder: true,
-        }),
+        body: JSON.stringify(clearing
+          ? { next_followup_date: null, clear: true, create_reminder: false }
+          : {
+            next_followup_date: nextDate,
+            next_followup_time: '10:00',
+            create_reminder: true,
+          }),
       })
         .then(function (body) {
           var data = body && body.data ? body.data : {};
           var saved = data.follow_up || null;
-          applySavedFollowup(saved, nextDate + 'T10:00:00');
+          applySavedFollowup(saved, clearing ? null : (nextDate + 'T10:00:00'));
           if (data.next_follow_up) {
             upsertFollowupInCache(data.next_follow_up);
           }
-          toast(body.message || 'Next follow-up date saved.', 'success');
+          toast(body.message || (clearing ? 'Next follow-up date cleared.' : 'Next follow-up date saved.'), 'success');
           refreshFollowupsPage({ reload: false, calendar: true, metrics: false, timelineSilent: true });
           if (document.getElementById('followups-data-table')) {
             realFollowUpsLoaded = false;
@@ -12834,7 +12842,7 @@ if (otherInput) {
           }
         })
         .catch(function (err) {
-          toast((err && err.message) || 'Unable to save next follow-up date.', 'error');
+          toast((err && err.message) || (clearing ? 'Unable to clear next follow-up date.' : 'Unable to save next follow-up date.'), 'error');
           finished = false;
           saving = false;
           btn.classList.remove('is-loading');
@@ -14474,8 +14482,15 @@ if (otherInput) {
       var reassignBtn = event.target.closest('[data-team-members-reassign]');
       if (reassignBtn) {
         event.preventDefault();
-        var caId = window._leadTeamMembersCaId;
+        var payload = window._leadTeamMembersPayload || {};
+        var members = payload.members || [];
+        var owner = members.find(function (member) { return member.is_lead_owner; }) || members[0];
         closeModal(document.getElementById('modal-lead-team-members'));
+        if (owner && owner.assignment_id && typeof openAssignmentFormForEdit === 'function') {
+          openAssignmentFormForEdit(owner.assignment_id);
+          return;
+        }
+        var caId = window._leadTeamMembersCaId;
         if (caId) openInboxAssign([caId]);
       }
     });
@@ -16035,6 +16050,10 @@ if (otherInput) {
           var payload = nextId
             ? { ca_id: Number(caId), employee_id: Number(nextId), assignment_type: 'Manual', rotation_logic_used: 'Inline assign from All Firms' }
             : null;
+          if (payload && currentId) {
+            payload.allow_reassign = true;
+            payload.reason = 'Inline reassign from All Firms';
+          }
           var req = nextId
             ? apiFetch('/lead-assignments', { method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'application/json', Accept: 'application/json' } })
             : (currentId
@@ -16059,7 +16078,7 @@ if (otherInput) {
               : Promise.resolve());
           Promise.resolve(req)
             .then(function () {
-              toast(nextId ? 'Employee assigned.' : 'Lead unassigned.', 'success');
+              toast(nextId ? (currentId ? 'Employee reassigned.' : 'Employee assigned.') : 'Lead unassigned.', 'success');
               finished = true;
               refreshDashboardAfterAssignment();
               renderCaMasterTable();
@@ -20555,6 +20574,7 @@ if (otherInput) {
           .then(function (body) {
             var data = body.data || {};
             var affected = (data.assigned_rows || 0) + (data.reassigned_rows || 0);
+            var skipped = data.failed_rows || 0;
             closeModal(document.getElementById('modal-assign-lead'));
             window._editingAssignmentId = null;
             window._inboxBulkLeadIds = null;
@@ -20566,7 +20586,13 @@ if (otherInput) {
             reloadLeadDataAfterMutation({
               cacheKeys: ['metrics', 'leads', 'assignments', 'employee_dashboard'],
             }).then(function () {
-              if (affected !== bulkLeadIds.length) {
+              if (skipped > 0) {
+                toast(
+                  'Assigned ' + affected + ' of ' + bulkLeadIds.length +
+                  ' selected leads. ' + skipped + ' already assigned (use Reassign to move them).',
+                  affected > 0 ? 'warning' : 'error'
+                );
+              } else if (affected !== bulkLeadIds.length) {
                 toast('Assigned ' + affected + ' of ' + bulkLeadIds.length + ' selected leads', 'warning');
               } else {
                 toast(affected + ' selected lead(s) assigned successfully', 'success');

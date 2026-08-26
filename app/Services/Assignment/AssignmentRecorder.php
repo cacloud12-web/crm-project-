@@ -28,8 +28,9 @@ class AssignmentRecorder
         ?int $assignedBy = null,
         string $activityAction = 'Lead Assignment',
         ?string $assignmentMode = 'manual',
+        bool $allowReassign = false,
     ): array {
-        return DB::transaction(function () use ($caId, $employeeId, $assignmentType, $reason, $assignedBy, $activityAction, $assignmentMode) {
+        return DB::transaction(function () use ($caId, $employeeId, $assignmentType, $reason, $assignedBy, $activityAction, $assignmentMode, $allowReassign) {
             $existing = LeadAssignmentEngine::query()
                 ->where('ca_id', $caId)
                 ->where('status', 'Active')
@@ -41,6 +42,14 @@ class AssignmentRecorder
                     'status' => 'duplicate',
                     'assignment' => $existing,
                     'message' => 'duplicate_assignment: lead already assigned to this executive',
+                ];
+            }
+
+            if ($existing && ! $allowReassign) {
+                return [
+                    'status' => 'already_assigned',
+                    'assignment' => $existing,
+                    'message' => 'already_assigned: lead is already assigned to another employee. Use Reassign to change ownership.',
                 ];
             }
 
@@ -80,6 +89,13 @@ class AssignmentRecorder
                 'assigned_by' => $assignedBy,
                 'assigned_at' => now(),
             ]);
+
+            // Keep list "Last Activity" in sync (denormalized column used by Master Data / Leads).
+            if (\App\Support\Database\SchemaMemo::hasColumn('ca_masters', 'last_activity_at')) {
+                CaMaster::query()->where('ca_id', $caId)->update([
+                    'last_activity_at' => now(),
+                ]);
+            }
 
             $firm = CaMaster::query()->where('ca_id', $caId)->value('firm_name') ?? 'Lead #'.$caId;
             $employeeName = Employee::query()->where('employee_id', $employeeId)->value('name') ?? 'Employee #'.$employeeId;

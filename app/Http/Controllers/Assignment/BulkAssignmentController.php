@@ -97,12 +97,16 @@ class BulkAssignmentController extends Controller
                     $summary['total_leads'],
                 );
             } else {
+                $skipped = (int) ($summary['failed_rows'] ?? 0);
                 $message = sprintf(
                     '%d leads assigned successfully (%d new, %d reassigned).',
                     $summary['assigned_rows'] + $summary['reassigned_rows'],
                     $summary['assigned_rows'],
                     $summary['reassigned_rows'],
                 );
+                if ($skipped > 0) {
+                    $message .= sprintf(' %d already-assigned lead(s) were skipped.', $skipped);
+                }
             }
 
             return ApiResponse::success($summary, $message);

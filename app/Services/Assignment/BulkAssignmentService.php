@@ -43,6 +43,7 @@ class BulkAssignmentService
         $reason = $data['reason'] ?? self::MODE_REASONS[$mode] ?? 'MANUAL_ASSIGN';
         $assignedBy = isset($data['assigned_by']) ? (int) $data['assigned_by'] : $this->resolveAssignedBy();
         $assignmentType = self::MODE_LABELS[$mode] ?? 'Manual';
+        $allowReassign = (bool) ($data['allow_reassign'] ?? false);
 
         $this->validateRequest($mode, $caIds, $employeeIds);
 
@@ -109,6 +110,40 @@ class BulkAssignmentService
             $isDuplicate = $owner && (int) $owner['employee_id'] === (int) $pick['employee_id'];
             $rowReason = $mode === 'manual' ? $reason : ($pick['reason'] ?? $reason);
 
+            if ($isDuplicate) {
+                $plan[] = $this->planRow(
+                    $lead,
+                    $owner,
+                    $pick['employee_id'],
+                    $employee->name,
+                    $mode,
+                    $assignmentType,
+                    $rowReason,
+                    'duplicate',
+                    'duplicate_assignment: lead already assigned to this executive',
+                );
+
+                continue;
+            }
+
+            // Assign must not silently steal leads already owned by someone else.
+            // Explicit reassign (allow_reassign) or the dedicated Reassign UI/PUT path is required.
+            if ($owner && ! $allowReassign) {
+                $plan[] = $this->planRow(
+                    $lead,
+                    $owner,
+                    $pick['employee_id'],
+                    $employee->name,
+                    $mode,
+                    $assignmentType,
+                    $rowReason,
+                    'failed',
+                    'already_assigned: lead is already assigned to another employee',
+                );
+
+                continue;
+            }
+
             $plan[] = $this->planRow(
                 $lead,
                 $owner,
@@ -117,11 +152,11 @@ class BulkAssignmentService
                 $mode,
                 $assignmentType,
                 $rowReason,
-                $isDuplicate ? 'duplicate' : ($preview ? 'preview' : 'pending'),
-                $isDuplicate ? 'duplicate_assignment: lead already assigned to this executive' : null,
+                $preview ? 'preview' : 'pending',
+                null,
             );
 
-            if (! $isDuplicate && $mode !== 'manual') {
+            if ($mode !== 'manual') {
                 if (in_array($mode, ['workload_balance', 'city_match', 'state_match'], true)) {
                     $workloads[$pick['employee_id']] = ($workloads[$pick['employee_id']] ?? 0) + 1;
                 }

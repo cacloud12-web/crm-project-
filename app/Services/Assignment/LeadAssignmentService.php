@@ -57,11 +57,20 @@ class LeadAssignmentService
             $data['assignment_type'] ?? 'Manual',
             $data['reason'] ?? 'MANUAL_ASSIGN',
             isset($data['assigned_by']) ? (int) $data['assigned_by'] : null,
+            'Lead Assignment',
+            'manual',
+            (bool) ($data['allow_reassign'] ?? false),
         );
 
         if (($result['status'] ?? '') === 'duplicate') {
             throw ValidationException::withMessages([
                 'employee_id' => [$result['message'] ?? 'Lead is already assigned to this executive.'],
+            ]);
+        }
+
+        if (($result['status'] ?? '') === 'already_assigned') {
+            throw ValidationException::withMessages([
+                'ca_id' => ['This lead is already assigned. Use Reassign to change the employee.'],
             ]);
         }
 
@@ -85,6 +94,7 @@ class LeadAssignmentService
                 $assignedBy,
                 'Lead Reassignment',
                 'manual',
+                true,
             );
 
             return $result['assignment']->load(['caMaster.city', 'employee']);

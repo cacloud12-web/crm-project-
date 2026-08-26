@@ -14,9 +14,10 @@ class SetFollowUpNextDateRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'next_followup_date' => 'required|date',
+            'next_followup_date' => 'nullable|date',
             'next_followup_time' => 'nullable|date_format:H:i',
             'create_reminder' => 'nullable|boolean',
+            'clear' => 'nullable|boolean',
         ];
     }
 }

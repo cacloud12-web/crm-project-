@@ -40,6 +40,7 @@ class BulkAssignmentRequest extends FormRequest
             'reason' => 'nullable|string|max:255',
             'assigned_by' => 'nullable|integer|exists:employees,employee_id',
             'preview' => 'nullable|boolean',
+            'allow_reassign' => 'nullable|boolean',
         ];
     }
 

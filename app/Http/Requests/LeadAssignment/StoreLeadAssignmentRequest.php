@@ -26,6 +26,7 @@ class StoreLeadAssignmentRequest extends FormRequest
             'executive_id' => 'nullable|exists:employees,employee_id',
             'assignment_type' => 'nullable|string|max:255',
             'reason' => 'nullable|string|max:255',
+            'allow_reassign' => 'nullable|boolean',
         ];
     }
 }

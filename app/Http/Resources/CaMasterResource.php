@@ -141,8 +141,17 @@ class CaMasterResource extends JsonResource
                 ->mapWithKeys(function ($lead) {
                     $caId = (int) (is_array($lead) ? ($lead['ca_id'] ?? 0) : $lead->ca_id);
                     $ts = is_array($lead) ? ($lead['last_activity_at'] ?? null) : $lead->last_activity_at;
+                    $summary = self::formatLastActivitySummaryFromTimestamp($ts);
+                    if ($summary && is_object($lead) && method_exists($lead, 'relationLoaded') && $lead->relationLoaded('activeTeamAssignments')) {
+                        $assignedDate = $lead->activeTeamAssignments->first()?->assigned_date?->toDateString();
+                        $activityDay = \Carbon\Carbon::parse($summary['occurred_at'])->toDateString();
+                        if ($assignedDate && $assignedDate === $activityDay) {
+                            $summary['type'] = 'assignment';
+                            $summary['label'] = 'Assigned';
+                        }
+                    }
 
-                    return [$caId => self::formatLastActivitySummaryFromTimestamp($ts)];
+                    return [$caId => $summary];
                 })
                 ->all();
         } else {

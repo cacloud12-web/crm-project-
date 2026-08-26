@@ -1050,6 +1050,7 @@ class CaMasterService
             $assignedBy,
             'Lead Assignment',
             'manual',
+            true,
         );
 
         $this->cacheService->forgetMasterListings();
