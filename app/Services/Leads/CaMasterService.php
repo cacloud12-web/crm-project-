@@ -402,6 +402,59 @@ class CaMasterService
         return $lead;
     }
 
+    /**
+     * Set Remarks 1 / 2 / 3 from the listing inline editor.
+     */
+    public function updateRemarkSlot(CaMaster $caMaster, int $slot, ?string $remark): CaMaster
+    {
+        if (! in_array($slot, [1, 2, 3], true)) {
+            throw new \InvalidArgumentException('Remark slot must be 1, 2, or 3.');
+        }
+
+        $column = 'remarks_'.$slot;
+        $user = auth()->user();
+        if ($user) {
+            $this->leadOwnership->assertCanEdit($user, $caMaster);
+            $this->leadLockService->assertCanMutate($caMaster, $user);
+        }
+
+        if (! \Illuminate\Support\Facades\Schema::hasColumn('ca_masters', $column)) {
+            return $caMaster->fresh(['city', 'state', 'sourceLead', 'lockedByEmployee']) ?? $caMaster;
+        }
+
+        $value = $this->normalizeRemarkSlot($remark);
+        $payload = [$column => $value];
+        if (\App\Support\Database\SchemaMemo::hasColumn('ca_masters', 'last_activity_at')) {
+            $payload['last_activity_at'] = now();
+        }
+        $caMaster->update($payload);
+        $lead = $caMaster->fresh(['city', 'state', 'sourceLead', 'lockedByEmployee']);
+
+        $this->activityLogService->log(
+            'CA_MASTER',
+            'Update Remarks '.$slot,
+            $this->shortId((string) $lead->ca_id),
+            $lead->firm_name ?: $lead->ca_name,
+            afterValue: $value !== null ? mb_substr($value, 0, 200) : null,
+        );
+
+        $this->invalidateDashboardCache(false);
+        $this->cacheService->forgetMasterListings();
+
+        return $lead;
+    }
+
+    private function normalizeRemarkSlot(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $trimmed = trim((string) $value);
+
+        return $trimmed === '' ? null : mb_substr($trimmed, 0, 2000);
+    }
+
     public function update(CaMaster $caMaster, array $data): CaMaster
     {
         $user = auth()->user();
@@ -849,6 +902,15 @@ class CaMasterService
             'sales_remarks' => array_key_exists('sales_remarks', $data)
                 ? $data['sales_remarks']
                 : $existing?->sales_remarks,
+            'remarks_1' => array_key_exists('remarks_1', $data)
+                ? $this->normalizeRemarkSlot($data['remarks_1'])
+                : $existing?->remarks_1,
+            'remarks_2' => array_key_exists('remarks_2', $data)
+                ? $this->normalizeRemarkSlot($data['remarks_2'])
+                : $existing?->remarks_2,
+            'remarks_3' => array_key_exists('remarks_3', $data)
+                ? $this->normalizeRemarkSlot($data['remarks_3'])
+                : $existing?->remarks_3,
             'gst_no' => $data['gst_no'] ?? $existing?->gst_no,
             'pan_no' => $data['pan_no'] ?? $existing?->pan_no,
             'city_id' => $cityId,

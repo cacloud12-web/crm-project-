@@ -50,6 +50,9 @@ Route::middleware(['auth', 'rbac'])->group(function () {
         ->middleware(['spa.browser:ca-master', 'throttle:lead-action']);
     Route::post('ca-masters/{ca_master}/sales-remarks', [CaMasterController::class, 'appendSalesRemark'])
         ->middleware(['spa.browser:leads', 'throttle:lead-action']);
+    Route::patch('ca-masters/{ca_master}/remarks/{slot}', [CaMasterController::class, 'updateRemarkSlot'])
+        ->whereNumber('slot')
+        ->middleware(['spa.browser:leads', 'throttle:lead-action']);
     Route::patch('ca-masters/{ca_master}/partners/{partner}/team-size', [CaMasterPartnerController::class, 'updateTeamSize'])
         ->middleware(['spa.browser:ca-master', 'throttle:lead-action']);
     Route::patch('ca-masters/{ca_master}/status', [CaMasterController::class, 'updateStatus'])

@@ -350,6 +350,31 @@ class CaMasterController extends Controller
         }
     }
 
+    public function updateRemarkSlot(Request $request, string $caMaster, int $slot): JsonResponse
+    {
+        try {
+            $lead = $this->caMasterService->find($caMaster);
+            $data = $request->validate([
+                'remark' => 'nullable|string|max:2000',
+            ]);
+            $lead = $this->caMasterService->updateRemarkSlot(
+                $lead,
+                $slot,
+                array_key_exists('remark', $data) ? $data['remark'] : null,
+            );
+
+            return ApiResponse::success(new CaMasterResource($lead), 'Remarks '.$slot.' updated');
+        } catch (LeadLockedException $exception) {
+            return ApiResponse::error($exception->getMessage(), 423, [
+                'lock' => $exception->lockInfo(),
+            ]);
+        } catch (\InvalidArgumentException $exception) {
+            return ApiResponse::error($exception->getMessage(), 422);
+        } catch (\Illuminate\Auth\Access\AuthorizationException $exception) {
+            return ApiResponse::error($exception->getMessage() ?: 'You do not have permission for this action.', 403);
+        }
+    }
+
     public function destroy(string $id): JsonResponse
     {
         $lead = $this->caMasterService->find($id);

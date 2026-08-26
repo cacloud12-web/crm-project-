@@ -860,6 +860,29 @@ window.CA_CRM = (function () {
     '</button>';
   }
 
+  function remarkSlotCell(text, opts) {
+    opts = opts || {};
+    var slot = parseInt(opts.slot, 10) || 1;
+    var columnKey = 'remarks_' + slot;
+    var label = 'Remarks ' + slot;
+    var raw = text == null || text === '' ? '' : String(text).trim();
+    if (raw === '—') raw = '';
+    var empty = !raw;
+    var inner = empty
+      ? '<span class="cam-cell-text cam-cell-empty cam-remark-slot-cell" data-column-value="' + escapeAttr(columnKey) + '">—</span>'
+      : truncatedPreviewCell(raw, 60, 'cam-remark-slot-cell', raw, columnKey);
+    if (!opts.canEdit || !opts.caId) {
+      return inner;
+    }
+    return '<button type="button" class="cam-inline-remarks-btn' + (empty ? ' cam-cell-empty' : '') +
+      '" data-cam-inline-remark-slot="' + escapeHtml(String(opts.caId)) +
+      '" data-remark-slot="' + slot +
+      '" title="' + (empty ? 'Add ' + label : 'Edit ' + label) +
+      '" aria-label="' + (empty ? 'Add ' : 'Edit ') + label + '">' +
+      inner +
+    '</button>';
+  }
+
   function emailIdCell(text) {
     var raw = text == null || text === '' ? '' : String(text).trim();
     if (!raw || raw === '—') {
@@ -3163,6 +3186,15 @@ if (otherInput) {
       email_id: l.email_id || '—',
       sales_remarks: l.sales_remarks && String(l.sales_remarks).trim() !== ''
         ? String(l.sales_remarks).slice(0, 2000)
+        : '—',
+      remarks_1: l.remarks_1 && String(l.remarks_1).trim() !== ''
+        ? String(l.remarks_1).slice(0, 2000)
+        : '—',
+      remarks_2: l.remarks_2 && String(l.remarks_2).trim() !== ''
+        ? String(l.remarks_2).slice(0, 2000)
+        : '—',
+      remarks_3: l.remarks_3 && String(l.remarks_3).trim() !== ''
+        ? String(l.remarks_3).slice(0, 2000)
         : '—',
       gst_no: l.gst_no || '—',
       state: l.state || l.state_name || '—',
@@ -5867,7 +5899,7 @@ if (otherInput) {
   ];
 
   var EMPLOYEE_ALWAYS_EDITABLE_FIELDS = [
-    'mobile_no', 'email_id', 'sales_remarks', 'alternate_mobile_no',
+    'mobile_no', 'email_id', 'sales_remarks', 'remarks_1', 'remarks_2', 'remarks_3', 'alternate_mobile_no',
     'is_newly_established', 'status', 'source_id', 'team_size',
     'state_id', 'city_id',
   ];
@@ -14403,6 +14435,8 @@ if (otherInput) {
     { id: '2026_07_email_sales_remarks_v3', keys: ['email_id', 'sales_remarks'] },
     // v4: ensure Mobile + Team Size stay visible for employee contact editing on Lead Management.
     { id: '2026_08_mobile_team_size_contact_v1', keys: ['mobile', 'team_size'] },
+    // v5: add Remarks 1/2/3 columns next to Sales Remarks.
+    { id: '2026_08_remarks_slots_v1', keys: ['remarks_1', 'remarks_2', 'remarks_3'] },
   ];
   var CAM_COLUMN_MIGRATIONS_STORAGE_KEY = 'crm.ca_masters.column_migrations.v1';
   var _camVisibleColumnKeys = null;
@@ -15000,6 +15034,21 @@ if (otherInput) {
         canEdit: canEdit,
         caId: l.ca_id,
       })) +
+      camColTd('remarks_1', 'cam-td-remarks cam-master-data-cell', remarkSlotCell(l.remarks_1, {
+        canEdit: canEdit,
+        caId: l.ca_id,
+        slot: 1,
+      })) +
+      camColTd('remarks_2', 'cam-td-remarks cam-master-data-cell', remarkSlotCell(l.remarks_2, {
+        canEdit: canEdit,
+        caId: l.ca_id,
+        slot: 2,
+      })) +
+      camColTd('remarks_3', 'cam-td-remarks cam-master-data-cell', remarkSlotCell(l.remarks_3, {
+        canEdit: canEdit,
+        caId: l.ca_id,
+        slot: 3,
+      })) +
       camColTd('ca_name', 'crm-td-ca cam-master-data-cell', caCell) +
       camColTd('last_activity', 'cam-td-last-activity cam-master-data-cell', renderLastActivityDisplayCell(l)) +
       withCamDataColumn('call_log', renderLeadCallLogQuickCell(l)) +
@@ -15070,6 +15119,9 @@ if (otherInput) {
         { caId: firm.ca_id, partnerId: pid },
       )) +
       camColTd('sales_remarks', 'cam-td-remarks cam-master-data-cell', '<span class="cam-cell-text cam-cell-empty">—</span>') +
+      camColTd('remarks_1', 'cam-td-remarks cam-master-data-cell', '<span class="cam-cell-text cam-cell-empty">—</span>') +
+      camColTd('remarks_2', 'cam-td-remarks cam-master-data-cell', '<span class="cam-cell-text cam-cell-empty">—</span>') +
+      camColTd('remarks_3', 'cam-td-remarks cam-master-data-cell', '<span class="cam-cell-text cam-cell-empty">—</span>') +
       camColTd('ca_name', 'crm-td-ca cam-master-data-cell', compactTextCell(partner.ca_name)) +
       camColTd('last_activity', 'cam-td-last-activity cam-master-data-cell', '<span class="cam-cell-text cam-cell-mono text-slate-400" title="Membership">' + escapeHtml(partner.membership_no || '—') + '</span>') +
       withCamDataColumn('call_log', renderLeadCallLogQuickCell(firm, partner)) +
@@ -16099,10 +16151,106 @@ if (otherInput) {
     });
   }
 
+  function openCaMasterInlineRemarkSlot(btn) {
+    if (!btn || btn.querySelector('input, textarea')) return;
+    var caId = btn.getAttribute('data-cam-inline-remark-slot');
+    var slot = parseInt(btn.getAttribute('data-remark-slot') || '0', 10);
+    if (!caId || [1, 2, 3].indexOf(slot) < 0) {
+      toast('Lead not found', 'warning');
+      return;
+    }
+    var lead = getLeadRecord(caId);
+    if (isEmployeeUser() && lead && !canUseLeadQuickActions(lead)) {
+      toast('You can only edit remarks for leads assigned to you.', 'error');
+      return;
+    }
+    if (lead && lead.is_read_only) {
+      toast('This lead is read-only.', 'warning');
+      return;
+    }
+    var field = 'remarks_' + slot;
+    var current = lead && lead[field] && lead[field] !== '—' ? String(lead[field]) : '';
+    var original = btn.innerHTML;
+    var wrap = document.createElement('span');
+    wrap.className = 'cam-inline-remarks-edit';
+    wrap.innerHTML =
+      '<input type="text" class="input-field input-field-sm cam-inline-remarks-input" value="' + escapeAttr(current) + '" maxlength="2000" placeholder="Add Remarks ' + slot + '…" aria-label="Remarks ' + slot + '" />' +
+      '<button type="button" class="btn-secondary btn-xs" data-cam-remark-slot-save>Save</button>';
+    btn.innerHTML = '';
+    btn.appendChild(wrap);
+    var input = wrap.querySelector('input');
+    input.focus();
+    input.select();
+    var finished = false;
+    function restore() {
+      if (finished) return;
+      finished = true;
+      btn.innerHTML = original;
+      btn.classList.remove('is-loading');
+    }
+    function save() {
+      if (finished) return;
+      var remark = String(input.value || '').trim();
+      if (remark === current) {
+        restore();
+        return;
+      }
+      finished = true;
+      btn.classList.add('is-loading');
+      apiFetch('/ca-masters/' + encodeURIComponent(caId) + '/remarks/' + slot, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ remark: remark || null }),
+      })
+        .then(function (body) {
+          var mapped = mergeLeadFromApiResponse(body);
+          if (mapped) upsertLeadInCache(mapped);
+          toast('Remarks ' + slot + ' saved.', 'success');
+          invalidateDataCaches(['leads', 'ca_masters', 'segment_counts']);
+          refreshCaMasterOrLeadsTable();
+        })
+        .catch(function (err) {
+          if (err && err.status === 403) {
+            toast('You do not have permission to edit remarks for this lead.', 'error');
+          } else {
+            toast((err && err.message) || 'Failed to save remarks.', 'error');
+          }
+          finished = false;
+          restore();
+        });
+    }
+    wrap.querySelector('[data-cam-remark-slot-save]').addEventListener('click', function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      save();
+    });
+    input.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        save();
+      }
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        restore();
+      }
+    });
+    input.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+    });
+  }
+
   function ensureSalesRemarksUiBound() {
     if (window._salesRemarksUiBound) return;
     window._salesRemarksUiBound = true;
     document.addEventListener('click', function (e) {
+      var slotBtn = e.target.closest('[data-cam-inline-remark-slot]');
+      if (slotBtn) {
+        if (slotBtn.querySelector('input, textarea') || e.target.closest('[data-cam-remark-slot-save]')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        openCaMasterInlineRemarkSlot(slotBtn);
+        return;
+      }
       var btn = e.target.closest('[data-cam-inline-remarks]');
       if (!btn) return;
       if (btn.querySelector('input, textarea') || e.target.closest('[data-cam-remarks-save]')) return;

@@ -135,6 +135,39 @@ class LeadWorkflowTest extends TestCase
         $this->assertStringContainsString('[Remark ·', (string) $lead->sales_remarks);
     }
 
+    public function test_remarks_slots_can_be_updated_from_listing(): void
+    {
+        $this->actingAsAdmin();
+        $lead = $this->createLead();
+
+        $this->patchJson('/ca-masters/'.$lead->ca_id.'/remarks/1', [
+            'remark' => 'First follow-up note',
+        ])->assertOk()
+            ->assertJsonPath('data.remarks_1', 'First follow-up note');
+
+        $this->patchJson('/ca-masters/'.$lead->ca_id.'/remarks/2', [
+            'remark' => 'Second note',
+        ])->assertOk()
+            ->assertJsonPath('data.remarks_2', 'Second note');
+
+        $this->patchJson('/ca-masters/'.$lead->ca_id.'/remarks/3', [
+            'remark' => 'Third note',
+        ])->assertOk()
+            ->assertJsonPath('data.remarks_3', 'Third note');
+
+        $lead->refresh();
+        $this->assertSame('First follow-up note', $lead->remarks_1);
+        $this->assertSame('Second note', $lead->remarks_2);
+        $this->assertSame('Third note', $lead->remarks_3);
+
+        $this->patchJson('/ca-masters/'.$lead->ca_id.'/remarks/2', [
+            'remark' => '',
+        ])->assertOk();
+
+        $lead->refresh();
+        $this->assertNull($lead->remarks_2);
+    }
+
     public function test_call_can_be_saved_without_call_note(): void
     {
         $this->actingAsAdmin();
