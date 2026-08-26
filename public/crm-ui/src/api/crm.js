@@ -12597,6 +12597,127 @@ if (otherInput) {
     return y + '-' + m + '-' + day;
   }
 
+  function canEditFollowupLeadRemarks(f) {
+    if (!f || !f.ca_id) return false;
+    if (crmCanAction('leads', 'edit') || crmCanAction('ca_master', 'edit')) return true;
+    if (!isEmployeeUser()) return false;
+    var lead = getLeadRecord(f.ca_id);
+    if (lead) return canUseLeadQuickActions(lead) && !lead.is_read_only;
+    return !!(f.employee_id || f.executive || f.employee_name);
+  }
+
+  function followupRemarks1Cell(f) {
+    var raw = f && f.remarks_1 != null ? String(f.remarks_1).trim() : '';
+    if (raw === '—') raw = '';
+    var empty = !raw;
+    var inner = empty
+      ? '<span class="cam-cell-text cam-cell-empty">—</span>'
+      : truncatedPreviewCell(raw, 60, '', raw);
+    if (!canEditFollowupLeadRemarks(f)) {
+      return '<td class="crm-td-remarks">' + inner + '</td>';
+    }
+    return '<td class="crm-td-remarks">' +
+      '<button type="button" class="cam-inline-remarks-btn' + (empty ? ' cam-cell-empty' : '') +
+      '" data-followup-inline-remarks-1="' + escapeAttr(String(f.ca_id)) +
+      '" data-followup-id="' + escapeAttr(String(f.followup_id || '')) +
+      '" title="' + (empty ? 'Add Remarks 1' : 'Edit Remarks 1') +
+      '" aria-label="' + (empty ? 'Add Remarks 1' : 'Edit Remarks 1') + '">' +
+      inner +
+    '</button></td>';
+  }
+
+  function openFollowupInlineRemarks1(btn) {
+    if (!btn || btn.querySelector('input, textarea')) return;
+    var caId = btn.getAttribute('data-followup-inline-remarks-1');
+    var followupId = btn.getAttribute('data-followup-id');
+    if (!caId) {
+      toast('Lead not found', 'warning');
+      return;
+    }
+    var followup = followupId ? findFollowupInCache(followupId) : null;
+    var current = followup && followup.remarks_1 && followup.remarks_1 !== '—'
+      ? String(followup.remarks_1)
+      : '';
+    var original = btn.innerHTML;
+    var wrap = document.createElement('span');
+    wrap.className = 'cam-inline-remarks-edit';
+    wrap.innerHTML =
+      '<input type="text" class="input-field input-field-sm cam-inline-remarks-input" value="' + escapeAttr(current) + '" maxlength="2000" placeholder="Add Remarks 1…" aria-label="Remarks 1" />' +
+      '<button type="button" class="btn-secondary btn-xs" data-followup-remarks-1-save>Save</button>';
+    btn.innerHTML = '';
+    btn.appendChild(wrap);
+    var input = wrap.querySelector('input');
+    input.focus();
+    input.select();
+    var finished = false;
+    function restore() {
+      if (finished) return;
+      finished = true;
+      btn.innerHTML = original;
+      btn.classList.remove('is-loading');
+    }
+    function save() {
+      if (finished) return;
+      var remark = String(input.value || '').trim();
+      if (remark === current) {
+        restore();
+        return;
+      }
+      finished = true;
+      btn.classList.add('is-loading');
+      apiFetch('/ca-masters/' + encodeURIComponent(caId) + '/remarks/1', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ remark: remark || null }),
+      })
+        .then(function (body) {
+          var mapped = mergeLeadFromApiResponse(body);
+          if (mapped) upsertLeadInCache(mapped);
+          var nextValue = mapped && mapped.remarks_1 && mapped.remarks_1 !== '—'
+            ? String(mapped.remarks_1)
+            : (remark || '');
+          if (followupId) {
+            var cached = findFollowupInCache(followupId) || { followup_id: followupId, ca_id: caId };
+            cached.remarks_1 = nextValue || null;
+            upsertFollowupInCache(cached);
+            updateFollowupTableRow(followupId, cached);
+          } else {
+            toast('Remarks 1 saved.', 'success');
+            reloadListing('follow_ups');
+            return;
+          }
+          toast('Remarks 1 saved.', 'success');
+        })
+        .catch(function (err) {
+          if (err && err.status === 403) {
+            toast('You do not have permission to edit remarks for this lead.', 'error');
+          } else {
+            toast((err && err.message) || 'Failed to save Remarks 1.', 'error');
+          }
+          finished = false;
+          restore();
+        });
+    }
+    wrap.querySelector('[data-followup-remarks-1-save]').addEventListener('click', function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      save();
+    });
+    input.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        save();
+      }
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        restore();
+      }
+    });
+    input.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+    });
+  }
+
   function followupTeamSizeCell(f) {
     var size = f.team_size != null && f.team_size !== '' ? Number(f.team_size) : null;
     var text = size != null && size > 0 ? String(size) : '—';
@@ -12706,6 +12827,14 @@ if (otherInput) {
     if (window._followupInlineUiBound) return;
     window._followupInlineUiBound = true;
     document.addEventListener('click', function (e) {
+      var remarksBtn = e.target.closest('[data-followup-inline-remarks-1]');
+      if (remarksBtn) {
+        if (remarksBtn.querySelector('input, textarea') || e.target.closest('[data-followup-remarks-1-save]')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        openFollowupInlineRemarks1(remarksBtn);
+        return;
+      }
       var btn = e.target.closest('[data-followup-inline-next-date]');
       if (!btn) return;
       if (btn.querySelector('input') || e.target.closest('[data-followup-next-date-save]')) return;
@@ -13731,6 +13860,7 @@ if (otherInput) {
       '<td class="crm-td-person">' + compactTextCell(f.executive || f.employee_name) + '</td>' +
       followupTeamSizeCell(f) +
       '<td class="crm-td-remarks">' + compactTextCell(remarksText) + '</td>' +
+      followupRemarks1Cell(f) +
       '<td class="crm-td-date"><span class="cam-cell-text cam-cell-mono">' + escapeHtml(formatDateTime(f.scheduled_date)) + '</span></td>' +
       followupNextDateCell(f) +
       '<td class="crm-td-status"><span class="cam-cell-badge">' + followupStatusBadge(f.status) + '</span></td>' +
@@ -13759,7 +13889,7 @@ if (otherInput) {
     var row = el.querySelector('tr[data-followup-id="' + followupId + '"]');
     if (row) row.remove();
     if (!el.querySelector('tr[data-followup-id]')) {
-      el.innerHTML = '<tr><td colspan="12" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
+      el.innerHTML = '<tr><td colspan="13" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
     }
     renderFollowupKpis();
   }
@@ -13773,7 +13903,7 @@ if (otherInput) {
     }
     var followups = pageFollowups || window.realFollowUps || [];
     rebuildFollowupIndex(followups);
-    el.innerHTML = followups.length ? followups.map(buildFollowupRowHtml).join('') : '<tr><td colspan="12" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
+    el.innerHTML = followups.length ? followups.map(buildFollowupRowHtml).join('') : '<tr><td colspan="13" class="text-center text-slate-500 p-4">No follow-ups yet.</td></tr>';
     bindCrmRowActions(el);
     syncInboxChecks('followups-data-table');
     iconsIn(el);

@@ -66,8 +66,13 @@ class FollowUpService
      */
     private function listingRelations(): array
     {
+        $caMasterColumns = ['ca_id', 'firm_name', 'mobile_no', 'city_id', 'ocr_city_text', 'team_size'];
+        if (\App\Support\Database\SchemaMemo::hasColumn('ca_masters', 'remarks_1')) {
+            $caMasterColumns[] = 'remarks_1';
+        }
+
         return [
-            'caMaster:ca_id,firm_name,mobile_no,city_id,ocr_city_text,team_size',
+            'caMaster:'.implode(',', $caMasterColumns),
             'caMaster.city:city_id,city_name',
             'employee:employee_id,name',
         ];

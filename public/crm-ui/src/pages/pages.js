@@ -1582,6 +1582,7 @@ window.CAPages = (function () {
           { label: 'Employee', colCls: 'crm-col-person', thCls: 'crm-th-person' },
           { label: 'Team Size', colCls: 'crm-col-numeric', thCls: 'crm-th-numeric' },
           { label: 'Remarks', colCls: 'crm-col-remarks', thCls: 'crm-th-remarks' },
+          { label: 'Remarks 1', colCls: 'crm-col-remarks', thCls: 'crm-th-remarks' },
           { label: 'Scheduled', colCls: 'crm-col-date', thCls: 'crm-th-date' },
           { label: 'Next Follow-up', colCls: 'crm-col-date', thCls: 'crm-th-date' },
           { label: 'Status', colCls: 'crm-col-status', thCls: 'crm-th-status' },

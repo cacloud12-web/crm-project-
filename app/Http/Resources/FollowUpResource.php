@@ -33,6 +33,7 @@ class FollowUpResource extends JsonResource
             'executive' => $this->employee?->name,
             'employee_name' => $this->employee?->name,
             'remarks' => $this->remarks,
+            'remarks_1' => $this->caMaster?->remarks_1,
             'scheduled_date' => $this->scheduled_date,
             'next_followup_date' => $this->next_followup_date,
             'status' => $this->status,
