@@ -65,6 +65,42 @@ class LeadLastActivityTest extends TestCase
             ]);
     }
 
+    public function test_recording_a_call_updates_denormalized_last_activity_for_listing(): void
+    {
+        $this->actingAsAdmin();
+
+        $ts = (string) microtime(true);
+        $lead = CaMaster::query()->create([
+            'ca_name' => 'Call Touch CA '.$ts,
+            'firm_name' => 'Call Touch Firm '.$ts,
+            'mobile_no' => '9'.substr(str_replace('.', '', $ts), -9),
+            'state_id' => CaMaster::query()->value('state_id'),
+            'status' => 'New',
+            'last_activity_at' => now()->subDays(33),
+        ]);
+        $employee = Employee::query()->where('status', 'Active')->firstOrFail();
+
+        $this->postJson('/workflow/calls', [
+            'ca_id' => $lead->ca_id,
+            'employee_id' => $employee->employee_id,
+            'call_status' => 'Not Connected',
+            'call_note' => 'No answer',
+        ])->assertOk();
+
+        $lead->refresh();
+        $this->assertTrue(
+            $lead->last_activity_at !== null && $lead->last_activity_at->isSameDay(now()),
+            'Call work should bump last_activity_at to today.'
+        );
+
+        $listing = $this->getJson('/ca-masters?search='.urlencode('Call Touch Firm '.$ts))->assertOk();
+        $items = $listing->json('data.items') ?? [];
+        $listed = collect($items)->firstWhere('ca_id', $lead->ca_id);
+
+        $this->assertNotNull($listed);
+        $this->assertSame('Today', $listed['last_activity']['relative_label'] ?? null);
+    }
+
     public function test_ca_master_listing_formats_denormalized_last_activity_labels(): void
     {
         $this->actingAsAdmin();

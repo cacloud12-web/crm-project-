@@ -119,6 +119,8 @@ class LeadWorkflowService
                 ? $salesRemarkBlock
                 : $existingRemarks."\n\n".$salesRemarkBlock;
         }
+        // Listing "Last Activity" uses denormalized last_activity_at — always bump on call work.
+        $leadUpdates['last_activity_at'] = $calledAt;
         if ($leadUpdates !== []) {
             $lead->update($leadUpdates);
         }
@@ -296,6 +298,7 @@ class LeadWorkflowService
             'status' => 'Demo Scheduled',
             'workflow_stage' => 'demo_scheduled',
             'demo_status' => 'scheduled',
+            'last_activity_at' => now(),
         ]);
 
         $this->statusSyncService->apply(

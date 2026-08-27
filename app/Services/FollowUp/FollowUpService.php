@@ -2,6 +2,7 @@
 
 namespace App\Services\FollowUp;
 
+use App\Models\CaMaster;
 use App\Models\FollowUp;
 use App\Models\LeadAssignmentEngine;
 use App\Services\Activity\ActivityLogService;
@@ -130,6 +131,9 @@ class FollowUpService
         } else {
             $this->syncMasterStatusFromFollowUp($followUp);
         }
+
+        // Ensure listing Last Activity updates even when status sync is a no-op.
+        CaMaster::touchLastActivityFor((int) $followUp->ca_id);
 
         $this->forgetFollowUpCaches($followUp);
 
@@ -304,6 +308,8 @@ class FollowUpService
         } else {
             $this->syncMasterStatusFromFollowUp($followUp);
         }
+
+        CaMaster::touchLastActivityFor((int) $followUp->ca_id);
 
         $this->forgetFollowUpCaches($followUp);
 

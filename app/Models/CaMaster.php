@@ -240,4 +240,41 @@ class CaMaster extends Model
     {
         return $this->hasMany(SalesHistory::class, 'ca_id', 'ca_id');
     }
+
+    /**
+     * Keep the denormalized listing "Last Activity" column in sync with real work.
+     */
+    public function touchLastActivity(mixed $at = null): bool
+    {
+        if (! \App\Support\Database\SchemaMemo::hasColumn('ca_masters', 'last_activity_at')) {
+            return false;
+        }
+
+        $timestamp = $at ? \Illuminate\Support\Carbon::parse($at) : now();
+        $current = $this->last_activity_at;
+        if ($current && $current->greaterThanOrEqualTo($timestamp)) {
+            return false;
+        }
+
+        return $this->newQuery()
+            ->where($this->getKeyName(), $this->getKey())
+            ->update(['last_activity_at' => $timestamp]) > 0;
+    }
+
+    public static function touchLastActivityFor(int $caId, mixed $at = null): bool
+    {
+        if ($caId <= 0 || ! \App\Support\Database\SchemaMemo::hasColumn('ca_masters', 'last_activity_at')) {
+            return false;
+        }
+
+        $timestamp = $at ? \Illuminate\Support\Carbon::parse($at) : now();
+
+        return static::query()
+            ->where('ca_id', $caId)
+            ->where(function ($query) use ($timestamp) {
+                $query->whereNull('last_activity_at')
+                    ->orWhere('last_activity_at', '<', $timestamp);
+            })
+            ->update(['last_activity_at' => $timestamp]) > 0;
+    }
 }
