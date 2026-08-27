@@ -9520,10 +9520,23 @@ if (otherInput) {
     document.querySelectorAll('.ca-tab-panel[data-tab-group="leads-view"]').forEach(function (panel) {
       panel.classList.toggle('active', panel.dataset.panel === viewId);
     });
+    try { sessionStorage.setItem('crm.leads.active_view.v1', viewId || 'all'); } catch (e) { /* ignore */ }
     renderLeadKpis();
     if (viewId === 'pipeline') loadKanbanLeads();
     else if (window.CA_LISTING_SEARCH) reloadListing('ca_masters');
     else renderLeadsTable();
+  }
+
+  function restoreLeadsViewFromStorage() {
+    try {
+      var view = sessionStorage.getItem('crm.leads.active_view.v1');
+      if (!view || view === 'all' || !document.querySelector('[data-tab-group="leads-view"]')) return 'all';
+      document.querySelectorAll('.ca-tab-panel[data-tab-group="leads-view"]').forEach(function (panel) {
+        panel.classList.toggle('active', panel.dataset.panel === view);
+      });
+      return view;
+    } catch (e) { /* ignore */ }
+    return 'all';
   }
 
   function applyLeadSegment(segmentId) {
@@ -9672,11 +9685,24 @@ if (otherInput) {
     document.querySelectorAll('.ca-tab-panel[data-tab-group="cam-view"]').forEach(function (panel) {
       panel.classList.toggle('active', panel.dataset.panel === viewId);
     });
+    try { sessionStorage.setItem('crm.cam.active_view.v1', viewId || 'all'); } catch (e) { /* ignore */ }
     renderCamKpis();
     syncCamStageFilterBarVisibility();
     if (viewId === 'all') syncCamStageFilterFromState();
     if (viewId === 'pipeline') loadKanbanLeads();
     else renderCaMasterTable();
+  }
+
+  function restoreCamViewFromStorage() {
+    try {
+      var view = sessionStorage.getItem('crm.cam.active_view.v1');
+      if (!view || view === 'all' || !document.querySelector('[data-tab-group="cam-view"]')) return 'all';
+      document.querySelectorAll('.ca-tab-panel[data-tab-group="cam-view"]').forEach(function (panel) {
+        panel.classList.toggle('active', panel.dataset.panel === view);
+      });
+      return view;
+    } catch (e) { /* ignore */ }
+    return 'all';
   }
 
   function readCaMasterStageFilter() {
@@ -10033,6 +10059,8 @@ if (otherInput) {
 
   function renderLeadsHub() {
     var doRender = function () {
+      restoreLeadsViewFromStorage();
+      restoreCaMastersListingUiFromStorage();
       var page = document.getElementById('leads-hub');
       if (page) {
         bindCaMasterColumnsUi(page);
@@ -15784,6 +15812,39 @@ if (otherInput) {
     syncCaMasterDateNavLabels(document);
   }
 
+  function syncCaMasterColumnFiltersFromState() {
+    if (!window.CA_LISTING_SEARCH) return;
+    var filters = CA_LISTING_SEARCH.getState('ca_masters').filters || {};
+    var roots = [];
+    var leadsHub = document.getElementById('leads-hub');
+    var camHub = document.getElementById('cam-hub');
+    if (leadsHub) roots.push(leadsHub);
+    if (camHub) roots.push(camHub);
+    roots.forEach(function (root) {
+      root.querySelectorAll('.crm-col-filter-input[data-col-filter-group="ca_masters"]').forEach(function (input) {
+        var key = input.getAttribute('data-col-filter');
+        if (!key) return;
+        input.value = filters[key] || '';
+      });
+      root.querySelectorAll('.crm-col-date-nav__value[data-col-filter-group="ca_masters"]').forEach(function (input) {
+        var key = input.getAttribute('data-col-filter');
+        if (!key) return;
+        input.value = filters[key] || '';
+      });
+    });
+    syncCaMasterDateNavLabels(document);
+    syncLeadsStatusFilterFromState();
+    syncCamStageFilterFromState();
+    window._leadSegmentFilter = filters.segment || 'all';
+  }
+
+  function restoreCaMastersListingUiFromStorage() {
+    if (!window.CA_LISTING_SEARCH) return;
+    // Touch getState so sessionStorage listing state is loaded before the first fetch.
+    CA_LISTING_SEARCH.getState('ca_masters');
+    syncCaMasterColumnFiltersFromState();
+  }
+
   function ensureEmployeeTodayAssignedDateFilter() {
     // Only sync UI from saved listing state — do not force "today" on open.
     // Forcing assigned_date=today ran a heavy filtered COUNT on every employee open
@@ -15883,6 +15944,8 @@ if (otherInput) {
     if (!page) return;
     if (page._camInit) return;
     page._camInit = true;
+    restoreCamViewFromStorage();
+    restoreCaMastersListingUiFromStorage();
     bindCaMasterColumnsUi(page);
     bindCaMasterColumnDateNav(page);
     ensureCaMasterColumnsPopoverMounted();

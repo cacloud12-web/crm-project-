@@ -40,9 +40,56 @@
 
   window._listingState = window._listingState || {};
 
+  var PERSISTED_LISTING_KEYS = ['ca_masters'];
+
+  function listingStorageKey(key) {
+    return 'crm.listing.' + key + '.v1';
+  }
+
+  function loadPersistedListingState(key) {
+    if (PERSISTED_LISTING_KEYS.indexOf(key) < 0) return null;
+    try {
+      var raw = sessionStorage.getItem(listingStorageKey(key));
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      return {
+        page: parseInt(parsed.page, 10) || 1,
+        per_page: parseInt(parsed.per_page, 10) || DEFAULT_PER_PAGE,
+        sort_by: parsed.sort_by || null,
+        sort_dir: parsed.sort_dir || 'desc',
+        filters: parsed.filters && typeof parsed.filters === 'object' ? parsed.filters : {},
+        search: typeof parsed.search === 'string' ? parsed.search : '',
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function persistListingState(key, state) {
+    if (PERSISTED_LISTING_KEYS.indexOf(key) < 0 || !state) return;
+    try {
+      sessionStorage.setItem(listingStorageKey(key), JSON.stringify({
+        page: state.page || 1,
+        per_page: state.per_page || DEFAULT_PER_PAGE,
+        sort_by: state.sort_by || null,
+        sort_dir: state.sort_dir || 'desc',
+        filters: state.filters || {},
+        search: state.search || '',
+      }));
+    } catch (e) { /* quota */ }
+  }
+
   function getState(key) {
     if (!window._listingState[key]) {
-      window._listingState[key] = { page: 1, per_page: DEFAULT_PER_PAGE, sort_by: null, sort_dir: 'desc', filters: {}, search: '' };
+      window._listingState[key] = loadPersistedListingState(key) || {
+        page: 1,
+        per_page: DEFAULT_PER_PAGE,
+        sort_by: null,
+        sort_dir: 'desc',
+        filters: {},
+        search: '',
+      };
     }
     return window._listingState[key];
   }
@@ -51,11 +98,22 @@
     var state = getState(key);
     Object.assign(state, patch || {});
     window._listingState[key] = state;
+    persistListingState(key, state);
     return state;
   }
 
   function clearState(key) {
-    window._listingState[key] = { page: 1, per_page: DEFAULT_PER_PAGE, sort_by: null, sort_dir: 'desc', filters: {}, search: '' };
+    window._listingState[key] = {
+      page: 1,
+      per_page: DEFAULT_PER_PAGE,
+      sort_by: null,
+      sort_dir: 'desc',
+      filters: {},
+      search: '',
+    };
+    if (PERSISTED_LISTING_KEYS.indexOf(key) >= 0) {
+      try { sessionStorage.removeItem(listingStorageKey(key)); } catch (e) { /* ignore */ }
+    }
     return window._listingState[key];
   }
 
