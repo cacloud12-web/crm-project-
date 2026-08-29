@@ -14,11 +14,22 @@ PHP_BIN="${PHP_BIN:-/opt/alt/php83/usr/bin/php}"
 
 echo "=== CRM report export (${DAYS} days) ==="
 "$PHP_BIN" scripts/employee-activity-audit-export.php "$NAMES" "$DAYS"
-"$PHP_BIN" scripts/demo-full-report-export.php "$DAYS"
+
+if [[ -f scripts/demo-full-report-export.php ]]; then
+  "$PHP_BIN" scripts/demo-full-report-export.php "$DAYS"
+else
+  echo "Note: demo-full-report-export.php not found — skipping demo-only workbook."
+fi
 
 if command -v python3 >/dev/null 2>&1; then
+  if ! python3 -c "import openpyxl" 2>/dev/null; then
+    echo "Installing openpyxl for Excel export..."
+    pip3 install --user openpyxl
+  fi
   python3 scripts/employee-activity-audit-to-excel.py
-  python3 scripts/demo-full-report-to-excel.py
+  if [[ -f scripts/demo-full-report-to-excel.py ]] && [[ -f storage/app/audits/demo-full-report.json ]]; then
+    python3 scripts/demo-full-report-to-excel.py
+  fi
 else
   echo "python3 not found — install openpyxl: pip3 install openpyxl"
   echo "JSON exported; run python scripts on a machine with openpyxl to get Excel."
