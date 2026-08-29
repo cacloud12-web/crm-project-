@@ -110,11 +110,19 @@ foreach ($employees as $employee) {
     }
 
     $scheduledTotal = (int) $employeeDemos->where('status', '<>', DemoSchedule::STATUS_CANCELLED)->count();
-    $completedInRange = (int) DemoSchedule::query()
-        ->where('employee_id', $employeeId)
+    $completedFromBooked = (int) $employeeDemos
+        ->where('status', '<>', DemoSchedule::STATUS_CANCELLED)
         ->where('status', DemoSchedule::STATUS_COMPLETED)
-        ->whereBetween('updated_at', [$from, $to])
         ->count();
+    $stillOpen = (int) $employeeDemos
+        ->whereIn('status', [DemoSchedule::STATUS_SCHEDULED, DemoSchedule::STATUS_RESCHEDULED])
+        ->count();
+    $missedFromBooked = (int) $employeeDemos
+        ->where('status', DemoSchedule::STATUS_MISSED)
+        ->count();
+    $completionPct = $scheduledTotal > 0
+        ? round(($completedFromBooked / $scheduledTotal) * 100, 1)
+        : 0.0;
 
     $rescheduledInRange = (int) DemoSchedule::query()
         ->where('employee_id', $employeeId)
@@ -135,7 +143,6 @@ foreach ($employees as $employee) {
         ->count();
 
     $notInterested = (int) $employeeResults->where('result', 'Not Interested')->count();
-    $stillOpen = (int) $employeeDemos->where('status', DemoSchedule::STATUS_SCHEDULED)->count();
 
     $employeeReports[] = [
         'employee_id' => $employeeId,
@@ -147,10 +154,14 @@ foreach ($employees as $employee) {
             'total_demos' => $scheduledTotal,
             'scheduled_created' => $scheduledTotal,
             'still_open' => $stillOpen,
-            'completed' => $completedInRange,
+            'still_scheduled' => $stillOpen,
+            'completed' => $completedFromBooked,
+            'completed_from_booked' => $completedFromBooked,
+            'completion_pct' => $completionPct,
+            'missed_from_booked' => $missedFromBooked,
             'rescheduled' => $rescheduledInRange,
             'cancelled' => $cancelledInRange,
-            'missed' => $missedInRange,
+            'missed' => $missedFromBooked,
             'not_interested' => $notInterested,
             'outcomes_recorded' => $employeeResults->count(),
             'status_breakdown' => $statusCounts,

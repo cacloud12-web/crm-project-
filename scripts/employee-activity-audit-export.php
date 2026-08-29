@@ -474,6 +474,22 @@ foreach ($employees as $employee) {
         ? round(($demoAchievedPeriod / $demoTargetPeriod) * 100, 1)
         : 0.0;
 
+    $demosBooked = $demos->whereNotIn('status', [DemoSchedule::STATUS_CANCELLED]);
+    $demosTotalBooked = (int) $demosBooked->count();
+    $demosStillScheduled = (int) $demosBooked->whereIn('status', [
+        DemoSchedule::STATUS_SCHEDULED,
+        DemoSchedule::STATUS_RESCHEDULED,
+    ])->count();
+    $demosCompletedFromBooked = (int) $demosBooked
+        ->where('status', DemoSchedule::STATUS_COMPLETED)
+        ->count();
+    $demosMissedFromBooked = (int) $demosBooked
+        ->where('status', DemoSchedule::STATUS_MISSED)
+        ->count();
+    $demoCompletionFromBookedPct = $demosTotalBooked > 0
+        ? round(($demosCompletedFromBooked / $demosTotalBooked) * 100, 1)
+        : 0.0;
+
     $employeeReports[] = [
         'employee_id' => $employeeId,
         'employee_name' => $employee->name,
@@ -488,9 +504,15 @@ foreach ($employees as $employee) {
             'demo_achievement_pct' => $demoAchievementPct,
             'demo_target_today' => $demoTargetToday,
             'demo_achieved_today' => $demoAchievedToday,
-            'demos_scheduled_created' => (int) $demos->whereNotIn('status', [DemoSchedule::STATUS_CANCELLED])->count(),
-            'demos_still_open' => (int) $demos->where('status', DemoSchedule::STATUS_SCHEDULED)->count(),
-            'demos_completed' => (int) $demosCompleted->count(),
+            'demos_total_booked' => $demosTotalBooked,
+            'demos_still_scheduled' => $demosStillScheduled,
+            'demos_completed_from_booked' => $demosCompletedFromBooked,
+            'demos_missed_from_booked' => $demosMissedFromBooked,
+            'demo_completion_from_booked_pct' => $demoCompletionFromBookedPct,
+            // Legacy keys kept for compatibility with older exports.
+            'demos_scheduled_created' => $demosTotalBooked,
+            'demos_still_open' => $demosStillScheduled,
+            'demos_completed' => $demosCompletedFromBooked,
             'demos_rescheduled' => (int) $demos->where('status', DemoSchedule::STATUS_RESCHEDULED)->count(),
             'demos_cancelled' => (int) $demos->where('status', DemoSchedule::STATUS_CANCELLED)->count(),
             'demos_missed' => (int) $demos->where('status', DemoSchedule::STATUS_MISSED)->count(),
@@ -558,8 +580,12 @@ $grand = [
     'leads_assigned_in_period' => array_sum(array_column(array_column($employeeReports, 'summary'), 'leads_assigned_in_period')),
     'demo_target_period' => array_sum(array_column(array_column($employeeReports, 'summary'), 'demo_target_period')),
     'demo_achieved_period' => array_sum(array_column(array_column($employeeReports, 'summary'), 'demo_achieved_period')),
-    'demos_scheduled_created' => array_sum(array_column(array_column($employeeReports, 'summary'), 'demos_scheduled_created')),
-    'demos_completed' => array_sum(array_column(array_column($employeeReports, 'summary'), 'demos_completed')),
+    'demos_total_booked' => array_sum(array_column(array_column($employeeReports, 'summary'), 'demos_total_booked')),
+    'demos_still_scheduled' => array_sum(array_column(array_column($employeeReports, 'summary'), 'demos_still_scheduled')),
+    'demos_completed_from_booked' => array_sum(array_column(array_column($employeeReports, 'summary'), 'demos_completed_from_booked')),
+    'demos_missed_from_booked' => array_sum(array_column(array_column($employeeReports, 'summary'), 'demos_missed_from_booked')),
+    'demos_scheduled_created' => array_sum(array_column(array_column($employeeReports, 'summary'), 'demos_total_booked')),
+    'demos_completed' => array_sum(array_column(array_column($employeeReports, 'summary'), 'demos_completed_from_booked')),
     'followups_total' => array_sum(array_column(array_column($employeeReports, 'summary'), 'followups_total')),
     'calls_total' => array_sum(array_column(array_column($employeeReports, 'summary'), 'calls_total')),
     'purchases_total' => array_sum(array_column(array_column($employeeReports, 'summary'), 'purchases_total')),
@@ -591,4 +617,4 @@ echo "Exported: {$jsonPath}\n";
 echo 'Period: '.($from === null ? 'ALL TIME' : "{$from->toDateString()} to {$to->toDateString()}")."\n";
 echo 'Employees: '.implode(', ', $employees->pluck('name')->all())."\n";
 echo "Integrity issues: ".count($integrityIssues)."\n";
-echo "Grand totals — demos scheduled: {$grand['demos_scheduled_created']}, completed: {$grand['demos_completed']}, followups: {$grand['followups_total']}, calls: {$grand['calls_total']}, purchases: {$grand['purchases_total']}\n";
+echo "Grand totals — demos booked: {$grand['demos_total_booked']}, still scheduled: {$grand['demos_still_scheduled']}, completed from booked: {$grand['demos_completed_from_booked']}, followups: {$grand['followups_total']}, calls: {$grand['calls_total']}, purchases: {$grand['purchases_total']}\n";

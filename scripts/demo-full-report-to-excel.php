@@ -58,8 +58,9 @@ function demoSheet(string $name, string $tableXml): string
 }
 
 $headers = [
-    'Employee', 'Role', 'Status', 'Total Demos', 'Still Open', 'Completed',
-    'Rescheduled', 'Cancelled', 'Missed', 'Not Interested', 'Thinking', 'Purchased',
+    'Employee', 'Role', 'Status', 'Total Demos Booked', 'Still Scheduled (Open)',
+    'Completed (from booked)', 'Completion %', 'Missed', 'Rescheduled', 'Cancelled', 'Not Interested',
+    'Thinking', 'Purchased',
 ];
 $rows = [];
 foreach ($data['employees'] as $emp) {
@@ -67,16 +68,18 @@ foreach ($data['employees'] as $emp) {
     $ob = $s['outcome_breakdown'] ?? [];
     $rows[] = [
         $emp['employee_name'], $emp['role'] ?? '', $emp['employee_status'] ?? '',
-        $s['total_demos'] ?? 0, $s['still_open'] ?? 0, $s['completed'] ?? 0,
-        $s['rescheduled'] ?? 0, $s['cancelled'] ?? 0, $s['missed'] ?? 0,
+        $s['total_demos'] ?? 0, $s['still_open'] ?? ($s['still_scheduled'] ?? 0),
+        $s['completed_from_booked'] ?? ($s['completed'] ?? 0), $s['completion_pct'] ?? 0,
+        $s['missed_from_booked'] ?? ($s['missed'] ?? 0),
+        $s['rescheduled'] ?? 0, $s['cancelled'] ?? 0,
         $s['not_interested'] ?? 0, $ob['Thinking'] ?? 0, $ob['Purchased'] ?? 0,
     ];
 }
 $gt = $data['grand_totals'] ?? [];
 $rows[] = [
     'GRAND TOTAL', '', '', $gt['total_demos'] ?? 0, $gt['still_open'] ?? 0,
-    $gt['completed'] ?? 0, $gt['rescheduled'] ?? 0, $gt['cancelled'] ?? 0,
-    $gt['missed'] ?? 0, $gt['not_interested'] ?? 0, '', '',
+    $gt['completed'] ?? 0, '', $gt['missed'] ?? 0,
+    $gt['rescheduled'] ?? 0, $gt['cancelled'] ?? 0, $gt['not_interested'] ?? 0, '', '',
 ];
 
 $sheets = [demoSheet('All Employees', demoTable($headers, $rows))];
