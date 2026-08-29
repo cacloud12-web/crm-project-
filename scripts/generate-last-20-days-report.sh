@@ -21,14 +21,15 @@ else
   echo "Note: demo-full-report-export.php not found — skipping demo-only workbook."
 fi
 
-if command -v python3 >/dev/null 2>&1; then
-  if ! python3 -c "import openpyxl" 2>/dev/null; then
-    echo "Installing openpyxl for Excel export..."
-    pip3 install --user openpyxl
-  fi
+if command -v python3 >/dev/null 2>&1 && python3 -c "import openpyxl" 2>/dev/null; then
   python3 scripts/employee-activity-audit-to-excel.py
-  if [[ -f scripts/demo-full-report-to-excel.py ]] && [[ -f storage/app/audits/demo-full-report.json ]]; then
+  if [[ -f storage/app/audits/demo-full-report.json ]] && [[ -f scripts/demo-full-report-to-excel.py ]]; then
     python3 scripts/demo-full-report-to-excel.py
+  fi
+elif [[ -f scripts/employee-activity-audit-to-excel.php ]]; then
+  "$PHP_BIN" scripts/employee-activity-audit-to-excel.php
+  if [[ -f storage/app/audits/demo-full-report.json ]] && [[ -f scripts/demo-full-report-to-excel.php ]]; then
+    "$PHP_BIN" scripts/demo-full-report-to-excel.php
   fi
 else
   echo "python3 not found — install openpyxl: pip3 install openpyxl"
@@ -38,7 +39,7 @@ fi
 
 echo ""
 echo "Download these files:"
-ls -lh storage/app/audits/CRM_Full_Report_Last_"${DAYS}"_Days_*.xlsx 2>/dev/null || true
-ls -lh storage/app/audits/Demo_Full_Employee_Report.xlsx 2>/dev/null || true
+ls -lh storage/app/audits/CRM_Full_Report_Last_"${DAYS}"_Days_*.xls* 2>/dev/null || true
+ls -lh storage/app/audits/Demo_Full_Employee_Report.xls* 2>/dev/null || true
 echo ""
 echo "Hostinger path: ~/domains/crm.caclouddesk.com/public_html/storage/app/audits/"

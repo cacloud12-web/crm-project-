@@ -7,8 +7,8 @@ git pull origin main
 bash scripts/generate-last-20-days-report.sh 20 all
 
 # Files created:
-#   storage/app/audits/CRM_Full_Report_Last_20_Days_YYYY-MM-DD_to_YYYY-MM-DD.xlsx
-#   storage/app/audits/Demo_Full_Employee_Report.xlsx
+#   storage/app/audits/CRM_Full_Report_Last_20_Days_YYYY-MM-DD_to_YYYY-MM-DD.xls
+#   storage/app/audits/Demo_Full_Employee_Report.xls
 #
 # Download via Hostinger File Manager:
 #   public_html/storage/app/audits/
