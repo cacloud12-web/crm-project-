@@ -1160,7 +1160,12 @@ window.CA_CRM = (function () {
     var ids = getInboxSelectedIds(tableKey);
     var bar = document.getElementById(tableKey + '-bulk-bar');
     var countEl = document.querySelector('[data-inbox-count="' + tableKey + '"]');
-    if (countEl) countEl.textContent = ids.length + ' selected';
+    if (countEl) {
+      var totalRows = document.querySelectorAll('.crm-inbox-row-check[data-inbox-table="' + tableKey + '"]').length;
+      countEl.textContent = ids.length > 0
+        ? (ids.length + ' selected' + (totalRows ? ' of ' + totalRows : ''))
+        : (totalRows ? totalRows + ' shown' : '0 shown');
+    }
     if (bar) {
       var wasHidden = bar.classList.contains('hidden');
       bar.classList.toggle('hidden', ids.length === 0);
@@ -1343,6 +1348,27 @@ window.CA_CRM = (function () {
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') setFollowupCalendarPopoverOpen(false);
     });
+  }
+
+  function bindFollowupsPageToolbar() {
+    ensureFollowupCalendarPopoverBound();
+
+    var exportBtn = document.getElementById('followup-export-btn');
+    if (exportBtn && !exportBtn._followupExportBound) {
+      exportBtn._followupExportBound = true;
+      exportBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        if (!crmCanAction('followups', 'export')) {
+          toast('You do not have permission to export follow-ups.', 'warning');
+          return;
+        }
+        if (window.CA_LISTING_SEARCH) {
+          CA_LISTING_SEARCH.exportListing('follow_ups');
+          return;
+        }
+        toast('Follow-up export is not available right now. Please refresh the page.', 'warning');
+      });
+    }
   }
 
   function openInboxImport() {
@@ -4759,6 +4785,7 @@ if (otherInput) {
   }
   function mapEmployeeDashboardToLeadMetrics(data) {
     var summary = (data && data.summary) || {};
+    var followupCounts = (data && data.followup_counts) || {};
     var warm = summary.warm_leads || 0;
     return {
       total_leads: summary.my_leads || 0,
@@ -4768,6 +4795,10 @@ if (otherInput) {
       cold_leads: summary.cold_leads || 0,
       pipeline_leads: warm,
       lost_leads: 0,
+      followups_due_today: followupCounts.due_today || 0,
+      pending_followups: followupCounts.pending || 0,
+      overdue_followups: followupCounts.overdue || 0,
+      completed_followups: followupCounts.completed || 0,
     };
   }
 
@@ -5096,6 +5127,9 @@ if (otherInput) {
               }
             }
             if (document.getElementById('leads-kpi-strip')) renderLeadKpis();
+            if (document.getElementById('followup-kpi-strip') || document.getElementById('followups-data-table')) {
+              renderFollowupKpis();
+            }
           }, { force: true, background: true, employeeId: filterEmployeeId, dateFilter: dateFilter });
         }
         return;
@@ -5244,13 +5278,31 @@ if (otherInput) {
     var assignedLeads = metrics ? metrics.assigned_leads : 0;
     var reports = metrics && metrics.reports ? metrics.reports : {};
     var conversion = reports.conversion_summary || {};
+    var demoMetrics = metrics && metrics.demo_metrics ? metrics.demo_metrics : {};
+    var demosScheduled = demoMetrics.demos_scheduled != null
+      ? demoMetrics.demos_scheduled
+      : (metrics && metrics.demos_scheduled != null ? metrics.demos_scheduled : (conversion.demo_scheduled !== undefined ? conversion.demo_scheduled : demoCount));
+    var demosCompleted = demoMetrics.demos_completed != null
+      ? demoMetrics.demos_completed
+      : (metrics && metrics.demos_completed != null ? metrics.demos_completed : 0);
+    var demoConversionRate = demoMetrics.demo_conversion_rate != null
+      ? demoMetrics.demo_conversion_rate
+      : (metrics && metrics.demo_conversion_rate != null ? metrics.demo_conversion_rate : null);
     return {
       total_leads: totalLeads,
       total_calls: metrics ? (metrics.followups_due_today + metrics.overdue_followups) : 0,
-      demo_count: conversion.demo_scheduled !== undefined ? conversion.demo_scheduled : demoCount,
-      demo_ratio: conversion.demo_ratio_pct !== undefined
-        ? conversion.demo_ratio_pct + '%'
-        : (totalLeads ? ((demoCount / totalLeads) * 100).toFixed(1) + '%' : '0%'),
+      demo_count: demosScheduled,
+      demos_scheduled: demosScheduled,
+      demos_completed: demosCompleted,
+      demos_rescheduled: demoMetrics.demos_rescheduled != null ? demoMetrics.demos_rescheduled : (metrics ? metrics.demos_rescheduled : 0),
+      demos_cancelled: demoMetrics.demos_cancelled != null ? demoMetrics.demos_cancelled : (metrics ? metrics.demos_cancelled : 0),
+      missed_demos: demoMetrics.missed_demos != null ? demoMetrics.missed_demos : (metrics ? metrics.missed_demos : 0),
+      demos_purchased: demoMetrics.demos_purchased != null ? demoMetrics.demos_purchased : (metrics ? metrics.demos_purchased : 0),
+      demo_ratio: demoConversionRate != null
+        ? Number(demoConversionRate).toFixed(1) + '%'
+        : (conversion.demo_ratio_pct !== undefined
+          ? conversion.demo_ratio_pct + '%'
+          : (totalLeads ? ((demoCount / totalLeads) * 100).toFixed(1) + '%' : '0%')),
       conversion: conversion.conversion_rate_pct !== undefined
         ? conversion.conversion_rate_pct + '%'
         : (totalLeads ? Math.round((assignedLeads / totalLeads) * 100) + '%' : '0%'),
@@ -5307,8 +5359,8 @@ if (otherInput) {
         ? (Math.min(100, Number(metrics.organization_target.daily_demo_achievement_pct || 0)) + '%')
         : '0%',
       demo_confirmation_cancelled: metrics && metrics.demo_confirmations
-        ? (metrics.demo_confirmations.demo_confirmation_cancelled || metrics.demo_confirmations.demos_cancelled || 0)
-        : (metrics && metrics.demos_cancelled != null ? metrics.demos_cancelled : 0),
+        ? (metrics.demo_confirmations.demo_confirmation_cancelled || 0)
+        : 0,
       productivity: metrics ? metrics.productivity : null,
       duplicate_monitoring: metrics ? metrics.duplicate_monitoring : null,
     };
@@ -6456,16 +6508,16 @@ if (otherInput) {
     {
       title: 'Demo',
       cards: [
-        { icon: 'presentation', label: 'Demos Scheduled', key: 'demo_count', nav: 'followups', followupType: 'Demo Scheduled', workflowTab: 'demo_scheduled', desc: 'Scheduled demos' },
-        { icon: 'calendar', label: 'Demos Scheduled Today', key: 'demos_scheduled_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', desc: "Today's demos" },
-        { icon: 'badge-check', label: 'Demos Completed', key: 'demo_confirmation_confirmed', nav: 'followups', followupType: 'Demo Completed', workflowTab: 'demo_completed', desc: 'Completed demos' },
-        { icon: 'check-circle', label: 'Demos Completed Today', key: 'demos_completed_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Completed', desc: "Today's completed demos" },
-        { icon: 'percent', label: 'Demo Conversion', key: 'demo_ratio', nav: 'analytics', desc: 'Demo conversion report' },
-        { icon: 'clock', label: 'Pending Confirmation', key: 'demo_confirmation_pending', nav: 'followups', followupType: 'Demo Scheduled', desc: 'Awaiting confirmation' },
-        { icon: 'badge-x', label: 'Missed Demos', key: 'demo_confirmation_rejected', nav: 'followups', followupType: 'Demo Scheduled', followupStatus: 'Missed', desc: 'Missed demos' },
-        { icon: 'ban', label: 'Cancelled', key: 'demo_confirmation_cancelled', nav: 'followups', followupType: 'Demo Scheduled', followupStatus: 'Cancelled', desc: 'Cancelled demos' },
-        { icon: 'calendar-clock', label: 'Rescheduled', key: 'demo_confirmation_rescheduled', nav: 'followups', followupType: 'Demo Scheduled', desc: 'Rescheduled demos' },
-        { icon: 'shopping-bag', label: 'Purchased', key: 'converted_leads', nav: 'ca-master', leadFilter: 'converted', desc: 'Customers converted after demo' },
+        { icon: 'presentation', label: 'Demos Scheduled', key: 'demos_scheduled', nav: 'followups', followupType: 'Demo Scheduled', workflowTab: 'demo_scheduled', desc: 'Demo schedules created in the selected date range' },
+        { icon: 'calendar', label: 'Demos Scheduled Today', key: 'demos_scheduled_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', desc: 'Demo schedules created today' },
+        { icon: 'badge-check', label: 'Demos Completed', key: 'demos_completed', nav: 'followups', followupType: 'Demo Completed', workflowTab: 'demo_completed', desc: 'Demos marked completed in the selected date range' },
+        { icon: 'check-circle', label: 'Demos Completed Today', key: 'demos_completed_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Completed', desc: 'Demos marked completed today' },
+        { icon: 'percent', label: 'Demo Completion %', key: 'demo_ratio', nav: 'analytics', desc: 'Completed demos divided by scheduled demos in range' },
+        { icon: 'clock', label: 'SMS Pending Confirm', key: 'demo_confirmation_pending', nav: 'followups', followupType: 'Demo Scheduled', desc: 'Customer SMS confirmations still pending' },
+        { icon: 'badge-x', label: 'Missed Demos', key: 'missed_demos', nav: 'followups', followupType: 'Demo Scheduled', followupStatus: 'Missed', desc: 'Demo schedules marked missed in range' },
+        { icon: 'ban', label: 'Cancelled Demos', key: 'demos_cancelled', nav: 'followups', followupType: 'Demo Scheduled', followupStatus: 'Cancelled', desc: 'Demo schedules cancelled in range' },
+        { icon: 'calendar-clock', label: 'Rescheduled Demos', key: 'demos_rescheduled', nav: 'followups', followupType: 'Demo Scheduled', desc: 'Demo schedules rescheduled in range' },
+        { icon: 'shopping-bag', label: 'Demo Purchased', key: 'demos_purchased', nav: 'ca-master', leadFilter: 'converted', desc: 'Demos with Purchased outcome in range' },
       ],
     },
     {
@@ -6524,16 +6576,17 @@ if (otherInput) {
     {
       title: 'Demo',
       cards: [
-        { icon: 'presentation', label: "Today's Demos", key: 'my_demos', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', source: 'summary', desc: 'Demos scheduled today' },
-        { icon: 'badge-check', label: 'Demos Completed Today', key: 'demos_completed_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Completed', source: 'summary', desc: "Today's completed demos" },
-        { icon: 'video', label: 'My Meetings', key: 'my_meetings', nav: 'followups', followupType: 'Demo Scheduled', source: 'summary', desc: 'All your meetings' },
+        { icon: 'presentation', label: 'Demos Scheduled Today', key: 'demos_scheduled_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', source: 'summary', desc: 'Demo schedules you created today (target achievement)' },
+        { icon: 'calendar', label: 'Demos Occurring Today', key: 'demos_occuring_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', source: 'summary', desc: 'Demos scheduled to occur today' },
+        { icon: 'badge-check', label: 'Demos Completed Today', key: 'demos_completed_today', nav: 'followups', followupFilter: 'today', followupType: 'Demo Completed', source: 'summary', desc: "Demos you marked completed today" },
+        { icon: 'video', label: 'My Meetings', key: 'my_meetings', nav: 'followups', followupType: 'Demo Scheduled', source: 'summary', desc: 'Follow-up meetings on your calendar' },
       ],
     },
     {
       title: 'Performance',
       cards: [
         { icon: 'target', label: "Today's Target", key: 'todays_target', nav: 'assignment', source: 'summary', desc: 'Daily demo target' },
-        { icon: 'award', label: "Today's Achieved", key: 'todays_achievement', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', source: 'summary', desc: 'Demos scheduled toward target' },
+        { icon: 'award', label: "Today's Achieved", key: 'todays_achievement', nav: 'followups', followupFilter: 'today', followupType: 'Demo Scheduled', source: 'summary', desc: 'Demos scheduled today toward your daily target' },
       ],
     },
   ];
@@ -12016,10 +12069,21 @@ if (otherInput) {
 
   function renderFollowupKpis() {
     var metrics = window.dashboardMetrics || {};
+    var followupCounts = null;
+    if (isEmployeeUser() && employeeDashboardData && employeeDashboardData.followup_counts) {
+      followupCounts = employeeDashboardData.followup_counts;
+    }
     var setKpi = function (id, val) {
       var el = document.getElementById(id);
       if (el) el.textContent = String(val);
     };
+    if (followupCounts) {
+      setKpi('fu-kpi-due-today', followupCounts.due_today != null ? followupCounts.due_today : 0);
+      setKpi('fu-kpi-pending', followupCounts.pending != null ? followupCounts.pending : 0);
+      setKpi('fu-kpi-overdue', followupCounts.overdue != null ? followupCounts.overdue : 0);
+      setKpi('fu-kpi-completed', followupCounts.completed != null ? followupCounts.completed : 0);
+      return;
+    }
     setKpi('fu-kpi-due-today', metrics.followups_due_today != null ? metrics.followups_due_today : 0);
     setKpi('fu-kpi-pending', metrics.pending_followups != null ? metrics.pending_followups : 0);
     setKpi('fu-kpi-overdue', metrics.overdue_followups != null ? metrics.overdue_followups : 0);
@@ -13549,6 +13613,7 @@ if (otherInput) {
 
   function refreshFollowupsPage(options) {
     options = options || {};
+    bindFollowupsPageToolbar();
     if (options.metrics !== false) {
       dashboardMetricsLoaded = false;
       loadDashboardMetricsFromDatabase(function () {
@@ -21481,6 +21546,7 @@ if (otherInput) {
       return;
     }
     if (pageId === 'followups') {
+      bindFollowupsPageToolbar();
       if (!applyDashboardNavIntentToFollowups()) {
         var dueFilter = window._followupDateFilter || '';
         if (dueFilter && window.CA_LISTING_SEARCH) {

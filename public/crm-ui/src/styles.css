@@ -6086,6 +6086,7 @@ body:has(#modal-dcp-detail.open) #overlay.active {
   box-shadow: 0 0 0 2px rgb(37 183 167 / 0.18);
 }
 .page-hero-toolbar {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;

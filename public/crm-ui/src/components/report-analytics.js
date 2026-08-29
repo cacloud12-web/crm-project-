@@ -481,13 +481,17 @@ window.CrmReportAnalytics = (function () {
         { icon: 'x-circle', tone: 'red', label: 'Lost Leads', value: fmtNum(s.lost_leads), tooltip: 'Leads in Lost or Inactive status.', trend: null },
       ];
     } else if (slug === 'followup_performance') {
+      var demo = report.demo_schedule_summary || {};
       var completionPct = Number(s.total_followups) ? fmtPct((Number(s.completed) / Number(s.total_followups)) * 100) : '—';
       cards = [
-        { icon: 'presentation', tone: 'blue', label: 'Total Follow-ups', value: fmtNum(s.total_followups), tooltip: 'All follow-ups scheduled in range.' },
-        { icon: 'check-circle', tone: 'green', label: 'Completed', value: fmtNum(s.completed), tooltip: 'Follow-ups marked completed.' },
-        { icon: 'alert-circle', tone: 'red', label: 'Overdue', value: fmtNum(s.overdue), tooltip: 'Open follow-ups past scheduled date.' },
-        { icon: 'calendar', tone: 'blue', label: 'Demo Related', value: fmtNum(s.demo_followups), tooltip: 'Follow-ups with Demo in the type.' },
-        { icon: 'percent', tone: 'orange', label: 'Completion Rate', value: completionPct, tooltip: 'Completed ÷ total follow-ups × 100.' },
+        { icon: 'presentation', tone: 'green', label: 'Demos Scheduled', value: fmtNum(s.demos_scheduled != null ? s.demos_scheduled : demo.demos_scheduled), tooltip: 'Demo schedules created in range (matches dashboard).' },
+        { icon: 'check-circle', tone: 'green', label: 'Demos Completed', value: fmtNum(s.demos_completed != null ? s.demos_completed : demo.demos_completed), tooltip: 'Demos marked completed in range (matches dashboard).' },
+        { icon: 'calendar-clock', tone: 'blue', label: 'Rescheduled', value: fmtNum(s.demos_rescheduled != null ? s.demos_rescheduled : demo.demos_rescheduled), tooltip: 'Demo schedules rescheduled in range.' },
+        { icon: 'badge-x', tone: 'red', label: 'Missed Demos', value: fmtNum(s.missed_demos != null ? s.missed_demos : demo.missed_demos), tooltip: 'Demo schedules missed in range.' },
+        { icon: 'percent', tone: 'orange', label: 'Demo Completion %', value: fmtPct(s.demo_conversion_rate != null ? s.demo_conversion_rate : demo.demo_conversion_rate), tooltip: 'Completed demos ÷ scheduled demos in range.' },
+        { icon: 'list', tone: 'blue', label: 'Follow-up Tasks', value: fmtNum(s.total_followups), tooltip: 'Follow-up tasks by scheduled date in range.' },
+        { icon: 'check-circle', tone: 'blue', label: 'Follow-ups Done', value: fmtNum(s.completed), tooltip: 'Follow-up tasks marked completed.' },
+        { icon: 'alert-circle', tone: 'red', label: 'Overdue Follow-ups', value: fmtNum(s.overdue), tooltip: 'Open follow-ups past scheduled date.' },
       ];
     } else if (slug === 'monthly_trends') {
       var lostTotal = sumRows(rows, 'lost_leads');
@@ -725,7 +729,7 @@ window.CrmReportAnalytics = (function () {
         }
         return '<td>' + escapeHtml(val == null ? '—' : String(val)) + '</td>';
       }).join('');
-      return '<tr>' + tds + '</tr>';
+      return '<tr' + (row.is_demo_schedule_row ? ' class="ra-table-row--highlight"' : '') + '>' + tds + '</tr>';
     }).join('') : '<tr><td colspan="' + keys.length + '" class="ra-table-empty">' +
       (allRows.length ? 'No rows match your search or drill-down.' : CHART_EMPTY) + '</td></tr>';
 
@@ -737,6 +741,10 @@ window.CrmReportAnalytics = (function () {
       '</div>';
     }
 
+    var noteHtml = report.demo_schedule_note
+      ? '<p class="ra-table-note text-caption text-slate-500 mb-2">' + escapeHtml(report.demo_schedule_note) + '</p>'
+      : '';
+
     return '<section class="ra-lc-table-section">' +
       '<header class="ra-lc-table-section__head">' +
         '<div><i data-lucide="table" class="h-4 w-4"></i><h4>Detailed Data</h4></div>' +
@@ -744,6 +752,7 @@ window.CrmReportAnalytics = (function () {
         '<label class="ra-table-search">' +
           '<input type="search" id="ra-table-search" placeholder="Search table…" value="' + escapeHtml(state.tableSearch) + '" aria-label="Search report table" /></label>' +
       '</header>' +
+      noteHtml +
       '<div class="ra-table-wrap scrollbar-thin"><table class="ra-table ra-lc-table"><thead><tr>' + thead + '</tr></thead><tbody>' + tbody + '</tbody></table></div>' +
     '</section>';
   }

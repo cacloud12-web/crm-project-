@@ -1,0 +1,47 @@
+# Paste this entire block in your SSH session (production server):
+
+cd ~/domains/crm.caclouddesk.com/public_html
+
+/opt/alt/php83/usr/bin/php artisan tinker --execute="
+use App\Models\{Employee,DemoSchedule,DemoResult,FollowUp,CallLog,PurchasedCustomer};
+use Carbon\Carbon;
+
+\$tz = config('app.timezone','Asia/Kolkata');
+\$names = ['soniya','simran','modu','dev'];
+\$open = ['Pending','Scheduled','Open','Overdue'];
+\$emps = Employee::query()->where(function(\$q) use (\$names) {
+  foreach (\$names as \$n) { \$q->orWhereRaw('LOWER(name) LIKE ?', ['%'.\$n.'%']); }
+})->orderBy('name')->get(['employee_id','name']);
+
+echo PHP_EOL.'=== EMPLOYEE ACTIVITY AUDIT (ALL TIME) ==='.PHP_EOL;
+echo str_pad('Employee',28).'Sched  Done   FU    Call  Buy   Issues'.PHP_EOL;
+echo str_repeat('-',70).PHP_EOL;
+
+\$all = Employee::orderBy('name')->pluck('name');
+foreach (\$names as \$n) {
+  if (!\$emps->first(fn(\$e)=>str_contains(strtolower(\$e->name),\$n))) {
+    echo 'WARNING: No employee matched: '.\$n.PHP_EOL;
+  }
+}
+
+foreach (\$emps as \$e) {
+  \$id = (int)\$e->employee_id;
+  \$sched = DemoSchedule::where('employee_id',\$id)->where('status','<>','cancelled')->count();
+  \$done = DemoSchedule::where('employee_id',\$id)->where('status','completed')->count();
+  \$fu = FollowUp::where('employee_id',\$id)->count();
+  \$calls = CallLog::where('employee_id',\$id)->count();
+  \$buy = PurchasedCustomer::where('employee_id',\$id)->count();
+  \$issues = 0;
+  \$issues += DemoSchedule::where('employee_id',\$id)->where('status','completed')->whereDoesntHave('result')->count();
+  \$issues += FollowUp::where('employee_id',\$id)->where('followup_type','Demo Scheduled')->whereIn('status',\$open)->whereNotIn('ca_id', DemoSchedule::where('employee_id',\$id)->whereIn('status',['scheduled','rescheduled','completed'])->pluck('ca_id'))->count();
+  echo str_pad(\$e->name,28).\$sched.'    '.\$done.'    '.\$fu.'   '.\$calls.'   '.\$buy.'    '.\$issues.PHP_EOL;
+}
+echo str_repeat('-',70).PHP_EOL;
+echo 'Sched=demo_schedules created (non-cancelled) | Done=completed demos | FU=all followups | Buy=purchased_customers'.PHP_EOL;
+echo 'Issues=completed demo w/o result + open Demo Scheduled FU w/o demo_schedule'.PHP_EOL;
+"
+
+# For FULL line-by-line Excel report (every lead), copy script then run:
+#   scp scripts/employee-activity-audit-export.php to server OR git pull after push
+#   /opt/alt/php83/usr/bin/php scripts/employee-activity-audit-export.php soniya,simran,modu,dev 0
+#   python3 scripts/employee-activity-audit-to-excel.py

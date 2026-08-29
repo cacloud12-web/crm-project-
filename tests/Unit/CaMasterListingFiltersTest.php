@@ -5,8 +5,11 @@ namespace Tests\Unit;
 use Tests\Support\CrmTestAccounts;
 
 use App\Models\CaMaster;
+use App\Models\Employee;
+use App\Models\LeadAssignmentEngine;
 use App\Models\User;
 use App\Services\Leads\CaMasterService;
+use App\Services\Leads\PhoneNormalizationService;
 use App\Support\Listing\ListingQueryApplier;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Auth;
@@ -154,6 +157,120 @@ class CaMasterListingFiltersTest extends TestCase
         ], $config);
 
         $this->assertGreaterThanOrEqual(3, $result['pagination']['total']);
+    }
+
+    public function test_mobile_no_column_filter_matches_formatted_indian_mobile_using_displayed_digits(): void
+    {
+        $lead = $this->seedFormattedMobileLead();
+
+        foreach (['919819779602', '9819779602', '+91 98197 79602'] as $mobileFilter) {
+            $result = $this->search(['mobile_no' => $mobileFilter, 'firm_name' => 'MobileFilterFirm']);
+            $this->assertSame(1, $result['pagination']['total'], "Failed for mobile_no={$mobileFilter}");
+            $this->assertSame($lead->ca_id, $result['items'][0]->ca_id);
+        }
+    }
+
+    public function test_mobile_no_column_filter_still_supports_partial_and_plain_mobile_values(): void
+    {
+        $formattedLead = $this->seedFormattedMobileLead();
+        $plainMobile = '9'.substr(str_replace('.', '', (string) microtime(true)), -9);
+        $plainLead = CaMaster::query()->create([
+            'firm_name' => 'MobileFilterPlain '.microtime(true),
+            'ca_name' => 'Plain Mobile CA',
+            'mobile_no' => $plainMobile,
+            'normalized_mobile' => app(PhoneNormalizationService::class)->normalize($plainMobile),
+            'status' => 'New',
+        ]);
+
+        $partialFormatted = $this->search(['mobile_no' => '98197', 'firm_name' => 'MobileFilterFirm']);
+        $this->assertSame(1, $partialFormatted['pagination']['total']);
+        $this->assertSame($formattedLead->ca_id, $partialFormatted['items'][0]->ca_id);
+
+        $lastDigitsFormatted = $this->search(['mobile_no' => '79602', 'firm_name' => 'MobileFilterFirm']);
+        $this->assertSame(1, $lastDigitsFormatted['pagination']['total']);
+        $this->assertSame($formattedLead->ca_id, $lastDigitsFormatted['items'][0]->ca_id);
+
+        $plainResult = $this->search(['mobile_no' => $plainMobile]);
+        $this->assertSame(1, $plainResult['pagination']['total']);
+        $this->assertSame($plainLead->ca_id, $plainResult['items'][0]->ca_id);
+    }
+
+    public function test_global_search_matches_formatted_mobile_using_displayed_digits(): void
+    {
+        $lead = $this->seedFormattedMobileLead();
+
+        $result = $this->search(['search' => '919819779602']);
+        $ids = collect($result['items'])->pluck('ca_id')->all();
+
+        $this->assertContains($lead->ca_id, $ids);
+    }
+
+    public function test_firm_name_filter_still_works_after_mobile_search_changes(): void
+    {
+        $lead = $this->seedFormattedMobileLead();
+
+        $result = $this->search(['firm_name' => $lead->firm_name]);
+
+        $this->assertSame(1, $result['pagination']['total']);
+        $this->assertSame($lead->ca_id, $result['items'][0]->ca_id);
+    }
+
+    public function test_mobile_search_does_not_break_employee_scope(): void
+    {
+        $employee = CrmTestAccounts::employee();
+        $employeeUser = CrmTestAccounts::employeeUser();
+        $otherEmployee = Employee::factory()->create([
+            'name' => 'Other Scope Employee',
+            'email_id' => 'other.scope.'.microtime(true).'@example.test',
+            'status' => 'Active',
+        ]);
+
+        $assignedLead = CaMaster::query()->create([
+            'firm_name' => 'Scoped Mobile Firm '.microtime(true),
+            'ca_name' => 'Scoped Mobile CA',
+            'mobile_no' => '+91 98197 79602',
+            'normalized_mobile' => '9819779602',
+            'status' => 'New',
+        ]);
+        LeadAssignmentEngine::query()->create([
+            'ca_id' => $assignedLead->ca_id,
+            'employee_id' => $employee->employee_id,
+            'status' => 'Active',
+            'assigned_date' => now()->toDateString(),
+        ]);
+
+        $otherLead = CaMaster::query()->create([
+            'firm_name' => 'Other Scoped Mobile Firm '.microtime(true),
+            'ca_name' => 'Other Scoped Mobile CA',
+            'mobile_no' => '+91 98197 79602',
+            'normalized_mobile' => '9819779602',
+            'status' => 'New',
+        ]);
+        LeadAssignmentEngine::query()->create([
+            'ca_id' => $otherLead->ca_id,
+            'employee_id' => $otherEmployee->employee_id,
+            'status' => 'Active',
+            'assigned_date' => now()->toDateString(),
+        ]);
+
+        Auth::login($employeeUser);
+
+        $result = $this->search(['mobile_no' => '919819779602']);
+        $ids = collect($result['items'])->pluck('ca_id')->all();
+
+        $this->assertContains($assignedLead->ca_id, $ids);
+        $this->assertNotContains($otherLead->ca_id, $ids);
+    }
+
+    private function seedFormattedMobileLead(): CaMaster
+    {
+        return CaMaster::query()->create([
+            'firm_name' => 'MobileFilterFirm '.microtime(true),
+            'ca_name' => 'Formatted Mobile CA',
+            'mobile_no' => '+91 98197 79602',
+            'normalized_mobile' => '9819779602',
+            'status' => 'New',
+        ]);
     }
 
     private function search(array $params): array

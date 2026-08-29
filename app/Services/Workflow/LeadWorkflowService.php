@@ -699,12 +699,7 @@ class LeadWorkflowService
             }
             // Always mark as Demo Completed so history appears under that type filter.
             $followUp->refresh();
-            $followUp->update([
-                'followup_type' => 'Demo Completed',
-                'outcome' => $result,
-                'remarks' => $remarkText,
-                'status' => 'Completed',
-            ]);
+            $this->applyCompletedDemoFollowUpState($followUp, $result, $remarkText);
         }
 
         $this->demoReminderService->cancelPendingForDemo($schedule->id);
@@ -781,32 +776,176 @@ class LeadWorkflowService
             ->orderBy('id')
             ->chunkById(100, function ($results) use (&$updated) {
                 foreach ($results as $result) {
-                    $followUpIds = FollowUp::query()
-                        ->where('ca_id', $result->ca_id)
-                        ->where(function ($query) use ($result) {
-                            $query->whereIn('followup_type', ['Demo Scheduled', 'Demo Completed']);
-                            if ($result->demoSchedule?->followup_id) {
-                                $query->orWhere('followup_id', $result->demoSchedule->followup_id);
-                            }
-                        })
-                        ->pluck('followup_id');
+                    $followUpQuery = FollowUp::query()->where('ca_id', $result->ca_id);
 
-                    if ($followUpIds->isEmpty()) {
-                        continue;
+                    if ($result->demoSchedule?->followup_id) {
+                        $followUpQuery->where(function ($query) use ($result) {
+                            $query->where('followup_id', $result->demoSchedule->followup_id)
+                                ->orWhereIn('followup_type', ['Demo Scheduled', 'Demo Completed']);
+                        });
+                    } else {
+                        $followUpQuery->whereIn('followup_type', ['Demo Scheduled', 'Demo Completed']);
                     }
 
-                    $updated += FollowUp::query()
-                        ->whereIn('followup_id', $followUpIds)
-                        ->update([
-                            'followup_type' => 'Demo Completed',
-                            'outcome' => $result->result,
-                            'remarks' => $result->notes ?: $result->result,
-                            'status' => 'Completed',
-                        ]);
+                    $followUps = $followUpQuery->get();
+                    foreach ($followUps as $followUp) {
+                        if ($this->applyCompletedDemoFollowUpState($followUp, $result->result, $result->notes)) {
+                            $updated++;
+                        }
+                    }
                 }
             });
 
         return $updated;
+    }
+
+    /**
+     * Repair follow-ups left as Demo Scheduled while status is already Completed.
+     *
+     * @return array{followups_retyped: int, demo_results_created: int}
+     */
+    public function syncOrphanedCompletedDemoFollowUps(): array
+    {
+        $demoResultsCreated = 0;
+        $followupsRetyped = 0;
+        $completedStatuses = config('followup_automation.completed_statuses', ['Completed', 'Closed']);
+
+        FollowUp::query()
+            ->where('followup_type', 'Demo Scheduled')
+            ->whereIn('status', $completedStatuses)
+            ->orderBy('followup_id')
+            ->chunkById(100, function ($followUps) use (&$followupsRetyped, &$demoResultsCreated) {
+                foreach ($followUps as $followUp) {
+                    if ($this->normalizeCompletedDemoFollowUp($followUp, $demoResultsCreated)) {
+                        $followupsRetyped++;
+                    }
+                }
+            });
+
+        return [
+            'followups_retyped' => $followupsRetyped,
+            'demo_results_created' => $demoResultsCreated,
+        ];
+    }
+
+    /**
+     * @return array{from_demo_results: int, orphaned_followups_retyped: int, demo_results_created: int}
+     */
+    public function syncAllDemoFollowUpState(): array
+    {
+        $orphaned = $this->syncOrphanedCompletedDemoFollowUps();
+
+        return [
+            'from_demo_results' => $this->syncCompletedDemoFollowUpTypes(),
+            'orphaned_followups_retyped' => $orphaned['followups_retyped'],
+            'demo_results_created' => $orphaned['demo_results_created'],
+        ];
+    }
+
+    /**
+     * When a demo follow-up is completed, keep type/outcome aligned and sync demo_schedules for reports.
+     */
+    public function normalizeCompletedDemoFollowUp(FollowUp $followUp, ?int &$demoResultsCreated = null): bool
+    {
+        $completedStatuses = config('followup_automation.completed_statuses', ['Completed', 'Closed']);
+        if ($followUp->followup_type !== 'Demo Scheduled' || ! in_array($followUp->status, $completedStatuses, true)) {
+            return false;
+        }
+
+        $outcome = $this->inferDemoOutcome($followUp);
+
+        $followUp->update([
+            'followup_type' => 'Demo Completed',
+            'outcome' => $followUp->outcome ?: $outcome,
+            'status' => 'Completed',
+        ]);
+
+        if ($this->ensureDemoResultForCompletedFollowUp($followUp->fresh(), $outcome)) {
+            if ($demoResultsCreated !== null) {
+                $demoResultsCreated++;
+            }
+        }
+
+        return true;
+    }
+
+    private function applyCompletedDemoFollowUpState(FollowUp $followUp, string $result, ?string $remarkText): bool
+    {
+        $followUp->update([
+            'followup_type' => 'Demo Completed',
+            'outcome' => $result,
+            'remarks' => $remarkText !== null && $remarkText !== '' ? $remarkText : $followUp->remarks,
+            'status' => 'Completed',
+        ]);
+
+        return true;
+    }
+
+    private function ensureDemoResultForCompletedFollowUp(FollowUp $followUp, string $result): bool
+    {
+        $validResults = config('lead_workflow.demo_results', []);
+        if (! in_array($result, $validResults, true)) {
+            $result = 'Thinking';
+        }
+
+        $schedule = DemoSchedule::query()
+            ->where(function ($query) use ($followUp) {
+                $query->where('followup_id', $followUp->followup_id);
+                if ($followUp->ca_id && $followUp->employee_id) {
+                    $query->orWhere(function ($nested) use ($followUp) {
+                        $nested->where('ca_id', $followUp->ca_id)
+                            ->where('employee_id', $followUp->employee_id);
+                    });
+                }
+            })
+            ->whereNotIn('status', [DemoSchedule::STATUS_CANCELLED])
+            ->whereDoesntHave('result')
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $schedule) {
+            return false;
+        }
+
+        DemoResult::query()->create([
+            'demo_schedule_id' => $schedule->id,
+            'ca_id' => $schedule->ca_id,
+            'employee_id' => $schedule->employee_id ?: $followUp->employee_id,
+            'result' => $result,
+            'notes' => $followUp->remarks,
+            'created_by_user_id' => auth()->id(),
+        ]);
+
+        $schedule->update(['status' => DemoSchedule::STATUS_COMPLETED]);
+
+        if ($schedule->employee_id) {
+            $this->cacheService->forgetDailyEmployeeTargets((int) $schedule->employee_id);
+            $this->cacheService->forgetDashboardMetrics();
+        }
+
+        return true;
+    }
+
+    private function inferDemoOutcome(FollowUp $followUp): string
+    {
+        $valid = config('lead_workflow.demo_results', []);
+        $outcome = trim((string) ($followUp->outcome ?? ''));
+        if ($outcome !== '' && in_array($outcome, $valid, true)) {
+            return $outcome;
+        }
+
+        $remarks = strtolower((string) ($followUp->remarks ?? ''));
+        if (str_contains($remarks, 'purchased') || str_contains($remarks, 'purchase')) {
+            return 'Purchased';
+        }
+        if (str_contains($remarks, 'not interested')) {
+            return 'Not Interested';
+        }
+        if (str_contains($remarks, 'interested')) {
+            return 'Interested';
+        }
+
+        return 'Thinking';
     }
 
     /**

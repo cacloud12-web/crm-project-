@@ -18,6 +18,7 @@ use App\Models\WaMessageLog;
 use App\Models\WhatsAppCampaign;
 use App\Models\YearlyEmployeeTarget;
 use App\Services\Cache\CrmCacheService;
+use App\Services\Dashboard\DemoMetricsService;
 use App\Services\Leads\EmployeeProductivityService;
 use App\Services\Rbac\EmployeeDataScopeService;
 use App\Support\Database\SqlAggregate;
@@ -33,6 +34,7 @@ class ReportsService
         private readonly EmployeeDataScopeService $employeeDataScope,
         private readonly CrmCacheService $cacheService,
         private readonly EmployeeProductivityService $employeeProductivity,
+        private readonly DemoMetricsService $demoMetricsService,
     ) {}
 
     public function summary(array $params = []): array
@@ -357,7 +359,7 @@ class ReportsService
             ->whereBetween('created_at', [$from, $to])
             ->whereNotIn('status', [DemoSchedule::STATUS_CANCELLED])
             ->selectRaw('employee_id')
-            ->selectRaw('COUNT(*) as demos_scheduled')
+            ->selectRaw('COUNT(DISTINCT demo_schedules.id) as demos_scheduled')
             ->groupBy('employee_id')
             ->pluck('demos_scheduled', 'employee_id');
 
@@ -573,6 +575,12 @@ class ReportsService
         $open = $this->quotedList(config('reports.open_followup_statuses', []));
         $completed = $this->quotedList(config('reports.completed_followup_statuses', []));
 
+        $demoSummary = $this->demoMetricsService->aggregateForRange(
+            $filters['employee_id'],
+            $filters['from'],
+            $filters['to'],
+        );
+
         $rows = $this->scopedFollowUpQuery($filters)
             ->when($filters['from'], fn ($q) => $q->where('scheduled_date', '>=', $filters['from']))
             ->when($filters['to'], fn ($q) => $q->where('scheduled_date', '<=', $filters['to']))
@@ -599,6 +607,9 @@ class ReportsService
             ])
             ->all();
 
+        $demoScheduleRows = $this->demoScheduleReportRows($demoSummary);
+        $rows = array_merge($demoScheduleRows, $rows);
+
         $summaryRow = $this->scopedFollowUpQuery($filters)
             ->when($filters['from'], fn ($q) => $q->where('scheduled_date', '>=', $filters['from']))
             ->when($filters['to'], fn ($q) => $q->where('scheduled_date', '<=', $filters['to']))
@@ -617,7 +628,15 @@ class ReportsService
                 'completed' => (int) ($summaryRow->completed ?? 0),
                 'overdue' => (int) ($summaryRow->overdue ?? 0),
                 'demo_followups' => (int) ($summaryRow->demo_followups ?? 0),
+                'demos_scheduled' => (int) ($demoSummary['demos_scheduled'] ?? 0),
+                'demos_completed' => (int) ($demoSummary['demos_completed'] ?? 0),
+                'demos_rescheduled' => (int) ($demoSummary['demos_rescheduled'] ?? 0),
+                'demos_cancelled' => (int) ($demoSummary['demos_cancelled'] ?? 0),
+                'missed_demos' => (int) ($demoSummary['missed_demos'] ?? 0),
+                'demo_conversion_rate' => (float) ($demoSummary['demo_conversion_rate'] ?? 0),
             ],
+            'demo_schedule_summary' => $demoSummary,
+            'demo_schedule_note' => 'Demo Schedules row uses demo_schedules (same as dashboard). Follow-up rows track follow-up tasks; completed demos move from Demo Scheduled to Demo Completed type.',
             'columns' => [
                 'followup_type' => 'Type',
                 'total_followups' => 'Total',
@@ -628,6 +647,29 @@ class ReportsService
                 'completion_rate_pct' => 'Completion %',
             ],
             'rows' => $rows,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $demoSummary
+     * @return list<array<string, mixed>>
+     */
+    private function demoScheduleReportRows(array $demoSummary): array
+    {
+        $scheduled = (int) ($demoSummary['demos_scheduled'] ?? 0);
+        $completed = (int) ($demoSummary['demos_completed'] ?? 0);
+
+        return [
+            [
+                'followup_type' => 'Demo Schedules (dashboard)',
+                'total_followups' => $scheduled,
+                'completed' => $completed,
+                'open_count' => max(0, $scheduled - $completed),
+                'overdue' => (int) ($demoSummary['missed_demos'] ?? 0),
+                'demo_related' => $scheduled,
+                'completion_rate_pct' => (float) ($demoSummary['demo_conversion_rate'] ?? 0),
+                'is_demo_schedule_row' => true,
+            ],
         ];
     }
 

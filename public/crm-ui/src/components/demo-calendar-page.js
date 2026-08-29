@@ -596,7 +596,48 @@ window.CrmDemoCalendarPage = (function () {
   }
 
   function exportDemos(label, demos) {
-    toast(label + ': ' + demos.length + ' demo(s) ready for export (demo mode — no file generated).', 'info');
+    if (!demos || !demos.length) {
+      toast('No demos to export for the selected range.', 'warning');
+      return;
+    }
+
+    var headers = ['Firm', 'CA Name', 'Executive', 'Phone', 'Date', 'Start', 'End', 'Status', 'Priority', 'Meeting Link', 'Remarks'];
+    var rows = demos.map(function (d) {
+      return [
+        d.firmName || '',
+        d.caName || '',
+        d.executive || '',
+        d.phone || '',
+        d.date || '',
+        d.startTime || '',
+        d.endTime || '',
+        Data.statusLabel(d.status) || d.status || '',
+        d.priority || '',
+        d.meetingLink || '',
+        d.remarks || d.description || '',
+      ];
+    });
+
+    var escapeCell = function (val) {
+      var text = String(val == null ? '' : val).replace(/"/g, '""');
+      return '"' + text + '"';
+    };
+
+    var csv = [headers.map(escapeCell).join(',')]
+      .concat(rows.map(function (row) { return row.map(escapeCell).join(','); }))
+      .join('\r\n');
+
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement('a');
+    var safeLabel = String(label || 'demos').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    link.href = url;
+    link.download = safeLabel + '-' + todayStr() + '.csv';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    toast('Downloaded ' + demos.length + ' demo(s).', 'success');
   }
 
   function bindUi() {

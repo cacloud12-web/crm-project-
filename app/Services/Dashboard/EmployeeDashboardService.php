@@ -70,6 +70,7 @@ class EmployeeDashboardService
         $followUpCounts = $this->followUpSummary($employeeId);
         $taskCounts = $this->taskSummary($employeeId);
         $assignmentStats = $this->assignmentStats($employeeId);
+        $demoFollowUpCounts = $this->demoFollowUpCounts($employeeId);
         $productivity = $this->employeeProductivity->employeeDashboardMetrics($employeeId);
         $today = now()->toDateString();
         $yearlyTarget = $this->yearlyEmployeeTargetService->currentYearForEmployee($user);
@@ -95,6 +96,8 @@ class EmployeeDashboardService
                 'my_leads' => (int) ($leadCounts['total'] ?? 0),
                 'my_followups' => $followUpCounts['total_open'],
                 'my_demos' => $demoSnapshot['demos_scheduled_today'],
+                'demos_scheduled_today' => $demoSnapshot['demos_scheduled_today'],
+                'demos_occuring_today' => (int) ($targetProgress['today']['demos_occuring_today'] ?? 0),
                 'my_meetings' => $followUpCounts['meetings_today'],
                 'todays_calls' => $followUpCounts['calls_today'],
                 'todays_tasks' => $taskCounts['due_today'] + $taskCounts['overdue'],
@@ -119,6 +122,14 @@ class EmployeeDashboardService
             'daily_target' => $dailyTarget,
             'target_progress' => $targetProgress,
             'demo_metrics' => $demoSnapshot,
+            'followup_counts' => [
+                'due_today' => (int) ($followUpCounts['due_today'] ?? 0),
+                'pending' => (int) ($followUpCounts['total_open'] ?? 0),
+                'overdue' => (int) ($followUpCounts['overdue'] ?? 0),
+                'completed' => (int) ($followUpCounts['completed'] ?? 0),
+                'demo_scheduled_open' => (int) ($demoFollowUpCounts['demo_scheduled_open'] ?? 0),
+                'demo_completed' => (int) ($demoFollowUpCounts['demo_completed'] ?? 0),
+            ],
             'today_work' => [
                 'followups_due' => $followUpCounts['due_today'],
                 'followups_overdue' => $followUpCounts['overdue'],
@@ -230,6 +241,25 @@ class EmployeeDashboardService
             'meetings_today' => (int) ($row->meetings_today ?? 0),
             'upcoming' => (int) ($row->upcoming ?? 0),
             'upcoming_week' => (int) ($row->upcoming_week ?? 0),
+        ];
+    }
+
+    /**
+     * @return array{demo_scheduled_open: int, demo_completed: int}
+     */
+    private function demoFollowUpCounts(int $employeeId): array
+    {
+        $open = $this->quotedList(self::OPEN_FOLLOWUP_STATUSES);
+        $completed = $this->quotedList(self::COMPLETED_FOLLOWUP_STATUSES);
+
+        $row = $this->followUpsQuery($employeeId)
+            ->selectRaw(SqlAggregate::countFilter('*', "followup_type = 'Demo Scheduled' AND status IN ({$open})").' as demo_scheduled_open')
+            ->selectRaw(SqlAggregate::countFilter('*', "followup_type = 'Demo Completed' AND status IN ({$completed})").' as demo_completed')
+            ->first();
+
+        return [
+            'demo_scheduled_open' => (int) ($row->demo_scheduled_open ?? 0),
+            'demo_completed' => (int) ($row->demo_completed ?? 0),
         ];
     }
 

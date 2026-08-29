@@ -1546,6 +1546,7 @@ window.CAPages = (function () {
     var types = ['Call Status', 'Demo Scheduled', 'Demo Completed', 'Demo History', 'Details Shared', 'Negotiation', 'Not Interested', 'Follow Up Reminder', 'Follow Up Scheduled'];
     var headerActions =
       pageHeroToolbar(
+        actIcon('download', 'Export', 'id="followup-export-btn"') +
         actSecondary('Calendar', 'id="followup-cal-toggle" aria-expanded="false" aria-controls="followup-cal-popover"', 'calendar') +
         actPrimary('Schedule Follow-up', 'data-open-modal="followup" data-manager-schedule-followup', 'plus')
       ) +

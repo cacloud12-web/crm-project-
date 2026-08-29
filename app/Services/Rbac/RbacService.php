@@ -535,6 +535,12 @@ class RbacService
             return ['module' => 'bulk', 'permission' => $method === 'GET' ? 'view' : 'import'];
         }
 
+        if (preg_match('#^listings/(follow_ups|sales_list)/export$#', $path, $matches)) {
+            $module = $matches[1] === 'follow_ups' ? 'followups' : 'sales_list';
+
+            return ['module' => $module, 'permission' => 'export'];
+        }
+
         if (str_contains($path, 'bulk-export') || str_starts_with($path, 'listings/')) {
             return ['module' => 'bulk', 'permission' => $method === 'GET' ? 'export' : 'export'];
         }

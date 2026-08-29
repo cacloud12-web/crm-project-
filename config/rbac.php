@@ -227,7 +227,7 @@ return [
             'assignment' => ['view', 'assign', 'reassign'],
             // Communication — use canonical actions only (no legacy "campaigns" action).
             'campaigns' => ['view', 'send_email', 'send_sms'],
-            'followups' => ['view', 'schedule_followup', 'schedule_demo', 'mark_completed', 'edit'],
+            'followups' => ['view', 'schedule_followup', 'schedule_demo', 'mark_completed', 'edit', 'export'],
             'tickets' => ['view', 'create', 'edit', 'assign', 'delete', 'download'],
             'sales_list' => ['view', 'edit', 'export'],
             'ocr' => ['view', 'create', 'edit', 'delete', 'upload', 'process', 'retry', 'download', 'view_all', 'import'],
@@ -245,7 +245,7 @@ return [
         'employee' => [
             'dashboard' => ['view'],
             'leads' => ['view', 'create', 'edit'],
-            'followups' => ['view', 'create', 'edit', 'schedule_followup', 'schedule_demo', 'mark_completed'],
+            'followups' => ['view', 'create', 'edit', 'schedule_followup', 'schedule_demo', 'mark_completed', 'export'],
             'tickets' => ['view', 'create', 'edit', 'download'],
             // Communication — keep canonical actions; also retain legacy "campaigns" grant from local OCR branch.
             'campaigns' => ['view', 'send_email', 'send_sms', 'campaigns'],

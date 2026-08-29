@@ -2,6 +2,7 @@
 
 namespace App\Support\Listing;
 
+use App\Services\Leads\PhoneNormalizationService;
 use App\Support\Database\SchemaMemo;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Arr;
@@ -228,7 +229,9 @@ class ListingQueryApplier
         $escaped = '%'.addcslashes($term, '%_\\').'%';
         $table = $query->getModel()->getTable();
 
-        $query->where(function (Builder $outer) use ($columns, $relations, $escaped, $table) {
+        $normalizedTerm = app(PhoneNormalizationService::class)->normalize($term);
+
+        $query->where(function (Builder $outer) use ($columns, $relations, $escaped, $table, $normalizedTerm) {
             foreach ($columns as $column) {
                 $qualified = str_contains($column, '.') ? $column : $table.'.'.$column;
                 self::whereIlike($outer, $qualified, $escaped, 'or');
@@ -242,6 +245,10 @@ class ListingQueryApplier
                         }
                     });
                 });
+            }
+
+            if ($normalizedTerm !== null) {
+                self::applyNormalizedMobileSearchOr($outer, $table, $normalizedTerm);
             }
         });
     }
@@ -293,6 +300,7 @@ class ListingQueryApplier
                 'rating_max' => $query->where('rating', '<=', (int) $value),
                 'boolean' => $query->where($key, filter_var($value, FILTER_VALIDATE_BOOLEAN)),
                 'ilike' => self::whereIlike($query, $key, '%'.addcslashes((string) $value, '%_\\').'%'),
+                'mobile_ilike' => self::applyMobileIlikeFilter($query, $key, $value),
                 'performed_by_ilike' => self::whereIlike($query, 'performed_by', '%'.$value.'%'),
                 'date_exact' => $query->whereDate($config['date_column'] ?? 'created_at', $value),
                 'city_name' => $query->whereHas('city', function (Builder $q) use ($value) {
@@ -318,9 +326,85 @@ class ListingQueryApplier
                 'master_pipeline_stage' => self::applyMasterPipelineStage($query, (string) $value),
                 'lead_tag' => self::applyLeadTag($query, (string) $value),
                 'followup_due' => self::applyFollowupDue($query, (string) $value, $config),
+                'followup_type' => self::applyFollowupTypeFilter($query, (string) $value),
                 default => null,
             };
         }
+    }
+
+    private static function applyMobileIlikeFilter(Builder $query, string $column, mixed $value): void
+    {
+        $term = trim((string) $value);
+        if ($term === '') {
+            return;
+        }
+
+        $escaped = '%'.addcslashes($term, '%_\\').'%';
+        $table = $query->getModel()->getTable();
+        $normalizedColumn = $column === 'alternate_mobile_no'
+            ? 'normalized_alternate_mobile'
+            : 'normalized_mobile';
+        $normalizedTerm = app(PhoneNormalizationService::class)->normalize($term);
+
+        $query->where(function (Builder $inner) use ($column, $escaped, $table, $normalizedColumn, $normalizedTerm) {
+            self::whereIlike($inner, $column, $escaped, 'or');
+
+            if ($normalizedTerm === null) {
+                return;
+            }
+
+            $normalizedLike = '%'.addcslashes($normalizedTerm, '%_\\').'%';
+
+            if (SchemaMemo::hasColumn($table, $normalizedColumn)) {
+                self::whereIlike($inner, $normalizedColumn, $normalizedLike, 'or');
+            }
+
+            self::whereDigitsOnlyIlike($inner, $table.'.'.$column, $normalizedLike, 'or');
+        });
+    }
+
+    private static function applyNormalizedMobileSearchOr(Builder $query, string $table, string $normalizedTerm): void
+    {
+        $normalizedLike = '%'.addcslashes($normalizedTerm, '%_\\').'%';
+
+        if (SchemaMemo::hasColumn($table, 'normalized_mobile')) {
+            self::whereIlike($query, $table.'.normalized_mobile', $normalizedLike, 'or');
+        }
+
+        if (SchemaMemo::hasColumn($table, 'normalized_alternate_mobile')) {
+            self::whereIlike($query, $table.'.normalized_alternate_mobile', $normalizedLike, 'or');
+        }
+
+        foreach (['mobile_no', 'alternate_mobile_no'] as $column) {
+            if (! SchemaMemo::hasColumn($table, $column)) {
+                continue;
+            }
+
+            self::whereDigitsOnlyIlike($query, $table.'.'.$column, $normalizedLike, 'or');
+        }
+    }
+
+    private static function whereDigitsOnlyIlike(
+        Builder $query,
+        string $qualifiedColumn,
+        string $likeValue,
+        string $boolean = 'and',
+    ): void {
+        $driver = $query->getConnection()->getDriverName();
+        $method = $boolean === 'or' ? 'orWhereRaw' : 'whereRaw';
+        $digitsExpression = self::digitsOnlySqlExpression($driver, $qualifiedColumn);
+        $operator = $driver === 'pgsql' ? 'ILIKE' : 'LIKE';
+
+        $query->{$method}("{$digitsExpression} {$operator} ?", [$likeValue]);
+    }
+
+    private static function digitsOnlySqlExpression(string $driver, string $qualifiedColumn): string
+    {
+        return match ($driver) {
+            'pgsql' => "REGEXP_REPLACE({$qualifiedColumn}, '[^0-9]', '', 'g')",
+            'mysql' => "REGEXP_REPLACE({$qualifiedColumn}, '[^0-9]', '')",
+            default => "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE({$qualifiedColumn}, ' ', ''), '+', ''), '-', ''), '(', ''), ')', '')",
+        };
     }
 
     private static function applyLeadTag(Builder $query, string $tag): void
@@ -431,6 +515,16 @@ class ListingQueryApplier
             }),
             default => null,
         };
+    }
+
+    private static function applyFollowupTypeFilter(Builder $query, string $type): void
+    {
+        $query->where('followup_type', $type);
+
+        if ($type === 'Demo Scheduled') {
+            $openStatuses = config('followup_automation.open_statuses', ['Pending', 'Scheduled', 'Open', 'Overdue']);
+            $query->whereIn('status', $openStatuses);
+        }
     }
 
     private static function applyFollowupDue(Builder $query, string $due, array $config): void

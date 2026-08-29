@@ -132,6 +132,12 @@ class FollowUpAutomationService
 
         $followUp = $followUp->fresh(['caMaster', 'employee']);
 
+        if ($followUp->followup_type === 'Demo Scheduled') {
+            app(\App\Services\Workflow\LeadWorkflowService::class)
+                ->normalizeCompletedDemoFollowUp($followUp);
+            $followUp = $followUp->fresh(['caMaster', 'employee']);
+        }
+
         Task::query()
             ->where('followup_id', $followUp->followup_id)
             ->whereIn('status', ['Pending', 'Overdue'])

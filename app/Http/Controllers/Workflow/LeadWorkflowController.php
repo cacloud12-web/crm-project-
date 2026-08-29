@@ -99,8 +99,8 @@ class LeadWorkflowController extends Controller
 
     public function demoHistory(): JsonResponse
     {
-        // Repair older completed demos so they appear under Demo Completed filters.
-        $this->workflowService->syncCompletedDemoFollowUpTypes();
+        // Repair older completed demos so they appear under Demo Completed filters and reports.
+        $this->workflowService->syncAllDemoFollowUpState();
 
         return ApiResponse::success(
             $this->workflowService->demoHistory(),

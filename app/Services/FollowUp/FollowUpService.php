@@ -280,6 +280,14 @@ class FollowUpService
         $followUp = $followUp->fresh($this->listingRelations());
         $firm = $followUp->caMaster?->firm_name ?? 'Lead #'.$followUp->ca_id;
 
+        $completedStatuses = config('followup_automation.completed_statuses', ['Completed', 'Closed']);
+        if ($followUp->followup_type === 'Demo Completed'
+            || ($previousFollowupType === 'Demo Scheduled' && in_array($followUp->status, $completedStatuses, true))) {
+            app(\App\Services\Workflow\LeadWorkflowService::class)
+                ->normalizeCompletedDemoFollowUp($followUp);
+            $followUp = $followUp->fresh($this->listingRelations());
+        }
+
         $this->activityLogService->log(
             'FOLLOW_UP_MANAGEMENT',
             'Follow-up Update',
