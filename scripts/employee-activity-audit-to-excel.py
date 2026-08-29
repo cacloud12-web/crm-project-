@@ -67,13 +67,18 @@ def write_table(ws, start_row, headers, rows, widths=None):
 def main():
     root = Path(__file__).resolve().parent.parent
     json_path = Path(sys.argv[1]) if len(sys.argv) > 1 else root / "storage/app/audits/employee-activity-audit.json"
-    out_path = Path(sys.argv[2]) if len(sys.argv) > 2 else root / "storage/app/audits/Employee_Activity_Audit.xlsx"
-
-    if not json_path.exists():
+    data = json.loads(json_path.read_text(encoding="utf-8")) if json_path.exists() else None
+    if data is None:
         print(f"Missing JSON: {json_path}")
         sys.exit(1)
 
-    data = json.loads(json_path.read_text(encoding="utf-8"))
+    period = data.get("period")
+    if isinstance(period, dict):
+        period_slug = f"{period.get('from')}_to_{period.get('to')}"
+        default_name = f"CRM_Full_Report_Last_{period.get('days', '')}_Days_{period_slug}.xlsx"
+    else:
+        default_name = "CRM_Full_Report_All_Time.xlsx"
+    out_path = Path(sys.argv[2]) if len(sys.argv) > 2 else root / "storage/app/audits" / default_name
     wb = Workbook()
     used = set()
 
@@ -82,16 +87,18 @@ def main():
     ws.title = "Summary"
     period = data.get("period")
     period_txt = "ALL TIME" if period == "all_time" else f"{period.get('from')} to {period.get('to')}"
-    ws["A1"] = "Employee Activity Audit"
+    ws["A1"] = "CRM Full Employee Report"
     ws["A1"].font = Font(bold=True, size=16, color="1F4E79")
-    ws.merge_cells("A1:K1")
+    ws.merge_cells("A1:R1")
     ws["A2"] = f"Period: {period_txt} | Generated: {data.get('generated_at', '')}"
-    ws.merge_cells("A2:K2")
-    ws["A3"] = f"Integrity issues: {data.get('integrity_issue_count', 0)}"
-    ws.merge_cells("A3:K3")
+    ws.merge_cells("A2:R2")
+    ws["A3"] = "Demo achieved = demos SCHEDULED per day (daily target rule). Integrity issues: {}".format(data.get('integrity_issue_count', 0))
+    ws.merge_cells("A3:R3")
 
     headers = [
-        "Employee", "Demos Scheduled", "Demos Completed", "Demos Open", "Follow-ups Total",
+        "Employee", "Leads Assigned (now)", "Leads Assigned (period)", "Demo Target (period)",
+        "Demo Achieved (period)", "Achievement %", "Today Target", "Today Achieved",
+        "Demos Scheduled", "Demos Completed", "Demos Open", "Follow-ups Total",
         "Demo Scheduled FU (open)", "Demo Completed FU", "Calls Total", "Purchases",
         "Purchased Demo Results", "Integrity Issues",
     ]
@@ -100,6 +107,13 @@ def main():
         s = emp["summary"]
         rows.append([
             emp["employee_name"],
+            s.get("leads_assigned_active", 0),
+            s.get("leads_assigned_in_period", 0),
+            s.get("demo_target_period", 0),
+            s.get("demo_achieved_period", 0),
+            s.get("demo_achievement_pct", 0),
+            s.get("demo_target_today", 0),
+            s.get("demo_achieved_today", 0),
             s["demos_scheduled_created"],
             s["demos_completed"],
             s["demos_still_open"],
@@ -113,10 +127,26 @@ def main():
         ])
     gt = data.get("grand_totals", {})
     rows.append([
-        "GRAND TOTAL", gt.get("demos_scheduled_created", 0), gt.get("demos_completed", 0), "", gt.get("followups_total", 0),
-        "", "", gt.get("calls_total", 0), gt.get("purchases_total", 0), "", data.get("integrity_issue_count", 0),
+        "GRAND TOTAL",
+        gt.get("leads_assigned_active", 0),
+        gt.get("leads_assigned_in_period", 0),
+        gt.get("demo_target_period", 0),
+        gt.get("demo_achieved_period", 0),
+        "",
+        "",
+        "",
+        gt.get("demos_scheduled_created", 0),
+        gt.get("demos_completed", 0),
+        "",
+        gt.get("followups_total", 0),
+        "",
+        "",
+        gt.get("calls_total", 0),
+        gt.get("purchases_total", 0),
+        gt.get("purchased_demo_results", 0),
+        data.get("integrity_issue_count", 0),
     ])
-    end = write_table(ws, 5, headers, rows, [24, 14, 14, 12, 14, 18, 16, 12, 12, 18, 16])
+    end = write_table(ws, 5, headers, rows, [22, 16, 16, 14, 16, 12, 12, 14, 14, 14, 12, 14, 18, 16, 12, 12, 18, 14])
     for c in range(1, len(headers) + 1):
         ws.cell(row=end, column=c).font = BOLD
 

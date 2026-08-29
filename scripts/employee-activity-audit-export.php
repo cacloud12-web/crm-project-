@@ -6,11 +6,11 @@
  * Usage on production:
  *   /opt/alt/php83/usr/bin/php scripts/employee-activity-audit-export.php
  *   /opt/alt/php83/usr/bin/php scripts/employee-activity-audit-export.php soniya,simran,modu,dev
- *   /opt/alt/php83/usr/bin/php scripts/employee-activity-audit-export.php soniya,simran,modu,dev 30
+ *   /opt/alt/php83/usr/bin/php scripts/employee-activity-audit-export.php all 20
  *
  * Args:
- *   1) comma-separated employee name fragments (default: soniya,simran,modu,dev)
- *   2) days (0 = all time, default 0)
+ *   1) comma-separated employee name fragments, or "all" (default: all)
+ *   2) days (0 = all time, default 20)
  *
  * Output: storage/app/audits/employee-activity-audit.json
  */
@@ -29,15 +29,19 @@ use App\Models\DemoResult;
 use App\Models\DemoSchedule;
 use App\Models\Employee;
 use App\Models\FollowUp;
+use App\Models\LeadAssignmentEngine;
 use App\Models\PurchasedCustomer;
+use App\Services\Assignment\DailyEmployeeTargetProgressService;
+use App\Services\Assignment\EmployeeTargetService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
 $timezone = config('app.timezone', 'Asia/Kolkata');
-$nameFilterRaw = trim((string) ($argv[1] ?? 'soniya,simran,modu,dev'));
-$days = max(0, (int) ($argv[2] ?? 0));
+$nameFilterRaw = trim((string) ($argv[1] ?? 'all'));
+$days = max(0, (int) ($argv[2] ?? 20));
+$exportAllEmployees = $nameFilterRaw === '' || strtolower($nameFilterRaw) === 'all';
 
-$nameFragments = array_values(array_filter(array_map(
+$nameFragments = $exportAllEmployees ? [] : array_values(array_filter(array_map(
     static fn (string $part) => strtolower(trim($part)),
     explode(',', $nameFilterRaw)
 )));
@@ -49,6 +53,9 @@ $from = $days > 0
 
 $openFollowupStatuses = ['Pending', 'Scheduled', 'Open', 'Overdue'];
 $completedFollowupStatuses = ['Completed', 'Closed'];
+
+$targetService = app(EmployeeTargetService::class);
+$progressService = app(DailyEmployeeTargetProgressService::class);
 
 $employeesQuery = Employee::query()->orderBy('name');
 if ($nameFragments !== []) {
@@ -425,6 +432,48 @@ foreach ($employees as $employee) {
         ];
     }
 
+    $leadsAssignedActive = (int) LeadAssignmentEngine::query()
+        ->join('ca_masters', 'ca_masters.ca_id', '=', 'lead_assignment_engines.ca_id')
+        ->where('lead_assignment_engines.employee_id', $employeeId)
+        ->where('lead_assignment_engines.status', 'Active')
+        ->whereNull('ca_masters.deleted_at')
+        ->distinct('lead_assignment_engines.ca_id')
+        ->count('lead_assignment_engines.ca_id');
+
+    $leadsAssignedInPeriod = 0;
+    $demoTargetPeriod = 0;
+    $demoAchievedPeriod = 0;
+    if ($from !== null) {
+        $leadsAssignedInPeriod = (int) LeadAssignmentEngine::query()
+            ->join('ca_masters', 'ca_masters.ca_id', '=', 'lead_assignment_engines.ca_id')
+            ->where('lead_assignment_engines.employee_id', $employeeId)
+            ->where('lead_assignment_engines.status', 'Active')
+            ->whereNull('ca_masters.deleted_at')
+            ->whereDate('lead_assignment_engines.assigned_date', '>=', $from->toDateString())
+            ->whereDate('lead_assignment_engines.assigned_date', '<=', $to->toDateString())
+            ->distinct('lead_assignment_engines.ca_id')
+            ->count('lead_assignment_engines.ca_id');
+
+        $cursor = $from->copy()->startOfDay();
+        $endDay = $to->copy()->startOfDay();
+        while ($cursor->lte($endDay)) {
+            $dateString = $cursor->toDateString();
+            $targets = $targetService->resolvedTargetsForDate($employeeId, $dateString);
+            $demoTargetPeriod += (int) ($targets['demo_target'] ?? 0);
+            $achievements = $progressService->achievementsForEmployee($employeeId, $dateString);
+            $demoAchievedPeriod += (int) ($achievements['demo_completed'] ?? 0);
+            $cursor->addDay();
+        }
+    }
+
+    $todayTargets = $targetService->resolvedTargetsForDate($employeeId, now($timezone)->toDateString());
+    $todayProgress = $progressService->achievementsForEmployee($employeeId, now($timezone)->toDateString());
+    $demoTargetToday = (int) ($todayTargets['demo_target'] ?? 0);
+    $demoAchievedToday = (int) ($todayProgress['demo_completed'] ?? 0);
+    $demoAchievementPct = $demoTargetPeriod > 0
+        ? round(($demoAchievedPeriod / $demoTargetPeriod) * 100, 1)
+        : 0.0;
+
     $employeeReports[] = [
         'employee_id' => $employeeId,
         'employee_name' => $employee->name,
@@ -432,6 +481,13 @@ foreach ($employees as $employee) {
         'employee_status' => $employee->status,
         'role' => $employee->role,
         'summary' => [
+            'leads_assigned_active' => $leadsAssignedActive,
+            'leads_assigned_in_period' => $leadsAssignedInPeriod,
+            'demo_target_period' => $demoTargetPeriod,
+            'demo_achieved_period' => $demoAchievedPeriod,
+            'demo_achievement_pct' => $demoAchievementPct,
+            'demo_target_today' => $demoTargetToday,
+            'demo_achieved_today' => $demoAchievedToday,
             'demos_scheduled_created' => (int) $demos->whereNotIn('status', [DemoSchedule::STATUS_CANCELLED])->count(),
             'demos_still_open' => (int) $demos->where('status', DemoSchedule::STATUS_SCHEDULED)->count(),
             'demos_completed' => (int) $demosCompleted->count(),
@@ -498,11 +554,16 @@ foreach ($nameFragments as $fragment) {
 }
 
 $grand = [
+    'leads_assigned_active' => array_sum(array_column(array_column($employeeReports, 'summary'), 'leads_assigned_active')),
+    'leads_assigned_in_period' => array_sum(array_column(array_column($employeeReports, 'summary'), 'leads_assigned_in_period')),
+    'demo_target_period' => array_sum(array_column(array_column($employeeReports, 'summary'), 'demo_target_period')),
+    'demo_achieved_period' => array_sum(array_column(array_column($employeeReports, 'summary'), 'demo_achieved_period')),
     'demos_scheduled_created' => array_sum(array_column(array_column($employeeReports, 'summary'), 'demos_scheduled_created')),
     'demos_completed' => array_sum(array_column(array_column($employeeReports, 'summary'), 'demos_completed')),
     'followups_total' => array_sum(array_column(array_column($employeeReports, 'summary'), 'followups_total')),
     'calls_total' => array_sum(array_column(array_column($employeeReports, 'summary'), 'calls_total')),
     'purchases_total' => array_sum(array_column(array_column($employeeReports, 'summary'), 'purchases_total')),
+    'purchased_demo_results' => array_sum(array_column(array_column($employeeReports, 'summary'), 'purchased_demo_results')),
 ];
 
 $report = [

@@ -1,0 +1,17 @@
+# LAST 20 DAYS — FULL DOWNLOADABLE EXCEL REPORT
+# Paste this entire block in your SSH terminal (production server).
+
+set +H
+cd ~/domains/crm.caclouddesk.com/public_html
+git pull origin main
+bash scripts/generate-last-20-days-report.sh 20 all
+
+# Files created:
+#   storage/app/audits/CRM_Full_Report_Last_20_Days_YYYY-MM-DD_to_YYYY-MM-DD.xlsx
+#   storage/app/audits/Demo_Full_Employee_Report.xlsx
+#
+# Download via Hostinger File Manager:
+#   public_html/storage/app/audits/
+#
+# Or only Soniya, Simran, Dev:
+#   bash scripts/generate-last-20-days-report.sh 20 soniya,simran,dev
