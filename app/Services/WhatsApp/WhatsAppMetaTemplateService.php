@@ -347,11 +347,14 @@ class WhatsAppMetaTemplateService
         }
         unset($metaComponents['meta_body_text']);
 
+        $metaStatus = strtoupper((string) ($definition['status'] ?? 'APPROVED'));
         $updates = [
             'meta_components' => $metaComponents,
-            'meta_status' => strtoupper((string) ($definition['status'] ?? 'APPROVED')),
+            'meta_status' => $metaStatus,
             'meta_status_updated_at' => now(),
             'meta_status_payload' => $definition,
+            'status' => $this->mapMetaEventToCrmStatus($metaStatus),
+            'is_active' => in_array($metaStatus, ['APPROVED', 'REINSTATED'], true),
         ];
 
         $metaLanguage = (string) ($definition['language'] ?? '');

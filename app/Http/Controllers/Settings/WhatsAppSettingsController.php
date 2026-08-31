@@ -94,7 +94,7 @@ class WhatsAppSettingsController extends Controller
     {
         try {
             $settings = $this->whatsAppSettingsService->current();
-            $template = $this->whatsAppTemplateService->findApproved((int) $request->validated('message_template_id'));
+            $template = $this->whatsAppTemplateService->findForTestSend((int) $request->validated('message_template_id'));
             $mobile = $request->validated('mobile_no')
                 ?: $settings->test_mobile_number
                 ?: config('whatsapp_cloud.env_defaults.test_mobile_number');

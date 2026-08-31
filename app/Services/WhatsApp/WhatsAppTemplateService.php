@@ -47,6 +47,31 @@ class WhatsAppTemplateService
         return $template;
     }
 
+    public function findForTestSend(int $id): MessageTemplate
+    {
+        $template = MessageTemplate::query()->findOrFail($id);
+
+        if ($template->channel !== MessageTemplate::CHANNEL_WHATSAPP) {
+            throw ValidationException::withMessages([
+                'message_template_id' => ['Only WhatsApp templates can be sent from this screen.'],
+            ]);
+        }
+
+        if (! $template->isApproved()) {
+            $metaStatus = strtoupper((string) ($template->meta_status ?? ''));
+
+            $message = $metaStatus === 'PENDING' || $template->status === MessageTemplate::STATUS_PENDING
+                ? 'This template is pending Meta approval. Test send will work once Meta approves it in WhatsApp Manager.'
+                : 'Only Meta-approved templates can be sent. Current status: '.($template->meta_status ?: $template->status).'.';
+
+            throw ValidationException::withMessages([
+                'message_template_id' => [$message],
+            ]);
+        }
+
+        return $template;
+    }
+
     public function findByName(string $templateName, string $languageCode = 'en'): ?MessageTemplate
     {
         return MessageTemplate::query()
