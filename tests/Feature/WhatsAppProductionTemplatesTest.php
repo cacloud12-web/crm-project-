@@ -239,7 +239,7 @@ class WhatsAppProductionTemplatesTest extends TestCase
         ]);
 
         $this->artisan('migrate', [
-            '--path' => 'database/migrations/2026_08_31_200000_align_demo_reminder_1_hour_with_meta_api.php',
+            '--path' => 'database/migrations/2026_08_31_210000_match_demo_reminder_meta_editor_samples.php',
         ]);
 
         $template = MessageTemplate::query()
@@ -285,7 +285,7 @@ class WhatsAppProductionTemplatesTest extends TestCase
 
             return is_array($button)
                 && ($button['index'] ?? null) === '0'
-                && ($button['parameters'][0]['text'] ?? '') === 'demo';
+                && ($button['parameters'][0]['text'] ?? '') === 'ouq-sxne-jwn';
         });
     }
 

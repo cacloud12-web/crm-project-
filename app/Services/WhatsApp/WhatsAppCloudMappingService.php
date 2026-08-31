@@ -492,7 +492,7 @@ class WhatsAppCloudMappingService
             }
             $text = (string) ($variables[$placeholder] ?? $variables['{{link}}'] ?? $variables['{{'.strtoupper($source).'}}'] ?? '');
             if (trim($text) === '') {
-                $text = (string) config('whatsapp_cloud.meta_parameter_fallbacks.meeting_link', 'https://caclouddesk.com/');
+                $text = (string) config('whatsapp_cloud.meta_parameter_fallbacks.meeting_link', 'https://meet.google.com/ouq-sxne-jwn');
             }
 
             $entry = [
@@ -546,7 +546,7 @@ class WhatsAppCloudMappingService
         }
 
         // Meta rejects empty URL button suffixes (#100 / #131009).
-        return 'demo';
+        return ltrim((string) config('whatsapp_cloud.meta_parameter_fallbacks.button_url_suffix', 'ouq-sxne-jwn'), '/');
     }
 
     private function metaParameterNameForPlaceholder(?string $placeholder): ?string
@@ -810,8 +810,8 @@ class WhatsAppCloudMappingService
             '{{demo_time}}' => now()->format('h:i A'),
             '{{date}}' => now()->format('d-M-Y'),
             '{{time}}' => now()->format('h:i A'),
-            '{{link}}' => (string) config('crm_defaults.template_preview.meeting_link', 'https://caclouddesk.com/'),
-            '{{MEETING_LINK}}' => (string) config('crm_defaults.template_preview.meeting_link', 'https://caclouddesk.com/'),
+            '{{link}}' => (string) config('crm_defaults.template_preview.meeting_link', 'https://meet.google.com/ouq-sxne-jwn'),
+            '{{MEETING_LINK}}' => (string) config('crm_defaults.template_preview.meeting_link', 'https://meet.google.com/ouq-sxne-jwn'),
             '{{employee_name}}' => 'CRM Test',
             '{{task_name}}' => 'Follow-up Call',
             '{{task_status}}' => 'Scheduled',
