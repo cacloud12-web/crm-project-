@@ -442,9 +442,9 @@ class WhatsAppMetaTemplateService
                     }
                 }
 
-                // Meta example param names are canonical; merge any extras parsed from body text.
+                // Meta example param names are often incomplete; body text placeholders are canonical.
                 if ($fromExamples !== []) {
-                    $bodyParameters = $fromExamples;
+                    $bodyParameters = count($fromText) >= count($fromExamples) ? $fromText : $fromExamples;
                     foreach ($fromText as $paramName) {
                         if (! in_array($paramName, $bodyParameters, true)) {
                             $bodyParameters[] = $paramName;

@@ -404,9 +404,20 @@ class WhatsAppCloudMappingService
             ];
 
             if ($format === 'named') {
-                $parameterName = isset($definedNames[$index])
-                    ? (string) $definedNames[$index]
-                    : $this->metaParameterNameForPlaceholder($placeholders[$index] ?? null);
+                $placeholderName = isset($placeholders[$index])
+                    ? trim($placeholders[$index], '{}')
+                    : '';
+                $definedName = isset($definedNames[$index])
+                    ? trim((string) $definedNames[$index])
+                    : '';
+
+                // Meta requires parameter_name to match approved body placeholders exactly (including spaces).
+                $parameterName = $placeholderName !== ''
+                    ? $placeholderName
+                    : ($definedName !== ''
+                        ? $definedName
+                        : (string) ($this->metaParameterNameForPlaceholder($placeholders[$index] ?? null) ?? ''));
+
                 if ($parameterName !== '' && ! ctype_digit($parameterName)) {
                     $entry['parameter_name'] = $parameterName;
                 }
@@ -432,12 +443,25 @@ class WhatsAppCloudMappingService
             $values = [];
             $orderedPlaceholders = $this->extractBodyPlaceholdersInOrder((string) $template->body_template);
 
-            foreach ($defined as $paramName) {
+            foreach ($defined as $index => $paramName) {
                 $name = (string) $paramName;
                 if (ctype_digit($name)) {
                     $placeholder = $orderedPlaceholders[(int) $name - 1] ?? '{{'.$name.'}}';
                 } else {
                     $placeholder = '{{'.$name.'}}';
+                }
+
+                if (! is_int($index)) {
+                    $index = array_search($paramName, $defined, true);
+                }
+
+                if (is_int($index) && isset($orderedPlaceholders[$index])) {
+                    $templatePlaceholder = $orderedPlaceholders[$index];
+                    if ($templatePlaceholder !== $placeholder && array_key_exists($templatePlaceholder, $variables)) {
+                        $values[] = (string) $variables[$templatePlaceholder];
+
+                        continue;
+                    }
                 }
 
                 if (array_key_exists($placeholder, $variables)) {
