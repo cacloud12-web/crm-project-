@@ -1811,6 +1811,7 @@ window.CA_CRM = (function () {
       toast('Lead not found', 'warning');
       return;
     }
+    CAData.setSelectedLeadId(id);
     window._editingFollowUpId = null;
     window._followupOriginalScheduled = '';
     openFollowupModalWithLeads([id], { mode: 'row' });
@@ -14389,6 +14390,7 @@ if (otherInput) {
         if (!window._editingFollowUpId) return;
         initFollowUpDateTimeField();
         initFollowUpDemoFields();
+        syncFollowupFormByType();
         setFollowupFormBusy(false);
         iconsIn(modal);
       })
@@ -18015,6 +18017,22 @@ if (otherInput) {
     return null;
   }
 
+  function resolveFollowupPresetLeadIds() {
+    var bulkIds = (window._inboxBulkLeadIds || [])
+      .map(function (id) { return parseInt(id, 10); })
+      .filter(Boolean);
+    if (bulkIds.length === 1) return bulkIds;
+
+    var inboxKeys = ['leads-data-table', 'ca-master-data-table'];
+    for (var i = 0; i < inboxKeys.length; i++) {
+      var inboxIds = getInboxSelectedLeadIds(inboxKeys[i]);
+      if (inboxIds.length === 1) return inboxIds;
+    }
+
+    var selected = normalizeFollowupLeadId(CAData.getSelectedLeadId() || window._selectedLeadId);
+    return selected ? [selected] : [];
+  }
+
   function setFollowupModalTitle(editing, opts) {
     opts = opts || {};
     var titleEl = document.querySelector('#followup-title [data-followup-title-text]')
@@ -18040,6 +18058,8 @@ if (otherInput) {
     window._followupContextLead = null;
     var hidden = document.getElementById('form-followup-ca-id');
     if (hidden) hidden.value = '';
+    var contextWrap = document.getElementById('followup-lead-context');
+    if (contextWrap) contextWrap.classList.add('hidden');
   }
 
   function clearFollowupLeadError() {
@@ -18072,12 +18092,13 @@ if (otherInput) {
   function setFollowupLeadPickerVisible(visible) {
     var wrap = document.getElementById('followup-lead-picker-wrap');
     if (wrap) wrap.classList.toggle('hidden', !visible);
+    if (!visible) clearFollowupLeadError();
   }
 
   function renderFollowupLeadContext(lead) {
-    /* Lead summary card removed from Add Follow-up — keep ca_id for save only. */
     window._followupContextLead = lead || null;
     var hidden = document.getElementById('form-followup-ca-id');
+    var contextWrap = document.getElementById('followup-lead-context');
     if (!hidden) return;
     if (!lead) {
       clearFollowupLeadContext();
@@ -18085,6 +18106,26 @@ if (otherInput) {
     }
     hidden.value = String(lead.ca_id);
     clearFollowupLeadError();
+
+    if (contextWrap) {
+      var titleEl = document.getElementById('followup-lead-context-title');
+      var firmEl = document.getElementById('followup-lead-ctx-firm');
+      var caEl = document.getElementById('followup-lead-ctx-ca');
+      var mobileEl = document.getElementById('followup-lead-ctx-mobile');
+      var cityEl = document.getElementById('followup-lead-ctx-city');
+      var employeeEl = document.getElementById('followup-lead-ctx-employee');
+      if (titleEl) titleEl.textContent = lead.firm_name || 'Lead';
+      if (firmEl) firmEl.textContent = lead.firm_name || '—';
+      if (caEl) caEl.textContent = lead.ca_name || '—';
+      if (mobileEl) mobileEl.textContent = lead.mobile_no || '—';
+      if (cityEl) cityEl.textContent = lead.city || lead.city_name || '—';
+      if (employeeEl) employeeEl.textContent = lead.executive || lead.employee_name || 'Unassigned';
+      contextWrap.classList.remove('hidden');
+    }
+
+    if (window._followupModalMode === 'row') {
+      setFollowupLeadPickerVisible(false);
+    }
   }
 
   function fetchLeadForFollowup(leadId) {
@@ -18234,6 +18275,7 @@ if (otherInput) {
         }
         initFollowUpDateTimeField();
         initFollowUpDemoFields();
+        syncFollowupFormByType();
         setFollowupFormBusy(false);
         iconsIn(modal);
         if (!isRowMode && !leadId) {
@@ -18487,7 +18529,10 @@ if (otherInput) {
     if (priorityWrap) priorityWrap.classList.toggle('hidden', remarksOnly);
     if (rescheduleWrap) rescheduleWrap.classList.toggle('hidden', remarksOnly);
     if (demoWrap) demoWrap.classList.toggle('hidden', !isDemo);
-    if (leadWrap) leadWrap.classList.toggle('hidden', remarksOnly && hasLead);
+    if (leadWrap) {
+      var hidePicker = window._followupModalMode === 'row' || (remarksOnly && hasLead);
+      leadWrap.classList.toggle('hidden', hidePicker);
+    }
     if (scheduledInput) {
       if (remarksOnly) scheduledInput.removeAttribute('required');
       else scheduledInput.setAttribute('required', 'required');
@@ -20146,9 +20191,7 @@ if (otherInput) {
             openFollowupModalWithLeads([], { mode: 'global' });
             return;
           }
-          var bulkIds = (window._inboxBulkLeadIds || []).map(function (id) { return parseInt(id, 10); }).filter(Boolean);
-          var followSelId = CAData.getSelectedLeadId();
-          var presetIds = bulkIds.length === 1 ? bulkIds : (followSelId ? [parseInt(followSelId, 10)] : []);
+          var presetIds = resolveFollowupPresetLeadIds();
           openFollowupModalWithLeads(presetIds, {
             mode: presetIds.length === 1 ? 'row' : 'global',
           });
@@ -21377,11 +21420,10 @@ if (otherInput) {
       if (typeof closeDetailDrawer === 'function') closeDetailDrawer();
       window._editingFollowUpId = null;
       window._followupOriginalScheduled = '';
-      var leadId = CAData.getSelectedLeadId();
-      openFollowupModalWithLeads(
-        leadId ? [parseInt(leadId, 10)] : [],
-        { mode: leadId ? 'row' : 'global' },
-      );
+      var presetIds = resolveFollowupPresetLeadIds();
+      openFollowupModalWithLeads(presetIds, {
+        mode: presetIds.length === 1 ? 'row' : 'global',
+      });
     });
     document.getElementById('detail-edit-btn')?.addEventListener('click', function () {
       var drawer = document.getElementById('detail-drawer');

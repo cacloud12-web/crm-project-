@@ -911,6 +911,31 @@
       </div>
       <form id="form-followup" class="ca-modal-body space-y-4">
         <input type="hidden" name="ca_id" id="form-followup-ca-id" />
+        <div id="followup-lead-context" class="followup-lead-context card hidden" aria-live="polite">
+          <p id="followup-lead-context-title" class="followup-lead-context__title">Lead</p>
+          <dl class="followup-lead-context__grid">
+            <div class="followup-lead-context__item">
+              <dt>Firm Name</dt>
+              <dd id="followup-lead-ctx-firm">—</dd>
+            </div>
+            <div class="followup-lead-context__item">
+              <dt>CA Name</dt>
+              <dd id="followup-lead-ctx-ca">—</dd>
+            </div>
+            <div class="followup-lead-context__item">
+              <dt>Mobile</dt>
+              <dd id="followup-lead-ctx-mobile">—</dd>
+            </div>
+            <div class="followup-lead-context__item">
+              <dt>City</dt>
+              <dd id="followup-lead-ctx-city">—</dd>
+            </div>
+            <div class="followup-lead-context__item followup-lead-context__item--full">
+              <dt>Assigned Employee</dt>
+              <dd id="followup-lead-ctx-employee">—</dd>
+            </div>
+          </dl>
+        </div>
         <div id="followup-lead-picker-wrap">
           <div class="campaign-lead-picker followup-lead-picker" id="followup-lead-picker">
             <div class="campaign-lead-picker__header">
