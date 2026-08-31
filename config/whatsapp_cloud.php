@@ -72,6 +72,7 @@ return [
         'demo_reminder_1_hour',
         'demo_reminder_one_day_before',
         'subscription_renewal_reminder',
+        'callback_scheduled',
         'expense_partnerjeyfg90rzl',
         'proforma_invoicel5ekuo0baa',
     ],
