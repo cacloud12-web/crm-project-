@@ -16,7 +16,6 @@ class WhatsAppConnectionService
         private readonly WhatsAppCloudMappingService $mappingService,
         private readonly WhatsAppDispatchService $dispatchService,
         private readonly WhatsAppLogService $logService,
-        private readonly WhatsAppMetaTemplateService $metaTemplateService,
         private readonly ActivityLogService $activityLogService,
     ) {}
 
@@ -107,14 +106,6 @@ class WhatsAppConnectionService
             throw ValidationException::withMessages([
                 'mobile_no' => ['A valid test mobile number is required.'],
             ]);
-        }
-
-        try {
-            $template = $this->metaTemplateService->syncTemplateStructure($template, $settings);
-        } catch (ValidationException $exception) {
-            throw $exception;
-        } catch (\Throwable) {
-            // Continue with stored mapping if Meta sync is temporarily unavailable.
         }
 
         $payload = $this->mappingService->buildTestTemplatePayload($template, $mobileNo, $settings);

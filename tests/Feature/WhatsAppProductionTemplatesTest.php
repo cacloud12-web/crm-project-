@@ -239,7 +239,7 @@ class WhatsAppProductionTemplatesTest extends TestCase
         ]);
 
         $this->artisan('migrate', [
-            '--path' => 'database/migrations/2026_08_31_180000_fix_demo_reminder_1_hour_visit_website_button.php',
+            '--path' => 'database/migrations/2026_08_31_200000_align_demo_reminder_1_hour_with_meta_api.php',
         ]);
 
         $template = MessageTemplate::query()
@@ -250,10 +250,6 @@ class WhatsAppProductionTemplatesTest extends TestCase
 
         Http::fake([
             'graph.facebook.com/*' => function ($request) use (&$capturedParams) {
-                if ($request->method() === 'GET') {
-                    return Http::response(['data' => []], 200);
-                }
-
                 $payload = $request->data();
                 $capturedParams = $payload['template']['components'][0]['parameters'] ?? [];
 
@@ -274,10 +270,9 @@ class WhatsAppProductionTemplatesTest extends TestCase
             ->assertJsonPath('data.meta_message_id', 'wamid.test-demo-reminder-001');
 
         $this->assertIsArray($capturedParams);
-        $this->assertCount(3, $capturedParams);
+        $this->assertCount(2, $capturedParams);
         $this->assertSame('name', $capturedParams[0]['parameter_name'] ?? null);
-        $this->assertSame('time', $capturedParams[1]['parameter_name'] ?? null);
-        $this->assertSame('link', $capturedParams[2]['parameter_name'] ?? null);
+        $this->assertSame('link', $capturedParams[1]['parameter_name'] ?? null);
 
         Http::assertSent(function ($request) {
             if ($request->method() !== 'POST') {
@@ -290,8 +285,7 @@ class WhatsAppProductionTemplatesTest extends TestCase
 
             return is_array($button)
                 && ($button['index'] ?? null) === '0'
-                && ($button['sub_type'] ?? null) === 'url'
-                && ! isset($button['parameters'][0]['parameter_name']);
+                && ($button['parameters'][0]['text'] ?? '') === 'demo';
         });
     }
 

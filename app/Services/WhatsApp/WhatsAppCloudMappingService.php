@@ -528,8 +528,11 @@ class WhatsAppCloudMappingService
         }
 
         $normalizedText = rtrim($text, '/');
-        if (str_starts_with($normalizedText, $baseUrl)) {
-            return ltrim(substr($normalizedText, strlen($baseUrl)), '/');
+        if ($normalizedText === $baseUrl || str_starts_with($normalizedText, $baseUrl.'/')) {
+            $suffix = ltrim(substr($normalizedText, strlen($baseUrl)), '/');
+            if ($suffix !== '') {
+                return $suffix;
+            }
         }
 
         $sampleSuffix = trim((string) ($button['sample_suffix'] ?? ''));
@@ -542,8 +545,8 @@ class WhatsAppCloudMappingService
             return ltrim($configuredSuffix, '/');
         }
 
-        // Meta URL buttons require a suffix matching the template base URL, not an unrelated domain.
-        return ltrim(parse_url($baseUrl, PHP_URL_PATH) ?: '', '/');
+        // Meta rejects empty URL button suffixes (#100 / #131009).
+        return 'demo';
     }
 
     private function metaParameterNameForPlaceholder(?string $placeholder): ?string
