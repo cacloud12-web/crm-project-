@@ -334,21 +334,22 @@ class WhatsAppMetaTemplateService
         $existingMeta = is_array($template->meta_components) ? $template->meta_components : [];
         $sample = is_array($existingMeta['sample'] ?? null) ? $existingMeta['sample'] : [];
         $parsedSample = is_array($parsed['sample'] ?? null) ? $parsed['sample'] : [];
-        $existingButtons = is_array($existingMeta['buttons'] ?? null) ? $existingMeta['buttons'] : [];
 
         $metaComponents = array_merge($existingMeta, $parsed);
-        unset($metaComponents['buttons'], $metaComponents['sample']);
+        unset($metaComponents['buttons'], $metaComponents['sample'], $metaComponents['meta_body_text']);
+        $metaComponents['body_parameters'] = $this->resolveBodyParameters(
+            is_array($existingMeta['body_parameters'] ?? null) ? $existingMeta['body_parameters'] : [],
+            is_array($parsed['body_parameters'] ?? null) ? $parsed['body_parameters'] : [],
+            (string) ($parsed['meta_body_text'] ?? $template->body_template),
+        );
         if (isset($parsed['buttons']) && is_array($parsed['buttons']) && $parsed['buttons'] !== []) {
             $metaComponents['buttons'] = $parsed['buttons'];
-        } elseif ($existingButtons !== []) {
-            $metaComponents['buttons'] = $existingButtons;
         }
         if ($parsedSample !== []) {
             $metaComponents['sample'] = $parsedSample;
         } elseif ($sample !== []) {
             $metaComponents['sample'] = $sample;
         }
-        unset($metaComponents['meta_body_text']);
 
         $metaStatus = strtoupper((string) ($definition['status'] ?? 'APPROVED'));
         $updates = [
@@ -512,6 +513,30 @@ class WhatsAppMetaTemplateService
         }
 
         return $result;
+    }
+
+    /**
+     * Prefer the fullest parameter list so Meta sync cannot shrink CRM mapping to a partial set.
+     *
+     * @param  list<string>  $existing
+     * @param  list<string>  $parsed
+     * @return list<string>
+     */
+    private function resolveBodyParameters(array $existing, array $parsed, string $bodyText): array
+    {
+        $fromText = [];
+        if ($bodyText !== '' && preg_match_all('/\{\{([^}]+)\}\}/', $bodyText, $matches)) {
+            $fromText = array_values(array_map(static fn (string $name) => trim($name), $matches[1]));
+        }
+
+        $best = [];
+        foreach ([$fromText, $parsed, $existing] as $candidate) {
+            if (count($candidate) > count($best)) {
+                $best = $candidate;
+            }
+        }
+
+        return array_values(array_filter($best, static fn (string $value) => $value !== ''));
     }
 
     private function mapMetaEventToCrmStatus(string $event): string

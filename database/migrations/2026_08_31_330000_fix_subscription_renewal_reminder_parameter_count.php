@@ -1,0 +1,61 @@
+<?php
+
+use App\Models\MessageTemplate;
+use Illuminate\Database\Migrations\Migration;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        $template = MessageTemplate::query()
+            ->where('channel', MessageTemplate::CHANNEL_WHATSAPP)
+            ->where('template_name', 'subscription_renewal_reminder')
+            ->where('language_code', 'en')
+            ->first();
+
+        if (! $template) {
+            return;
+        }
+
+        $meta = is_array($template->meta_components) ? $template->meta_components : [];
+        unset($meta['buttons']);
+        $meta['parameter_format'] = 'named';
+        $meta['body_parameters'] = [
+            'name',
+            'RenewalDue Date',
+            'Subscription Plan',
+            'Renewal Amount',
+        ];
+        $meta['sample'] = [
+            'name' => 'CA Ravi Kumar',
+            'RenewalDue Date' => '15-Sep-2026',
+            'Subscription Plan' => 'Professional Plan',
+            'Renewal Amount' => '15,000',
+        ];
+
+        $template->update([
+            'body_template' => <<<'BODY'
+Hello {{name}},
+
+This is a reminder that your CA Cloud Desk subscription is due for renewal on {{RenewalDue Date}}.
+
+Plan: {{Subscription Plan}}
+Renewal Amount: {{Renewal Amount}}
+
+Please renew your subscription to continue uninterrupted access to your account.
+BODY,
+            'variable_map' => [
+                '{{name}}' => 'ca_name',
+                '{{RenewalDue Date}}' => 'renewal_due_date',
+                '{{Subscription Plan}}' => 'subscription_plan',
+                '{{Renewal Amount}}' => 'renewal_amount',
+            ],
+            'meta_components' => $meta,
+        ]);
+    }
+
+    public function down(): void
+    {
+        // Non-destructive patch migration.
+    }
+};
