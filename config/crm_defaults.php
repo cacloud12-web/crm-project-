@@ -18,7 +18,7 @@ return [
         'employee_name' => 'Account Manager',
         'employee_email' => 'manager@example.com',
         'employee_phone' => '+91 90000 00001',
-        'meeting_link' => 'https://meet.example.com/demo',
+        'meeting_link' => env('WHATSAPP_TEST_MEETING_LINK', env('CRM_WEBSITE_URL', 'https://caclouddesk.com/')),
         'support_email' => env('CRM_SUPPORT_EMAIL', 'support@example.com'),
         'support_phone' => env('CRM_SUPPORT_PHONE', '+91 1800 000 000'),
         'website' => env('CRM_WEBSITE_URL', 'https://example.com'),

@@ -333,11 +333,14 @@ class WhatsAppMetaTemplateService
         $parsed = $this->parseMetaTemplateStructure($definition);
         $existingMeta = is_array($template->meta_components) ? $template->meta_components : [];
         $sample = is_array($existingMeta['sample'] ?? null) ? $existingMeta['sample'] : [];
+        $existingButtons = is_array($existingMeta['buttons'] ?? null) ? $existingMeta['buttons'] : [];
 
         $metaComponents = array_merge($existingMeta, $parsed);
         unset($metaComponents['buttons']);
         if (isset($parsed['buttons']) && is_array($parsed['buttons']) && $parsed['buttons'] !== []) {
             $metaComponents['buttons'] = $parsed['buttons'];
+        } elseif ($existingButtons !== []) {
+            $metaComponents['buttons'] = $existingButtons;
         }
         if ($sample !== []) {
             $metaComponents['sample'] = $sample;
@@ -397,6 +400,7 @@ class WhatsAppMetaTemplateService
             if ($type === 'BODY') {
                 $bodyText = (string) ($component['text'] ?? '');
                 $namedExamples = $component['example']['body_text_named_params'] ?? null;
+                $fromExamples = [];
 
                 if (is_array($namedExamples) && $namedExamples !== []) {
                     foreach ($namedExamples as $item) {
@@ -405,19 +409,25 @@ class WhatsAppMetaTemplateService
                         }
                         $paramName = trim((string) ($item['param_name'] ?? ''));
                         if ($paramName !== '') {
-                            $bodyParameters[] = $paramName;
+                            $fromExamples[] = $paramName;
                         }
                     }
                     $parameterFormat = 'NAMED';
-                } elseif ($bodyText !== '') {
-                    if (preg_match_all('/\{\{([a-z_][a-z0-9_]*)\}\}/i', $bodyText, $matches)) {
-                        $bodyParameters = array_values($matches[1]);
-                        $parameterFormat = $parameterFormat === '' ? 'NAMED' : $parameterFormat;
-                    } elseif (preg_match_all('/\{\{(\d+)\}\}/', $bodyText, $matches)) {
-                        $bodyParameters = array_map('strval', $matches[1]);
-                        $parameterFormat = 'POSITIONAL';
-                    }
                 }
+
+                $fromText = [];
+                if ($bodyText !== '' && preg_match_all('/\{\{([a-z_][a-z0-9_]*)\}\}/i', $bodyText, $matches)) {
+                    $fromText = array_values($matches[1]);
+                    if ($parameterFormat === '') {
+                        $parameterFormat = 'NAMED';
+                    }
+                } elseif ($bodyText !== '' && preg_match_all('/\{\{(\d+)\}\}/', $bodyText, $matches)) {
+                    $fromText = array_map('strval', $matches[1]);
+                    $parameterFormat = 'POSITIONAL';
+                }
+
+                // Body text is the source of truth — Meta examples can omit variables like {{time}}.
+                $bodyParameters = $fromText !== [] ? $fromText : $fromExamples;
             }
 
             if ($type === 'BUTTONS') {

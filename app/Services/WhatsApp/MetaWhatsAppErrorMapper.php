@@ -37,6 +37,7 @@ final class MetaWhatsAppErrorMapper
         $mapped = match ($code) {
             190 => self::tokenError($subcode, $message),
             100 => self::invalidRequestError($message),
+            131009 => 'Template parameter value is invalid. For URL buttons, the dynamic link must match the approved template base URL (e.g. caclouddesk.com). Update WHATSAPP_TEST_MEETING_LINK or WHATSAPP_BUTTON_URL_SUFFIX in .env.',
             132001 => 'Template Not Found or Language Mismatch. Verify the template name and language (en_US) are approved in Meta WhatsApp Manager.',
             132000 => self::templateParameterError($message),
             132015 => 'Template Paused. This template has been paused in Meta WhatsApp Manager.',

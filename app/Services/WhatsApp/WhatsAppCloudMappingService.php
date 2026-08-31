@@ -492,7 +492,7 @@ class WhatsAppCloudMappingService
             }
             $text = (string) ($variables[$placeholder] ?? $variables['{{link}}'] ?? $variables['{{'.strtoupper($source).'}}'] ?? '');
             if (trim($text) === '') {
-                $text = (string) config('whatsapp_cloud.meta_parameter_fallbacks.meeting_link', 'https://meet.example.com/demo');
+                $text = (string) config('whatsapp_cloud.meta_parameter_fallbacks.meeting_link', 'https://caclouddesk.com/');
             }
 
             $entry = [
@@ -522,12 +522,28 @@ class WhatsAppCloudMappingService
             return $text;
         }
 
-        $baseUrl = trim((string) ($button['url_base'] ?? ''));
-        if ($baseUrl !== '' && str_starts_with($text, $baseUrl)) {
-            return ltrim(substr($text, strlen($baseUrl)), '/');
+        $baseUrl = rtrim(trim((string) ($button['url_base'] ?? '')), '/');
+        if ($baseUrl === '') {
+            return $text;
         }
 
-        return $text;
+        $normalizedText = rtrim($text, '/');
+        if (str_starts_with($normalizedText, $baseUrl)) {
+            return ltrim(substr($normalizedText, strlen($baseUrl)), '/');
+        }
+
+        $sampleSuffix = trim((string) ($button['sample_suffix'] ?? ''));
+        if ($sampleSuffix !== '') {
+            return ltrim($sampleSuffix, '/');
+        }
+
+        $configuredSuffix = trim((string) config('whatsapp_cloud.meta_parameter_fallbacks.button_url_suffix', ''));
+        if ($configuredSuffix !== '') {
+            return ltrim($configuredSuffix, '/');
+        }
+
+        // Meta URL buttons require a suffix matching the template base URL, not an unrelated domain.
+        return ltrim(parse_url($baseUrl, PHP_URL_PATH) ?: '', '/');
     }
 
     private function metaParameterNameForPlaceholder(?string $placeholder): ?string
@@ -791,8 +807,8 @@ class WhatsAppCloudMappingService
             '{{demo_time}}' => now()->format('h:i A'),
             '{{date}}' => now()->format('d-M-Y'),
             '{{time}}' => now()->format('h:i A'),
-            '{{link}}' => (string) config('crm_defaults.template_preview.meeting_link', 'https://meet.example.com/demo'),
-            '{{MEETING_LINK}}' => (string) config('crm_defaults.template_preview.meeting_link', 'https://meet.example.com/demo'),
+            '{{link}}' => (string) config('crm_defaults.template_preview.meeting_link', 'https://caclouddesk.com/'),
+            '{{MEETING_LINK}}' => (string) config('crm_defaults.template_preview.meeting_link', 'https://caclouddesk.com/'),
             '{{employee_name}}' => 'CRM Test',
             '{{task_name}}' => 'Follow-up Call',
             '{{task_status}}' => 'Scheduled',
