@@ -239,7 +239,7 @@ class WhatsAppProductionTemplatesTest extends TestCase
         ]);
 
         $this->artisan('migrate', [
-            '--path' => 'database/migrations/2026_08_31_160000_fix_demo_whatsapp_template_parameter_mapping.php',
+            '--path' => 'database/migrations/2026_08_31_170000_restore_demo_reminder_body_link_parameters.php',
         ]);
 
         $template = MessageTemplate::query()
@@ -270,19 +270,10 @@ class WhatsAppProductionTemplatesTest extends TestCase
             ->assertJsonPath('data.meta_message_id', 'wamid.test-demo-reminder-001');
 
         $this->assertIsArray($capturedParams);
-        $this->assertCount(2, $capturedParams);
+        $this->assertCount(3, $capturedParams);
         $this->assertSame('name', $capturedParams[0]['parameter_name'] ?? null);
         $this->assertSame('time', $capturedParams[1]['parameter_name'] ?? null);
-
-        Http::assertSent(function ($request) {
-            $payload = $request->data();
-            $components = $payload['template']['components'] ?? [];
-            $button = collect($components)->firstWhere('type', 'button');
-
-            return is_array($button)
-                && ($button['index'] ?? null) === '2'
-                && ($button['parameters'][0]['parameter_name'] ?? null) === 'link';
-        });
+        $this->assertSame('link', $capturedParams[2]['parameter_name'] ?? null);
     }
 
     public function test_send_test_demo_reminder_one_day_before_uses_named_meta_parameters(): void

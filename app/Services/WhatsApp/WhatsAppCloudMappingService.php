@@ -485,12 +485,8 @@ class WhatsAppCloudMappingService
 
             $entry = [
                 'type' => 'text',
-                'text' => trim($text),
+                'text' => $this->normalizeButtonParameterText(trim($text), $button),
             ];
-            $parameterName = (string) ($button['parameter_name'] ?? '');
-            if ($parameterName !== '') {
-                $entry['parameter_name'] = $parameterName;
-            }
 
             $components[] = [
                 'type' => 'button',
@@ -501,6 +497,25 @@ class WhatsAppCloudMappingService
         }
 
         return $components;
+    }
+
+    /**
+     * URL button parameters must be the dynamic suffix only, not parameter_name.
+     *
+     * @param  array<string, mixed>  $button
+     */
+    private function normalizeButtonParameterText(string $text, array $button): string
+    {
+        if ($text === '') {
+            return $text;
+        }
+
+        $baseUrl = trim((string) ($button['url_base'] ?? ''));
+        if ($baseUrl !== '' && str_starts_with($text, $baseUrl)) {
+            return ltrim(substr($text, strlen($baseUrl)), '/');
+        }
+
+        return $text;
     }
 
     private function metaParameterNameForPlaceholder(?string $placeholder): ?string
