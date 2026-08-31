@@ -715,12 +715,16 @@ class WhatsAppCloudMappingService
 
         if (! $lead) {
             $resolved = $this->applyTemplateSampleDefaults($template, $resolved);
+        } else {
+            $resolved = $this->applyTemplateSampleDefaultsForEmpty($template, $resolved);
         }
 
         preg_match_all('/\{\{[^}]+\}\}/', (string) $template->body_template, $matches);
         foreach (array_unique($matches[0] ?? []) as $placeholder) {
-            if (! array_key_exists($placeholder, $resolved)) {
-                $resolved[$placeholder] = $leadVariables[$placeholder] ?? 'Test';
+            if (! array_key_exists($placeholder, $resolved) || trim((string) $resolved[$placeholder]) === '') {
+                $resolved[$placeholder] = $this->sampleValueForPlaceholder($template, $placeholder)
+                    ?? $leadVariables[$placeholder]
+                    ?? (string) config('whatsapp_cloud.meta_parameter_fallbacks.default', 'N/A');
             }
         }
 
@@ -758,6 +762,45 @@ class WhatsAppCloudMappingService
         }
 
         return $variables;
+    }
+
+    /**
+     * Fill only empty placeholders from Meta-approved template samples (campaign sends with partial lead data).
+     *
+     * @param  array<string, string>  $variables
+     * @return array<string, string>
+     */
+    private function applyTemplateSampleDefaultsForEmpty(MessageTemplate $template, array $variables): array
+    {
+        $meta = is_array($template->meta_components) ? $template->meta_components : [];
+        $sample = is_array($meta['sample'] ?? null) ? $meta['sample'] : [];
+
+        foreach ($sample as $key => $value) {
+            if (! is_string($key) || ! is_scalar($value) || trim((string) $value) === '') {
+                continue;
+            }
+
+            $placeholder = '{{'.$key.'}}';
+            if (! array_key_exists($placeholder, $variables) || trim((string) $variables[$placeholder]) === '') {
+                $text = $this->sanitizeMetaParameterText((string) $value);
+                $variables[$placeholder] = $text;
+            }
+        }
+
+        return $variables;
+    }
+
+    private function sampleValueForPlaceholder(MessageTemplate $template, string $placeholder): ?string
+    {
+        $meta = is_array($template->meta_components) ? $template->meta_components : [];
+        $sample = is_array($meta['sample'] ?? null) ? $meta['sample'] : [];
+        $name = trim($placeholder, '{}');
+
+        if ($name !== '' && isset($sample[$name]) && trim((string) $sample[$name]) !== '') {
+            return $this->sanitizeMetaParameterText((string) $sample[$name]);
+        }
+
+        return null;
     }
 
     /**
@@ -817,10 +860,21 @@ class WhatsAppCloudMappingService
         }
 
         $variableMap = is_array($template?->variable_map) ? $template->variable_map : [];
+        $sample = is_array($template?->meta_components['sample'] ?? null)
+            ? $template->meta_components['sample']
+            : [];
+        $bodyParameterNames = is_array($template?->meta_components['body_parameters'] ?? null)
+            ? $template->meta_components['body_parameters']
+            : [];
 
-        return array_map(function (string $value, int $index) use ($placeholders, $variableMap) {
+        return array_map(function (string $value, int $index) use ($placeholders, $variableMap, $sample, $bodyParameterNames) {
             if (trim($value) !== '') {
                 return trim($value);
+            }
+
+            $paramName = isset($bodyParameterNames[$index]) ? (string) $bodyParameterNames[$index] : null;
+            if ($paramName !== null && isset($sample[$paramName]) && trim((string) $sample[$paramName]) !== '') {
+                return trim((string) $sample[$paramName]);
             }
 
             $placeholder = $placeholders[$index] ?? null;
