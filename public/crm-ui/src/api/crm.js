@@ -18817,7 +18817,10 @@ if (otherInput) {
     var launchBtn = c.status === 'Scheduled'
       ? iconBtn('rocket', 'Process', 'data-launch-whatsapp-campaign="' + c.id + '"', 'primary')
       : '';
-    var actions = '<div class="flex flex-wrap gap-2 mt-3">' + launchBtn + campaignDeleteButton('whatsapp', c.id, c.status) + '</div>';
+    var retryBtn = failed > 0 && c.status !== 'Scheduled' && c.status !== 'Draft'
+      ? iconBtn('rotate-ccw', 'Retry Failed', 'data-retry-whatsapp-campaign="' + c.id + '"', 'secondary')
+      : '';
+    var actions = '<div class="flex flex-wrap gap-2 mt-3">' + launchBtn + retryBtn + campaignDeleteButton('whatsapp', c.id, c.status) + '</div>';
     return '<div class="card-interactive p-4 campaign-card" data-whatsapp-campaign-id="' + c.id + '">' +
       '<div class="flex justify-between mb-2"><p class="text-card-heading">' + escapeHtml(c.campaign_name) + '</p>' + waStatusBadge(c.status) + '</div>' +
       '<p class="text-caption text-slate-500">Type: ' + escapeHtml(c.campaign_type) + '</p>' +
@@ -20154,6 +20157,27 @@ if (otherInput) {
           })
           .finally(function () {
             launchWaBtn.disabled = false;
+          });
+        return;
+      }
+
+      var retryWaBtn = e.target.closest('[data-retry-whatsapp-campaign]');
+      if (retryWaBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (retryWaBtn.disabled) return;
+        retryWaBtn.disabled = true;
+        var retryCampaignId = retryWaBtn.dataset.retryWhatsappCampaign;
+        apiFetch('/campaigns/whatsapp/' + retryCampaignId + '/retry-failed', { method: 'POST' })
+          .then(function () {
+            toast('Failed messages queued for retry', 'success');
+            refreshWhatsAppPage();
+          })
+          .catch(function (error) {
+            toast(error.message || 'Failed to retry WhatsApp campaign', 'error');
+          })
+          .finally(function () {
+            retryWaBtn.disabled = false;
           });
         return;
       }

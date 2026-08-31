@@ -438,14 +438,16 @@ class WhatsAppMetaTemplateService
                     }
                 }
 
-                // Body text is the source of truth — merge Meta example param names when body omits one.
-                $bodyParameters = $fromText !== [] ? $fromText : $fromExamples;
-                if ($fromText !== [] && $fromExamples !== []) {
-                    foreach ($fromExamples as $paramName) {
+                // Meta example param names are canonical; merge any extras parsed from body text.
+                if ($fromExamples !== []) {
+                    $bodyParameters = $fromExamples;
+                    foreach ($fromText as $paramName) {
                         if (! in_array($paramName, $bodyParameters, true)) {
                             $bodyParameters[] = $paramName;
                         }
                     }
+                } else {
+                    $bodyParameters = $fromText;
                 }
 
                 $positionalExamples = $component['example']['body_text'] ?? null;
