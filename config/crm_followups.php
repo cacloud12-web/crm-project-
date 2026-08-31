@@ -11,9 +11,16 @@ return [
         'Details Shared',
         'Negotiation',
         'Not Interested',
+        'Do Not Disturb',
         'Follow Up Reminder',
         'Follow Up Scheduled',
         'Call',
+    ],
+
+    /** Follow-up types that only need remarks (no schedule / priority). */
+    'remarks_only_types' => [
+        'Not Interested',
+        'Do Not Disturb',
     ],
 
     'statuses' => [

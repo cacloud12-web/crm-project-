@@ -213,6 +213,7 @@ window.CA_CRM = (function () {
       Inactive: 'bg-slate-100 text-slate-600',
       Lost: 'badge-danger',
       'Not Interested': 'badge-danger',
+      'Do Not Disturb': 'bg-orange-50 text-orange-700',
       New: 'badge-brand',
       Pipeline: 'badge-brand',
       Negotiation: 'badge-brand',
@@ -362,6 +363,7 @@ window.CA_CRM = (function () {
     'WhatsApp Sent': { icon: 'message-circle', color: 'bg-emerald-500' },
     'Purchased': { icon: 'shopping-bag', color: 'bg-emerald-600' },
     'Not Interested': { icon: 'x-circle', color: 'bg-rose-500' },
+    'Do Not Disturb': { icon: 'ban', color: 'bg-orange-500' },
     'Status Changed': { icon: 'git-branch', color: 'bg-slate-500' },
     'Call Completed': { icon: 'phone-call', color: 'bg-emerald-500' },
     'Follow-up Added': { icon: 'calendar-plus', color: 'bg-blue-500' },
@@ -13983,12 +13985,17 @@ if (otherInput) {
 
   function buildFollowupRowHtml(f) {
     var rowClass = 'ca-table-row crm-table-row' + (f.status === 'Overdue' ? ' followup-row-overdue' : '');
+    if (isFollowupDndType(f.followup_type)) rowClass += ' followup-row-dnd';
     var rescheduled = f.is_rescheduled ? ' <span class="badge badge-brand">Rescheduled</span>' : '';
     var outcomeBadge = f.outcome
       ? ' <span class="badge badge-brand">' + escapeHtml(f.outcome) + '</span>'
       : '';
     var remarksText = f.remarks || f.outcome || '—';
     var followupId = f.followup_id;
+    var dndIcon = isFollowupDndType(f.followup_type) ? followupDndIconHtml() + ' ' : '';
+    var typeLabel = isFollowupDndType(f.followup_type)
+      ? followupDndIconHtml() + ' <span class="followup-dnd-type-label">DND</span>'
+      : compactTextCell(f.followup_type);
     var actionsCell = (followupId == null || followupId === '')
       ? '<td class="sticky-right crm-actions-cell crm-actions-cell--inline"><span class="cam-cell-empty">—</span></td>'
       : (window.CAActionDropdown
@@ -14001,8 +14008,8 @@ if (otherInput) {
         : '<td class="sticky-right crm-actions-cell"><span class="cam-cell-empty">—</span></td>');
     return '<tr class="' + rowClass + '" data-followup-id="' + followupId + '">' +
       renderInboxCheckCell('followups-data-table', f.followup_id) +
-      '<td class="crm-td-status">' + compactTextCell(f.followup_type) + outcomeBadge + rescheduled + '</td>' +
-      '<td class="sticky-left-2 crm-td-firm font-medium">' + firmNameCell(f.firm_name) + '</td>' +
+      '<td class="crm-td-status">' + typeLabel + outcomeBadge + rescheduled + '</td>' +
+      '<td class="sticky-left-2 crm-td-firm font-medium">' + dndIcon + firmNameCell(f.firm_name) + '</td>' +
       '<td class="crm-td-mobile">' + camPhoneCell(f.mobile_no) + '</td>' +
       '<td class="crm-td-geo">' + compactTextCell(f.city || f.city_name) + '</td>' +
       '<td class="crm-td-person">' + compactTextCell(f.executive || f.employee_name) + '</td>' +
@@ -18304,7 +18311,17 @@ if (otherInput) {
   }
 
   function isFollowupRemarksOnlyType(type) {
-    return String(type || '').trim() === 'Not Interested';
+    var t = String(type || '').trim();
+    return t === 'Not Interested' || t === 'Do Not Disturb';
+  }
+
+  function isFollowupDndType(type) {
+    return String(type || '').trim() === 'Do Not Disturb';
+  }
+
+  function followupDndIconHtml() {
+    return '<span class="followup-dnd-icon" title="Do Not Disturb lead" aria-label="Do Not Disturb">' +
+      '<i data-lucide="ban" class="h-4 w-4"></i></span>';
   }
 
   function getFollowupSelectedLeadTeamSize() {
@@ -18461,15 +18478,23 @@ if (otherInput) {
     var priorityWrap = document.getElementById('followup-priority-wrap');
     var rescheduleWrap = document.getElementById('followup-reschedule-reason-wrap');
     var demoWrap = document.getElementById('followup-demo-fields-wrap');
+    var leadWrap = document.getElementById('followup-lead-picker-wrap');
     var scheduledInput = document.getElementById('form-followup-scheduled-date');
+    var remarksInput = form.elements.remarks;
+    var hasLead = !!normalizeFollowupLeadId(document.getElementById('form-followup-ca-id')?.value);
 
     if (scheduledWrap) scheduledWrap.classList.toggle('hidden', remarksOnly);
     if (priorityWrap) priorityWrap.classList.toggle('hidden', remarksOnly);
     if (rescheduleWrap) rescheduleWrap.classList.toggle('hidden', remarksOnly);
     if (demoWrap) demoWrap.classList.toggle('hidden', !isDemo);
+    if (leadWrap) leadWrap.classList.toggle('hidden', remarksOnly && hasLead);
     if (scheduledInput) {
       if (remarksOnly) scheduledInput.removeAttribute('required');
       else scheduledInput.setAttribute('required', 'required');
+    }
+    if (remarksInput) {
+      if (isFollowupDndType(type)) remarksInput.setAttribute('required', 'required');
+      else remarksInput.removeAttribute('required');
     }
     if (isDemo) populateFollowupDemoFieldsFromLead(window._followupDemoProviderEmployeeId || null);
   }
@@ -20785,6 +20810,10 @@ if (otherInput) {
         delete payload.priority;
         delete payload.reschedule_reason;
         payload.status = 'Completed';
+        if (isFollowupDndType(payload.followup_type) && !String(payload.remarks || '').trim()) {
+          toast('Please enter remarks for Do Not Disturb.', 'error');
+          return;
+        }
       } else {
       var scheduleCheck = validateFollowUpScheduledAt(payload.scheduled_date);
       if (!scheduleCheck.valid && !editingId) {

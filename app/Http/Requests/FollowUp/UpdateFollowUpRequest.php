@@ -36,7 +36,11 @@ class UpdateFollowUpRequest extends FormRequest
             'ca_id' => 'sometimes|required|exists:ca_masters,ca_id',
             'employee_id' => 'nullable|exists:employees,employee_id',
             'followup_type' => ['sometimes', 'required', 'string', 'max:255', Rule::in(config('crm_followups.types', []))],
-            'remarks' => 'nullable|string',
+            'remarks' => [
+                Rule::requiredIf(fn () => $this->input('followup_type') === 'Do Not Disturb'),
+                'nullable',
+                'string',
+            ],
             'scheduled_date' => 'sometimes|required|date',
             'next_followup_date' => 'nullable|date',
             'status' => ['nullable', 'string', 'max:255', Rule::in(config('crm_followups.statuses', []))],

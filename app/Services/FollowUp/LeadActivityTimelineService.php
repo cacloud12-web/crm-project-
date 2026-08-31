@@ -725,6 +725,7 @@ class LeadActivityTimelineService
             str_contains($type, 'WhatsApp') => 'message-circle',
             str_contains($type, 'Purchased') => 'shopping-bag',
             str_contains($type, 'Not Interested') => 'x-circle',
+            str_contains($type, 'Do Not Disturb') => 'ban',
             str_contains($type, 'Status') => 'git-branch',
             default => 'activity',
         };

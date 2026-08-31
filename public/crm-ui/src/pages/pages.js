@@ -1543,7 +1543,7 @@ window.CAPages = (function () {
 
   /* ─── Follow Ups ─── */
   function followupsPage() {
-    var types = ['Call Status', 'Demo Scheduled', 'Demo Completed', 'Demo History', 'Details Shared', 'Negotiation', 'Not Interested', 'Follow Up Reminder', 'Follow Up Scheduled'];
+    var types = ['Call Status', 'Demo Scheduled', 'Demo Completed', 'Demo History', 'Details Shared', 'Negotiation', 'Not Interested', 'Do Not Disturb', 'Follow Up Reminder', 'Follow Up Scheduled'];
     var headerActions =
       pageHeroToolbar(
         actIcon('download', 'Export', 'id="followup-export-btn"') +

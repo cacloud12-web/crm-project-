@@ -6,7 +6,9 @@ use App\Models\CaMaster;
 use App\Models\FollowUp;
 use App\Models\LeadAssignmentEngine;
 use App\Services\Activity\ActivityLogService;
+use App\Models\DndManagement;
 use App\Services\Cache\CrmCacheService;
+use App\Services\Dnd\DndManagementService;
 use App\Services\Concerns\SearchesListings;
 use App\Services\DemoConfirmation\DemoConfirmationService;
 use App\Services\FollowUp\Concerns\ResolvesFollowUpDemoFields;
@@ -83,7 +85,7 @@ class FollowUpService
     {
         app(EmployeeDataScopeService::class)->ensureCanAccessCaMaster((int) $data['ca_id']);
 
-        if (($data['followup_type'] ?? '') === 'Not Interested') {
+        if ($this->isRemarksOnlyFollowUpType((string) ($data['followup_type'] ?? ''))) {
             $data['status'] = $data['status'] ?? 'Completed';
             $data['scheduled_date'] = $data['scheduled_date'] ?? now()->toDateTimeString();
         }
@@ -135,9 +137,41 @@ class FollowUpService
         // Ensure listing Last Activity updates even when status sync is a no-op.
         CaMaster::touchLastActivityFor((int) $followUp->ca_id);
 
+        if ($followUp->followup_type === 'Do Not Disturb') {
+            $this->ensureDndEntryForFollowUp($followUp);
+        }
+
         $this->forgetFollowUpCaches($followUp);
 
         return $followUp;
+    }
+
+    private function isRemarksOnlyFollowUpType(string $type): bool
+    {
+        return in_array($type, config('crm_followups.remarks_only_types', []), true);
+    }
+
+    private function ensureDndEntryForFollowUp(FollowUp $followUp): void
+    {
+        if (! $followUp->ca_id) {
+            return;
+        }
+
+        $exists = DndManagement::query()
+            ->where('ca_id', $followUp->ca_id)
+            ->where('dnd_type', 'All')
+            ->exists();
+
+        if ($exists) {
+            return;
+        }
+
+        app(DndManagementService::class)->create([
+            'ca_id' => $followUp->ca_id,
+            'dnd_type' => 'All',
+            'reason' => $followUp->remarks ?: 'Marked Do Not Disturb from follow-up',
+            'added_by' => auth()->user()?->name ?? 'System',
+        ]);
     }
 
     private function forgetFollowUpCaches(FollowUp $followUp): void
@@ -232,7 +266,7 @@ class FollowUpService
         $rescheduleReason = $data['reschedule_reason'] ?? null;
         $nextType = (string) ($data['followup_type'] ?? $followUp->followup_type);
 
-        if ($nextType === 'Not Interested') {
+        if ($this->isRemarksOnlyFollowUpType($nextType)) {
             $data['status'] = 'Completed';
             unset($data['scheduled_date'], $data['priority'], $data['reschedule_reason']);
         }
@@ -318,6 +352,10 @@ class FollowUpService
         }
 
         CaMaster::touchLastActivityFor((int) $followUp->ca_id);
+
+        if ($followUp->followup_type === 'Do Not Disturb') {
+            $this->ensureDndEntryForFollowUp($followUp);
+        }
 
         $this->forgetFollowUpCaches($followUp);
 

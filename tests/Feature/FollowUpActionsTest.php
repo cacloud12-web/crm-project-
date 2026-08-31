@@ -310,4 +310,35 @@ class FollowUpActionsTest extends TestCase
             'status' => 'Completed',
         ]);
     }
+
+    public function test_create_do_not_disturb_follow_up_requires_only_remarks_and_adds_dnd_entry(): void
+    {
+        $manager = CrmTestAccounts::manager();
+        $this->actingAs($manager);
+
+        $lead = \App\Models\CaMaster::query()->firstOrFail();
+        $employeeId = \App\Models\Employee::query()->where('status', 'Active')->value('employee_id');
+
+        $this->postJson('/follow-ups', [
+            'ca_id' => $lead->ca_id,
+            'employee_id' => $employeeId,
+            'followup_type' => 'Do Not Disturb',
+            'remarks' => 'Customer asked not to call again',
+        ])->assertCreated()
+            ->assertJsonPath('data.followup_type', 'Do Not Disturb')
+            ->assertJsonPath('data.status', 'Completed')
+            ->assertJsonPath('data.remarks', 'Customer asked not to call again');
+
+        $this->assertDatabaseHas('follow_ups', [
+            'ca_id' => $lead->ca_id,
+            'followup_type' => 'Do Not Disturb',
+            'status' => 'Completed',
+            'remarks' => 'Customer asked not to call again',
+        ]);
+
+        $this->assertDatabaseHas('dnd_management', [
+            'ca_id' => $lead->ca_id,
+            'dnd_type' => 'All',
+        ]);
+    }
 }

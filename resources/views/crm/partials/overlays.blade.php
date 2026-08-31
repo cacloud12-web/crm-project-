@@ -945,7 +945,7 @@
             </div>
           </div>
         </div>
-        <div><label class="form-label">Follow-up Type</label><select name="followup_type" class="input-field"><option>Call Status</option><option>Demo Scheduled</option><option>Demo Completed</option><option>Details Shared</option><option>Negotiation</option><option>Not Interested</option><option>Follow Up Reminder</option><option>Follow Up Scheduled</option></select></div>
+        <div><label class="form-label">Follow-up Type</label><select name="followup_type" class="input-field"><option>Call Status</option><option>Demo Scheduled</option><option>Demo Completed</option><option>Details Shared</option><option>Negotiation</option><option>Not Interested</option><option>Do Not Disturb</option><option>Follow Up Reminder</option><option>Follow Up Scheduled</option></select></div>
         <div><label class="form-label">Remarks</label><textarea name="remarks" class="input-field" rows="2" placeholder="Discussion notes…"></textarea></div>
         <div id="followup-scheduled-wrap">
           <label class="form-label" for="form-followup-scheduled-date">Scheduled Date &amp; Time</label>
