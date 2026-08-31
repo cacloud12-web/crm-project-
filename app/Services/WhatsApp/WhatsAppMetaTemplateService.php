@@ -341,10 +341,9 @@ class WhatsAppMetaTemplateService
             is_array($existingMeta['body_parameters'] ?? null) ? $existingMeta['body_parameters'] : [],
             is_array($parsed['body_parameters'] ?? null) ? $parsed['body_parameters'] : [],
             (string) ($parsed['meta_body_text'] ?? $template->body_template),
+            (string) $template->body_template,
         );
-        if (isset($parsed['buttons']) && is_array($parsed['buttons']) && $parsed['buttons'] !== []) {
-            $metaComponents['buttons'] = $parsed['buttons'];
-        }
+        unset($metaComponents['buttons']);
         if ($parsedSample !== []) {
             $metaComponents['sample'] = $parsedSample;
         } elseif ($sample !== []) {
@@ -367,7 +366,11 @@ class WhatsAppMetaTemplateService
         }
 
         if (filled($parsed['meta_body_text'] ?? null)) {
-            $updates['body_template'] = (string) $parsed['meta_body_text'];
+            $existingCount = count($this->extractPlaceholderNames((string) $template->body_template));
+            $parsedCount = count($this->extractPlaceholderNames((string) $parsed['meta_body_text']));
+            if ($parsedCount >= $existingCount) {
+                $updates['body_template'] = (string) $parsed['meta_body_text'];
+            }
         }
 
         $template->update($updates);
@@ -522,21 +525,31 @@ class WhatsAppMetaTemplateService
      * @param  list<string>  $parsed
      * @return list<string>
      */
-    private function resolveBodyParameters(array $existing, array $parsed, string $bodyText): array
+    private function resolveBodyParameters(array $existing, array $parsed, string $bodyText, string $crmBodyText = ''): array
     {
-        $fromText = [];
-        if ($bodyText !== '' && preg_match_all('/\{\{([^}]+)\}\}/', $bodyText, $matches)) {
-            $fromText = array_values(array_map(static fn (string $name) => trim($name), $matches[1]));
-        }
+        $fromText = $this->extractPlaceholderNames($bodyText);
+        $fromCrmBody = $this->extractPlaceholderNames($crmBodyText);
 
         $best = [];
-        foreach ([$fromText, $parsed, $existing] as $candidate) {
+        foreach ([$fromCrmBody, $fromText, $parsed, $existing] as $candidate) {
             if (count($candidate) > count($best)) {
                 $best = $candidate;
             }
         }
 
         return array_values(array_filter($best, static fn (string $value) => $value !== ''));
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function extractPlaceholderNames(string $bodyText): array
+    {
+        if ($bodyText === '' || ! preg_match_all('/\{\{([^}]+)\}\}/', $bodyText, $matches)) {
+            return [];
+        }
+
+        return array_values(array_map(static fn (string $name) => trim($name), $matches[1]));
     }
 
     private function mapMetaEventToCrmStatus(string $event): string
