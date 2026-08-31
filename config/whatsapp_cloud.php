@@ -69,6 +69,7 @@ return [
 
     'approved_templates' => [
         'demo_scheduled',
+        'demo_reminder__1_hour',
         'expense_partnerjeyfg90rzl',
         'proforma_invoicel5ekuo0baa',
     ],
