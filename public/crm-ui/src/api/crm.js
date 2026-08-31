@@ -25329,7 +25329,7 @@ if (otherInput) {
     var lastTestNote = document.getElementById('whatsapp-settings-last-test-note');
     if (lastTestNote) {
       if (wa.last_tested_at) {
-        var statusLabel = wa.last_test_status === 'success' ? 'Last test succeeded' : 'Last test failed';
+        var statusLabel = wa.last_test_status === 'success' ? 'Last connection test succeeded' : 'Last connection test failed';
         var detail = wa.last_test_message ? ' — ' + wa.last_test_message : '';
         lastTestNote.textContent = statusLabel + ' at ' + wa.last_tested_at + detail;
         lastTestNote.classList.remove('hidden');
@@ -25406,6 +25406,11 @@ if (otherInput) {
           msg += ' (ID: ' + result.meta_message_id + ')';
         }
         toast(msg, result.success ? 'success' : 'error');
+        if (result.success) {
+          return apiFetch('/whatsapp-settings').then(function (settingsBody) {
+            populateWhatsAppSettingsForm(settingsBody.data || {});
+          });
+        }
         if (!result.success && result.provider_response) {
           console.info('WhatsApp test send provider response', result.provider_response);
         }
