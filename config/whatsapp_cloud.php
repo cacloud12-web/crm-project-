@@ -71,6 +71,7 @@ return [
         'demo_scheduled',
         'demo_reminder_1_hour',
         'demo_reminder_one_day_before',
+        'subscription_renewal_reminder',
         'expense_partnerjeyfg90rzl',
         'proforma_invoicel5ekuo0baa',
     ],
@@ -101,6 +102,9 @@ return [
         'button_url_suffix' => env('WHATSAPP_BUTTON_URL_SUFFIX', 'ouq-sxne-jwn'),
         'demo_date' => null,
         'demo_time' => null,
+        'renewal_due_date' => '15-Sep-2026',
+        'subscription_plan' => 'Professional Plan',
+        'renewal_amount' => '15,000',
         'default' => 'N/A',
     ],
 
