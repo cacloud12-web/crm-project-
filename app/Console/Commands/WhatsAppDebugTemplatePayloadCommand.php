@@ -46,6 +46,15 @@ class WhatsAppDebugTemplatePayloadCommand extends Command
             $settings,
         );
 
+        $this->info('CRM template record:');
+        $this->line(json_encode([
+            'id' => $template->id,
+            'template_name' => $template->template_name,
+            'language_code' => $template->language_code,
+            'meta_api_name' => $template->metaApiTemplateName(),
+            'send_language_code' => $template->metaApiLanguageCode(),
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
         $this->info('CRM template mapping:');
         $this->line(json_encode($template->meta_components, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
@@ -61,8 +70,32 @@ class WhatsAppDebugTemplatePayloadCommand extends Command
             $this->warn('Access token not configured — skipping Meta fetch.');
         }
 
+        $sendTemplate = $payload['request_body']['template'] ?? [];
+        $sendBodyParams = $sendTemplate['components'][0]['parameters'] ?? [];
+        $sendParamNames = array_values(array_map(
+            static fn (array $param): string => (string) ($param['parameter_name'] ?? ''),
+            is_array($sendBodyParams) ? $sendBodyParams : [],
+        ));
+
         $this->info('Send payload (request_body.template):');
-        $this->line(json_encode($payload['request_body']['template'] ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        $this->line(json_encode($sendTemplate, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+        if ($settings->hasAccessToken() && isset($definition) && is_array($definition)) {
+            $parsed = $metaTemplateService->parseMetaTemplateStructure($definition);
+            $expected = is_array($parsed['body_parameters'] ?? null) ? $parsed['body_parameters'] : [];
+            $this->info('Parameter check:');
+            $this->line(json_encode([
+                'expected_from_meta_body' => $expected,
+                'send_parameter_names' => $sendParamNames,
+                'expected_count' => count($expected),
+                'send_count' => count($sendParamNames),
+                'names_match' => $expected === $sendParamNames,
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+            if ($expected !== $sendParamNames) {
+                $this->warn('Mismatch: Meta body placeholders and send parameter_name values must match exactly (including spaces).');
+            }
+        }
 
         return self::SUCCESS;
     }

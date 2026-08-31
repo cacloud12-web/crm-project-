@@ -54,6 +54,12 @@ final class MetaWhatsAppErrorMapper
         };
 
         if ($mapped !== null) {
+            $details = trim((string) ($error['error_data']['details'] ?? ''));
+
+            if ($details !== '') {
+                $mapped .= ' Meta details: '.$details;
+            }
+
             return $message !== '' ? $mapped.' Meta response: '.$message : $mapped;
         }
 
