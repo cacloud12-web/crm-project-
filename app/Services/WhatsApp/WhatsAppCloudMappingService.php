@@ -682,7 +682,28 @@ class WhatsAppCloudMappingService
                     'ca_name', 'client_name' => (string) ($lead->ca_name ?? ''),
                     'firm_name' => (string) ($lead->firm_name ?? ''),
                     'mobile_no', 'mobile' => (string) ($lead->mobile_no ?? ''),
-                    'amount', 'expense_date', 'expense_category', 'expense_id',
+                    'demo_date', 'renewal_due_date', 'payment_date' => (string) (
+                        $leadVariables['{{date}}']
+                        ?: config('whatsapp_cloud.meta_parameter_fallbacks.'.$source)
+                        ?: config('whatsapp_cloud.meta_parameter_fallbacks.default', 'N/A')
+                    ),
+                    'demo_time' => (string) (
+                        $leadVariables['{{time}}']
+                        ?: config('whatsapp_cloud.meta_parameter_fallbacks.demo_time')
+                        ?: now()->format('h:i A')
+                    ),
+                    'meeting_link' => (string) (
+                        $leadVariables['{{link}}']
+                        ?: config('whatsapp_cloud.meta_parameter_fallbacks.meeting_link', 'https://meet.google.com/ouq-sxne-jwn')
+                    ),
+                    'amount', 'renewal_amount' => (string) (
+                        config('whatsapp_cloud.meta_parameter_fallbacks.'.$source)
+                        ?: config('whatsapp_cloud.meta_parameter_fallbacks.amount', 'N/A')
+                    ),
+                    'subscription_plan' => (string) (
+                        config('whatsapp_cloud.meta_parameter_fallbacks.subscription_plan', 'Professional Plan')
+                    ),
+                    'expense_date', 'expense_category', 'expense_id',
                     'service_name', 'invoice_date', 'invoice_amount', 'due_date' => (string) (
                         config('whatsapp_cloud.meta_parameter_fallbacks.'.$source)
                         ?: config('whatsapp_cloud.meta_parameter_fallbacks.default', 'N/A')

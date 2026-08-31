@@ -428,18 +428,25 @@ class WhatsAppMetaTemplateService
                 }
 
                 $fromText = [];
-                if ($bodyText !== '' && preg_match_all('/\{\{([a-z_][a-z0-9_]*)\}\}/i', $bodyText, $matches)) {
-                    $fromText = array_values($matches[1]);
+                if ($bodyText !== '' && preg_match_all('/\{\{(\d+)\}\}/', $bodyText, $matches)) {
+                    $fromText = array_map('strval', $matches[1]);
+                    $parameterFormat = 'POSITIONAL';
+                } elseif ($bodyText !== '' && preg_match_all('/\{\{([^}]+)\}\}/', $bodyText, $matches)) {
+                    $fromText = array_values(array_map(static fn (string $name) => trim($name), $matches[1]));
                     if ($parameterFormat === '') {
                         $parameterFormat = 'NAMED';
                     }
-                } elseif ($bodyText !== '' && preg_match_all('/\{\{(\d+)\}\}/', $bodyText, $matches)) {
-                    $fromText = array_map('strval', $matches[1]);
-                    $parameterFormat = 'POSITIONAL';
                 }
 
-                // Body text is the source of truth — Meta examples can omit variables like {{time}}.
+                // Body text is the source of truth — merge Meta example param names when body omits one.
                 $bodyParameters = $fromText !== [] ? $fromText : $fromExamples;
+                if ($fromText !== [] && $fromExamples !== []) {
+                    foreach ($fromExamples as $paramName) {
+                        if (! in_array($paramName, $bodyParameters, true)) {
+                            $bodyParameters[] = $paramName;
+                        }
+                    }
+                }
 
                 $positionalExamples = $component['example']['body_text'] ?? null;
                 if ($bodySampleValues === [] && is_array($positionalExamples) && isset($positionalExamples[0]) && is_array($positionalExamples[0])) {

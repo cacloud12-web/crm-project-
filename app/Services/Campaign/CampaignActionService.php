@@ -207,6 +207,7 @@ class CampaignActionService
                 ->delete();
 
             $campaign->update([
+                'status' => 'Draft',
                 'retry_count' => (int) $campaign->retry_count + 1,
             ]);
 
