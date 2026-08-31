@@ -239,7 +239,7 @@ class WhatsAppProductionTemplatesTest extends TestCase
         ]);
 
         $this->artisan('migrate', [
-            '--path' => 'database/migrations/2026_08_31_170000_restore_demo_reminder_body_link_parameters.php',
+            '--path' => 'database/migrations/2026_08_31_180000_fix_demo_reminder_1_hour_visit_website_button.php',
         ]);
 
         $template = MessageTemplate::query()
@@ -250,6 +250,10 @@ class WhatsAppProductionTemplatesTest extends TestCase
 
         Http::fake([
             'graph.facebook.com/*' => function ($request) use (&$capturedParams) {
+                if ($request->method() === 'GET') {
+                    return Http::response(['data' => []], 200);
+                }
+
                 $payload = $request->data();
                 $capturedParams = $payload['template']['components'][0]['parameters'] ?? [];
 
@@ -274,6 +278,21 @@ class WhatsAppProductionTemplatesTest extends TestCase
         $this->assertSame('name', $capturedParams[0]['parameter_name'] ?? null);
         $this->assertSame('time', $capturedParams[1]['parameter_name'] ?? null);
         $this->assertSame('link', $capturedParams[2]['parameter_name'] ?? null);
+
+        Http::assertSent(function ($request) {
+            if ($request->method() !== 'POST') {
+                return false;
+            }
+
+            $payload = $request->data();
+            $components = $payload['template']['components'] ?? [];
+            $button = collect($components)->firstWhere('type', 'button');
+
+            return is_array($button)
+                && ($button['index'] ?? null) === '0'
+                && ($button['sub_type'] ?? null) === 'url'
+                && ! isset($button['parameters'][0]['parameter_name']);
+        });
     }
 
     public function test_send_test_demo_reminder_one_day_before_uses_named_meta_parameters(): void

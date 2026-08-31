@@ -283,7 +283,7 @@ class WhatsAppMetaTemplateService
                     continue;
                 }
 
-                if (strtoupper((string) ($row['status'] ?? '')) !== 'APPROVED') {
+                if (! in_array(strtoupper((string) ($row['status'] ?? '')), ['APPROVED', 'ACTIVE'], true)) {
                     continue;
                 }
 
