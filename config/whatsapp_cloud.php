@@ -39,6 +39,9 @@ return [
         '{{mobile}}' => 'mobile_no',
         '{{city}}' => 'city.city_name',
         '{{state}}' => 'state.state_name',
+        '{{date}}' => 'demo_date',
+        '{{time}}' => 'demo_time',
+        '{{link}}' => 'meeting_link',
         '{{demo_date}}' => 'demo.scheduled_date',
         '{{demo_time}}' => 'demo.scheduled_time',
         '{{employee_name}}' => 'assignment.employee.name',
@@ -65,6 +68,7 @@ return [
     ],
 
     'approved_templates' => [
+        'demo_scheduled',
         'expense_partnerjeyfg90rzl',
         'proforma_invoicel5ekuo0baa',
     ],
@@ -91,6 +95,9 @@ return [
         'expense_category' => 'General',
         'expense_id' => 'EXP-2026-0001',
         'due_date' => '28-June-2025',
+        'meeting_link' => 'https://meet.example.com/demo',
+        'demo_date' => null,
+        'demo_time' => null,
         'default' => 'N/A',
     ],
 

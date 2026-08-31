@@ -63,14 +63,19 @@ class WhatsAppCloudMappingService
 
         $demoDate = '';
         $demoTime = '';
+        $meetingLink = '';
         if ($demoFollowUp?->scheduled_date) {
             $scheduled = Carbon::parse($demoFollowUp->scheduled_date);
-            $demoDate = $scheduled->format('d-F-Y');
+            $demoDate = $scheduled->format('d-M-Y');
             $demoTime = $scheduled->format('h:i A');
         } elseif ($demoFollowUp?->next_followup_date) {
             $scheduled = Carbon::parse($demoFollowUp->next_followup_date);
-            $demoDate = $scheduled->format('d-F-Y');
+            $demoDate = $scheduled->format('d-M-Y');
             $demoTime = $scheduled->format('h:i A');
+        }
+        $meetingLink = trim((string) ($demoFollowUp?->meeting_link ?? ''));
+        if ($meetingLink === '') {
+            $meetingLink = (string) config('crm_defaults.template_preview.meeting_link', '');
         }
 
         $taskName = trim((string) ($latestTask?->followup_type ?: $latestTask?->notes ?: ''));
@@ -87,6 +92,10 @@ class WhatsAppCloudMappingService
             '{{state}}' => (string) ($lead->state?->state_name ?? ''),
             '{{demo_date}}' => $demoDate,
             '{{demo_time}}' => $demoTime,
+            '{{date}}' => $demoDate,
+            '{{time}}' => $demoTime,
+            '{{link}}' => $meetingLink,
+            '{{MEETING_LINK}}' => $meetingLink,
             '{{employee_name}}' => (string) ($assignment?->employee?->name ?? ''),
             '{{assigned_staff}}' => $assignedStaff !== '' ? $assignedStaff : ((string) ($assignment?->employee?->name ?? '') !== '' ? (string) $assignment?->employee?->name : 'Not assigned'),
             '{{task_name}}' => $taskName !== '' ? $taskName : 'Task',
@@ -596,6 +605,10 @@ class WhatsAppCloudMappingService
             '{{state}}' => $preview['state'] ?? 'Sample State',
             '{{demo_date}}' => now()->format('d M Y'),
             '{{demo_time}}' => now()->format('h:i A'),
+            '{{date}}' => now()->format('d-M-Y'),
+            '{{time}}' => now()->format('h:i A'),
+            '{{link}}' => (string) config('crm_defaults.template_preview.meeting_link', 'https://meet.example.com/demo'),
+            '{{MEETING_LINK}}' => (string) config('crm_defaults.template_preview.meeting_link', 'https://meet.example.com/demo'),
             '{{employee_name}}' => 'CRM Test',
             '{{task_name}}' => 'Follow-up Call',
             '{{task_status}}' => 'Scheduled',
