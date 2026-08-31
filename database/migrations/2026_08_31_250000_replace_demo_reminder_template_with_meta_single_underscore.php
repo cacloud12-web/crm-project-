@@ -45,7 +45,7 @@ BODY,
                 'footer' => 'CA CloudDesk',
                 'status' => MessageTemplate::STATUS_PENDING,
                 'category' => 'MARKETING',
-                'publish_status' => 'pending',
+                'publish_status' => 'active',
                 'variable_map' => [
                     '{{name}}' => 'ca_name',
                     '{{time}}' => 'demo_time',
