@@ -68,13 +68,18 @@
 
   function persistListingState(key, state) {
     if (PERSISTED_LISTING_KEYS.indexOf(key) < 0 || !state) return;
+    var filters = Object.assign({}, state.filters || {});
+    if (key === 'ca_masters' && typeof window._employeeLeadsDateFilterActive !== 'undefined' && !window._employeeLeadsDateFilterActive) {
+      delete filters.assigned_date;
+      delete filters.executive;
+    }
     try {
       sessionStorage.setItem(listingStorageKey(key), JSON.stringify({
         page: state.page || 1,
         per_page: state.per_page || DEFAULT_PER_PAGE,
         sort_by: state.sort_by || null,
         sort_dir: state.sort_dir || 'desc',
-        filters: state.filters || {},
+        filters: filters,
         search: state.search || '',
       }));
     } catch (e) { /* quota */ }

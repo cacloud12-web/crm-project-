@@ -6356,6 +6356,7 @@ if (otherInput) {
     }
     if (intent.assignedDateToday) {
       filters.assigned_date = todayIsoDate();
+      markEmployeeLeadsDateFilterActive(true);
     }
     if (intent.leadView) {
       window._pendingLeadView = intent.leadView;
@@ -15916,7 +15917,48 @@ if (otherInput) {
     if (!window.CA_LISTING_SEARCH) return;
     // Touch getState so sessionStorage listing state is loaded before the first fetch.
     CA_LISTING_SEARCH.getState('ca_masters');
+    sanitizeEmployeeLeadsListingState();
     syncCaMasterColumnFiltersFromState();
+  }
+
+  /**
+   * Employees should see all assigned leads on open/reload. A stale assigned_date filter
+   * (often from dashboard "today" navigation) was shrinking the list to a handful of rows.
+   */
+  function sanitizeEmployeeLeadsListingState() {
+    if (!isEmployeeUser() || !window.CA_LISTING_SEARCH) return;
+    if (!document.getElementById('leads-hub')) return;
+    if (window._employeeLeadsDateFilterActive) return;
+
+    var state = CA_LISTING_SEARCH.getState('ca_masters');
+    var filters = Object.assign({}, state.filters || {});
+    var dirty = false;
+
+    if (filters.assigned_date) {
+      delete filters.assigned_date;
+      dirty = true;
+    }
+    if (filters.executive) {
+      delete filters.executive;
+      dirty = true;
+    }
+
+    if (!dirty) return;
+
+    CA_LISTING_SEARCH.setState('ca_masters', {
+      page: 1,
+      filters: filters,
+    });
+    clearListingPageCaches(['ca_masters']);
+    window._leadSegmentFilter = filters.segment || 'all';
+  }
+
+  function markEmployeeLeadsDateFilterActive(isActive) {
+    if (!isEmployeeUser()) return;
+    window._employeeLeadsDateFilterActive = !!isActive;
+    if (!isActive) {
+      sanitizeEmployeeLeadsListingState();
+    }
   }
 
   function ensureEmployeeTodayAssignedDateFilter() {
@@ -15929,6 +15971,10 @@ if (otherInput) {
 
   function applyCaMasterDateNavListingFilters() {
     if (document.getElementById('leads-hub')) {
+      var assignedInput = document.querySelector('#leads-hub .crm-col-date-nav[data-col-date-nav="assigned_date"] .crm-col-date-nav__value');
+      if (assignedInput && isEmployeeUser()) {
+        markEmployeeLeadsDateFilterActive(!!String(assignedInput.value || '').trim());
+      }
       if (window.CA_LISTING_SEARCH) {
         CA_LISTING_SEARCH.setState('ca_masters', { page: 1, filters: buildLeadsListingFilters() });
         reloadListing('ca_masters');
@@ -27529,7 +27575,8 @@ if (otherInput) {
 
     var cachedListing = readListingPageCache(key, extra);
     var tableHasRows = listingTableHasRows(key, cfg);
-    if (cachedListing && cachedListing.body && !tableHasRows) {
+    var skipCache = key === 'ca_masters' && isEmployeeUser() && document.getElementById('leads-hub') && !window._employeeLeadsDateFilterActive;
+    if (cachedListing && cachedListing.body && !tableHasRows && !skipCache) {
       applyListingFetchBody(key, cachedListing.body, extra, { fromCache: true });
     }
 
