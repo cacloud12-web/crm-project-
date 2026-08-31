@@ -280,6 +280,9 @@ class WhatsAppProductionTemplatesTest extends TestCase
         $this->assertSame('name', $capturedParams[0]['parameter_name'] ?? null);
         $this->assertSame('time', $capturedParams[1]['parameter_name'] ?? null);
         $this->assertSame('link', $capturedParams[2]['parameter_name'] ?? null);
+        $this->assertSame('CA Ravi Kumar', $capturedParams[0]['text'] ?? null);
+        $this->assertSame('10:30 PM', $capturedParams[1]['text'] ?? null);
+        $this->assertSame('https://meet.google.com/ouq-sxne-jwn', $capturedParams[2]['text'] ?? null);
 
         Http::assertSent(function ($request) {
             if ($request->method() !== 'POST') {

@@ -333,16 +333,19 @@ class WhatsAppMetaTemplateService
         $parsed = $this->parseMetaTemplateStructure($definition);
         $existingMeta = is_array($template->meta_components) ? $template->meta_components : [];
         $sample = is_array($existingMeta['sample'] ?? null) ? $existingMeta['sample'] : [];
+        $parsedSample = is_array($parsed['sample'] ?? null) ? $parsed['sample'] : [];
         $existingButtons = is_array($existingMeta['buttons'] ?? null) ? $existingMeta['buttons'] : [];
 
         $metaComponents = array_merge($existingMeta, $parsed);
-        unset($metaComponents['buttons']);
+        unset($metaComponents['buttons'], $metaComponents['sample']);
         if (isset($parsed['buttons']) && is_array($parsed['buttons']) && $parsed['buttons'] !== []) {
             $metaComponents['buttons'] = $parsed['buttons'];
         } elseif ($existingButtons !== []) {
             $metaComponents['buttons'] = $existingButtons;
         }
-        if ($sample !== []) {
+        if ($parsedSample !== []) {
+            $metaComponents['sample'] = $parsedSample;
+        } elseif ($sample !== []) {
             $metaComponents['sample'] = $sample;
         }
         unset($metaComponents['meta_body_text']);
@@ -392,6 +395,7 @@ class WhatsAppMetaTemplateService
         $bodyParameters = [];
         $buttons = [];
         $bodyText = '';
+        $sampleValues = [];
 
         foreach ($components as $component) {
             if (! is_array($component)) {
@@ -404,6 +408,7 @@ class WhatsAppMetaTemplateService
                 $bodyText = (string) ($component['text'] ?? '');
                 $namedExamples = $component['example']['body_text_named_params'] ?? null;
                 $fromExamples = [];
+                $bodySampleValues = [];
 
                 if (is_array($namedExamples) && $namedExamples !== []) {
                     foreach ($namedExamples as $item) {
@@ -413,6 +418,10 @@ class WhatsAppMetaTemplateService
                         $paramName = trim((string) ($item['param_name'] ?? ''));
                         if ($paramName !== '') {
                             $fromExamples[] = $paramName;
+                            $example = $item['example'] ?? null;
+                            if (is_string($example) && trim($example) !== '') {
+                                $bodySampleValues[$paramName] = trim($example);
+                            }
                         }
                     }
                     $parameterFormat = 'NAMED';
@@ -431,6 +440,21 @@ class WhatsAppMetaTemplateService
 
                 // Body text is the source of truth — Meta examples can omit variables like {{time}}.
                 $bodyParameters = $fromText !== [] ? $fromText : $fromExamples;
+
+                $positionalExamples = $component['example']['body_text'] ?? null;
+                if ($bodySampleValues === [] && is_array($positionalExamples) && isset($positionalExamples[0]) && is_array($positionalExamples[0])) {
+                    foreach ($positionalExamples[0] as $index => $example) {
+                        if (! is_scalar($example)) {
+                            continue;
+                        }
+                        $paramName = $bodyParameters[$index] ?? (string) ($index + 1);
+                        $bodySampleValues[(string) $paramName] = trim((string) $example);
+                    }
+                }
+
+                if ($bodySampleValues !== []) {
+                    $sampleValues = array_merge($sampleValues, $bodySampleValues);
+                }
             }
 
             if ($type === 'BUTTONS') {
@@ -472,6 +496,10 @@ class WhatsAppMetaTemplateService
             $result['buttons'] = $buttons;
         } else {
             unset($result['buttons']);
+        }
+
+        if ($sampleValues !== []) {
+            $result['sample'] = $sampleValues;
         }
 
         return $result;

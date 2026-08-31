@@ -645,7 +645,7 @@ class WhatsAppCloudMappingService
     {
         $leadVariables = $lead
             ? $this->resolveVariables($lead)
-            : $this->applyTemplateSampleDefaults($template, $this->baseDummyVariables());
+            : $this->baseDummyVariables();
         $resolved = $leadVariables;
 
         $map = $template->variable_map;
@@ -690,6 +690,10 @@ class WhatsAppCloudMappingService
                     default => $leadVariables[$namedKey] ?? $leadVariables[$placeholder] ?? '',
                 };
             }
+        }
+
+        if (! $lead) {
+            $resolved = $this->applyTemplateSampleDefaults($template, $resolved);
         }
 
         preg_match_all('/\{\{[^}]+\}\}/', (string) $template->body_template, $matches);
