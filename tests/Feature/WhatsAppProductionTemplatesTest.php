@@ -170,6 +170,59 @@ class WhatsAppProductionTemplatesTest extends TestCase
         ]);
     }
 
+    public function test_send_test_demo_scheduled_template_uses_named_meta_parameters(): void
+    {
+        WhatsAppSetting::query()->delete();
+        WhatsAppSetting::query()->create([
+            'provider_name' => 'Meta WhatsApp Cloud API',
+            'phone_number_id' => '1234567890',
+            'business_account_id' => '9876543210',
+            'access_token' => 'test-access-token',
+            'api_version' => 'v23.0',
+            'mode' => WhatsAppSetting::MODE_LIVE,
+            'is_active' => true,
+            'integration_status' => WhatsAppSetting::INTEGRATION_INTEGRATED,
+            'test_mobile_number' => '9876543210',
+        ]);
+
+        $this->artisan('migrate', [
+            '--path' => 'database/migrations/2026_08_31_120000_sync_demo_scheduled_whatsapp_template.php',
+        ]);
+
+        $template = MessageTemplate::query()
+            ->where('template_name', 'demo_scheduled')
+            ->firstOrFail();
+
+        $capturedParams = null;
+
+        Http::fake([
+            'graph.facebook.com/*' => function ($request) use (&$capturedParams) {
+                $payload = $request->data();
+                $capturedParams = $payload['template']['components'][0]['parameters'] ?? [];
+
+                return Http::response([
+                    'messages' => [['id' => 'wamid.test-demo-scheduled-001']],
+                ], 200);
+            },
+        ]);
+
+        $this->actingAs($this->admin());
+
+        $response = $this->postJson('/whatsapp-settings/send-test-template', [
+            'message_template_id' => $template->id,
+            'mobile_no' => '9876543210',
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('data.meta_message_id', 'wamid.test-demo-scheduled-001');
+
+        $this->assertIsArray($capturedParams);
+        $this->assertSame('name', $capturedParams[0]['parameter_name'] ?? null);
+        $this->assertSame('date', $capturedParams[1]['parameter_name'] ?? null);
+        $this->assertSame('time', $capturedParams[2]['parameter_name'] ?? null);
+        $this->assertSame('link', $capturedParams[3]['parameter_name'] ?? null);
+    }
+
     public function test_whatsapp_settings_include_connection_dashboard_fields(): void
     {
         WhatsAppSetting::query()->delete();

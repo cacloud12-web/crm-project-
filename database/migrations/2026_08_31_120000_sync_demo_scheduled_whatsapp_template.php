@@ -44,11 +44,12 @@ BODY,
                     '{{link}}' => 'meeting_link',
                 ],
                 'meta_components' => [
+                    'parameter_format' => 'named',
                     'body_parameters' => [
-                        'ca_name',
-                        'demo_date',
-                        'demo_time',
-                        'meeting_link',
+                        'name',
+                        'date',
+                        'time',
+                        'link',
                     ],
                     'sample' => [
                         'name' => 'Sample Client',

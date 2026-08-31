@@ -87,6 +87,10 @@ final class MetaWhatsAppErrorMapper
             return 'Invalid Phone Number ID. Verify the Phone Number ID in WhatsApp settings matches Meta Business Manager.';
         }
 
+        if (str_contains(strtolower($message), 'parameter')) {
+            return 'Invalid Template Parameters. Named Meta templates (e.g. {{name}}, {{date}}) must match the approved WhatsApp template exactly. Verify template name, language, and variable names in Meta WhatsApp Manager.';
+        }
+
         return 'Invalid Request. '.$message;
     }
 }

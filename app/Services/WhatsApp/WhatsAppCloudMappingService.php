@@ -376,14 +376,67 @@ class WhatsAppCloudMappingService
         if ($bodyParameters !== []) {
             $components[] = [
                 'type' => 'body',
-                'parameters' => array_map(
-                    fn (string $text) => ['type' => 'text', 'text' => $text],
-                    $bodyParameters,
-                ),
+                'parameters' => $this->buildMetaBodyParameters($template, $bodyParameters),
             ];
         }
 
         return $components;
+    }
+
+    /**
+     * Meta templates created in WhatsApp Manager with lowercase named placeholders
+     * (e.g. {{name}}) require parameter_name on each body parameter when sending.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function buildMetaBodyParameters(MessageTemplate $template, array $bodyParameters): array
+    {
+        $placeholders = $this->extractBodyPlaceholders((string) $template->body_template);
+        $parameters = [];
+
+        foreach ($bodyParameters as $index => $text) {
+            $entry = [
+                'type' => 'text',
+                'text' => $text,
+            ];
+
+            $parameterName = $this->metaParameterNameForPlaceholder($placeholders[$index] ?? null);
+            if ($parameterName !== null) {
+                $entry['parameter_name'] = $parameterName;
+            }
+
+            $parameters[] = $entry;
+        }
+
+        return $parameters;
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function extractBodyPlaceholders(string $bodyTemplate): array
+    {
+        preg_match_all('/\{\{[^}]+\}\}/', $bodyTemplate, $matches);
+
+        return array_values(array_unique($matches[0] ?? []));
+    }
+
+    private function metaParameterNameForPlaceholder(?string $placeholder): ?string
+    {
+        if (! is_string($placeholder) || $placeholder === '') {
+            return null;
+        }
+
+        $name = trim($placeholder, '{}');
+        if ($name === '' || ctype_digit($name)) {
+            return null;
+        }
+
+        if (! preg_match('/^[a-z][a-z0-9_]*$/', $name)) {
+            return null;
+        }
+
+        return $name;
     }
 
     /**
