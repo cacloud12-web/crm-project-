@@ -400,7 +400,7 @@ class WhatsAppCloudMappingService
         foreach ($bodyParameters as $index => $text) {
             $entry = [
                 'type' => 'text',
-                'text' => $text,
+                'text' => $this->sanitizeMetaParameterText($text),
             ];
 
             if ($format === 'named') {
@@ -497,7 +497,9 @@ class WhatsAppCloudMappingService
 
             $entry = [
                 'type' => 'text',
-                'text' => $this->normalizeButtonParameterText(trim($text), $button),
+                'text' => $this->sanitizeMetaParameterText(
+                    $this->normalizeButtonParameterText(trim($text), $button),
+                ),
             ];
 
             $components[] = [
@@ -547,6 +549,13 @@ class WhatsAppCloudMappingService
 
         // Meta rejects empty URL button suffixes (#100 / #131009).
         return ltrim((string) config('whatsapp_cloud.meta_parameter_fallbacks.button_url_suffix', 'ouq-sxne-jwn'), '/');
+    }
+
+    private function sanitizeMetaParameterText(string $text): string
+    {
+        $text = trim(str_replace(["\r\n", "\r", "\n", "\t"], ' ', $text));
+
+        return preg_replace('/\s{2,}/', ' ', $text) ?? $text;
     }
 
     private function metaParameterNameForPlaceholder(?string $placeholder): ?string

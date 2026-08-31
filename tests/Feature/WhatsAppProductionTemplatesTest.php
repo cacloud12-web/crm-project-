@@ -241,6 +241,9 @@ class WhatsAppProductionTemplatesTest extends TestCase
         $this->artisan('migrate', [
             '--path' => 'database/migrations/2026_08_31_220000_sync_demo_reminder_three_named_variables.php',
         ]);
+        $this->artisan('migrate', [
+            '--path' => 'database/migrations/2026_08_31_230000_remove_demo_reminder_url_button_parameters.php',
+        ]);
 
         $template = MessageTemplate::query()
             ->where('template_name', 'demo_reminder__1_hour')
@@ -282,11 +285,8 @@ class WhatsAppProductionTemplatesTest extends TestCase
 
             $payload = $request->data();
             $components = $payload['template']['components'] ?? [];
-            $button = collect($components)->firstWhere('type', 'button');
 
-            return is_array($button)
-                && ($button['index'] ?? null) === '0'
-                && ($button['parameters'][0]['text'] ?? '') === 'ouq-sxne-jwn';
+            return collect($components)->doesntContain('type', 'button');
         });
     }
 
