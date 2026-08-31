@@ -239,15 +239,18 @@ class WhatsAppProductionTemplatesTest extends TestCase
         ]);
 
         $this->artisan('migrate', [
-            '--path' => 'database/migrations/2026_08_31_220000_sync_demo_reminder_three_named_variables.php',
-        ]);
-        $this->artisan('migrate', [
-            '--path' => 'database/migrations/2026_08_31_230000_remove_demo_reminder_url_button_parameters.php',
+            '--path' => 'database/migrations/2026_08_31_250000_replace_demo_reminder_template_with_meta_single_underscore.php',
         ]);
 
         $template = MessageTemplate::query()
-            ->where('template_name', 'demo_reminder__1_hour')
+            ->where('template_name', 'demo_reminder_1_hour')
             ->firstOrFail();
+
+        $template->update([
+            'meta_status' => 'APPROVED',
+            'status' => MessageTemplate::STATUS_APPROVED,
+            'is_active' => true,
+        ]);
 
         $capturedParams = null;
 

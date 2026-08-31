@@ -10,7 +10,7 @@ use Illuminate\Console\Command;
 class WhatsAppSyncMetaTemplateCommand extends Command
 {
     protected $signature = 'whatsapp:sync-meta-template
-                            {name? : CRM or Meta template name (e.g. demo_reminder__1_hour)}
+                            {name? : CRM or Meta template name (e.g. demo_reminder_1_hour)}
                             {--all : Sync all active approved WhatsApp templates}';
 
     protected $description = 'Fetch approved template structure from Meta and update CRM parameter mapping';

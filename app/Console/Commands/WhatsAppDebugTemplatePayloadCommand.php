@@ -11,7 +11,7 @@ use Illuminate\Console\Command;
 class WhatsAppDebugTemplatePayloadCommand extends Command
 {
     protected $signature = 'whatsapp:debug-template-payload
-                            {name=demo_reminder__1_hour : CRM or Meta template name}
+                            {name=demo_reminder_1_hour : CRM or Meta template name}
                             {--language=en : Template language code}';
 
     protected $description = 'Build and print the Meta send payload for a WhatsApp template (no message sent)';
