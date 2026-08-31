@@ -43,7 +43,7 @@
   var PERSISTED_LISTING_KEYS = ['ca_masters'];
 
   function listingStorageKey(key) {
-    return 'crm.listing.' + key + '.v1';
+    return 'crm.listing.' + key + '.v2';
   }
 
   function loadPersistedListingState(key) {
@@ -72,6 +72,8 @@
     if (key === 'ca_masters' && typeof window._employeeLeadsDateFilterActive !== 'undefined' && !window._employeeLeadsDateFilterActive) {
       delete filters.assigned_date;
       delete filters.executive;
+      delete filters.from;
+      delete filters.to;
     }
     try {
       sessionStorage.setItem(listingStorageKey(key), JSON.stringify({

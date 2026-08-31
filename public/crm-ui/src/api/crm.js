@@ -15934,14 +15934,12 @@ if (otherInput) {
     var filters = Object.assign({}, state.filters || {});
     var dirty = false;
 
-    if (filters.assigned_date) {
-      delete filters.assigned_date;
-      dirty = true;
-    }
-    if (filters.executive) {
-      delete filters.executive;
-      dirty = true;
-    }
+    ['assigned_date', 'executive', 'from', 'to'].forEach(function (field) {
+      if (filters[field]) {
+        delete filters[field];
+        dirty = true;
+      }
+    });
 
     if (!dirty) return;
 
@@ -15951,6 +15949,43 @@ if (otherInput) {
     });
     clearListingPageCaches(['ca_masters']);
     window._leadSegmentFilter = filters.segment || 'all';
+    clearEmployeeLeadsColumnFilterInputs();
+  }
+
+  function clearEmployeeLeadsColumnFilterInputs() {
+    var hub = document.getElementById('leads-hub');
+    if (!hub || window._employeeLeadsDateFilterActive) return;
+    hub.querySelectorAll('[data-col-filter-group="ca_masters"][data-col-filter="assigned_date"]').forEach(function (input) {
+      input.value = '';
+    });
+    syncCaMasterDateNavLabels(hub);
+  }
+
+  function resetEmployeeLeadsListingOnBoot() {
+    if (!isEmployeeUser() || !document.getElementById('leads-hub')) return;
+    if (window._employeeLeadsBootResetDone) return;
+    window._employeeLeadsBootResetDone = true;
+    if (typeof peekDashboardNavIntent === 'function' && peekDashboardNavIntent()) return;
+
+    if (window.CA_LISTING_SEARCH) {
+      CA_LISTING_SEARCH.clearState('ca_masters');
+    }
+    clearListingPageCaches(['ca_masters']);
+    window._leadSegmentFilter = 'all';
+    window._employeeLeadsDateFilterActive = false;
+    window._leadFilterPrefs = null;
+    clearEmployeeLeadsColumnFilterInputs();
+  }
+
+  function stripEmployeeStaleLeadsFilters(filters) {
+    if (!isEmployeeUser() || !document.getElementById('leads-hub')) return filters || {};
+    if (window._employeeLeadsDateFilterActive) return filters || {};
+    var next = Object.assign({}, filters || {});
+    delete next.assigned_date;
+    delete next.executive;
+    delete next.from;
+    delete next.to;
+    return next;
   }
 
   function markEmployeeLeadsDateFilterActive(isActive) {
@@ -21623,6 +21658,7 @@ if (otherInput) {
       return;
     }
     if (pageId === 'leads' || pageId === 'leads-segments') {
+      resetEmployeeLeadsListingOnBoot();
       applyDashboardNavIntentToLeadsListing('ca_masters');
       renderLeadsHub();
       applyPendingLeadViewFromDashboard();
@@ -27542,9 +27578,19 @@ if (otherInput) {
         extra.segment = window._leadSegmentFilter;
       }
       if (onLeadsHub) {
-        Object.assign(extra, CA_LISTING_SEARCH.readLeadDrawerFilters());
-        Object.assign(extra, readCaMasterColumnFilters());
+        if (!isEmployeeUser() || window._employeeLeadsDateFilterActive) {
+          Object.assign(extra, CA_LISTING_SEARCH.readLeadDrawerFilters());
+        }
+        if (!isEmployeeUser() || window._employeeLeadsDateFilterActive) {
+          Object.assign(extra, readCaMasterColumnFilters());
+        }
         mergeLeadStatusFiltersIntoExtra(extra, 'leads-filter-pipeline-stage');
+        extra = stripEmployeeStaleLeadsFilters(extra);
+        if (window.CA_LISTING_SEARCH) {
+          var listingState = CA_LISTING_SEARCH.getState('ca_masters');
+          listingState.filters = stripEmployeeStaleLeadsFilters(listingState.filters || {});
+          CA_LISTING_SEARCH.setState('ca_masters', { filters: listingState.filters });
+        }
       }
       if (isMasterDataHub()) {
         syncCamListingStateFromDom();
@@ -27575,7 +27621,7 @@ if (otherInput) {
 
     var cachedListing = readListingPageCache(key, extra);
     var tableHasRows = listingTableHasRows(key, cfg);
-    var skipCache = key === 'ca_masters' && isEmployeeUser() && document.getElementById('leads-hub') && !window._employeeLeadsDateFilterActive;
+    var skipCache = key === 'ca_masters' && isEmployeeUser() && document.getElementById('leads-hub');
     if (cachedListing && cachedListing.body && !tableHasRows && !skipCache) {
       applyListingFetchBody(key, cachedListing.body, extra, { fromCache: true });
     }
