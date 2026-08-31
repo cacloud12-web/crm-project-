@@ -73,6 +73,7 @@ return [
         'demo_reminder_one_day_before',
         'subscription_renewal_reminder',
         'callback_scheduled',
+        'payment_received',
         'expense_partnerjeyfg90rzl',
         'proforma_invoicel5ekuo0baa',
     ],
@@ -106,6 +107,7 @@ return [
         'renewal_due_date' => '15-Sep-2026',
         'subscription_plan' => 'Professional Plan',
         'renewal_amount' => '15,000',
+        'payment_date' => '31-Aug-2026',
         'default' => 'N/A',
     ],
 
