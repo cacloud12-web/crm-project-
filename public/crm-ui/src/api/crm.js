@@ -3285,6 +3285,7 @@ if (otherInput) {
       verified_from_google: !!l.verified_from_google,
       researched_at: l.researched_at || null,
       research_status: l.research_status || null,
+      is_dnd: !!l.is_dnd,
       created_at: l.created_at,
       updated_at: l.updated_at,
       updated: formatRelativeDate(l.updated_at),
@@ -15319,6 +15320,9 @@ if (otherInput) {
     if (l.verification_status === 'needs_verification' || l.review_required) {
       rowCls += ' cam-row--needs-verification';
     }
+    if (isLeadDnd(l)) {
+      rowCls += ' cam-row--dnd';
+    }
     var parentRow = '<tr class="' + rowCls + '" data-lead-id="' + l.ca_id + '" data-row=\'' + data + '\'>' +
       withCamDataColumn('selection', renderInboxCheckCell(tableKey, l.ca_id)) +
       camColTd('firm_name', 'sticky-left-2 crm-td-firm cam-master-data-cell', firmCell) +
@@ -15368,6 +15372,7 @@ if (otherInput) {
   }
 
   function renderCaMasterFirmNameCell(l, partnerCount, expandableCount) {
+    var dndIcon = isLeadDnd(l) ? followupDndIconHtml() + ' ' : '';
     var name = firmNameCell(l.firm_name);
     if (partnerCount < 1) return name;
     var toggleHtml = '';
@@ -15379,7 +15384,7 @@ if (otherInput) {
     }
     return '<div class="cam-firm-with-partners">' +
       toggleHtml +
-      '<div class="cam-firm-with-partners__body">' + name +
+      '<div class="cam-firm-with-partners__body">' + dndIcon + name +
         '<span class="cam-partner-meta">' + partnerCount + (partnerCount === 1 ? ' Partner' : ' Partners') + '</span>' +
       '</div></div>';
   }
@@ -18440,6 +18445,10 @@ if (otherInput) {
 
   function isFollowupDndType(type) {
     return String(type || '').trim() === 'Do Not Disturb';
+  }
+
+  function isLeadDnd(lead) {
+    return !!(lead && (lead.is_dnd === true || lead.is_dnd === 1 || lead.is_dnd === '1'));
   }
 
   function followupDndIconHtml() {

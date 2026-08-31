@@ -9854,6 +9854,7 @@ body.rw-open {
 .followup-row-overdue { background: #fef2f2 !important; }
 .followup-row-overdue td { color: #991b1b; }
 .followup-row-dnd { background: #fff7ed !important; }
+.cam-row--dnd { background: #fff7ed !important; }
 .followup-dnd-icon {
   display: inline-flex;
   align-items: center;

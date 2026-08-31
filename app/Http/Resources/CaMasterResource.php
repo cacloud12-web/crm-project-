@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Models\DndManagement;
 use App\Models\OcrParsedFirm;
 use App\Services\Leads\LeadActivityTimelineService;
 use App\Services\Leads\LeadOwnershipService;
@@ -58,6 +59,11 @@ class CaMasterResource extends JsonResource
     private static array $lastActivityByCaId = [];
 
     /**
+     * @var array<int, bool>
+     */
+    private static array $dndByCaId = [];
+
+    /**
      * @var array<int, array{city: ?string, state: ?string}>
      */
     private static array $ocrGeoByCaId = [];
@@ -73,6 +79,7 @@ class CaMasterResource extends JsonResource
             self::$assignedDateByCaId = [];
             self::$lastActivityByCaId = [];
             self::$ocrGeoByCaId = [];
+            self::$dndByCaId = [];
 
             return;
         }
@@ -89,9 +96,20 @@ class CaMasterResource extends JsonResource
             self::$assignedDateByCaId = [];
             self::$lastActivityByCaId = [];
             self::$ocrGeoByCaId = [];
+            self::$dndByCaId = [];
 
             return;
         }
+
+        self::$dndByCaId = array_fill_keys(
+            DndManagement::query()
+                ->whereIn('ca_id', $caIds)
+                ->distinct()
+                ->pluck('ca_id')
+                ->map(fn ($id) => (int) $id)
+                ->all(),
+            true,
+        );
 
         $first = $collection->first();
         if (
@@ -318,6 +336,7 @@ class CaMasterResource extends JsonResource
                 }
             ),
             'is_wrong_number' => (bool) $this->is_wrong_number,
+            'is_dnd' => self::$dndByCaId[(int) $this->ca_id] ?? false,
             'wrong_number_reason' => $this->wrong_number_reason,
             'rating' => $this->rating,
             'is_newly_established' => (bool) $this->is_newly_established,

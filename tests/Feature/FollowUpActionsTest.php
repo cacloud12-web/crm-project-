@@ -340,5 +340,9 @@ class FollowUpActionsTest extends TestCase
             'ca_id' => $lead->ca_id,
             'dnd_type' => 'All',
         ]);
+
+        $this->getJson('/ca-masters?per_page=1&search='.urlencode((string) $lead->firm_name))
+            ->assertOk()
+            ->assertJsonPath('data.items.0.is_dnd', true);
     }
 }
