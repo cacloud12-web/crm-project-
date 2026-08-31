@@ -643,7 +643,9 @@ class WhatsAppCloudMappingService
      */
     public function resolveTemplateVariables(MessageTemplate $template, ?CaMaster $lead = null, array $overrides = []): array
     {
-        $leadVariables = $lead ? $this->resolveVariables($lead) : $this->baseDummyVariables();
+        $leadVariables = $lead
+            ? $this->resolveVariables($lead)
+            : $this->applyTemplateSampleDefaults($template, $this->baseDummyVariables());
         $resolved = $leadVariables;
 
         $map = $template->variable_map;
@@ -707,6 +709,30 @@ class WhatsAppCloudMappingService
         }
 
         return $resolved;
+    }
+
+    /**
+     * Prefer Meta-approved sample values from template config for test/preview sends.
+     *
+     * @param  array<string, string>  $variables
+     * @return array<string, string>
+     */
+    private function applyTemplateSampleDefaults(MessageTemplate $template, array $variables): array
+    {
+        $meta = is_array($template->meta_components) ? $template->meta_components : [];
+        $sample = is_array($meta['sample'] ?? null) ? $meta['sample'] : [];
+
+        foreach ($sample as $key => $value) {
+            if (! is_string($key) || ! is_scalar($value) || trim((string) $value) === '') {
+                continue;
+            }
+
+            $text = $this->sanitizeMetaParameterText((string) $value);
+            $variables['{{'.$key.'}}'] = $text;
+            $variables['{{'.strtoupper($key).'}}'] = $text;
+        }
+
+        return $variables;
     }
 
     /**
