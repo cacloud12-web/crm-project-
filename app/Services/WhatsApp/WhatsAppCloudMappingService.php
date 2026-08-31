@@ -430,9 +430,16 @@ class WhatsAppCloudMappingService
 
         if (is_array($defined) && $defined !== []) {
             $values = [];
+            $orderedPlaceholders = $this->extractBodyPlaceholdersInOrder((string) $template->body_template);
+
             foreach ($defined as $paramName) {
                 $name = (string) $paramName;
-                $placeholder = ctype_digit($name) ? '{{'.$name.'}}' : '{{'.$name.'}}';
+                if (ctype_digit($name)) {
+                    $placeholder = $orderedPlaceholders[(int) $name - 1] ?? '{{'.$name.'}}';
+                } else {
+                    $placeholder = '{{'.$name.'}}';
+                }
+
                 if (array_key_exists($placeholder, $variables)) {
                     $values[] = (string) $variables[$placeholder];
 
@@ -477,7 +484,12 @@ class WhatsAppCloudMappingService
             }
 
             $source = (string) ($button['parameter_source'] ?? $button['parameter'] ?? 'link');
-            $placeholder = '{{'.$source.'}}';
+            if (ctype_digit($source)) {
+                $orderedPlaceholders = $this->extractBodyPlaceholdersInOrder((string) $template->body_template);
+                $placeholder = $orderedPlaceholders[(int) $source - 1] ?? '{{'.$source.'}}';
+            } else {
+                $placeholder = '{{'.$source.'}}';
+            }
             $text = (string) ($variables[$placeholder] ?? $variables['{{link}}'] ?? $variables['{{'.strtoupper($source).'}}'] ?? '');
             if (trim($text) === '') {
                 $text = (string) config('whatsapp_cloud.meta_parameter_fallbacks.meeting_link', 'https://meet.example.com/demo');

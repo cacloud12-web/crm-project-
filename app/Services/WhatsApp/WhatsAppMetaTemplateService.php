@@ -244,6 +244,226 @@ class WhatsAppMetaTemplateService
         return "{$base}/{$version}/{$wabaId}/message_templates";
     }
 
+    /**
+     * Fetch an approved template definition from Meta WhatsApp Manager.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function fetchTemplateDefinition(
+        string $metaName,
+        ?WhatsAppSetting $settings = null,
+        ?string $language = null,
+    ): ?array {
+        $settings ??= $this->settingsService->current();
+        $this->settingsService->assertReadyForLiveDispatch($settings);
+
+        try {
+            $response = Http::timeout(30)
+                ->withToken((string) $settings->access_token)
+                ->acceptJson()
+                ->get($this->messageTemplatesEndpoint($settings), [
+                    'name' => $metaName,
+                    'fields' => 'name,language,status,components,parameter_format,category',
+                    'limit' => 25,
+                ]);
+
+            $body = $response->json();
+            if (! is_array($body) || ! $response->successful()) {
+                Log::warning('whatsapp.meta_template.fetch.failed', [
+                    'meta_name' => $metaName,
+                    'http_status' => $response->status(),
+                    'body' => $body,
+                ]);
+
+                return null;
+            }
+
+            foreach ($body['data'] ?? [] as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+
+                if (strtoupper((string) ($row['status'] ?? '')) !== 'APPROVED') {
+                    continue;
+                }
+
+                if ($language !== null && ! $this->languageCodesMatch((string) $language, (string) ($row['language'] ?? ''))) {
+                    continue;
+                }
+
+                return $row;
+            }
+
+            return null;
+        } catch (\Throwable $exception) {
+            Log::warning('whatsapp.meta_template.fetch.exception', [
+                'meta_name' => $metaName,
+                'message' => $exception->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    /**
+     * Align CRM meta_components with the approved template structure in Meta.
+     */
+    public function syncTemplateStructure(
+        MessageTemplate $template,
+        ?WhatsAppSetting $settings = null,
+    ): MessageTemplate {
+        $settings ??= $this->settingsService->current();
+        $metaName = $template->metaApiTemplateName();
+        $definition = $this->fetchTemplateDefinition(
+            $metaName,
+            $settings,
+            (string) $template->language_code,
+        );
+
+        if ($definition === null) {
+            $definition = $this->fetchTemplateDefinition($metaName, $settings);
+        }
+
+        if ($definition === null) {
+            throw ValidationException::withMessages([
+                'template' => ["Template \"{$metaName}\" was not found as APPROVED in Meta WhatsApp Manager."],
+            ]);
+        }
+
+        $parsed = $this->parseMetaTemplateStructure($definition);
+        $existingMeta = is_array($template->meta_components) ? $template->meta_components : [];
+        $sample = is_array($existingMeta['sample'] ?? null) ? $existingMeta['sample'] : [];
+
+        $metaComponents = array_merge($existingMeta, $parsed);
+        unset($metaComponents['buttons']);
+        if (isset($parsed['buttons']) && is_array($parsed['buttons']) && $parsed['buttons'] !== []) {
+            $metaComponents['buttons'] = $parsed['buttons'];
+        }
+        if ($sample !== []) {
+            $metaComponents['sample'] = $sample;
+        }
+        unset($metaComponents['meta_body_text']);
+
+        $updates = [
+            'meta_components' => $metaComponents,
+            'meta_status' => strtoupper((string) ($definition['status'] ?? 'APPROVED')),
+            'meta_status_updated_at' => now(),
+            'meta_status_payload' => $definition,
+        ];
+
+        $metaLanguage = (string) ($definition['language'] ?? '');
+        if ($metaLanguage !== '') {
+            $updates['language_code'] = $this->normalizeLanguageCode($metaLanguage);
+        }
+
+        if (filled($parsed['meta_body_text'] ?? null)) {
+            $updates['body_template'] = (string) $parsed['meta_body_text'];
+        }
+
+        $template->update($updates);
+
+        Log::info('whatsapp.meta_template.synced', [
+            'template_id' => $template->id,
+            'template_name' => $template->template_name,
+            'meta_name' => $metaName,
+            'language_code' => $updates['language_code'] ?? $template->language_code,
+            'parameter_format' => $parsed['parameter_format'] ?? null,
+            'body_parameters' => $parsed['body_parameters'] ?? [],
+            'buttons' => $parsed['buttons'] ?? [],
+        ]);
+
+        return $template->fresh();
+    }
+
+    /**
+     * @param  array<string, mixed>  $definition
+     * @return array<string, mixed>
+     */
+    public function parseMetaTemplateStructure(array $definition): array
+    {
+        $components = is_array($definition['components'] ?? null) ? $definition['components'] : [];
+        $parameterFormat = strtoupper((string) ($definition['parameter_format'] ?? ''));
+        $bodyParameters = [];
+        $buttons = [];
+        $bodyText = '';
+
+        foreach ($components as $component) {
+            if (! is_array($component)) {
+                continue;
+            }
+
+            $type = strtoupper((string) ($component['type'] ?? ''));
+
+            if ($type === 'BODY') {
+                $bodyText = (string) ($component['text'] ?? '');
+                $namedExamples = $component['example']['body_text_named_params'] ?? null;
+
+                if (is_array($namedExamples) && $namedExamples !== []) {
+                    foreach ($namedExamples as $item) {
+                        if (! is_array($item)) {
+                            continue;
+                        }
+                        $paramName = trim((string) ($item['param_name'] ?? ''));
+                        if ($paramName !== '') {
+                            $bodyParameters[] = $paramName;
+                        }
+                    }
+                    $parameterFormat = 'NAMED';
+                } elseif ($bodyText !== '') {
+                    if (preg_match_all('/\{\{([a-z_][a-z0-9_]*)\}\}/i', $bodyText, $matches)) {
+                        $bodyParameters = array_values($matches[1]);
+                        $parameterFormat = $parameterFormat === '' ? 'NAMED' : $parameterFormat;
+                    } elseif (preg_match_all('/\{\{(\d+)\}\}/', $bodyText, $matches)) {
+                        $bodyParameters = array_map('strval', $matches[1]);
+                        $parameterFormat = 'POSITIONAL';
+                    }
+                }
+            }
+
+            if ($type === 'BUTTONS') {
+                foreach ($component['buttons'] ?? [] as $index => $button) {
+                    if (! is_array($button)) {
+                        continue;
+                    }
+                    if (strtoupper((string) ($button['type'] ?? '')) !== 'URL') {
+                        continue;
+                    }
+
+                    $url = (string) ($button['url'] ?? '');
+                    if (! preg_match('/\{\{([^}]+)\}\}/', $url, $urlMatch)) {
+                        continue;
+                    }
+
+                    $paramSource = trim((string) $urlMatch[1]);
+                    $urlBase = preg_replace('/\{\{[^}]+\}\}.*$/', '', $url) ?? $url;
+
+                    $buttons[] = [
+                        'index' => (string) $index,
+                        'sub_type' => 'url',
+                        'parameter_source' => $paramSource,
+                        'url_base' => $urlBase,
+                    ];
+                }
+            }
+        }
+
+        $format = strtolower($parameterFormat === 'POSITIONAL' ? 'positional' : 'named');
+
+        $result = [
+            'parameter_format' => $format,
+            'body_parameters' => array_values(array_filter($bodyParameters, fn ($value) => $value !== '')),
+            'meta_body_text' => $bodyText,
+        ];
+
+        if ($buttons !== []) {
+            $result['buttons'] = $buttons;
+        } else {
+            unset($result['buttons']);
+        }
+
+        return $result;
+    }
+
     private function mapMetaEventToCrmStatus(string $event): string
     {
         return match (strtoupper($event)) {
