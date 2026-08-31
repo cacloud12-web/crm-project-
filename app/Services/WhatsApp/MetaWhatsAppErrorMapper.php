@@ -38,7 +38,7 @@ final class MetaWhatsAppErrorMapper
             190 => self::tokenError($subcode, $message),
             100 => self::invalidRequestError($message),
             132001 => 'Template Not Found or Language Mismatch. Verify the template name and language (en_US) are approved in Meta WhatsApp Manager.',
-            132000 => 'Template Not Approved. The template must be approved by Meta before sending.',
+            132000 => self::templateParameterError($message),
             132015 => 'Template Paused. This template has been paused in Meta WhatsApp Manager.',
             131008 => 'Template Variable Missing. One or more template variables were empty. Ensure all required fields are filled before sending.',
             131026 => 'Invalid Phone Number. The recipient number is not a valid WhatsApp number.',
@@ -92,5 +92,14 @@ final class MetaWhatsAppErrorMapper
         }
 
         return 'Invalid Request. '.$message;
+    }
+
+    private static function templateParameterError(string $message): string
+    {
+        if (str_contains(strtolower($message), 'parameter')) {
+            return 'Template parameter mismatch. The number or names of variables sent do not match the approved Meta template. Open the template in Meta WhatsApp Manager and verify variable count, names, and whether any variable is on a button (not in the body).';
+        }
+
+        return 'Template send rejected by Meta. The template may be pending review or the request format does not match the approved template.';
     }
 }

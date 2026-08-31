@@ -152,7 +152,7 @@ class WhatsAppCloudMappingService
         $variables = $this->resolveTemplateVariables($template, $lead, $variableOverrides);
         $bodyText = $this->renderTemplateBody($template->body_template, $variables);
         $parameters = $this->sanitizeMetaBodyParameters(
-            $this->extractBodyParameters($template->body_template, $variables),
+            $this->resolveBodyParameterValues($template, $variables),
             $template,
         );
 
@@ -165,7 +165,7 @@ class WhatsAppCloudMappingService
             ],
         ];
 
-        $components = $this->buildMetaTemplateComponents($template, $parameters);
+        $components = $this->buildMetaTemplateComponents($template, $parameters, $variables);
         if ($components !== []) {
             $templatePayload['components'] = $components;
         }
@@ -327,7 +327,7 @@ class WhatsAppCloudMappingService
         $variables = $this->resolveTemplateVariables($template);
         $bodyText = $this->renderTemplateBody($template->body_template, $variables);
         $parameters = $this->sanitizeMetaBodyParameters(
-            $this->extractBodyParameters($template->body_template, $variables),
+            $this->resolveBodyParameterValues($template, $variables),
             $template,
         );
 
@@ -336,7 +336,7 @@ class WhatsAppCloudMappingService
             'language' => ['code' => $template->metaApiLanguageCode()],
         ];
 
-        $components = $this->buildMetaTemplateComponents($template, $parameters);
+        $components = $this->buildMetaTemplateComponents($template, $parameters, $variables);
         if ($components !== []) {
             $templatePayload['components'] = $components;
         }
@@ -364,7 +364,7 @@ class WhatsAppCloudMappingService
     /**
      * @return list<array{type: string, parameters: list<array<string, mixed>>}>
      */
-    public function buildMetaTemplateComponents(MessageTemplate $template, array $bodyParameters): array
+    public function buildMetaTemplateComponents(MessageTemplate $template, array $bodyParameters, array $variables = []): array
     {
         $components = [];
         $headerComponent = $this->buildHeaderComponent($template);
@@ -380,7 +380,7 @@ class WhatsAppCloudMappingService
             ];
         }
 
-        return $components;
+        return array_merge($components, $this->buildMetaButtonComponents($template, $variables));
     }
 
     /**
@@ -391,7 +391,10 @@ class WhatsAppCloudMappingService
      */
     public function buildMetaBodyParameters(MessageTemplate $template, array $bodyParameters): array
     {
-        $placeholders = $this->extractBodyPlaceholders((string) $template->body_template);
+        $meta = is_array($template->meta_components) ? $template->meta_components : [];
+        $format = (string) ($meta['parameter_format'] ?? 'named');
+        $definedNames = is_array($meta['body_parameters'] ?? null) ? $meta['body_parameters'] : [];
+        $placeholders = $this->extractBodyPlaceholdersInOrder((string) $template->body_template);
         $parameters = [];
 
         foreach ($bodyParameters as $index => $text) {
@@ -400,9 +403,13 @@ class WhatsAppCloudMappingService
                 'text' => $text,
             ];
 
-            $parameterName = $this->metaParameterNameForPlaceholder($placeholders[$index] ?? null);
-            if ($parameterName !== null) {
-                $entry['parameter_name'] = $parameterName;
+            if ($format === 'named') {
+                $parameterName = isset($definedNames[$index])
+                    ? (string) $definedNames[$index]
+                    : $this->metaParameterNameForPlaceholder($placeholders[$index] ?? null);
+                if ($parameterName !== '' && ! ctype_digit($parameterName)) {
+                    $entry['parameter_name'] = $parameterName;
+                }
             }
 
             $parameters[] = $entry;
@@ -412,13 +419,88 @@ class WhatsAppCloudMappingService
     }
 
     /**
+     * Build parameter values using meta_components.body_parameters when configured.
+     *
      * @return list<string>
      */
-    public function extractBodyPlaceholders(string $bodyTemplate): array
+    public function resolveBodyParameterValues(MessageTemplate $template, array $variables): array
+    {
+        $meta = is_array($template->meta_components) ? $template->meta_components : [];
+        $defined = $meta['body_parameters'] ?? null;
+
+        if (is_array($defined) && $defined !== []) {
+            $values = [];
+            foreach ($defined as $paramName) {
+                $name = (string) $paramName;
+                $placeholder = ctype_digit($name) ? '{{'.$name.'}}' : '{{'.$name.'}}';
+                if (array_key_exists($placeholder, $variables)) {
+                    $values[] = (string) $variables[$placeholder];
+
+                    continue;
+                }
+
+                $upper = '{{'.strtoupper($name).'}}';
+                $values[] = (string) ($variables[$upper] ?? '');
+            }
+
+            return $values;
+        }
+
+        return $this->extractBodyParametersInOrder((string) $template->body_template, $variables);
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function extractBodyPlaceholdersInOrder(string $bodyTemplate): array
     {
         preg_match_all('/\{\{[^}]+\}\}/', $bodyTemplate, $matches);
 
-        return array_values(array_unique($matches[0] ?? []));
+        return array_values($matches[0] ?? []);
+    }
+
+    /**
+     * @return list<array{type: string, sub_type: string, index: string, parameters: list<array<string, mixed>>}>
+     */
+    private function buildMetaButtonComponents(MessageTemplate $template, array $variables): array
+    {
+        $meta = is_array($template->meta_components) ? $template->meta_components : [];
+        $buttons = $meta['buttons'] ?? [];
+        if (! is_array($buttons) || $buttons === []) {
+            return [];
+        }
+
+        $components = [];
+        foreach ($buttons as $button) {
+            if (! is_array($button)) {
+                continue;
+            }
+
+            $source = (string) ($button['parameter_source'] ?? $button['parameter'] ?? 'link');
+            $placeholder = '{{'.$source.'}}';
+            $text = (string) ($variables[$placeholder] ?? $variables['{{link}}'] ?? $variables['{{'.strtoupper($source).'}}'] ?? '');
+            if (trim($text) === '') {
+                $text = (string) config('whatsapp_cloud.meta_parameter_fallbacks.meeting_link', 'https://meet.example.com/demo');
+            }
+
+            $entry = [
+                'type' => 'text',
+                'text' => trim($text),
+            ];
+            $parameterName = (string) ($button['parameter_name'] ?? '');
+            if ($parameterName !== '') {
+                $entry['parameter_name'] = $parameterName;
+            }
+
+            $components[] = [
+                'type' => 'button',
+                'sub_type' => (string) ($button['sub_type'] ?? 'url'),
+                'index' => (string) ($button['index'] ?? '0'),
+                'parameters' => [$entry],
+            ];
+        }
+
+        return $components;
     }
 
     private function metaParameterNameForPlaceholder(?string $placeholder): ?string
@@ -577,15 +659,30 @@ class WhatsAppCloudMappingService
      */
     public function extractBodyParameters(string $bodyTemplate, array $variables): array
     {
+        return $this->extractBodyParametersInOrder($bodyTemplate, $variables);
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function extractBodyParametersInOrder(string $bodyTemplate, array $variables): array
+    {
         preg_match_all('/\{\{[^}]+\}\}/', $bodyTemplate, $matches);
-        $keys = array_values(array_unique($matches[0] ?? []));
         $parameters = [];
 
-        foreach ($keys as $key) {
+        foreach ($matches[0] ?? [] as $key) {
             $parameters[] = (string) ($variables[$key] ?? '');
         }
 
         return $parameters;
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function extractBodyPlaceholders(string $bodyTemplate): array
+    {
+        return $this->extractBodyPlaceholdersInOrder($bodyTemplate);
     }
 
     /**
@@ -602,8 +699,15 @@ class WhatsAppCloudMappingService
 
         $placeholders = [];
         if ($template !== null) {
-            preg_match_all('/\{\{[^}]+\}\}/', (string) $template->body_template, $matches);
-            $placeholders = array_values(array_unique($matches[0] ?? []));
+            $meta = is_array($template->meta_components) ? $template->meta_components : [];
+            if (is_array($meta['body_parameters'] ?? null) && $meta['body_parameters'] !== []) {
+                foreach ($meta['body_parameters'] as $paramName) {
+                    $name = (string) $paramName;
+                    $placeholders[] = ctype_digit($name) ? '{{'.$name.'}}' : '{{'.$name.'}}';
+                }
+            } else {
+                $placeholders = $this->extractBodyPlaceholdersInOrder((string) $template->body_template);
+            }
         }
 
         $variableMap = is_array($template?->variable_map) ? $template->variable_map : [];
