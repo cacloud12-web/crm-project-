@@ -720,7 +720,7 @@ class WhatsAppCloudMappingService
                     'ca_name', 'client_name' => (string) ($lead->ca_name ?? ''),
                     'firm_name' => (string) ($lead->firm_name ?? ''),
                     'mobile_no', 'mobile' => (string) ($lead->mobile_no ?? ''),
-                    'demo_date', 'renewal_due_date', 'renewal_date', 'payment_date' => (string) (
+                    'demo_date', 'renewal_due_date', 'renewal_date', 'payment_date', 'expiry_date' => (string) (
                         $leadVariables['{{date}}']
                         ?: config('whatsapp_cloud.meta_parameter_fallbacks.'.$source)
                         ?: config('whatsapp_cloud.meta_parameter_fallbacks.default', 'N/A')
@@ -738,8 +738,9 @@ class WhatsAppCloudMappingService
                         config('whatsapp_cloud.meta_parameter_fallbacks.'.$source)
                         ?: config('whatsapp_cloud.meta_parameter_fallbacks.amount', 'N/A')
                     ),
-                    'subscription_plan' => (string) (
-                        config('whatsapp_cloud.meta_parameter_fallbacks.subscription_plan', 'Professional Plan')
+                    'subscription_plan', 'plan_name' => (string) (
+                        config('whatsapp_cloud.meta_parameter_fallbacks.'.$source)
+                        ?: config('whatsapp_cloud.meta_parameter_fallbacks.subscription_plan', 'Professional Plan')
                     ),
                     'expense_date', 'expense_category', 'expense_id',
                     'service_name', 'invoice_date', 'invoice_amount', 'due_date' => (string) (
