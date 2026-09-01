@@ -37,7 +37,7 @@ final class MetaWhatsAppErrorMapper
         $mapped = match ($code) {
             190 => self::tokenError($subcode, $message),
             100 => self::invalidRequestError($message),
-            131009 => 'Template parameter value is invalid. Values sent to Meta do not match what the approved template expects (check variable names, formats, and that URLs use https).',
+            131009 => 'Template parameter value is invalid. Values sent to Meta do not match what the approved template expects (check variable names, formats, and that URLs use https). Static URL, phone, and Flow buttons must not include send-time button parameters.',
             132018 => 'Template parameter validation failed. The variable count, names, or values sent do not match the approved Meta template. Compare body and button parameters with WhatsApp Manager.',
             132001 => 'Template Not Found or Language Mismatch. Verify the template name and language (en_US) are approved in Meta WhatsApp Manager.',
             132000 => self::templateParameterError($message),

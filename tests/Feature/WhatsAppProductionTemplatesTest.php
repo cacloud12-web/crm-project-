@@ -430,6 +430,84 @@ class WhatsAppProductionTemplatesTest extends TestCase
         });
     }
 
+    public function test_stale_button_config_is_not_sent_without_requires_send_parameter_flag(): void
+    {
+        WhatsAppSetting::query()->delete();
+        WhatsAppSetting::query()->create([
+            'provider_name' => 'Meta WhatsApp Cloud API',
+            'phone_number_id' => '1234567890',
+            'business_account_id' => '9876543210',
+            'access_token' => 'test-access-token',
+            'api_version' => 'v23.0',
+            'mode' => WhatsAppSetting::MODE_LIVE,
+            'is_active' => true,
+            'integration_status' => WhatsAppSetting::INTEGRATION_INTEGRATED,
+            'test_mobile_number' => '9876543210',
+        ]);
+
+        $this->artisan('migrate', [
+            '--path' => 'database/migrations/2026_08_31_250000_replace_demo_reminder_template_with_meta_single_underscore.php',
+        ]);
+
+        $template = MessageTemplate::query()
+            ->where('template_name', 'demo_reminder_1_hour')
+            ->firstOrFail();
+
+        $template->update([
+            'meta_status' => 'APPROVED',
+            'status' => MessageTemplate::STATUS_APPROVED,
+            'meta_components' => array_merge(is_array($template->meta_components) ? $template->meta_components : [], [
+                'meta_registered_body_parameters' => ['name', 'time', 'link'],
+                'body_placeholder_parameters' => ['name', 'time', 'link'],
+                'buttons' => [[
+                    'index' => '0',
+                    'sub_type' => 'url',
+                    'parameter_source' => 'link',
+                    'url_base' => 'https://caclouddesk.com',
+                ]],
+            ]),
+        ]);
+
+        $payload = app(WhatsAppCloudMappingService::class)->buildTestTemplatePayload(
+            $template->fresh(),
+            '9876543210',
+        );
+
+        $components = $payload['request_body']['template']['components'] ?? [];
+        $this->assertCount(1, $components);
+        $this->assertSame('body', $components[0]['type'] ?? null);
+    }
+
+    public function test_subscription_renewal_reminder_blocks_send_when_meta_registered_only_name(): void
+    {
+        $this->artisan('migrate', [
+            '--path' => 'database/migrations/2026_08_31_340000_match_subscription_renewal_reminder_to_meta_editor.php',
+        ]);
+
+        $template = MessageTemplate::query()
+            ->where('template_name', 'subscription_renewal_reminder')
+            ->firstOrFail();
+
+        $template->update([
+            'meta_components' => array_merge(is_array($template->meta_components) ? $template->meta_components : [], [
+                'meta_registered_body_parameters' => ['name'],
+                'body_placeholder_parameters' => [
+                    'name',
+                    'Renewal Due Date',
+                    'Subscription Plan',
+                    'Renewal Amount',
+                ],
+            ]),
+        ]);
+
+        $this->expectException(\Illuminate\Validation\ValidationException::class);
+
+        app(WhatsAppCloudMappingService::class)->buildTestTemplatePayload(
+            $template->fresh(),
+            '919999999999',
+        );
+    }
+
     public function test_send_test_demo_reminder_one_day_before_uses_named_meta_parameters(): void
     {
         WhatsAppSetting::query()->delete();

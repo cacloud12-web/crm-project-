@@ -17,6 +17,7 @@ class WhatsAppCloudMappingService
     public function __construct(
         private readonly WhatsAppSettingsService $settingsService,
         private readonly WhatsAppTemplateService $templateService,
+        private readonly WhatsAppMetaTemplateService $metaTemplateService,
     ) {}
 
     /**
@@ -149,6 +150,7 @@ class WhatsAppCloudMappingService
         array $variableOverrides = [],
     ): array {
         $settings ??= $this->settingsService->current();
+        $this->metaTemplateService->assertTemplateReadyForMetaSend($template);
         $variables = $this->resolveTemplateVariables($template, $lead, $variableOverrides);
         $bodyText = $this->renderTemplateBody($template->body_template, $variables);
         $parameters = $this->sanitizeMetaBodyParameters(
@@ -323,6 +325,7 @@ class WhatsAppCloudMappingService
         ?WhatsAppSetting $settings = null,
     ): array {
         $settings ??= $this->settingsService->current();
+        $this->metaTemplateService->assertTemplateReadyForMetaSend($template, $settings);
         $recipient = $this->normalizeRecipientMobile($mobileNo);
         $variables = $this->resolveTemplateVariables($template);
         $bodyText = $this->renderTemplateBody($template->body_template, $variables);
@@ -504,6 +507,10 @@ class WhatsAppCloudMappingService
         $components = [];
         foreach ($buttons as $button) {
             if (! is_array($button)) {
+                continue;
+            }
+
+            if (! ($button['requires_send_parameter'] ?? false)) {
                 continue;
             }
 

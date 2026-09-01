@@ -336,14 +336,20 @@ class WhatsAppMetaTemplateService
         $parsedSample = is_array($parsed['sample'] ?? null) ? $parsed['sample'] : [];
 
         $metaComponents = array_merge($existingMeta, $parsed);
-        unset($metaComponents['buttons'], $metaComponents['sample'], $metaComponents['meta_body_text']);
+        unset($metaComponents['buttons'], $metaComponents['flow_buttons'], $metaComponents['sample'], $metaComponents['meta_body_text']);
         $metaComponents['body_parameters'] = $this->resolveBodyParameters(
             is_array($existingMeta['body_parameters'] ?? null) ? $existingMeta['body_parameters'] : [],
             is_array($parsed['body_parameters'] ?? null) ? $parsed['body_parameters'] : [],
             (string) ($parsed['meta_body_text'] ?? $template->body_template),
             (string) $template->body_template,
         );
-        unset($metaComponents['buttons']);
+        unset($metaComponents['buttons'], $metaComponents['flow_buttons']);
+        if (is_array($parsed['meta_registered_body_parameters'] ?? null)) {
+            $metaComponents['meta_registered_body_parameters'] = $parsed['meta_registered_body_parameters'];
+        }
+        if (is_array($parsed['body_placeholder_parameters'] ?? null)) {
+            $metaComponents['body_placeholder_parameters'] = $parsed['body_placeholder_parameters'];
+        }
         if ($parsedSample !== []) {
             $metaComponents['sample'] = $parsedSample;
         } elseif ($sample !== []) {
@@ -400,6 +406,8 @@ class WhatsAppMetaTemplateService
         $buttons = [];
         $bodyText = '';
         $sampleValues = [];
+        $registeredBodyParameters = [];
+        $bodyPlaceholderParameters = [];
 
         foreach ($components as $component) {
             if (! is_array($component)) {
@@ -441,6 +449,9 @@ class WhatsAppMetaTemplateService
                         $parameterFormat = 'NAMED';
                     }
                 }
+
+                $registeredBodyParameters = $fromExamples;
+                $bodyPlaceholderParameters = $fromText;
 
                 // Meta example param names are often incomplete; body text placeholders are canonical.
                 if ($fromExamples !== []) {
@@ -492,6 +503,7 @@ class WhatsAppMetaTemplateService
                         'sub_type' => 'url',
                         'parameter_source' => $paramSource,
                         'url_base' => $urlBase,
+                        'requires_send_parameter' => true,
                     ];
                 }
             }
@@ -503,6 +515,8 @@ class WhatsAppMetaTemplateService
             'parameter_format' => $format,
             'body_parameters' => array_values(array_filter($bodyParameters, fn ($value) => $value !== '')),
             'meta_body_text' => $bodyText,
+            'meta_registered_body_parameters' => array_values(array_filter($registeredBodyParameters, fn ($value) => $value !== '')),
+            'body_placeholder_parameters' => array_values(array_filter($bodyPlaceholderParameters, fn ($value) => $value !== '')),
         ];
 
         if ($buttons !== []) {
@@ -550,6 +564,99 @@ class WhatsAppMetaTemplateService
         }
 
         return array_values(array_map(static fn (string $name) => trim($name), $matches[1]));
+    }
+
+    /**
+     * Block sends when Meta has fewer registered variables than the approved body text requires.
+     * Prevents #132000 (param count mismatch) and #131009 (invalid button sub_type) at the API.
+     */
+    public function assertTemplateReadyForMetaSend(MessageTemplate $template, ?WhatsAppSetting $settings = null): void
+    {
+        $meta = is_array($template->meta_components) ? $template->meta_components : [];
+        $registered = is_array($meta['meta_registered_body_parameters'] ?? null)
+            ? array_values(array_filter($meta['meta_registered_body_parameters'], static fn ($value) => is_string($value) && $value !== ''))
+            : [];
+        $placeholders = is_array($meta['body_placeholder_parameters'] ?? null)
+            ? array_values(array_filter($meta['body_placeholder_parameters'], static fn ($value) => is_string($value) && $value !== ''))
+            : $this->extractPlaceholderNames((string) $template->body_template);
+
+        if ($registered === [] || $placeholders === []) {
+            return;
+        }
+
+        if (count($registered) >= count($placeholders)) {
+            return;
+        }
+
+        $missing = array_values(array_diff($placeholders, $registered));
+
+        throw ValidationException::withMessages([
+            'template' => [
+                sprintf(
+                    'Meta template "%s" is misconfigured in WhatsApp Manager: only %d variable(s) are registered with Meta (%s) but the approved body needs %d (%s). Missing in Meta: %s. Edit the template in WhatsApp Manager, add sample values for every variable, and wait for Meta approval before sending.',
+                    $template->template_name,
+                    count($registered),
+                    implode(', ', $registered),
+                    count($placeholders),
+                    implode(', ', $placeholders),
+                    implode(', ', $missing),
+                ),
+            ],
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $definition
+     * @return list<string>
+     */
+    public function extractRegisteredBodyParameterNamesFromDefinition(array $definition): array
+    {
+        $components = is_array($definition['components'] ?? null) ? $definition['components'] : [];
+
+        foreach ($components as $component) {
+            if (! is_array($component) || strtoupper((string) ($component['type'] ?? '')) !== 'BODY') {
+                continue;
+            }
+
+            $namedExamples = $component['example']['body_text_named_params'] ?? null;
+            if (! is_array($namedExamples) || $namedExamples === []) {
+                return [];
+            }
+
+            $registered = [];
+            foreach ($namedExamples as $item) {
+                if (! is_array($item)) {
+                    continue;
+                }
+                $paramName = trim((string) ($item['param_name'] ?? ''));
+                if ($paramName !== '') {
+                    $registered[] = $paramName;
+                }
+            }
+
+            return $registered;
+        }
+
+        return [];
+    }
+
+    /**
+     * @param  array<string, mixed>  $definition
+     * @return list<string>
+     */
+    public function extractBodyPlaceholderNamesFromDefinition(array $definition): array
+    {
+        $components = is_array($definition['components'] ?? null) ? $definition['components'] : [];
+
+        foreach ($components as $component) {
+            if (! is_array($component) || strtoupper((string) ($component['type'] ?? '')) !== 'BODY') {
+                continue;
+            }
+
+            return $this->extractPlaceholderNames((string) ($component['text'] ?? ''));
+        }
+
+        return [];
     }
 
     private function mapMetaEventToCrmStatus(string $event): string
