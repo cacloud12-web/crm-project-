@@ -604,6 +604,30 @@ class WhatsAppProductionTemplatesTest extends TestCase
         $this->assertSame('2', $components[1]['index'] ?? null);
     }
 
+    public function test_onboarding_scheduled_template_sends_body_only_without_flow_button(): void
+    {
+        $this->artisan('migrate', [
+            '--path' => 'database/migrations/2026_09_01_220000_sync_onboarding_scheduled_whatsapp_template.php',
+        ]);
+
+        $template = MessageTemplate::query()
+            ->where('template_name', 'onboarding_scheduled')
+            ->firstOrFail();
+
+        $components = app(WhatsAppCloudMappingService::class)->buildMetaTemplateComponents(
+            $template,
+            ['CA Ravi Kumar', '01-Sep-2026', '10:30 AM', 'https://meet.google.com/ouq-sxne-jwn'],
+        );
+
+        $this->assertCount(1, $components);
+        $this->assertSame('body', $components[0]['type'] ?? null);
+        $this->assertCount(4, $components[0]['parameters'] ?? []);
+        $this->assertSame('name', $components[0]['parameters'][0]['parameter_name'] ?? null);
+        $this->assertSame('onboarding_date', $components[0]['parameters'][1]['parameter_name'] ?? null);
+        $this->assertSame('onboarding_time', $components[0]['parameters'][2]['parameter_name'] ?? null);
+        $this->assertSame('meeting_link', $components[0]['parameters'][3]['parameter_name'] ?? null);
+    }
+
     public function test_send_test_welcome_after_purchase_template_uses_named_meta_parameters(): void
     {
         WhatsAppSetting::query()->delete();
