@@ -582,6 +582,28 @@ class WhatsAppProductionTemplatesTest extends TestCase
         $this->assertSame('unused', $components[1]['parameters'][0]['action']['flow_token'] ?? null);
     }
 
+    public function test_proposal_pricing_shared_template_includes_flow_button_at_index_two(): void
+    {
+        $this->artisan('migrate', [
+            '--path' => 'database/migrations/2026_09_01_210000_sync_proposal_pricing_shared_whatsapp_template.php',
+        ]);
+
+        $template = MessageTemplate::query()
+            ->where('template_name', 'proposal_pricing_shared')
+            ->firstOrFail();
+
+        $components = app(WhatsAppCloudMappingService::class)->buildMetaTemplateComponents(
+            $template,
+            ['CA Ravi Kumar'],
+        );
+
+        $this->assertSame('body', $components[0]['type'] ?? null);
+        $this->assertSame('name', $components[0]['parameters'][0]['parameter_name'] ?? null);
+        $this->assertSame('button', $components[1]['type'] ?? null);
+        $this->assertSame('flow', $components[1]['sub_type'] ?? null);
+        $this->assertSame('2', $components[1]['index'] ?? null);
+    }
+
     public function test_send_test_welcome_after_purchase_template_uses_named_meta_parameters(): void
     {
         WhatsAppSetting::query()->delete();

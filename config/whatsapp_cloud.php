@@ -87,6 +87,7 @@ return [
         'payment_received',
         'demo_thank_you',
         'post_demo_follow_up',
+        'proposal_pricing_shared',
         'welcome_after_purchase',
         'expense_partnerjeyfg90rzl',
         'proforma_invoicel5ekuo0baa',
