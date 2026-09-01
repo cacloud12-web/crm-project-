@@ -308,6 +308,9 @@ class WhatsAppProductionTemplatesTest extends TestCase
         $this->artisan('migrate', [
             '--path' => 'database/migrations/2026_09_01_160000_refresh_subscription_renewal_reminder_meta_template.php',
         ]);
+        $this->artisan('migrate', [
+            '--path' => 'database/migrations/2026_09_01_190000_store_subscription_renewal_reminder_meta_status_payload.php',
+        ]);
 
         $template = MessageTemplate::query()
             ->where('template_name', 'subscription_renewal_reminder')
@@ -354,8 +357,13 @@ class WhatsAppProductionTemplatesTest extends TestCase
 
             $payload = $request->data();
             $components = $payload['template']['components'] ?? [];
+            $flowButton = collect($components)->first(fn ($component) => ($component['sub_type'] ?? '') === 'flow');
 
-            return collect($components)->doesntContain('type', 'button');
+            return is_array($flowButton)
+                && ($flowButton['type'] ?? null) === 'button'
+                && ($flowButton['index'] ?? null) === '2'
+                && ($flowButton['parameters'][0]['type'] ?? null) === 'action'
+                && ($flowButton['parameters'][0]['action']['flow_token'] ?? null) === 'unused';
         });
     }
 

@@ -334,6 +334,8 @@ class WhatsAppMetaTemplateService
         $existingMeta = is_array($template->meta_components) ? $template->meta_components : [];
         $sample = is_array($existingMeta['sample'] ?? null) ? $existingMeta['sample'] : [];
         $parsedSample = is_array($parsed['sample'] ?? null) ? $parsed['sample'] : [];
+        $parsedButtons = is_array($parsed['buttons'] ?? null) ? $parsed['buttons'] : [];
+        $parsedFlowButtons = is_array($parsed['flow_buttons'] ?? null) ? $parsed['flow_buttons'] : [];
 
         $metaComponents = array_merge($existingMeta, $parsed);
         unset($metaComponents['buttons'], $metaComponents['flow_buttons'], $metaComponents['sample'], $metaComponents['meta_body_text']);
@@ -343,7 +345,16 @@ class WhatsAppMetaTemplateService
             (string) ($parsed['meta_body_text'] ?? $template->body_template),
             (string) $template->body_template,
         );
-        unset($metaComponents['buttons'], $metaComponents['flow_buttons']);
+        if ($parsedButtons !== []) {
+            $metaComponents['buttons'] = $parsedButtons;
+        } else {
+            unset($metaComponents['buttons']);
+        }
+        if ($parsedFlowButtons !== []) {
+            $metaComponents['flow_buttons'] = $parsedFlowButtons;
+        } else {
+            unset($metaComponents['flow_buttons']);
+        }
         if (is_array($parsed['meta_registered_body_parameters'] ?? null)) {
             $metaComponents['meta_registered_body_parameters'] = $parsed['meta_registered_body_parameters'];
         }
@@ -389,6 +400,7 @@ class WhatsAppMetaTemplateService
             'parameter_format' => $parsed['parameter_format'] ?? null,
             'body_parameters' => $parsed['body_parameters'] ?? [],
             'buttons' => $parsed['buttons'] ?? [],
+            'flow_buttons' => $parsed['flow_buttons'] ?? [],
         ]);
 
         return $template->fresh();
@@ -404,6 +416,7 @@ class WhatsAppMetaTemplateService
         $parameterFormat = strtoupper((string) ($definition['parameter_format'] ?? ''));
         $bodyParameters = [];
         $buttons = [];
+        $flowButtons = [];
         $bodyText = '';
         $sampleValues = [];
         $registeredBodyParameters = [];
@@ -486,7 +499,21 @@ class WhatsAppMetaTemplateService
                     if (! is_array($button)) {
                         continue;
                     }
-                    if (strtoupper((string) ($button['type'] ?? '')) !== 'URL') {
+
+                    $buttonType = strtoupper((string) ($button['type'] ?? ''));
+
+                    if ($buttonType === 'FLOW') {
+                        $flowButtons[] = [
+                            'index' => (string) $index,
+                            'flow_id' => trim((string) ($button['flow_id'] ?? '')),
+                            'requires_send_parameter' => true,
+                            'sub_type' => 'flow',
+                        ];
+
+                        continue;
+                    }
+
+                    if ($buttonType !== 'URL') {
                         continue;
                     }
 
@@ -523,6 +550,12 @@ class WhatsAppMetaTemplateService
             $result['buttons'] = $buttons;
         } else {
             unset($result['buttons']);
+        }
+
+        if ($flowButtons !== []) {
+            $result['flow_buttons'] = $flowButtons;
+        } else {
+            unset($result['flow_buttons']);
         }
 
         if ($sampleValues !== []) {
@@ -570,6 +603,161 @@ class WhatsAppMetaTemplateService
      * Block sends when Meta has fewer registered variables than the approved body text requires.
      * Prevents #132000 (param count mismatch) and #131009 (invalid button sub_type) at the API.
      */
+    /**
+     * @return list<array{index: string, flow_id: string, requires_send_parameter: bool, sub_type: string}>
+     */
+    public function resolveFlowButtons(MessageTemplate $template): array
+    {
+        $meta = is_array($template->meta_components) ? $template->meta_components : [];
+        $fromMeta = $meta['flow_buttons'] ?? null;
+        if (is_array($fromMeta) && $fromMeta !== []) {
+            return $this->normalizeFlowButtons($fromMeta);
+        }
+
+        $payload = is_array($template->meta_status_payload) ? $template->meta_status_payload : [];
+        if ($payload !== []) {
+            $parsed = $this->parseMetaTemplateStructure($payload);
+            $fromPayload = $parsed['flow_buttons'] ?? null;
+            if (is_array($fromPayload) && $fromPayload !== []) {
+                return $this->normalizeFlowButtons($fromPayload);
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $flowButtons
+     * @return list<array{index: string, flow_id: string, requires_send_parameter: bool, sub_type: string}>
+     */
+    private function normalizeFlowButtons(array $flowButtons): array
+    {
+        $normalized = [];
+
+        foreach ($flowButtons as $button) {
+            if (! is_array($button)) {
+                continue;
+            }
+
+            $normalized[] = [
+                'index' => (string) ($button['index'] ?? '0'),
+                'flow_id' => trim((string) ($button['flow_id'] ?? '')),
+                'requires_send_parameter' => (bool) ($button['requires_send_parameter'] ?? true),
+                'sub_type' => 'flow',
+            ];
+        }
+
+        return $normalized;
+    }
+
+    public function assertFlowButtonsReadyForMetaSend(MessageTemplate $template, ?WhatsAppSetting $settings = null): void
+    {
+        $flowButtons = $this->resolveFlowButtons($template);
+        if ($flowButtons === []) {
+            return;
+        }
+
+        $settings ??= $this->settingsService->current();
+        if (! $settings->hasAccessToken() || ! filled($settings->business_account_id)) {
+            return;
+        }
+
+        foreach ($flowButtons as $button) {
+            $flowId = trim((string) ($button['flow_id'] ?? ''));
+            if ($flowId === '') {
+                Log::warning('whatsapp.meta_flow.missing_flow_id', [
+                    'template_name' => $template->template_name,
+                    'button_index' => (string) ($button['index'] ?? '0'),
+                ]);
+
+                continue;
+            }
+
+            $definition = $this->fetchFlowDefinition($flowId, $settings);
+            if ($definition === null) {
+                throw ValidationException::withMessages([
+                    'template' => [
+                        sprintf(
+                            'Meta Flow "%s" linked to template "%s" could not be loaded. Confirm the Flow exists and is linked in WhatsApp Manager.',
+                            $flowId,
+                            $template->template_name,
+                        ),
+                    ],
+                ]);
+            }
+
+            $status = strtoupper((string) ($definition['status'] ?? ''));
+            if ($status !== 'PUBLISHED') {
+                throw ValidationException::withMessages([
+                    'template' => [
+                        sprintf(
+                            'Meta Flow "%s" for template "%s" is not PUBLISHED (current status: %s). Publish the Flow in WhatsApp Manager before sending.',
+                            $flowId,
+                            $template->template_name,
+                            $status !== '' ? $status : 'unknown',
+                        ),
+                    ],
+                ]);
+            }
+
+            $waba = $definition['whatsapp_business_account'] ?? null;
+            $wabaId = is_array($waba)
+                ? trim((string) ($waba['id'] ?? ''))
+                : trim((string) $waba);
+
+            if ($wabaId !== '' && $wabaId !== (string) $settings->business_account_id) {
+                throw ValidationException::withMessages([
+                    'template' => [
+                        sprintf(
+                            'Meta Flow "%s" belongs to WABA %s but this CRM is configured for WABA %s.',
+                            $flowId,
+                            $wabaId,
+                            (string) $settings->business_account_id,
+                        ),
+                    ],
+                ]);
+            }
+        }
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function fetchFlowDefinition(string $flowId, WhatsAppSetting $settings): ?array
+    {
+        $base = rtrim((string) config('whatsapp_cloud.graph_base_url'), '/');
+        $endpoint = "{$base}/{$settings->api_version}/{$flowId}";
+
+        try {
+            $response = Http::timeout(15)
+                ->withToken((string) $settings->access_token)
+                ->acceptJson()
+                ->get($endpoint, [
+                    'fields' => 'id,status,whatsapp_business_account',
+                ]);
+
+            $body = $response->json();
+            if (! is_array($body) || ! $response->successful()) {
+                Log::warning('whatsapp.meta_flow.fetch.failed', [
+                    'flow_id' => $flowId,
+                    'http_status' => $response->status(),
+                    'body' => $body,
+                ]);
+
+                return null;
+            }
+
+            return $body;
+        } catch (\Throwable $exception) {
+            Log::warning('whatsapp.meta_flow.fetch.exception', [
+                'flow_id' => $flowId,
+                'message' => $exception->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
     public function assertTemplateReadyForMetaSend(MessageTemplate $template, ?WhatsAppSetting $settings = null): void
     {
         $meta = is_array($template->meta_components) ? $template->meta_components : [];

@@ -10,6 +10,7 @@ use App\Models\MessageTemplate;
 use App\Models\WhatsAppSetting;
 use App\Rules\ValidMobileNumber;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class WhatsAppCloudMappingService
@@ -151,6 +152,7 @@ class WhatsAppCloudMappingService
     ): array {
         $settings ??= $this->settingsService->current();
         $this->metaTemplateService->assertTemplateReadyForMetaSend($template);
+        $this->metaTemplateService->assertFlowButtonsReadyForMetaSend($template, $settings);
         $variables = $this->resolveTemplateVariables($template, $lead, $variableOverrides);
         $bodyText = $this->renderTemplateBody($template->body_template, $variables);
         $parameters = $this->sanitizeMetaBodyParameters(
@@ -326,6 +328,7 @@ class WhatsAppCloudMappingService
     ): array {
         $settings ??= $this->settingsService->current();
         $this->metaTemplateService->assertTemplateReadyForMetaSend($template, $settings);
+        $this->metaTemplateService->assertFlowButtonsReadyForMetaSend($template, $settings);
         $recipient = $this->normalizeRecipientMobile($mobileNo);
         $variables = $this->resolveTemplateVariables($template);
         $bodyText = $this->renderTemplateBody($template->body_template, $variables);
@@ -383,7 +386,77 @@ class WhatsAppCloudMappingService
             ];
         }
 
-        return array_merge($components, $this->buildMetaButtonComponents($template, $variables));
+        $components = array_merge(
+            $components,
+            $this->buildMetaFlowButtonComponents($template),
+            $this->buildMetaButtonComponents($template, $variables),
+        );
+
+        $this->logMetaTemplateSendComponents($template, $components);
+
+        return $components;
+    }
+
+    /**
+     * Meta FLOW buttons require a send-time button component with flow_token.
+     * Index is the zero-based position in Meta's approved BUTTONS array.
+     *
+     * @return list<array{type: string, sub_type: string, index: string, parameters: list<array<string, mixed>>}>
+     */
+    private function buildMetaFlowButtonComponents(MessageTemplate $template): array
+    {
+        $flowButtons = $this->metaTemplateService->resolveFlowButtons($template);
+        if ($flowButtons === []) {
+            return [];
+        }
+
+        $components = [];
+        foreach ($flowButtons as $button) {
+            if (! is_array($button) || ! ($button['requires_send_parameter'] ?? true)) {
+                continue;
+            }
+
+            $components[] = [
+                'type' => 'button',
+                'sub_type' => 'flow',
+                'index' => (string) ($button['index'] ?? '0'),
+                'parameters' => [
+                    [
+                        'type' => 'action',
+                        'action' => [
+                            'flow_token' => 'unused',
+                        ],
+                    ],
+                ],
+            ];
+        }
+
+        return $components;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $components
+     */
+    private function logMetaTemplateSendComponents(MessageTemplate $template, array $components): void
+    {
+        $buttonComponents = array_values(array_filter(
+            $components,
+            static fn ($component) => is_array($component) && ($component['type'] ?? '') === 'button',
+        ));
+
+        Log::info('whatsapp.meta_template.send_components', [
+            'template_name' => $template->template_name,
+            'meta_template_name' => $template->metaApiTemplateName(),
+            'components' => $components,
+            'button_components' => array_map(static function (array $component): array {
+                return [
+                    'type' => $component['type'] ?? null,
+                    'sub_type' => $component['sub_type'] ?? null,
+                    'index' => $component['index'] ?? null,
+                    'parameters' => $component['parameters'] ?? null,
+                ];
+            }, $buttonComponents),
+        ]);
     }
 
     /**
@@ -494,8 +567,8 @@ class WhatsAppCloudMappingService
     }
 
     /**
-     * Meta templates with static URL, phone, or Flow buttons must not receive send-time
-     * button components. Only dynamic URL buttons ({{var}} in the approved URL) need this.
+     * Meta templates with static URL or phone buttons must not receive send-time button
+     * components. Dynamic URL buttons ({{var}} in the approved URL) are handled separately.
      *
      * @return list<array{type: string, sub_type: string, index: string, parameters: list<array<string, mixed>>}>
      */

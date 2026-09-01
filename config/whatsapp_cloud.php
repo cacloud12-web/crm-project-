@@ -31,8 +31,9 @@ return [
     /*
     |--------------------------------------------------------------------------
     | Send-time template button parameters (disabled for CA Cloud Desk templates)
-    | Static URL, phone, and Flow buttons are defined in Meta — never send button
-    | components unless a template has a dynamic URL placeholder like {{link}}.
+    | Dynamic URL buttons ({{var}} in approved URL) need sub_type "url" at send time.
+    | FLOW buttons are handled separately and always receive sub_type "flow".
+    | Static URL and PHONE_NUMBER buttons never receive send-time components.
     |--------------------------------------------------------------------------
     */
     'enable_template_button_parameters' => false,
