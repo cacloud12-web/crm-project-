@@ -239,18 +239,12 @@ class WhatsAppProductionTemplatesTest extends TestCase
         ]);
 
         $this->artisan('migrate', [
-            '--path' => 'database/migrations/2026_08_31_250000_replace_demo_reminder_template_with_meta_single_underscore.php',
+            '--path' => 'database/migrations/2026_09_01_150000_refresh_demo_reminder_1_hour_revised_meta_template.php',
         ]);
 
         $template = MessageTemplate::query()
             ->where('template_name', 'demo_reminder_1_hour')
             ->firstOrFail();
-
-        $template->update([
-            'meta_status' => 'APPROVED',
-            'status' => MessageTemplate::STATUS_APPROVED,
-            'is_active' => true,
-        ]);
 
         $capturedParams = null;
 
@@ -281,8 +275,8 @@ class WhatsAppProductionTemplatesTest extends TestCase
         $this->assertSame('time', $capturedParams[1]['parameter_name'] ?? null);
         $this->assertSame('link', $capturedParams[2]['parameter_name'] ?? null);
         $this->assertSame('CA Ravi Kumar', $capturedParams[0]['text'] ?? null);
-        $this->assertSame('10:30 PM', $capturedParams[1]['text'] ?? null);
-        $this->assertSame('https://meet.google.com/ouq-sxne-jwn', $capturedParams[2]['text'] ?? null);
+        $this->assertSame('4:20 PM', $capturedParams[1]['text'] ?? null);
+        $this->assertSame('https://meet.google.com/bbr-jihj-tii', $capturedParams[2]['text'] ?? null);
 
         Http::assertSent(function ($request) {
             if ($request->method() !== 'POST') {
