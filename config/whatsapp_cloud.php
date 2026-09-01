@@ -115,6 +115,7 @@ return [
         'demo_date' => null,
         'demo_time' => null,
         'renewal_due_date' => '15-Sep-2026',
+        'renewal_date' => '15-Sep-2026',
         'subscription_plan' => 'Professional Plan',
         'renewal_amount' => '15,000',
         'payment_date' => '31-Aug-2026',

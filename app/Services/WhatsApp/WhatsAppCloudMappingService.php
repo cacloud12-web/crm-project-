@@ -720,7 +720,7 @@ class WhatsAppCloudMappingService
                     'ca_name', 'client_name' => (string) ($lead->ca_name ?? ''),
                     'firm_name' => (string) ($lead->firm_name ?? ''),
                     'mobile_no', 'mobile' => (string) ($lead->mobile_no ?? ''),
-                    'demo_date', 'renewal_due_date', 'payment_date' => (string) (
+                    'demo_date', 'renewal_due_date', 'renewal_date', 'payment_date' => (string) (
                         $leadVariables['{{date}}']
                         ?: config('whatsapp_cloud.meta_parameter_fallbacks.'.$source)
                         ?: config('whatsapp_cloud.meta_parameter_fallbacks.default', 'N/A')

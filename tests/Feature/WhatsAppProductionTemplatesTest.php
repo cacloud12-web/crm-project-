@@ -306,7 +306,7 @@ class WhatsAppProductionTemplatesTest extends TestCase
         ]);
 
         $this->artisan('migrate', [
-            '--path' => 'database/migrations/2026_08_31_340000_match_subscription_renewal_reminder_to_meta_editor.php',
+            '--path' => 'database/migrations/2026_09_01_160000_refresh_subscription_renewal_reminder_meta_template.php',
         ]);
 
         $template = MessageTemplate::query()
@@ -339,9 +339,9 @@ class WhatsAppProductionTemplatesTest extends TestCase
         $this->assertIsArray($capturedParams);
         $this->assertCount(4, $capturedParams);
         $this->assertSame('name', $capturedParams[0]['parameter_name'] ?? null);
-        $this->assertSame('Renewal Due Date', $capturedParams[1]['parameter_name'] ?? null);
-        $this->assertSame('Subscription Plan', $capturedParams[2]['parameter_name'] ?? null);
-        $this->assertSame('Renewal Amount', $capturedParams[3]['parameter_name'] ?? null);
+        $this->assertSame('renewal_date', $capturedParams[1]['parameter_name'] ?? null);
+        $this->assertSame('subscription_plan', $capturedParams[2]['parameter_name'] ?? null);
+        $this->assertSame('renewal_amount', $capturedParams[3]['parameter_name'] ?? null);
         $this->assertSame('CA Ravi Kumar', $capturedParams[0]['text'] ?? null);
         $this->assertSame('15-Sep-2026', $capturedParams[1]['text'] ?? null);
         $this->assertSame('Professional Plan', $capturedParams[2]['text'] ?? null);
@@ -539,7 +539,7 @@ class WhatsAppProductionTemplatesTest extends TestCase
     public function test_subscription_renewal_reminder_blocks_send_when_meta_registered_only_name(): void
     {
         $this->artisan('migrate', [
-            '--path' => 'database/migrations/2026_08_31_340000_match_subscription_renewal_reminder_to_meta_editor.php',
+            '--path' => 'database/migrations/2026_09_01_160000_refresh_subscription_renewal_reminder_meta_template.php',
         ]);
 
         $template = MessageTemplate::query()
@@ -551,9 +551,9 @@ class WhatsAppProductionTemplatesTest extends TestCase
                 'meta_registered_body_parameters' => ['name'],
                 'body_placeholder_parameters' => [
                     'name',
-                    'Renewal Due Date',
-                    'Subscription Plan',
-                    'Renewal Amount',
+                    'renewal_date',
+                    'subscription_plan',
+                    'renewal_amount',
                 ],
             ]),
         ]);
