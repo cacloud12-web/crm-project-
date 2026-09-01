@@ -84,6 +84,7 @@ return [
         'subscription_renewal_reminder',
         'callback_scheduled',
         'payment_received',
+        'demo_thank_you',
         'expense_partnerjeyfg90rzl',
         'proforma_invoicel5ekuo0baa',
     ],
