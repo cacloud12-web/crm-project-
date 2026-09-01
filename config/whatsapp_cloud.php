@@ -86,6 +86,7 @@ return [
         'callback_scheduled',
         'payment_received',
         'demo_thank_you',
+        'post_demo_follow_up',
         'welcome_after_purchase',
         'expense_partnerjeyfg90rzl',
         'proforma_invoicel5ekuo0baa',
