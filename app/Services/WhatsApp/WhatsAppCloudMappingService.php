@@ -494,10 +494,17 @@ class WhatsAppCloudMappingService
     }
 
     /**
+     * Meta templates with static URL, phone, or Flow buttons must not receive send-time
+     * button components. Only dynamic URL buttons ({{var}} in the approved URL) need this.
+     *
      * @return list<array{type: string, sub_type: string, index: string, parameters: list<array<string, mixed>>}>
      */
     private function buildMetaButtonComponents(MessageTemplate $template, array $variables): array
     {
+        if (! (bool) config('whatsapp_cloud.enable_template_button_parameters', false)) {
+            return [];
+        }
+
         $meta = is_array($template->meta_components) ? $template->meta_components : [];
         $buttons = $meta['buttons'] ?? [];
         if (! is_array($buttons) || $buttons === []) {
