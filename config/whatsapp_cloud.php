@@ -69,6 +69,7 @@ return [
 
     'approved_templates' => [
         'demo_scheduled',
+        'demo_reschedule',
         'demo_reminder_1_hour',
         'demo_reminder_one_day_before',
         'subscription_renewal_reminder',
